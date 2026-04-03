@@ -355,6 +355,10 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Backup: &multigresv1alpha1.BackupConfig{
 							Type:       multigresv1alpha1.BackupTypeFilesystem,
 							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+							Retention: &multigresv1alpha1.RetentionPolicy{
+								FullCount:         ptr.To(int32(4)),
+								DifferentialCount: ptr.To(int32(1)),
+							},
 						},
 					},
 				},
@@ -651,6 +655,10 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 					Backup: &multigresv1alpha1.BackupConfig{
 						Type:       multigresv1alpha1.BackupTypeFilesystem,
 						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+						Retention: &multigresv1alpha1.RetentionPolicy{
+							FullCount:         ptr.To(int32(4)),
+							DifferentialCount: ptr.To(int32(1)),
+						},
 					},
 				},
 			},

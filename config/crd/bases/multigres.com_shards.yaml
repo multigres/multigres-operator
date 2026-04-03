@@ -103,14 +103,40 @@ spec:
                           When empty, the operator generates and rotates certificates automatically.
                         type: string
                     type: object
+                  retention:
+                    description: Retention configures pgBackRest backup retention.
+                    properties:
+                      differentialCount:
+                        description: DifferentialCount is the number of differential
+                          backups to retain per full backup.
+                        format: int32
+                        maximum: 30
+                        minimum: 1
+                        type: integer
+                      fullCount:
+                        description: FullCount is the number of full backups to retain.
+                        format: int32
+                        maximum: 30
+                        minimum: 1
+                        type: integer
+                    type: object
                   s3:
                     description: |-
                       S3 defines the S3-compatible storage configuration.
                       Required when type is "s3".
                     properties:
+                      allowStaleMetadataRecovery:
+                        description: |-
+                          AllowStaleMetadataRecovery allows automatic recovery from stale stanza metadata.
+                          WARNING: This may delete existing backup data.
+                        type: boolean
                       bucket:
                         minLength: 1
                         type: string
+                      cleanupOnDelete:
+                        description: CleanupOnDelete deletes S3 backup data during
+                          cluster deletion.
+                        type: boolean
                       credentialsSecret:
                         description: CredentialsSecret is the name of the Secret containing
                           AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
@@ -123,11 +149,8 @@ spec:
                         minLength: 1
                         type: string
                       serviceAccountName:
-                        description: |-
-                          ServiceAccountName is the name of the ServiceAccount to use for IRSA-based S3 authentication.
-                          The ServiceAccount must exist in the same namespace and be annotated with
-                          eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
-                          The operator does NOT create this ServiceAccount — the user must create it externally.
+                        description: ServiceAccountName is the ServiceAccount used
+                          for IRSA-based S3 authentication.
                         type: string
                       useEnvCredentials:
                         type: boolean

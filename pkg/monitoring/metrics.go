@@ -107,6 +107,38 @@ var (
 		},
 		[]string{"cluster", "shard", "pool", "cell", "namespace"},
 	)
+
+	backupRetainedCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "multigres_operator_backup_retained_count",
+			Help: "Number of retained backups per shard, partitioned by type.",
+		},
+		[]string{"cluster", "shard", "namespace", "type"},
+	)
+
+	backupOldestRetainedAge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "multigres_operator_backup_oldest_retained_age_seconds",
+			Help: "Age of the oldest retained backup in seconds.",
+		},
+		[]string{"cluster", "shard", "namespace"},
+	)
+
+	backupRestoreTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "multigres_operator_backup_restore_total",
+			Help: "Total pod restoration events, partitioned by source and result.",
+		},
+		[]string{"cluster", "shard", "namespace", "source", "result"},
+	)
+
+	backupFenceActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "multigres_operator_backup_fence_active",
+			Help: "Whether backup fencing is active for a shard (1=fenced, 0=unfenced).",
+		},
+		[]string{"cluster", "shard", "namespace"},
+	)
 )
 
 func init() {
@@ -123,6 +155,10 @@ func init() {
 		lastBackupAgeSeconds,
 		drainOperationsTotal,
 		rollingUpdateInProgress,
+		backupRetainedCount,
+		backupOldestRetainedAge,
+		backupRestoreTotal,
+		backupFenceActive,
 	)
 }
 
@@ -142,5 +178,9 @@ func Collectors() []prometheus.Collector {
 		lastBackupAgeSeconds,
 		drainOperationsTotal,
 		rollingUpdateInProgress,
+		backupRetainedCount,
+		backupOldestRetainedAge,
+		backupRestoreTotal,
+		backupFenceActive,
 	}
 }

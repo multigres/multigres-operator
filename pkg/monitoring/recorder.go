@@ -71,3 +71,29 @@ func SetRollingUpdateInProgress(cluster, shard, pool, cell, namespace string, in
 	}
 	rollingUpdateInProgress.WithLabelValues(cluster, shard, pool, cell, namespace).Set(val)
 }
+
+// SetBackupRetainedCount sets the number of retained backups per shard by type.
+func SetBackupRetainedCount(cluster, shard, namespace string, fullCount, diffCount int) {
+	backupRetainedCount.WithLabelValues(cluster, shard, namespace, "full").Set(float64(fullCount))
+	backupRetainedCount.WithLabelValues(cluster, shard, namespace, "diff").Set(float64(diffCount))
+}
+
+// SetBackupOldestRetainedAge sets the age of the oldest retained backup for a shard.
+func SetBackupOldestRetainedAge(cluster, shard, namespace string, age time.Duration) {
+	backupOldestRetainedAge.WithLabelValues(cluster, shard, namespace).Set(age.Seconds())
+}
+
+// IncrementBackupRestore increments the backup restore counter for a shard.
+// source is "s3_backup" or "pg_basebackup"; result is "success" or "failure".
+func IncrementBackupRestore(cluster, shard, namespace, source, result string) {
+	backupRestoreTotal.WithLabelValues(cluster, shard, namespace, source, result).Inc()
+}
+
+// SetBackupFenceActive sets whether backup fencing is active for a shard.
+func SetBackupFenceActive(cluster, shard, namespace string, active bool) {
+	val := 0.0
+	if active {
+		val = 1.0
+	}
+	backupFenceActive.WithLabelValues(cluster, shard, namespace).Set(val)
+}

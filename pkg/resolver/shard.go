@@ -293,10 +293,18 @@ func defaultBackupConfig(cfg *multigresv1alpha1.BackupConfig) {
 		if cfg.Filesystem.Path == "" {
 			cfg.Filesystem.Path = DefaultBackupPath
 		}
-		// Ensure Storage struct is initialized if completely empty?
-		// StorageSpec is a struct value, so accessing fields is safe.
 		if cfg.Filesystem.Storage.Size == "" {
 			cfg.Filesystem.Storage.Size = DefaultBackupStorageSize
 		}
+	}
+
+	if cfg.Retention == nil {
+		cfg.Retention = &multigresv1alpha1.RetentionPolicy{}
+	}
+	if cfg.Retention.FullCount == nil {
+		cfg.Retention.FullCount = ptr.To(int32(4))
+	}
+	if cfg.Retention.DifferentialCount == nil {
+		cfg.Retention.DifferentialCount = ptr.To(int32(1))
 	}
 }

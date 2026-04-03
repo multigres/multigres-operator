@@ -161,6 +161,10 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 														Size: resolver.DefaultBackupStorageSize,
 													},
 												},
+												Retention: &multigresv1alpha1.RetentionPolicy{
+													FullCount:         ptr.To(int32(4)),
+													DifferentialCount: ptr.To(int32(1)),
+												},
 											},
 										},
 									},
@@ -463,6 +467,10 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 												Storage: multigresv1alpha1.StorageSpec{
 													Size: resolver.DefaultBackupStorageSize,
 												},
+											},
+											Retention: &multigresv1alpha1.RetentionPolicy{
+												FullCount:         ptr.To(int32(4)),
+												DifferentialCount: ptr.To(int32(1)),
 											},
 										},
 									}},

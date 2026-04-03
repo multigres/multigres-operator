@@ -1016,6 +1016,57 @@ func TestDefaultBackupConfig(t *testing.T) {
 			t.Fatal("Filesystem = nil, want non-nil")
 		}
 	})
+
+	t.Run("sets retention defaults when nil", func(t *testing.T) {
+		t.Parallel()
+		cfg := &multigresv1alpha1.BackupConfig{Type: multigresv1alpha1.BackupTypeS3}
+		defaultBackupConfig(cfg)
+		if cfg.Retention == nil {
+			t.Fatal("Retention = nil, want non-nil")
+		}
+		if cfg.Retention.FullCount == nil || *cfg.Retention.FullCount != 4 {
+			t.Errorf("FullCount = %v, want 4", cfg.Retention.FullCount)
+		}
+		if cfg.Retention.DifferentialCount == nil || *cfg.Retention.DifferentialCount != 1 {
+			t.Errorf("DifferentialCount = %v, want 1", cfg.Retention.DifferentialCount)
+		}
+	})
+
+	t.Run("does not override existing retention values", func(t *testing.T) {
+		t.Parallel()
+		cfg := &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeS3,
+			Retention: &multigresv1alpha1.RetentionPolicy{
+				FullCount:         ptr.To(int32(7)),
+				DifferentialCount: ptr.To(int32(3)),
+			},
+		}
+		defaultBackupConfig(cfg)
+		if *cfg.Retention.FullCount != 7 {
+			t.Errorf("FullCount = %d, want 7", *cfg.Retention.FullCount)
+		}
+		if *cfg.Retention.DifferentialCount != 3 {
+			t.Errorf("DifferentialCount = %d, want 3", *cfg.Retention.DifferentialCount)
+		}
+	})
+
+	t.Run("fills partial retention defaults", func(t *testing.T) {
+		t.Parallel()
+		cfg := &multigresv1alpha1.BackupConfig{
+			Type:      multigresv1alpha1.BackupTypeS3,
+			Retention: &multigresv1alpha1.RetentionPolicy{FullCount: ptr.To(int32(10))},
+		}
+		defaultBackupConfig(cfg)
+		if *cfg.Retention.FullCount != 10 {
+			t.Errorf("FullCount = %d, want 10 (should not be overridden)", *cfg.Retention.FullCount)
+		}
+		if cfg.Retention.DifferentialCount == nil || *cfg.Retention.DifferentialCount != 1 {
+			t.Errorf(
+				"DifferentialCount = %v, want 1 (should be defaulted)",
+				cfg.Retention.DifferentialCount,
+			)
+		}
+	})
 }
 
 func TestResolveShard_InheritedBackup(t *testing.T) {

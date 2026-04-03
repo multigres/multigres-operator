@@ -159,6 +159,10 @@ type BackupConfig struct {
 	// When SecretName is empty, the operator auto-generates and rotates certificates.
 	// +optional
 	PgBackRestTLS *PgBackRestTLSConfig `json:"pgbackrestTLS,omitempty"`
+
+	// Retention configures pgBackRest backup retention.
+	// +optional
+	Retention *RetentionPolicy `json:"retention,omitempty"`
 }
 
 // FilesystemBackupConfig defines settings for filesystem-based backups.
@@ -190,12 +194,18 @@ type S3BackupConfig struct {
 	// +optional
 	CredentialsSecret string `json:"credentialsSecret,omitempty"`
 
-	// ServiceAccountName is the name of the ServiceAccount to use for IRSA-based S3 authentication.
-	// The ServiceAccount must exist in the same namespace and be annotated with
-	// eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
-	// The operator does NOT create this ServiceAccount — the user must create it externally.
+	// ServiceAccountName is the ServiceAccount used for IRSA-based S3 authentication.
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// CleanupOnDelete deletes S3 backup data during cluster deletion.
+	// +optional
+	CleanupOnDelete *bool `json:"cleanupOnDelete,omitempty"`
+
+	// AllowStaleMetadataRecovery allows automatic recovery from stale stanza metadata.
+	// WARNING: This may delete existing backup data.
+	// +optional
+	AllowStaleMetadataRecovery *bool `json:"allowStaleMetadataRecovery,omitempty"`
 }
 
 // PgBackRestTLSConfig configures TLS for pgBackRest inter-node communication.
@@ -206,6 +216,21 @@ type PgBackRestTLSConfig struct {
 	// When empty, the operator generates and rotates certificates automatically.
 	// +optional
 	SecretName string `json:"secretName,omitempty"`
+}
+
+// RetentionPolicy configures pgBackRest backup retention.
+type RetentionPolicy struct {
+	// FullCount is the number of full backups to retain.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30
+	// +optional
+	FullCount *int32 `json:"fullCount,omitempty"`
+
+	// DifferentialCount is the number of differential backups to retain per full backup.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=30
+	// +optional
+	DifferentialCount *int32 `json:"differentialCount,omitempty"`
 }
 
 // ============================================================================
@@ -429,8 +454,7 @@ func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {
 			if child.S3.KeyPrefix != "" {
 				merged.S3.KeyPrefix = child.S3.KeyPrefix
 			}
-			// Bool fields are tricky in merge (is false explicitly set or default?)
-			// For simplicity in v1alpha1, we assume if struct is present, we take the value
+			// UseEnvCredentials follows child.S3 when the child S3 block is present.
 			merged.S3.UseEnvCredentials = child.S3.UseEnvCredentials
 			if child.S3.CredentialsSecret != "" {
 				merged.S3.CredentialsSecret = child.S3.CredentialsSecret
@@ -438,11 +462,29 @@ func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {
 			if child.S3.ServiceAccountName != "" {
 				merged.S3.ServiceAccountName = child.S3.ServiceAccountName
 			}
+			if child.S3.CleanupOnDelete != nil {
+				merged.S3.CleanupOnDelete = child.S3.CleanupOnDelete
+			}
+			if child.S3.AllowStaleMetadataRecovery != nil {
+				merged.S3.AllowStaleMetadataRecovery = child.S3.AllowStaleMetadataRecovery
+			}
 		}
 	}
 
 	if child.PgBackRestTLS != nil {
 		merged.PgBackRestTLS = child.PgBackRestTLS.DeepCopy()
+	}
+
+	if child.Retention != nil {
+		if merged.Retention == nil {
+			merged.Retention = &RetentionPolicy{}
+		}
+		if child.Retention.FullCount != nil {
+			merged.Retention.FullCount = child.Retention.FullCount
+		}
+		if child.Retention.DifferentialCount != nil {
+			merged.Retention.DifferentialCount = child.Retention.DifferentialCount
+		}
 	}
 
 	return merged
