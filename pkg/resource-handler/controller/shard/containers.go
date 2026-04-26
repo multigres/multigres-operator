@@ -209,14 +209,17 @@ func buildPgctldContainer(
 	}
 
 	return corev1.Container{
-		Name:            "postgres",
-		Image:           image,
-		Command:         []string{"/usr/local/bin/pgctld"},
-		Args:            args,
-		Resources:       pool.Postgres.Resources,
-		Env:             env,
-		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
-		VolumeMounts:    volumeMounts,
+		Name:      "postgres",
+		Image:     image,
+		Command:   []string{"/usr/local/bin/pgctld"},
+		Args:      args,
+		Resources: pool.Postgres.Resources,
+		Env:       env,
+		SecurityContext: buildContainerSecurityContext(
+			pool.FSGroup,
+			defaultPostgresRunAsUserUID,
+		),
+		VolumeMounts: volumeMounts,
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
@@ -281,7 +284,10 @@ func buildPostgresExporterContainer(
 				},
 			},
 		},
-		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
+		SecurityContext: buildContainerSecurityContext(
+			pool.FSGroup,
+			defaultPostgresExporterRunAsUserUID,
+		),
 	}
 }
 
@@ -338,13 +344,16 @@ func buildMultiPoolerSidecar(
 	}
 
 	c := corev1.Container{
-		Name:            "multipooler",
-		Image:           image,
-		Args:            args,
-		Ports:           buildMultiPoolerContainerPorts(),
-		Resources:       pool.Multipooler.Resources,
-		RestartPolicy:   &sidecarRestartPolicy,
-		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
+		Name:          "multipooler",
+		Image:         image,
+		Args:          args,
+		Ports:         buildMultiPoolerContainerPorts(),
+		Resources:     pool.Multipooler.Resources,
+		RestartPolicy: &sidecarRestartPolicy,
+		SecurityContext: buildContainerSecurityContext(
+			pool.FSGroup,
+			defaultMultiPoolerRunAsUserUID,
+		),
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{

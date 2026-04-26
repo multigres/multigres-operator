@@ -254,21 +254,21 @@ func TestBuildPoolPod_SecurityContextWithFSGroup(t *testing.T) {
 
 func TestBuildContainerSecurityContext(t *testing.T) {
 	t.Run("nil fsGroup", func(t *testing.T) {
-		sc := buildContainerSecurityContext(nil)
+		sc := buildContainerSecurityContext(nil, defaultPostgresRunAsUserUID)
 		assert.True(t, *sc.RunAsNonRoot)
-		assert.Nil(t, sc.RunAsUser)
-		assert.Nil(t, sc.RunAsGroup)
+		assert.Equal(t, defaultPostgresRunAsUserUID, *sc.RunAsUser)
+		assert.Equal(t, defaultPostgresRunAsUserUID, *sc.RunAsGroup)
 	})
 
 	t.Run("with fsGroup", func(t *testing.T) {
-		sc := buildContainerSecurityContext(ptr.To(int64(999)))
+		sc := buildContainerSecurityContext(ptr.To(int64(999)), defaultPostgresRunAsUserUID)
 		assert.True(t, *sc.RunAsNonRoot)
 		assert.Equal(t, int64(999), *sc.RunAsUser)
 		assert.Equal(t, int64(999), *sc.RunAsGroup)
 	})
 
 	t.Run("alpine fsGroup", func(t *testing.T) {
-		sc := buildContainerSecurityContext(ptr.To(int64(70)))
+		sc := buildContainerSecurityContext(ptr.To(int64(70)), defaultPostgresRunAsUserUID)
 		assert.True(t, *sc.RunAsNonRoot)
 		assert.Equal(t, int64(70), *sc.RunAsUser)
 		assert.Equal(t, int64(70), *sc.RunAsGroup)
