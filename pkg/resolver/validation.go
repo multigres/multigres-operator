@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
 // ============================================================================
@@ -709,9 +710,9 @@ func (r *Resolver) validateCellTopology(
 	for _, cell := range cells {
 		var key, value string
 		switch {
-		case cell.Zone != "":
-			key = "topology.kubernetes.io/zone"
-			value = string(cell.Zone)
+		case cell.ZoneID != "":
+			key = metadata.NodeLabelZoneID
+			value = string(cell.ZoneID)
 		case cell.Region != "":
 			key = "topology.kubernetes.io/region"
 			value = string(cell.Region)
@@ -743,12 +744,12 @@ func (r *Resolver) validateCellTopology(
 	}
 
 	// Build a set of available topology values
-	availableZones := make(map[string]bool)
+	availableZoneIDs := make(map[string]bool)
 	availableRegions := make(map[string]bool)
 	for i := range nodeList.Items {
 		labels := nodeList.Items[i].Labels
-		if z, ok := labels["topology.kubernetes.io/zone"]; ok {
-			availableZones[z] = true
+		if zoneID, ok := labels[metadata.NodeLabelZoneID]; ok {
+			availableZoneIDs[zoneID] = true
 		}
 		if reg, ok := labels["topology.kubernetes.io/region"]; ok {
 			availableRegions[reg] = true
@@ -758,8 +759,8 @@ func (r *Resolver) validateCellTopology(
 	for _, tc := range checks {
 		var found bool
 		switch tc.key {
-		case "topology.kubernetes.io/zone":
-			found = availableZones[tc.value]
+		case metadata.NodeLabelZoneID:
+			found = availableZoneIDs[tc.value]
 		case "topology.kubernetes.io/region":
 			found = availableRegions[tc.value]
 		}

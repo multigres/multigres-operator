@@ -53,7 +53,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				// Actually, TableGroups don't need cells if not defined inline?
 				// The error message might help: "unknown field Spec".
 				// Ah, DatabaseConfig has fields directly embedded or defined.
-				Cells: []multigresv1alpha1.CellConfig{{Name: "zone-a", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "zone-a", ZoneID: "use1-az1"}},
 			},
 		}
 

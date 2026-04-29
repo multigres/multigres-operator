@@ -4,10 +4,10 @@ nodes:
   - role: control-plane
   - role: worker
     labels:
-      topology.kubernetes.io/zone: us-east-1a
+      topology.k8s.aws/zone-id: use1-az1
   - role: worker
     labels:
-      topology.kubernetes.io/zone: us-east-1b
+      topology.k8s.aws/zone-id: use1-az2
   - role: worker
     labels:
-      topology.kubernetes.io/zone: us-east-1c
+      topology.k8s.aws/zone-id: use1-az3

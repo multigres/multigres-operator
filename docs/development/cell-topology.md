@@ -1,4 +1,4 @@
-# Cell Topology and Zone/Region Allocation
+# Cell Topology and Zone ID/Region Allocation
 
 ## Local TopoServer (Cell Children) — Not Yet Implemented
 
@@ -109,17 +109,18 @@ This means cells are the mechanism by which multigres guarantees that a committe
 
 However, this guarantee is only real if the cell's pods actually run in the correct zone. If the Kubernetes scheduler places `zone-1` pool pods on `us-east-1b` nodes, the cross-cell quorum is meaningless — both "cells" are on the same physical infrastructure.
 
-## Zone/Region Scheduling Implementation
+## Zone ID/Region Scheduling Implementation
 
-The operator natively integrates Cell topology with Kubernetes node scheduling via the `zone` and `region` fields on the `Cell` and `CellConfig` definitions.
+The operator natively integrates Cell topology with Kubernetes node scheduling via the `zoneId` and `region` fields on the `Cell` and `CellConfig` definitions.
 
 ### 1. Optional Topology Constraint
 
-The `zone` and `region` fields are optional and mutually exclusive (validated via `!(has(self.zone) && has(self.region))`).
+The `zoneId` and `region` fields are optional and mutually exclusive (validated via CEL: `!(has(self.zoneId) && has(self.region))`). At least one of the two must be specified.
 
-- `zone` set → injects `nodeSelector: { topology.kubernetes.io/zone: <zone> }`
+- `zoneId` set → injects `nodeSelector: { topology.k8s.aws/zone-id: <zoneId> }`
 - `region` set → injects `nodeSelector: { topology.kubernetes.io/region: <region> }`
-- **neither set** → no `nodeSelector` is injected, and pods will schedule on any available node. This is essential for single-node environments like Kind or Minikube where topology labels do not exist.
+
+`zoneId` uses the AWS availability zone ID (e.g. `use1-az1`) exposed via the `topology.k8s.aws/zone-id` node label set by the [AWS Node Labeler](https://github.com/aws/aws-node-labeler). Unlike zone names (e.g. `us-east-1a`), zone IDs are consistent across AWS accounts, making them the correct identifier for cross-account or shared-infrastructure deployments.
 
 ### 2. Auto-injection of `nodeSelector`
 
@@ -130,7 +131,7 @@ The injected `nodeSelector` is **strict** and **additive**:
 The components receiving this injection are:
 | Component | Injection Logic |
 |---|---|
-| **MultiGateway Deployment** | Determined directly from the Cell CR `Spec.Zone` / `Spec.Region` |
+| **MultiGateway Deployment** | Determined directly from the Cell CR `Spec.ZoneID` / `Spec.Region` |
 | **Pool Pods** | Looked up via `CellTopologyLabels` in `ShardSpec` |
 | **MultiOrch Deployment** | Looked up via `CellTopologyLabels` in `ShardSpec` |
 
@@ -143,9 +144,9 @@ To avoid independent API reads, the cluster controller builds a `CellTopologyLab
 ### 4. Pre-flight Validation Warnings
 
 The operator's validating webhook (`ValidateClusterLogic` in `resolver.go`) checks the live cluster for nodes matching the specified topology labels. Specifically, it lists all `corev1.Node` objects at admission time.
-If a cell specifies a `zone` or `region` that does not exist on any current nodes, the webhook emits a Kubernetes Admission **Warning**:
+If a cell specifies a `zoneId` or `region` that does not exist on any current nodes, the webhook emits a Kubernetes Admission **Warning**:
 
-`cell 'X': no nodes currently match topology.kubernetes.io/zone=Y; pods will be Pending until matching nodes are available`
+`cell 'X': no nodes currently match topology.k8s.aws/zone-id=Y; pods will be Pending until matching nodes are available`
 
 We use warnings rather than rejections because cluster nodes are ephemeral (e.g., Karpenter or Cluster Autoscaler may spin up a new AZ from zero upon spotting Pending pods).
 

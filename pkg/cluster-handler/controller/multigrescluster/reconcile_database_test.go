@@ -110,8 +110,8 @@ func TestReconcile_Databases(t *testing.T) {
 		"Reconcile: Implicit Cell Sorting": {
 			preReconcileUpdate: func(t testing.TB, c *multigresv1alpha1.MultigresCluster) {
 				c.Spec.Cells = []multigresv1alpha1.CellConfig{
-					{Name: "zone-b", Zone: "us-east-1b"},
-					{Name: "zone-a", Zone: "us-east-1a"},
+					{Name: "zone-b", ZoneID: "use1-az2"},
+					{Name: "zone-a", ZoneID: "use1-az1"},
 				}
 			},
 			existingObjects: []client.Object{

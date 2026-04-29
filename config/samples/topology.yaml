@@ -1,5 +1,5 @@
 # To try this sample, use: make kind-deploy-topology
-# This creates a kind cluster with 3 worker nodes labeled with topology zones.
+# This creates a kind cluster with 3 worker nodes labeled with topology zone IDs.
 apiVersion: multigres.com/v1alpha1
 kind: MultigresCluster
 metadata:
@@ -42,7 +42,7 @@ spec:
   # ----------------------------------------------------------------
   cells:
     - name: "z1"
-      zone: "us-east-1a"
+      zoneId: "use1-az1"
       spec:
          multigateway:
            replicas: 2
@@ -55,7 +55,7 @@ spec:
                memory: "256Mi"
 
     - name: "z2"
-      zone: "us-east-1b"
+      zoneId: "use1-az2"
       spec:
          multigateway:
            replicas: 2
@@ -68,7 +68,7 @@ spec:
                memory: "256Mi"
 
     - name: "z3"
-      zone: "us-east-1c"
+      zoneId: "use1-az3"
       spec:
          multigateway:
            replicas: 2

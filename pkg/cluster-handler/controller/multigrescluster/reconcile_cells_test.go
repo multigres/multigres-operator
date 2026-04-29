@@ -26,7 +26,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 					TemplateRef: "non-existent-core",
 				},
-				Cells: []multigresv1alpha1.CellConfig{{Name: "zone-a", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "zone-a", ZoneID: "use1-az1"}},
 			},
 		}
 
@@ -57,7 +57,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 				},
 				Cells: []multigresv1alpha1.CellConfig{{
 					Name:         "zone-a",
-					Zone:         "us-east-1a",
+					ZoneID:       "use1-az1",
 					CellTemplate: "non-existent-cell",
 				}},
 			},
@@ -114,7 +114,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 					Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd"},
 				},
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "zone-a", Zone: "us-east-1a"},
+					{Name: "zone-a", ZoneID: "use1-az1"},
 				},
 			},
 		}
@@ -189,7 +189,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 					Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd"},
 				},
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "zone-a", Zone: "us-east-1a"},
+					{Name: "zone-a", ZoneID: "use1-az1"},
 				},
 			},
 		}
@@ -224,7 +224,7 @@ func TestReconcileCells_HappyPath(t *testing.T) {
 					Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd"},
 				},
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "zone-new", Zone: "us-east-1a"},
+					{Name: "zone-new", ZoneID: "use1-az1"},
 				},
 			},
 		}

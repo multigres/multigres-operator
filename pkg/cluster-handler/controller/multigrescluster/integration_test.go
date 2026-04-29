@@ -204,7 +204,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-a", Zone: "us-east-1a", Spec: &multigresv1alpha1.CellInlineSpec{
+						{Name: "zone-a", ZoneID: "use1-az1", Spec: &multigresv1alpha1.CellInlineSpec{
 							MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 						}},
 					},
@@ -469,7 +469,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.CellSpec{
 						Name: "zone-a",
-						Zone: "us-east-1a",
+						ZoneID: "use1-az1",
 						Images: multigresv1alpha1.CellImages{
 							MultiGateway:     "gateway:latest",
 							ImagePullPolicy:  corev1.PullAlways,
@@ -508,7 +508,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.TableGroupSpec{
 						CellTopologyLabels: map[multigresv1alpha1.CellName]map[string]string{
-							"zone-a": {"topology.kubernetes.io/zone": "us-east-1a"},
+							"zone-a": {"topology.k8s.aws/zone-id": "use1-az1"},
 						},
 						DatabaseName: "postgres",
 						LogLevels: multigresv1alpha1.ComponentLogLevels{
@@ -594,7 +594,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						TemplateRef: "default",
 					},
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-a", Zone: "us-east-1a"},
+						{Name: "zone-a", ZoneID: "use1-az1"},
 					},
 				},
 			},
@@ -830,7 +830,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.CellSpec{
 						Name: "zone-a",
-						Zone: "us-east-1a",
+						ZoneID: "use1-az1",
 						Images: multigresv1alpha1.CellImages{
 							MultiGateway:    resolver.DefaultMultiGatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
@@ -868,7 +868,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.TableGroupSpec{
 						CellTopologyLabels: map[multigresv1alpha1.CellName]map[string]string{
-							"zone-a": {"topology.kubernetes.io/zone": "us-east-1a"},
+							"zone-a": {"topology.k8s.aws/zone-id": "use1-az1"},
 						},
 						DatabaseName: "postgres",
 						LogLevels: multigresv1alpha1.ComponentLogLevels{
@@ -952,7 +952,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						ShardTemplate: "default",
 					},
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-a", Zone: "us-east-1a"},
+						{Name: "zone-a", ZoneID: "use1-az1"},
 					},
 				},
 			},
@@ -1188,7 +1188,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.CellSpec{
 						Name: "zone-a",
-						Zone: "us-east-1a",
+						ZoneID: "use1-az1",
 						Images: multigresv1alpha1.CellImages{
 							MultiGateway:    resolver.DefaultMultiGatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
@@ -1226,7 +1226,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.TableGroupSpec{
 						CellTopologyLabels: map[multigresv1alpha1.CellName]map[string]string{
-							"zone-a": {"topology.kubernetes.io/zone": "us-east-1a"},
+							"zone-a": {"topology.k8s.aws/zone-id": "use1-az1"},
 						},
 						DatabaseName: "postgres",
 						LogLevels: multigresv1alpha1.ComponentLogLevels{

@@ -1343,7 +1343,8 @@ spec:
                     type: string
                 type: object
               region:
-                description: Region indicates the physical region.
+                description: Region indicates the physical region (mutually exclusive
+                  with zoneId via CEL validation).
                 maxLength: 63
                 minLength: 1
                 type: string
@@ -1546,8 +1547,10 @@ spec:
                 - prunePoolers
                 - registerCell
                 type: object
-              zone:
-                description: Zone indicates the physical availability zone.
+              zoneId:
+                description: |-
+                  ZoneID indicates the physical availability zone ID (e.g. use1-az1).
+                  Zone IDs are consistent across AWS accounts, unlike zone names.
                 maxLength: 63
                 minLength: 1
                 type: string
@@ -1558,8 +1561,10 @@ spec:
             - name
             type: object
             x-kubernetes-validations:
-            - message: cannot specify both 'zone' and 'region'
-              rule: '!(has(self.zone) && has(self.region))'
+            - message: cannot specify both 'zoneId' and 'region'
+              rule: '!(has(self.zoneId) && has(self.region))'
+            - message: at least one of 'zoneId' or 'region' must be specified
+              rule: has(self.zoneId) || has(self.region)
           status:
             description: CellStatus defines the observed state of Cell.
             properties:

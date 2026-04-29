@@ -27,9 +27,9 @@ spec:
   durabilityPolicy: "AT_LEAST_2"
   cells:
     - name: zone-a
-      zone: us-east-1a
+      zoneId: use1-az1
     - name: zone-b
-      zone: us-east-1b
+      zoneId: use1-az2
   databases:
     - name: postgres
       default: true
@@ -50,9 +50,9 @@ spec:
   durabilityPolicy: "AT_LEAST_2"  # default for all databases
   cells:
     - name: zone-a
-      zone: us-east-1a
+      zoneId: use1-az1
     - name: zone-b
-      zone: us-east-1b
+      zoneId: use1-az2
   databases:
     - name: postgres
       default: true
@@ -77,7 +77,7 @@ In this example, the `postgres` database uses `MULTI_CELL_AT_LEAST_2` (cross-AZ 
 | Multi-AZ with cross-zone durability requirement | `MULTI_CELL_AT_LEAST_2` |
 | Development / testing | `AT_LEAST_2` |
 
-When using `MULTI_CELL_AT_LEAST_2`, ensure your shard's pools span at least 2 cells and that each cell maps to a distinct availability zone via `spec.cells[].zone`. See [Cell Topology](development/cell-topology.md) for details on how cells map to Kubernetes scheduling constraints.
+When using `MULTI_CELL_AT_LEAST_2`, ensure your shard's pools span at least 2 cells and that each cell maps to a distinct availability zone via `spec.cells[].zoneId`. See [Cell Topology](development/cell-topology.md) for details on how cells map to Kubernetes scheduling constraints.
 
 ## Replica Count Considerations
 

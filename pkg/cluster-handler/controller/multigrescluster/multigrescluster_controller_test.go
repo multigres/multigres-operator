@@ -320,7 +320,7 @@ func setupFixtures(tb testing.TB) (
 				TemplateRef: "default-core",
 			},
 			Cells: []multigresv1alpha1.CellConfig{
-				{Name: "zone-a", Zone: "us-east-1a"},
+				{Name: "zone-a", ZoneID: "use1-az1"},
 			},
 			Databases: []multigresv1alpha1.DatabaseConfig{
 				{

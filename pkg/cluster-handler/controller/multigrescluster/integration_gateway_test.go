@@ -45,7 +45,7 @@ func TestExternalGateway_EnableDisableLifecycle(t *testing.T) {
 				ShardTemplate: "default",
 			},
 			Cells: []multigresv1alpha1.CellConfig{
-				{Name: "zone-a", Zone: "us-east-1a"},
+				{Name: "zone-a", ZoneID: "use1-az1"},
 			},
 			ExternalGateway: &multigresv1alpha1.ExternalGatewayConfig{
 				Enabled:     true,
@@ -270,7 +270,7 @@ func TestExternalGateway_NoReadyGatewaysTransition(t *testing.T) {
 				ShardTemplate: "default",
 			},
 			Cells: []multigresv1alpha1.CellConfig{
-				{Name: "zone-a", Zone: "us-east-1a"},
+				{Name: "zone-a", ZoneID: "use1-az1"},
 			},
 			ExternalGateway: &multigresv1alpha1.ExternalGatewayConfig{
 				Enabled:     true,

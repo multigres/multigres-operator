@@ -1258,7 +1258,7 @@ spec:
                       type: object
                     region:
                       description: Region indicates the physical region (mutually
-                        exclusive with zone via CEL validation).
+                        exclusive with zoneId via CEL validation).
                       maxLength: 63
                       minLength: 1
                       type: string
@@ -2533,8 +2533,10 @@ spec:
                       - message: local topology servers (localTopoServer) are not
                           yet supported
                         rule: '!has(self.localTopoServer)'
-                    zone:
-                      description: Zone indicates the physical availability zone.
+                    zoneId:
+                      description: |-
+                        ZoneID indicates the physical availability zone ID (e.g. use1-az1).
+                        Zone IDs are consistent across AWS accounts, unlike zone names.
                       maxLength: 63
                       minLength: 1
                       type: string
@@ -2546,8 +2548,10 @@ spec:
                     rule: '!(has(self.spec) && has(self.cellTemplate))'
                   - message: cannot specify both 'spec' and 'overrides'
                     rule: '!(has(self.spec) && has(self.overrides))'
-                  - message: cannot specify both 'zone' and 'region'
-                    rule: '!(has(self.zone) && has(self.region))'
+                  - message: cannot specify both 'zoneId' and 'region'
+                    rule: '!(has(self.zoneId) && has(self.region))'
+                  - message: at least one of 'zoneId' or 'region' must be specified
+                    rule: has(self.zoneId) || has(self.region)
                 maxItems: 50
                 type: array
                 x-kubernetes-list-map-keys:

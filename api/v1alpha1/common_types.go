@@ -283,10 +283,11 @@ type PostgresConfigRef struct {
 // +kubebuilder:validation:Pattern=`^(([0-9]{1,3}\.){3}[0-9]{1,3})$|^(([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})$`
 type IPAddress string
 
-// Zone is the cloud provider availability zone identifier.
+// ZoneID is the cloud provider availability zone ID (e.g. use1-az1).
+// Unlike zone names, zone IDs are consistent across AWS accounts.
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=63
-type Zone string
+type ZoneID string
 
 // Region is the cloud provider region identifier.
 // +kubebuilder:validation:MinLength=1

@@ -132,7 +132,7 @@ metadata:
 spec:
   cells:
     - name: "zone-a"
-      zone: "us-east-1a"
+      zoneId: "use1-az1"
 ```
 
 The operator fills in all defaults: a 3-node etcd TopoServer, a MultiAdmin,
@@ -940,7 +940,7 @@ spec:
   # observability: not set → inherits operator's OTEL_EXPORTER_OTLP_ENDPOINT
   cells:
     - name: "zone-a"
-      zone: "us-east-1a"
+      zoneId: "use1-az1"
 ```
 
 #### Override per cluster
@@ -961,7 +961,7 @@ spec:
     tracesSampler: "parentbased_traceidratio"
   cells:
     - name: "zone-a"
-      zone: "us-east-1a"
+      zoneId: "use1-az1"
 ```
 
 #### Disable data-plane telemetry

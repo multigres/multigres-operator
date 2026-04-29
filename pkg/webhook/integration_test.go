@@ -233,7 +233,7 @@ func TestWebhook_Mutation(t *testing.T) {
 				Namespace: testNamespace,
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
 
@@ -276,7 +276,7 @@ func TestWebhook_Validation(t *testing.T) {
 				TemplateDefaults: multigresv1alpha1.TemplateDefaults{
 					CoreTemplate: "non-existent-template",
 				},
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
 
@@ -306,7 +306,7 @@ func TestWebhook_TemplateProtection(t *testing.T) {
 				TemplateDefaults: multigresv1alpha1.TemplateDefaults{
 					CoreTemplate: "production-core",
 				},
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
 		if err := k8sClient.Create(ctx, cluster); err != nil {
@@ -353,8 +353,8 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "cell-a", Zone: "us-east-1a"},
-					{Name: "cell-b", Zone: "us-east-1b"},
+					{Name: "cell-a", ZoneID: "use1-az1"},
+					{Name: "cell-b", ZoneID: "use1-az2"},
 				},
 			},
 		}
@@ -369,7 +369,7 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 		}
 
 		fetched.Spec.Cells = []multigresv1alpha1.CellConfig{
-			{Name: "cell-a", Zone: "us-east-1a"},
+			{Name: "cell-a", ZoneID: "use1-az1"},
 		}
 		err := k8sClient.Update(ctx, fetched)
 		if err == nil {
@@ -388,7 +388,7 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "original-cell", Zone: "us-east-1a"},
+					{Name: "original-cell", ZoneID: "use1-az1"},
 				},
 			},
 		}
@@ -404,7 +404,7 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 
 		// Replace the cell with a different name — effectively a rename
 		fetched.Spec.Cells = []multigresv1alpha1.CellConfig{
-			{Name: "renamed-cell", Zone: "us-east-1a"},
+			{Name: "renamed-cell", ZoneID: "use1-az1"},
 		}
 		err := k8sClient.Update(ctx, fetched)
 		if err == nil {
@@ -423,7 +423,7 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "cell-x", Zone: "us-east-1a"},
+					{Name: "cell-x", ZoneID: "use1-az1"},
 				},
 			},
 		}
@@ -438,7 +438,7 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 		}
 
 		fetched.Spec.Cells = append(fetched.Spec.Cells, multigresv1alpha1.CellConfig{
-			Name: "cell-y", Zone: "us-east-1b",
+			Name: "cell-y", ZoneID: "use1-az2",
 		})
 		if err := k8sClient.Update(ctx, fetched); err != nil {
 			t.Fatalf("Expected appending a cell to succeed, got: %v", err)
@@ -472,7 +472,7 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
 					Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 				},
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
 		if err := k8sClient.Create(ctx, cluster); err != nil {
@@ -508,7 +508,7 @@ func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
 					TemplateRef: "specific-large",
 				},
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
 		if err := k8sClient.Create(ctx, cluster); err != nil {
@@ -534,7 +534,7 @@ func TestWebhook_SystemCatalogIdempotency(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "idempotency-test", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 				Databases: []multigresv1alpha1.DatabaseConfig{
 					{
 						Name:    "postgres",
@@ -584,7 +584,7 @@ func TestWebhook_DeepTemplateProtection(t *testing.T) {
 				Labels:    map[string]string{metadata.LabelUsesShardTemplate: "true"},
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 				Databases: []multigresv1alpha1.DatabaseConfig{
 					{
 						Name:    "postgres",
@@ -635,7 +635,7 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 				Namespace: testNamespace,
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
 
@@ -682,7 +682,7 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 						Storage: multigresv1alpha1.StorageSpec{Class: "manual", Size: "5Gi"},
 					},
 				},
-				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", Zone: "us-east-1a"}},
+				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 				Databases: []multigresv1alpha1.DatabaseConfig{{
 					Name:    "postgres",
 					Default: true,

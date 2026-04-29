@@ -27,7 +27,7 @@ metadata:
 spec:
   cells:
     - name: "zone-a"
-      zone: "us-east-1a"
+      zoneId: "use1-az1"
 ```
 
 **What happens:**
@@ -54,10 +54,10 @@ spec:
     cellTemplate: "standard-cell"    # Defines MultiGateway & LocalTopoServer
     shardTemplate: "standard-shard"  # Defines MultiOrch & Pools
   cells:
-    - name: "us-east-1a"
-      zone: "us-east-1a" # Inherits 'standard-cell' config
-    - name: "us-east-1b"
-      zone: "us-east-1b" # Inherits 'standard-cell' config
+    - name: "az1"
+      zoneId: "use1-az1" # Inherits 'standard-cell' config
+    - name: "az2"
+      zoneId: "use1-az2" # Inherits 'standard-cell' config
 ```
 
 **What happens:**

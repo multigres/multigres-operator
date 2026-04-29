@@ -97,8 +97,8 @@ func BuildMultiGatewayDeployment(
 		clusterName,
 	)
 	metadata.AddCellLabel(labels, cell.Spec.Name)
-	if cell.Spec.Zone != "" {
-		metadata.AddZoneLabel(labels, cell.Spec.Zone)
+	if cell.Spec.ZoneID != "" {
+		metadata.AddZoneIDLabel(labels, cell.Spec.ZoneID)
 	}
 	if cell.Spec.Region != "" {
 		metadata.AddRegionLabel(labels, cell.Spec.Region)
@@ -257,8 +257,8 @@ func BuildMultiGatewayService(
 	clusterName := cell.Labels["multigres.com/cluster"]
 	labels := metadata.BuildStandardLabels(clusterName, MultiGatewayComponentName)
 	metadata.AddCellLabel(labels, cell.Spec.Name)
-	if cell.Spec.Zone != "" {
-		metadata.AddZoneLabel(labels, cell.Spec.Zone)
+	if cell.Spec.ZoneID != "" {
+		metadata.AddZoneIDLabel(labels, cell.Spec.ZoneID)
 	}
 	if cell.Spec.Region != "" {
 		metadata.AddRegionLabel(labels, cell.Spec.Region)
@@ -304,13 +304,13 @@ func BuildMultiGatewayService(
 }
 
 // buildCellNodeSelector returns a nodeSelector map for the cell's topology.
-// Returns nil if the cell has no zone or region, which means no scheduling constraint.
-// Zone and region are mutually exclusive (enforced by CEL validation on CellSpec).
+// buildCellNodeSelector returns a nodeSelector map for the cell's topology.
+// Returns nil if no topology is set.
 func buildCellNodeSelector(cell *multigresv1alpha1.Cell) map[string]string {
 	switch {
-	case cell.Spec.Zone != "":
+	case cell.Spec.ZoneID != "":
 		return map[string]string{
-			"topology.kubernetes.io/zone": string(cell.Spec.Zone),
+			metadata.NodeLabelZoneID: string(cell.Spec.ZoneID),
 		}
 	case cell.Spec.Region != "":
 		return map[string]string{

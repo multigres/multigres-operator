@@ -30,8 +30,8 @@ func TestBuildCell(t *testing.T) {
 	}
 
 	cellCfg := &multigresv1alpha1.CellConfig{
-		Name: "zone-a",
-		Zone: "us-east-1a",
+		Name:   "zone-a",
+		ZoneID: "use1-az1",
 	}
 
 	gatewaySpec := &multigresv1alpha1.StatelessSpec{
@@ -65,8 +65,8 @@ func TestBuildCell(t *testing.T) {
 		if got.Name != expectedName {
 			t.Errorf("Name = %v, want %v", got.Name, expectedName)
 		}
-		if got.Spec.Zone != "us-east-1a" {
-			t.Errorf("Zone = %v, want %v", got.Spec.Zone, "us-east-1a")
+		if got.Spec.ZoneID != "use1-az1" {
+			t.Errorf("ZoneID = %v, want %v", got.Spec.ZoneID, "use1-az1")
 		}
 		if got.Spec.Images.MultiGateway != "gateway:latest" {
 			t.Errorf("Gateway Image = %v, want %v", got.Spec.Images.MultiGateway, "gateway:latest")
@@ -78,6 +78,29 @@ func TestBuildCell(t *testing.T) {
 		// Verify OwnerReference
 		if len(got.OwnerReferences) != 1 {
 			t.Errorf("OwnerReferences count = %v, want 1", len(got.OwnerReferences))
+		}
+	})
+
+	t.Run("Propagates ZoneID", func(t *testing.T) {
+		cellCfgWithZoneID := &multigresv1alpha1.CellConfig{
+			Name:   "zone-a",
+			ZoneID: "use1-az1",
+		}
+		got, err := BuildCell(
+			cluster,
+			cellCfgWithZoneID,
+			gatewaySpec,
+			noGatewayPlacement,
+			localTopoSpec,
+			globalTopoRef,
+			allCells,
+			scheme,
+		)
+		if err != nil {
+			t.Fatalf("BuildCell() error = %v", err)
+		}
+		if got.Spec.ZoneID != "use1-az1" {
+			t.Errorf("ZoneID = %v, want use1-az1", got.Spec.ZoneID)
 		}
 	})
 

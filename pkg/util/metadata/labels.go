@@ -82,8 +82,12 @@ const (
 	// LabelMultigresPool identifies which pool a resource belongs to.
 	LabelMultigresPool = "multigres.com/pool"
 
-	// LabelMultigresZone identifies which zone a resource belongs to.
-	LabelMultigresZone = "multigres.com/zone"
+	// LabelMultigresZoneID identifies which zone ID a resource belongs to.
+	LabelMultigresZoneID = "multigres.com/zone-id"
+
+	// NodeLabelZoneID is the AWS node label key for the availability zone ID.
+	// Zone IDs (e.g. use1-az1) are consistent across accounts, unlike zone names.
+	NodeLabelZoneID = "topology.k8s.aws/zone-id"
 
 	// LabelMultigresRegion identifies which region a resource belongs to.
 	LabelMultigresRegion = "multigres.com/region"
@@ -207,12 +211,12 @@ func AddPoolLabel(
 	return labels
 }
 
-// AddZoneLabel adds the zone label to the provided labels map.
-func AddZoneLabel(
+// AddZoneIDLabel adds the zone ID label to the provided labels map.
+func AddZoneIDLabel(
 	labels map[string]string,
-	zoneName multigresv1alpha1.Zone,
+	zoneID multigresv1alpha1.ZoneID,
 ) map[string]string {
-	labels[LabelMultigresZone] = string(zoneName)
+	labels[LabelMultigresZoneID] = string(zoneID)
 	return labels
 }
 

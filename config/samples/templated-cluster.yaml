@@ -12,10 +12,10 @@ spec:
 
   # 2. Define Cells (Inherits 'standard-cell')
   cells:
-    - name: "us-east-1a"
-      # zone: "us-east-1a"
-    - name: "us-east-1b"
-      # zone: "us-east-1b"
+    - name: "az1"
+      zoneId: "use1-az1"
+    - name: "az2"
+      zoneId: "use1-az2"
 
   # 3. Configure the System Database
   # We explicitly define this to ensure it uses our 'standard-shard' template
@@ -34,5 +34,5 @@ spec:
                   main-app:
                     # Spread the primary pool across both available cells
                     cells:
-                      - "us-east-1a"
-                      - "us-east-1b"
+                      - "az1"
+                      - "az2"

@@ -101,7 +101,7 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
-    zone: us-east-1a
+    zoneId: use1-az1
   databases:
   - default: true          # <--- System Catalog Created
     name: postgres
@@ -160,8 +160,8 @@ kubectl get multigrescluster standard-ha-cluster -o yaml
 ```yaml
 spec:
   cells:
-  - name: us-east-1a
-    zone: us-east-1a
+  - name: az1
+    zoneId: use1-az1
   databases:
   - default: true
     name: postgres
@@ -174,8 +174,8 @@ spec:
           pools:
             main-app:        # <--- Inherited from 'standard-shard' Template
               cells:
-              - us-east-1a
-              - us-east-1b
+              - az1
+              - az2
               replicasPerCell: 2 # <--- Overrides default (1)
   templateDefaults:
     cellTemplate: standard-cell
@@ -269,7 +269,7 @@ spec:
     overrides:
       multigateway:
         replicas: 3          # <--- Specific Override
-    zone: us-east-1a
+    zoneId: use1-az1
   databases:
   - default: true
     name: postgres
@@ -369,7 +369,7 @@ kubectl get multigrescluster minimal -o yaml
 spec:
   cells:
   - name: zone-a
-    zone: us-east-1a
+    zoneId: use1-az1
   images: {}                 # <--- Empty! No Defaults Injected
   templateDefaults: {}
 ```

@@ -196,25 +196,25 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 		WithObjects(shardTpl, badPoolTpl).
 		Build()
 
-	nodeZoneA := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   "node-zone-a",
-			Labels: map[string]string{"topology.kubernetes.io/zone": "us-east-1a"},
-		},
-	}
 	nodeRegionEast := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   "node-region-east",
 			Labels: map[string]string{"topology.kubernetes.io/region": "us-east-1"},
 		},
 	}
-	withZoneAClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, defaultSC, nodeZoneA).
-		Build()
+	nodeZoneID := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "node-zone-id",
+			Labels: map[string]string{"topology.k8s.aws/zone-id": "use1-az1"},
+		},
+	}
 	withRegionClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(shardTpl, badPoolTpl, defaultSC, nodeRegionEast).
+		Build()
+	withZoneIDClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(shardTpl, badPoolTpl, defaultSC, nodeZoneID).
 		Build()
 	noMatchingNodeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -493,13 +493,13 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			},
 			// Uses fakeClient which HAS a default StorageClass
 		},
-		// COVERAGE: validateCellTopology zone/region branches
-		"Cell Zone matches node - no topology warning": {
+		// COVERAGE: validateCellTopology zoneId/region branches
+		"Cell ZoneID matches node via withZoneIDClient - no topology warning": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-a", Zone: "us-east-1a"},
+						{Name: "zone-a", ZoneID: "use1-az1"},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{{
 						TableGroups: []multigresv1alpha1.TableGroupConfig{{
@@ -511,14 +511,14 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 					}},
 				},
 			},
-			customClient: withZoneAClient,
+			customClient: withZoneIDClient,
 		},
-		"Cell Zone no matching node - topology warning": {
+		"Cell ZoneID no matching node - topology warning": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-b", Zone: "us-west-2a"},
+						{Name: "zone-b", ZoneID: "usw2-az1"},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{{
 						TableGroups: []multigresv1alpha1.TableGroupConfig{{
@@ -532,7 +532,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			},
 			customClient: noMatchingNodeClient,
 			wantWarnings: []string{
-				"no nodes currently match topology.kubernetes.io/zone=us-west-2a",
+				"no nodes currently match topology.k8s.aws/zone-id=usw2-az1",
 			},
 		},
 		"Cell Region matches node - no topology warning": {
@@ -575,6 +575,26 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			wantWarnings: []string{
 				"no nodes currently match topology.kubernetes.io/region=eu-west-1",
 			},
+		},
+		"Cell ZoneID matches node - no topology warning": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "az-a", ZoneID: "use1-az1"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{
+							{
+								Shards: []multigresv1alpha1.ShardConfig{
+									{Name: "s0", ShardTemplate: "prod-shard"},
+								},
+							},
+						},
+					}},
+				},
+			},
+			customClient: withZoneIDClient,
 		},
 		// COVERAGE: quorum warning for readWrite pools with low replica count
 		"Quorum Warning: readWrite pool with 2 replicas": {
@@ -1006,13 +1026,13 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			},
 			wantErr: "failed to check for default StorageClass",
 		},
-		"Two cells same zone - topology dedup": {
+		"Two cells same zoneId - topology dedup": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "cell-a", Zone: "us-east-1a"},
-						{Name: "cell-b", Zone: "us-east-1a"},
+						{Name: "cell-a", ZoneID: "use1-az1"},
+						{Name: "cell-b", ZoneID: "use1-az1"},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{{
 						TableGroups: []multigresv1alpha1.TableGroupConfig{{
@@ -1026,8 +1046,8 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			},
 			customClient: noMatchingNodeClient,
 			wantWarnings: []string{
-				"cell 'cell-a': no nodes currently match topology.kubernetes.io/zone=us-east-1a",
-				"cell 'cell-b': no nodes currently match topology.kubernetes.io/zone=us-east-1a",
+				"cell 'cell-a': no nodes currently match topology.k8s.aws/zone-id=use1-az1",
+				"cell 'cell-b': no nodes currently match topology.k8s.aws/zone-id=use1-az1",
 			},
 		},
 		"Invalid Pool Name (uppercase and special chars)": {
@@ -1130,7 +1150,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-a", Zone: "us-east-1a"},
+						{Name: "zone-a", ZoneID: "use1-az1"},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{{
 						TableGroups: []multigresv1alpha1.TableGroupConfig{{

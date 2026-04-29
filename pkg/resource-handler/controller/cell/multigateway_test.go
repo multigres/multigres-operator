@@ -1114,8 +1114,8 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 				},
 				Spec: multigresv1alpha1.CellSpec{
-					Name: "zone-topo",
-					Zone: "us-east-1a",
+					Name:   "zone-topo",
+					ZoneID: "use1-az1",
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -1141,7 +1141,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 						"app.kubernetes.io/component":  "multigateway",
 						"app.kubernetes.io/part-of":    "multigres",
 						"app.kubernetes.io/managed-by": "multigres-operator",
-						"multigres.com/zone":           "us-east-1a",
+						"multigres.com/zone-id":        "use1-az1",
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{
@@ -1170,7 +1170,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 								"app.kubernetes.io/component":  "multigateway",
 								"app.kubernetes.io/part-of":    "multigres",
 								"app.kubernetes.io/managed-by": "multigres-operator",
-								"multigres.com/zone":           "us-east-1a",
+								"multigres.com/zone-id":        "use1-az1",
 							},
 						},
 						Spec: corev1.PodSpec{
@@ -1243,7 +1243,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 								},
 							},
 							NodeSelector: map[string]string{
-								"topology.kubernetes.io/zone": "us-east-1a",
+								"topology.k8s.aws/zone-id": "use1-az1",
 							},
 						},
 					},
@@ -1464,6 +1464,34 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("BuildMultiGatewayDeployment() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestBuildCellNodeSelector(t *testing.T) {
+	tests := map[string]struct {
+		spec multigresv1alpha1.CellSpec
+		want map[string]string
+	}{
+		"zoneId only": {
+			spec: multigresv1alpha1.CellSpec{ZoneID: "use1-az1"},
+			want: map[string]string{"topology.k8s.aws/zone-id": "use1-az1"},
+		},
+		"region": {
+			spec: multigresv1alpha1.CellSpec{Region: "us-west-2"},
+			want: map[string]string{"topology.kubernetes.io/region": "us-west-2"},
+		},
+		"none": {
+			spec: multigresv1alpha1.CellSpec{},
+			want: nil,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cell := &multigresv1alpha1.Cell{Spec: tc.spec}
+			if diff := cmp.Diff(tc.want, buildCellNodeSelector(cell)); diff != "" {
+				t.Errorf("buildCellNodeSelector() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1740,8 +1768,8 @@ func TestBuildMultiGatewayService(t *testing.T) {
 					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 				},
 				Spec: multigresv1alpha1.CellSpec{
-					Name: "zone-topo",
-					Zone: "us-east-1a",
+					Name:   "zone-topo",
+					ZoneID: "use1-az1",
 				},
 			},
 			scheme: scheme,
@@ -1755,7 +1783,7 @@ func TestBuildMultiGatewayService(t *testing.T) {
 						"app.kubernetes.io/component":  "multigateway",
 						"app.kubernetes.io/part-of":    "multigres",
 						"app.kubernetes.io/managed-by": "multigres-operator",
-						"multigres.com/zone":           "us-east-1a",
+						"multigres.com/zone-id":        "use1-az1",
 					},
 					OwnerReferences: []metav1.OwnerReference{
 						{

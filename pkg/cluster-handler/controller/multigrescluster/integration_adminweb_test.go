@@ -43,7 +43,7 @@ func TestExternalAdminWeb_EnableDisableLifecycle(t *testing.T) {
 				ShardTemplate: "default",
 			},
 			Cells: []multigresv1alpha1.CellConfig{
-				{Name: "zone-a", Zone: "us-east-1a"},
+				{Name: "zone-a", ZoneID: "use1-az1"},
 			},
 			ExternalAdminWeb: &multigresv1alpha1.ExternalAdminWebConfig{
 				Enabled:     true,
@@ -209,7 +209,7 @@ func TestExternalAdminWeb_NoReadyAdminWebTransition(t *testing.T) {
 				ShardTemplate: "default",
 			},
 			Cells: []multigresv1alpha1.CellConfig{
-				{Name: "zone-a", Zone: "us-east-1a"},
+				{Name: "zone-a", ZoneID: "use1-az1"},
 			},
 			ExternalAdminWeb: &multigresv1alpha1.ExternalAdminWebConfig{
 				Enabled:     true,

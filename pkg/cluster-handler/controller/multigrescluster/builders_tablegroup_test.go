@@ -101,6 +101,66 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("CellTopologyLabels ZoneID", func(t *testing.T) {
+		c := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-cluster",
+				Namespace: "default",
+				UID:       "cluster-uid",
+			},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{{Name: "az-cell", ZoneID: "use1-az1"}},
+			},
+		}
+		got, err := BuildTableGroup(
+			c,
+			dbCfg,
+			&multigresv1alpha1.TableGroupConfig{Name: "tg"},
+			[]multigresv1alpha1.ShardResolvedSpec{{Name: "s0"}},
+			globalTopoRef,
+			scheme,
+		)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.CellTopologyLabels["az-cell"]["topology.k8s.aws/zone-id"] != "use1-az1" {
+			t.Errorf(
+				"expected topology.k8s.aws/zone-id=use1-az1, got %v",
+				got.Spec.CellTopologyLabels["az-cell"],
+			)
+		}
+	})
+
+	t.Run("CellTopologyLabels ZoneID only", func(t *testing.T) {
+		c := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-cluster",
+				Namespace: "default",
+				UID:       "cluster-uid",
+			},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{
+					{Name: "both-cell", ZoneID: "use1-az1"},
+				},
+			},
+		}
+		got, err := BuildTableGroup(
+			c,
+			dbCfg,
+			&multigresv1alpha1.TableGroupConfig{Name: "tg"},
+			[]multigresv1alpha1.ShardResolvedSpec{{Name: "s0"}},
+			globalTopoRef,
+			scheme,
+		)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		labels := got.Spec.CellTopologyLabels["both-cell"]
+		if labels["topology.k8s.aws/zone-id"] != "use1-az1" {
+			t.Errorf("expected topology.k8s.aws/zone-id=use1-az1, got %v", labels)
+		}
+	})
+
 	t.Run("CellTopologyLabels Region", func(t *testing.T) {
 		regionCluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{

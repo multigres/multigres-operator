@@ -59,19 +59,19 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				},
 				Cells: []multigresv1alpha1.CellConfig{
 					// Case A: Fallback to Cluster Default (Expect 1)
-					{Name: "zone-a", Zone: "us-east-1a"},
+					{Name: "zone-a", ZoneID: "use1-az1"},
 
 					// Case B: Explicit Template Ref (Expect 5)
 					{
 						Name:         "zone-b",
-						Zone:         "us-east-1b",
+						ZoneID:       "use1-az2",
 						CellTemplate: "large",
 					},
 
 					// Case C: Explicit Template Ref + Inline Override (Expect 3)
 					{
 						Name:         "zone-c",
-						Zone:         "us-east-1c",
+						ZoneID:       "use1-az3",
 						CellTemplate: "large",
 						Overrides: &multigresv1alpha1.CellOverrides{
 							MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
@@ -81,7 +81,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 					// Case D: Inline Spec (Highest Priority) (Expect 9)
 					{
 						Name: "zone-d",
-						Zone: "us-east-1d",
+						ZoneID: "use1-az4",
 						Spec: &multigresv1alpha1.CellInlineSpec{
 							MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))},
 						},
@@ -115,7 +115,10 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: multigresv1alpha1.CellName(zone),
-					Zone: multigresv1alpha1.Zone("us-east-1" + zone[len(zone)-1:]), // construct zone from name (e.g. zone-a -> us-east-1a)
+					ZoneID: func() multigresv1alpha1.ZoneID {
+						azSuffix := map[byte]string{'a': "1", 'b': "2", 'c': "3", 'd': "4"}
+						return multigresv1alpha1.ZoneID("use1-az" + azSuffix[zone[len(zone)-1]])
+					}(), // construct zoneId from name (e.g. zone-a -> use1-az1)
 					Images: multigresv1alpha1.CellImages{
 						MultiGateway:    resolver.DefaultMultiGatewayImage,
 						ImagePullPolicy: resolver.DefaultImagePullPolicy,
@@ -173,7 +176,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				TemplateDefaults: multigresv1alpha1.TemplateDefaults{}, // Empty, relying on implicit "default"
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "zone-a", Zone: "us-east-1a"},
+					{Name: "zone-a", ZoneID: "use1-az1"},
 				},
 			},
 		}
@@ -196,7 +199,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			},
 			Spec: multigresv1alpha1.CellSpec{
 				Name: "zone-a",
-				Zone: "us-east-1a",
+				ZoneID: "use1-az1",
 				Images: multigresv1alpha1.CellImages{
 					MultiGateway:    resolver.DefaultMultiGatewayImage,
 					ImagePullPolicy: resolver.DefaultImagePullPolicy,
@@ -254,8 +257,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Cells: []multigresv1alpha1.CellConfig{
-					{Name: "zone-a", Zone: "us-east-1a"},
-					{Name: "zone-c", Zone: "us-east-1c"},
+					{Name: "zone-a", ZoneID: "use1-az1"},
+					{Name: "zone-c", ZoneID: "use1-az3"},
 				},
 				Databases: []multigresv1alpha1.DatabaseConfig{
 					{
@@ -302,8 +305,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			},
 			Spec: multigresv1alpha1.TableGroupSpec{
 				CellTopologyLabels: map[multigresv1alpha1.CellName]map[string]string{
-					"zone-a": {"topology.kubernetes.io/zone": "us-east-1a"},
-					"zone-c": {"topology.kubernetes.io/zone": "us-east-1c"},
+					"zone-a": {"topology.k8s.aws/zone-id": "use1-az1"},
+					"zone-c": {"topology.k8s.aws/zone-id": "use1-az3"},
 				},
 				DatabaseName: "postgres",
 				LogLevels: multigresv1alpha1.ComponentLogLevels{
@@ -390,7 +393,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 		Spec: multigresv1alpha1.MultigresClusterSpec{
 			Cells: []multigresv1alpha1.CellConfig{
 				{
-					Name: "zone-a", Zone: "us-east-1a",
+					Name: "zone-a", ZoneID: "use1-az1",
 					Spec: &multigresv1alpha1.CellInlineSpec{
 						MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 					},
@@ -417,7 +420,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 		},
 		Spec: multigresv1alpha1.CellSpec{
 			Name: "zone-a",
-			Zone: "us-east-1a",
+			ZoneID: "use1-az1",
 			Images: multigresv1alpha1.CellImages{
 				MultiGateway:    resolver.DefaultMultiGatewayImage,
 				ImagePullPolicy: resolver.DefaultImagePullPolicy,
@@ -560,7 +563,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 				ShardTemplate: multigresv1alpha1.TemplateRef(tplName),
 			},
 			Cells: []multigresv1alpha1.CellConfig{
-				{Name: "zone-a", Zone: "us-east-1a"},
+				{Name: "zone-a", ZoneID: "use1-az1"},
 			},
 			Databases: []multigresv1alpha1.DatabaseConfig{
 				{
@@ -597,7 +600,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 		},
 		Spec: multigresv1alpha1.TableGroupSpec{
 			CellTopologyLabels: map[multigresv1alpha1.CellName]map[string]string{
-				"zone-a": {"topology.kubernetes.io/zone": "us-east-1a"},
+				"zone-a": {"topology.k8s.aws/zone-id": "use1-az1"},
 			},
 			DatabaseName: "postgres",
 			LogLevels: multigresv1alpha1.ComponentLogLevels{

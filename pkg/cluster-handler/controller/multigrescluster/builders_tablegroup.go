@@ -95,17 +95,17 @@ func mergeDurabilityPolicy(child, parent string) string {
 }
 
 // buildCellTopologyLabels builds a map of cell name → nodeSelector labels from the cluster's cells.
-// Zone cells get {"topology.kubernetes.io/zone": value}, region cells get
-// {"topology.kubernetes.io/region": value}. Cells without zone or region are omitted.
+// ZoneID cells get {metadata.NodeLabelZoneID: value}, region cells get
+// {"topology.kubernetes.io/region": value}. Cells without zoneId or region are omitted.
 func buildCellTopologyLabels(
 	cluster *multigresv1alpha1.MultigresCluster,
 ) map[multigresv1alpha1.CellName]map[string]string {
 	m := make(map[multigresv1alpha1.CellName]map[string]string)
 	for _, cell := range cluster.Spec.Cells {
 		switch {
-		case cell.Zone != "":
+		case cell.ZoneID != "":
 			m[cell.Name] = map[string]string{
-				"topology.kubernetes.io/zone": string(cell.Zone),
+				metadata.NodeLabelZoneID: string(cell.ZoneID),
 			}
 		case cell.Region != "":
 			m[cell.Name] = map[string]string{
