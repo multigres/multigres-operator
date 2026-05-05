@@ -596,11 +596,53 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			},
 			customClient: withZoneIDClient,
 		},
-		// COVERAGE: quorum warning for readWrite pools with low replica count
-		"Quorum Warning: readWrite pool with 2 replicas": {
+		// COVERAGE: durability warning for readWrite pools below AT_LEAST_2 achievability
+		"Durability Warning: AT_LEAST_2 pool with 1 total pooler": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Backup: &multigresv1alpha1.BackupConfig{
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Storage: multigresv1alpha1.StorageSpec{
+								AccessModes: []corev1.PersistentVolumeAccessMode{
+									corev1.ReadWriteMany,
+								},
+							},
+						},
+					},
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
+							}},
+						}},
+					}},
+				},
+			},
+			wantWarnings: []string{
+				"replicasPerCell=1 across 1 cell(s) (1 total)",
+				"durability policy \"AT_LEAST_2\" requires at least 2 total poolers",
+			},
+		},
+		"No Durability Warning: AT_LEAST_2 pool with 2 replicas in one cell": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Backup: &multigresv1alpha1.BackupConfig{
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Storage: multigresv1alpha1.StorageSpec{
+								AccessModes: []corev1.PersistentVolumeAccessMode{
+									corev1.ReadWriteMany,
+								},
+							},
+						},
+					},
 					Cells: []multigresv1alpha1.CellConfig{
 						{Name: "zone-1"},
 					},
@@ -621,9 +663,27 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 					}},
 				},
 			},
-			wantWarnings: []string{
-				"replicasPerCell=2 across 1 cell(s) (2 total)",
+			wantNoWarnings: true,
+		},
+		"No Durability Warning: AT_LEAST_2 pool with 2 cells and 1 replica per cell": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1"},
+						{Name: "zone-2"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
+							}},
+						}},
+					}},
+				},
 			},
+			wantNoWarnings: true,
 		},
 		"No Quorum Warning: three cells with 1 replica per cell": {
 			cluster: &multigresv1alpha1.MultigresCluster{
@@ -646,6 +706,27 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 										},
 									},
 								},
+							}},
+						}},
+					}},
+				},
+			},
+			wantNoWarnings: true,
+		},
+		"No Quorum Warning: three cells with omitted replicas default to 1 per cell": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1"},
+						{Name: "zone-2"},
+						{Name: "zone-3"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
 							}},
 						}},
 					}},
@@ -678,7 +759,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				},
 			},
 		},
-		"Quorum Warning: pool with 2 replicas": {
+		"Durability Warning: inline AT_LEAST_2 pool with 1 total pooler": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -692,8 +773,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 								Spec: &multigresv1alpha1.ShardInlineSpec{
 									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 										"main-rw": {
-											Type:            "readWrite",
-											ReplicasPerCell: ptr.To(int32(2)),
+											Type: "readWrite",
 										},
 									},
 								},
@@ -702,7 +782,80 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 					}},
 				},
 			},
-			wantWarnings: []string{"has replicasPerCell=2 across 1 cell(s) (2 total)"},
+			wantWarnings: []string{"has replicasPerCell=1 across 1 cell(s) (1 total)"},
+		},
+		"Durability Warning: MULTI_CELL_AT_LEAST_2 pool in one cell": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					DurabilityPolicy: "MULTI_CELL_AT_LEAST_2",
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
+								Overrides: &multigresv1alpha1.ShardOverrides{
+									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+										"default": {
+											ReplicasPerCell: ptr.To(int32(3)),
+										},
+									},
+								},
+							}},
+						}},
+					}},
+				},
+			},
+			wantWarnings: []string{
+				"spans 1 cell(s)",
+				"durability policy \"MULTI_CELL_AT_LEAST_2\" requires at least 2 distinct cells",
+			},
+		},
+		"No Durability Warning: MULTI_CELL_AT_LEAST_2 pool in two cells": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					DurabilityPolicy: "MULTI_CELL_AT_LEAST_2",
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1"},
+						{Name: "zone-2"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
+							}},
+						}},
+					}},
+				},
+			},
+			wantNoWarnings: true,
+		},
+		"No Durability Warning: MULTI_CELL_AT_LEAST_2 pool in three cells": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					DurabilityPolicy: "MULTI_CELL_AT_LEAST_2",
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1"},
+						{Name: "zone-2"},
+						{Name: "zone-3"},
+					},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
+							}},
+						}},
+					}},
+				},
+			},
+			wantNoWarnings: true,
 		},
 		"Etcd 1 replica warning": {
 			cluster: &multigresv1alpha1.MultigresCluster{

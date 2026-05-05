@@ -389,8 +389,11 @@ func (r *Resolver) ValidateClusterLogic(
 				orch, pools, _, backupCfg, _, _, err := r.ResolveShard(
 					ctx,
 					&shard,
-					cellNames,
-					tgBackup,
+					ResolveShardOptions{
+						AllCellNames:            cellNames,
+						InheritedBackup:         tgBackup,
+						MaterializeCellDefaults: true,
+					},
 				)
 				if err != nil {
 					return nil, fmt.Errorf(
@@ -454,25 +457,52 @@ func (r *Resolver) ValidateClusterLogic(
 				}
 
 				// ------------------------------------------------------------------
-				// 3. Quorum Warning for pools with insufficient total replicas
+				// 3. Durability achievability warnings
 				// ------------------------------------------------------------------
 				for poolName, pool := range pools {
-					replicas := int32(3) // default
+					durabilityPolicy := effectiveDatabaseDurabilityPolicy(db, cluster)
+					if durabilityPolicy == "" {
+						durabilityPolicy = DefaultDurabilityPolicy
+					}
+					replicas := DefaultPoolReplicasPerCell
 					if pool.ReplicasPerCell != nil {
 						replicas = *pool.ReplicasPerCell
 					}
 					cellCount := len(pool.Cells)
+					if cellCount == 0 {
+						cellCount = len(cellNames)
+					}
 					totalReplicas := int(replicas) * cellCount
-					if totalReplicas < 3 {
+
+					switch durabilityPolicy {
+					case "MULTI_CELL_AT_LEAST_2":
+						if cellCount >= 2 {
+							continue
+						}
+						warnings = append(warnings, fmt.Sprintf(
+							"pool '%s' in shard '%s' spans %d cell(s); "+
+								"durability policy %q requires at least %d distinct cells.",
+							poolName,
+							shard.Name,
+							cellCount,
+							durabilityPolicy,
+							2,
+						))
+
+					default:
+						if totalReplicas >= 2 {
+							continue
+						}
 						warnings = append(warnings, fmt.Sprintf(
 							"pool '%s' in shard '%s' has replicasPerCell=%d across %d cell(s) (%d total); "+
-								"The HA baseline for AT_LEAST_2 is at least 3 total pods (1 primary + 2 standbys). "+
-								"For zero-downtime rolling upgrades within a single cell, use at least 3 replicas in that cell.",
+								"durability policy %q requires at least %d total poolers.",
 							poolName,
 							shard.Name,
 							replicas,
 							cellCount,
 							totalReplicas,
+							durabilityPolicy,
+							2,
 						))
 					}
 				}
@@ -565,8 +595,11 @@ func (r *Resolver) ValidateClusterLogic(
 				_, pools, _, backupCfg, _, _, err := r.ResolveShard(
 					ctx,
 					&shard,
-					cellNames,
-					tgBackup,
+					ResolveShardOptions{
+						AllCellNames:            cellNames,
+						InheritedBackup:         tgBackup,
+						MaterializeCellDefaults: true,
+					},
 				)
 				if err != nil {
 					continue // already validated in section 2
@@ -640,6 +673,16 @@ func getEffectiveEtcdReplicas(cluster *multigresv1alpha1.MultigresCluster) int32
 		return *cluster.Spec.GlobalTopoServer.Etcd.Replicas
 	}
 	return DefaultEtcdReplicas
+}
+
+func effectiveDatabaseDurabilityPolicy(
+	db multigresv1alpha1.DatabaseConfig,
+	cluster *multigresv1alpha1.MultigresCluster,
+) string {
+	return multigresv1alpha1.MergeDurabilityPolicy(
+		db.DurabilityPolicy,
+		cluster.Spec.DurabilityPolicy,
+	)
 }
 
 // dnsLabelRegex matches valid DNS labels per RFC 1123. This mirrors the

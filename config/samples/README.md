@@ -122,8 +122,7 @@ This allows you to set "sane defaults" at the Namespace level (Level 3), overrid
 
 ## 5. Pool Replica Requirements
 
-- **Minimum**: `replicasPerCell` must be at least **1** (CRD-enforced). Setting it to 0 is rejected.
-- **Recommended**: at least **3** replicas per cell. The `AT_LEAST_2` durability policy requires 1 primary + 2 synchronous standbys so that one standby can be drained during rolling upgrades while the other maintains write quorum. The operator issues an admission warning if a pool has fewer than 3 replicas.
+Pools default to `replicasPerCell: 1`. `AT_LEAST_2` requires 2 total poolers; `MULTI_CELL_AT_LEAST_2` requires poolers in 2 cells. For high availability, use at least 3 total poolers so the policy remains achievable while one pooler is unavailable.
 
 ---
 

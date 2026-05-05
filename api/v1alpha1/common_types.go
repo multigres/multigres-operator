@@ -400,6 +400,14 @@ func MergePVCDeletionPolicy(child, parent *PVCDeletionPolicy) *PVCDeletionPolicy
 	return merged
 }
 
+// MergeDurabilityPolicy returns the child durability policy when set, otherwise parent.
+func MergeDurabilityPolicy(child, parent string) string {
+	if child != "" {
+		return child
+	}
+	return parent
+}
+
 // MergeBackupConfig merges child and parent backup config with child taking precedence.
 // Implements deep merge logic where appropriate.
 func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {

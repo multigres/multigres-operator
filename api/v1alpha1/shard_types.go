@@ -74,10 +74,8 @@ type PoolSpec struct {
 	// +kubebuilder:validation:XValidation:rule="oldSelf.all(c, c in self)",message="Cells cannot be removed from a pool (Append-Only)"
 	Cells []CellName `json:"cells,omitempty"`
 
-	// ReplicasPerCell is the desired number of Postgres data pods PER CELL in this pool.
-	// Sidecars (like Multipooler) will scale alongside the Postgres pods.
-	// Minimum 1 is required; readWrite pools need at least 3 for zero-downtime rolling upgrades
-	// (AT_LEAST_2 durability requires 1 primary + 2 standbys to maintain quorum during drain).
+	// ReplicasPerCell is the desired number of pool pods per selected cell.
+	// The default and minimum is 1.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=32
 	// +optional

@@ -27,7 +27,7 @@ On every `CREATE` and `UPDATE` of a `MultigresCluster`, the webhook materialises
 | `spec.multiAdminWeb` | 1 replica, default resources |
 | Per-cell `spec.multiGateway` | 1 replica, default resources |
 | Per-shard `spec.multiOrch` | 1 replica, default resources |
-| Per-shard `spec.pools` | `default` pool, 3 replicas/cell, 1Gi storage, default container resources |
+| Per-shard `spec.pools` | `default` pool with 1 replica per selected cell, 1Gi storage, default container resources |
 | Per-shard `spec.backup` | Filesystem, default path and storage |
 | `spec.templateDefaults` | Promoted to `"default"` if a matching template exists in the namespace |
 

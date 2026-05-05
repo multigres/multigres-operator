@@ -139,8 +139,10 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 													"default": {
 														Type: "readWrite",
 														// Cells should be nil to avoid sticky defaults
-														Cells:           nil,
-														ReplicasPerCell: ptr.To(int32(3)),
+														Cells: nil,
+														ReplicasPerCell: ptr.To(
+															resolver.DefaultPoolReplicasPerCell,
+														),
 														Storage: multigresv1alpha1.StorageSpec{
 															Size: "1Gi",
 														},
@@ -442,8 +444,10 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 											},
 											Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 												"default": {
-													Type:            "readWrite",
-													ReplicasPerCell: ptr.To(int32(3)),
+													Type: "readWrite",
+													ReplicasPerCell: ptr.To(
+														resolver.DefaultPoolReplicasPerCell,
+													),
 													Storage: multigresv1alpha1.StorageSpec{
 														Size: resolver.DefaultEtcdStorageSize,
 													},

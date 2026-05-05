@@ -26,6 +26,9 @@ const (
 	// DefaultPoolName is the name used for the default pool when no pools are specified in a ShardTemplate.
 	DefaultPoolName = "default"
 
+	// DefaultPoolReplicasPerCell is the default number of Postgres pods to run in each selected cell.
+	DefaultPoolReplicasPerCell int32 = 1
+
 	// DefaultTopoRootPath is the default etcd key prefix for the global topology server.
 	DefaultTopoRootPath = "/multigres/global"
 
