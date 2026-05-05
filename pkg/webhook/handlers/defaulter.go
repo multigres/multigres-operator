@@ -193,6 +193,10 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 	// D. Resolve Shards
 	hasGlobalShard := cluster.Spec.TemplateDefaults.ShardTemplate != ""
 	hasImplicitShard, _ := scopedResolver.ShardTemplateExists(ctx, resolver.FallbackShardTemplate)
+	var allCellNames []multigresv1alpha1.CellName
+	for _, cell := range cluster.Spec.Cells {
+		allCellNames = append(allCellNames, cell.Name)
+	}
 
 	for i := range cluster.Spec.Databases {
 		dbBackup := multigresv1alpha1.MergeBackupConfig(
@@ -211,13 +215,15 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 				isUsingTemplate := hasInline || hasGlobalShard || hasImplicitShard
 
 				if !isUsingTemplate {
-					// We pass 'nil' for allCellNames to prevent "Sticky Context Defaults".
-					// We want the Stored Spec to remain empty (dynamic) rather than locking in the current list of cells.
+					// We pass cell names for contextual cell defaulting, but leave
+					// MaterializeCellDefaults false so the stored spec remains dynamic.
 					multiOrchSpec, poolsSpec, resolvedPvcPolicy, resolvedBackupConfig, resolvedInitdbArgs, resolvedPostgresConfigRef, err := scopedResolver.ResolveShard(
 						ctx,
 						shard,
-						nil,
-						tgBackup,
+						resolver.ResolveShardOptions{
+							AllCellNames:    allCellNames,
+							InheritedBackup: tgBackup,
+						},
 					)
 					if err != nil {
 						return fmt.Errorf("failed to resolve shard '%s': %w", shard.Name, err)

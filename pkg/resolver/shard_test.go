@@ -45,7 +45,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"default": {
 					Type:            "readWrite",
-					ReplicasPerCell: ptr.To(int32(3)),
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
 					Storage: multigresv1alpha1.StorageSpec{
 						Size: DefaultEtcdStorageSize,
 					},
@@ -77,10 +77,9 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Resources: DefaultResourcesOrch(),
 				},
 			},
-			// FIX: Updated to expect fully hydrated defaults for pool "p"
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p": {
-					ReplicasPerCell: ptr.To(int32(3)),
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
 					Storage: multigresv1alpha1.StorageSpec{
 						Size: DefaultEtcdStorageSize, // "1Gi"
 					},
@@ -112,7 +111,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 			},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p": {
-					ReplicasPerCell: ptr.To(int32(3)),
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
 					FSGroup:         ptr.To(int64(1234)),
 					Storage: multigresv1alpha1.StorageSpec{
 						Size: DefaultEtcdStorageSize,
@@ -150,9 +149,81 @@ func TestResolver_ResolveShard(t *testing.T) {
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type:            "read",
-					ReplicasPerCell: ptr.To(int32(3)),
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
 					// Expect injected cells
 					Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
+					Storage: multigresv1alpha1.StorageSpec{
+						Size: DefaultEtcdStorageSize,
+					},
+					Postgres: multigresv1alpha1.ContainerConfig{
+						Resources: DefaultResourcesPostgres(),
+					},
+					Multipooler: multigresv1alpha1.ContainerConfig{
+						Resources: DefaultResourcesPooler(),
+					},
+				},
+			},
+		},
+		"Dynamic Cell Injection Three Cells Defaults To One Replica Per Cell": {
+			config: &multigresv1alpha1.ShardConfig{
+				Spec: &multigresv1alpha1.ShardInlineSpec{
+					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+					},
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"p1": {Type: "readWrite"},
+					},
+				},
+			},
+			allCellNames: []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
+			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(1)),
+					Resources: DefaultResourcesOrch(),
+				},
+				Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
+			},
+			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"p1": {
+					Type:            "readWrite",
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
+					Cells:           []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
+					Storage: multigresv1alpha1.StorageSpec{
+						Size: DefaultEtcdStorageSize,
+					},
+					Postgres: multigresv1alpha1.ContainerConfig{
+						Resources: DefaultResourcesPostgres(),
+					},
+					Multipooler: multigresv1alpha1.ContainerConfig{
+						Resources: DefaultResourcesPooler(),
+					},
+				},
+			},
+		},
+		"Explicit Two Pool Cells Defaults To One Replica Per Cell": {
+			config: &multigresv1alpha1.ShardConfig{
+				Spec: &multigresv1alpha1.ShardInlineSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"p1": {
+							Type:  "readWrite",
+							Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
+						},
+					},
+				},
+			},
+			allCellNames: []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
+			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(1)),
+					Resources: DefaultResourcesOrch(),
+				},
+				Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
+			},
+			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"p1": {
+					Type:            "readWrite",
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
+					Cells:           []multigresv1alpha1.CellName{"zone-a", "zone-b"},
 					Storage: multigresv1alpha1.StorageSpec{
 						Size: DefaultEtcdStorageSize,
 					},
@@ -185,7 +256,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 			},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p": {
-					ReplicasPerCell: ptr.To(int32(3)),
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
 					Storage:         multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 					Postgres: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPostgres(),
@@ -210,8 +281,10 @@ func TestResolver_ResolveShard(t *testing.T) {
 			orch, pools, pvcPolicy, _, _, _, err := r.ResolveShard(
 				t.Context(),
 				tc.config,
-				tc.allCellNames,
-				nil,
+				ResolveShardOptions{
+					AllCellNames:            tc.allCellNames,
+					MaterializeCellDefaults: true,
+				},
 			)
 			if tc.wantErr {
 				if err == nil {
@@ -920,7 +993,7 @@ func TestResolveShard_PVCDeletionPolicy(t *testing.T) {
 
 		_, _, policy, _, _, _, err := r.ResolveShard(t.Context(), &multigresv1alpha1.ShardConfig{
 			ShardTemplate: "tpl-pvc",
-		}, nil, nil)
+		}, ResolveShardOptions{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -947,7 +1020,7 @@ func TestResolveShard_PVCDeletionPolicy(t *testing.T) {
 					},
 				},
 			},
-		}, nil, nil)
+		}, ResolveShardOptions{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1075,7 +1148,7 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 					"default": {Type: "readWrite"},
 				},
 			},
-		}, nil, inherited)
+		}, ResolveShardOptions{InheritedBackup: inherited})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1114,7 +1187,7 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 					Path: "/shard-override",
 				},
 			},
-		}, nil, inherited)
+		}, ResolveShardOptions{InheritedBackup: inherited})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1134,7 +1207,7 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 					"default": {Type: "readWrite"},
 				},
 			},
-		}, nil, nil)
+		}, ResolveShardOptions{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

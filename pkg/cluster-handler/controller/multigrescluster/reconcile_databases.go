@@ -67,8 +67,11 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 				orch, pools, pvcPolicy, finalShardBackup, initdbArgs, postgresConfigRef, err := res.ResolveShard(
 					ctx,
 					shardCfg,
-					allCellNames,
-					tgBackup,
+					resolver.ResolveShardOptions{
+						AllCellNames:            allCellNames,
+						InheritedBackup:         tgBackup,
+						MaterializeCellDefaults: true,
+					},
 				)
 				if err != nil {
 					r.Recorder.Eventf(

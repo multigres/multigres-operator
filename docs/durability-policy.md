@@ -81,4 +81,4 @@ When using `MULTI_CELL_AT_LEAST_2`, ensure your shard's pools span at least 2 ce
 
 ## Replica Count Considerations
 
-The `AT_LEAST_2` policy requires at least 3 replicas per pool (1 primary + 2 standbys) for zero-downtime rolling upgrades, since quorum must be maintained while one node is being drained. The CRD enforces a minimum of 1 replica, but pools with fewer than 3 replicas will lose quorum during drain operations.
+Pools default to `replicasPerCell: 1`. `AT_LEAST_2` requires 2 total poolers; `MULTI_CELL_AT_LEAST_2` requires poolers in 2 cells. For high availability, use at least 3 total poolers so the policy remains achievable while one pooler is unavailable.

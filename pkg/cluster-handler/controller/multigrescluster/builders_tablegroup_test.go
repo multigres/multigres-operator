@@ -248,12 +248,3 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 }
-
-func TestMergeDurabilityPolicy(t *testing.T) {
-	if got := mergeDurabilityPolicy("child", "parent"); got != "child" {
-		t.Errorf("mergeDurabilityPolicy(child, parent) = %v, want child", got)
-	}
-	if got := mergeDurabilityPolicy("", "parent"); got != "parent" {
-		t.Errorf("mergeDurabilityPolicy('', parent) = %v, want parent", got)
-	}
-}

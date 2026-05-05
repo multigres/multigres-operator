@@ -13,12 +13,17 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
+type ResolveShardOptions struct {
+	AllCellNames            []multigresv1alpha1.CellName
+	InheritedBackup         *multigresv1alpha1.BackupConfig
+	MaterializeCellDefaults bool
+}
+
 // ResolveShard determines the final configuration for a specific Shard.
 func (r *Resolver) ResolveShard(
 	ctx context.Context,
 	shardSpec *multigresv1alpha1.ShardConfig,
-	allCellNames []multigresv1alpha1.CellName,
-	inheritedBackup *multigresv1alpha1.BackupConfig,
+	opts ResolveShardOptions,
 ) (*multigresv1alpha1.MultiOrchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef, error) {
 	// 1. Fetch Template
 	templateName := shardSpec.ShardTemplate
@@ -33,7 +38,7 @@ func (r *Resolver) ResolveShard(
 		shardSpec.Overrides,
 		shardSpec.Spec,
 		shardSpec.Backup,
-		inheritedBackup,
+		opts.InheritedBackup,
 	)
 
 	// 3. Apply Deep Defaults (Level 4)
@@ -49,8 +54,8 @@ func (r *Resolver) ResolveShard(
 	// Contextual Defaulting: Lazy Cell Injection
 	// If the resolved configuration has no cells defined, it means "run everywhere".
 	// We inject the full list of cluster cells here.
-	if len(multiOrch.Cells) == 0 && len(allCellNames) > 0 {
-		for _, c := range allCellNames {
+	if opts.MaterializeCellDefaults && len(multiOrch.Cells) == 0 && len(opts.AllCellNames) > 0 {
+		for _, c := range opts.AllCellNames {
 			multiOrch.Cells = append(multiOrch.Cells, multigresv1alpha1.CellName(c))
 		}
 		// Sort for deterministic output
@@ -66,17 +71,17 @@ func (r *Resolver) ResolveShard(
 
 	for name := range pools {
 		p := pools[name]
-		defaultPoolSpec(&p)
 
 		// Contextual Defaulting for Pools
-		if len(p.Cells) == 0 && len(allCellNames) > 0 {
-			for _, c := range allCellNames {
+		if opts.MaterializeCellDefaults && len(p.Cells) == 0 && len(opts.AllCellNames) > 0 {
+			for _, c := range opts.AllCellNames {
 				p.Cells = append(p.Cells, multigresv1alpha1.CellName(c))
 			}
 			// Sort for deterministic output
 			slices.Sort(p.Cells)
 		}
 
+		defaultPoolSpec(&p)
 		pools[name] = p
 	}
 
@@ -268,12 +273,7 @@ func mergePoolSpec(
 
 func defaultPoolSpec(spec *multigresv1alpha1.PoolSpec) {
 	if spec.ReplicasPerCell == nil {
-		// Default to 3 replicas to satisfy multiorch's AT_LEAST_2 durability policy
-		// requirement.
-		// TODO: multiorch currently only supports AT_LEAST_2 or MULTI_CELL_AT_LEAST_2,
-		// both of which require at least 2 replicas for quorum. Single-node
-		// policies are not yet supported.
-		spec.ReplicasPerCell = ptr.To(int32(3))
+		spec.ReplicasPerCell = ptr.To(DefaultPoolReplicasPerCell)
 	}
 	if spec.Storage.Size == "" {
 		spec.Storage.Size = DefaultEtcdStorageSize
