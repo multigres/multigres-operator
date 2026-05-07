@@ -26,6 +26,7 @@ func TestBuildOTELEnvVars(t *testing.T) {
 	// Clear all OTEL env vars so host environment doesn't interfere.
 	otelEnvVars := []string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
 		"OTEL_EXPORTER_OTLP_PROTOCOL",
 		"OTEL_TRACES_EXPORTER",
 		"OTEL_METRICS_EXPORTER",
@@ -34,6 +35,7 @@ func TestBuildOTELEnvVars(t *testing.T) {
 		"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
 		"OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION",
 		"OTEL_TRACES_SAMPLER",
+		"OTEL_RESOURCE_ATTRIBUTES",
 	}
 	for _, env := range otelEnvVars {
 		t.Setenv(env, "")
@@ -63,9 +65,20 @@ func TestBuildOTELEnvVars(t *testing.T) {
 				{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://tempo:4318"},
 			},
 		},
+		"metrics endpoint only": {
+			cfg: &ObservabilityConfig{
+				OTLPMetricsEndpoint: "http://vmagent:4318/v1/metrics",
+				MetricsExporter:     "otlp",
+			},
+			want: []corev1.EnvVar{
+				{Name: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", Value: "http://vmagent:4318/v1/metrics"},
+				{Name: "OTEL_METRICS_EXPORTER", Value: "otlp"},
+			},
+		},
 		"all fields populated": {
 			cfg: &ObservabilityConfig{
 				OTLPEndpoint:         "http://tempo:4318",
+				OTLPMetricsEndpoint:  "http://vmagent:4318/v1/metrics",
 				OTLPProtocol:         "grpc",
 				TracesExporter:       "otlp",
 				MetricsExporter:      "otlp",
@@ -77,6 +90,7 @@ func TestBuildOTELEnvVars(t *testing.T) {
 			},
 			want: []corev1.EnvVar{
 				{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://tempo:4318"},
+				{Name: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", Value: "http://vmagent:4318/v1/metrics"},
 				{Name: "OTEL_EXPORTER_OTLP_PROTOCOL", Value: "grpc"},
 				{Name: "OTEL_TRACES_EXPORTER", Value: "otlp"},
 				{Name: "OTEL_METRICS_EXPORTER", Value: "otlp"},
@@ -114,20 +128,67 @@ func TestBuildOTELEnvVars(t *testing.T) {
 	}
 }
 
+func TestBuildOTELEnvVarsWithResourceAttributes(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "")
+	t.Setenv(
+		"OTEL_RESOURCE_ATTRIBUTES",
+		"deployment.environment=dev,deployment.region=us\\,east,multigres.project=old",
+	)
+
+	cfg := &ObservabilityConfig{
+		OTLPMetricsEndpoint: "http://vmagent:4318/v1/metrics",
+		MetricsExporter:     "otlp",
+	}
+	got := BuildOTELEnvVarsWithResourceAttributes(cfg, map[string]string{
+		"multigres.project":   "project-ref-123",
+		"multigres.cluster":   "cluster-a",
+		"multigres.component": "multipooler",
+	})
+
+	want := []corev1.EnvVar{
+		{Name: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", Value: "http://vmagent:4318/v1/metrics"},
+		{Name: "OTEL_METRICS_EXPORTER", Value: "otlp"},
+		{
+			Name: "OTEL_RESOURCE_ATTRIBUTES",
+			Value: "deployment.environment=dev," +
+				"deployment.region=us\\,east," +
+				"multigres.project=project-ref-123," +
+				"multigres.cluster=cluster-a," +
+				"multigres.component=multipooler",
+		},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("len(BuildOTELEnvVarsWithResourceAttributes()) = %d, want %d\n  got:  %v\n  want: %v",
+			len(got), len(want), got, want)
+	}
+	for i := range got {
+		if got[i].Name != want[i].Name || got[i].Value != want[i].Value {
+			t.Errorf("env[%d] = {%q, %q}, want {%q, %q}",
+				i, got[i].Name, got[i].Value, want[i].Name, want[i].Value)
+		}
+	}
+}
+
 func TestBuildOTELEnvVars_FallbackToEnv(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://from-env:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://metrics-from-env:4318/v1/metrics")
 	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
 
 	// nil config should fall back to env vars.
 	got := BuildOTELEnvVars(nil)
-	if len(got) < 2 {
-		t.Fatalf("expected at least 2 env vars from fallback, got %d: %v", len(got), got)
+	if len(got) < 3 {
+		t.Fatalf("expected at least 3 env vars from fallback, got %d: %v", len(got), got)
 	}
 	if got[0].Value != "http://from-env:4318" {
 		t.Errorf("endpoint = %q, want %q", got[0].Value, "http://from-env:4318")
 	}
-	if got[1].Value != "http/protobuf" {
-		t.Errorf("protocol = %q, want %q", got[1].Value, "http/protobuf")
+	if got[1].Value != "http://metrics-from-env:4318/v1/metrics" {
+		t.Errorf("metrics endpoint = %q, want %q", got[1].Value, "http://metrics-from-env:4318/v1/metrics")
+	}
+	if got[2].Value != "http/protobuf" {
+		t.Errorf("protocol = %q, want %q", got[2].Value, "http/protobuf")
 	}
 }
 

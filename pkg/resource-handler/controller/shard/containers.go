@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
 )
 
@@ -172,7 +173,7 @@ func buildPgctldContainer(
 		})
 	}
 	env = append(env, s3EnvVars(shard.Spec.Backup)...)
-	if otelVars := multigresv1alpha1.BuildOTELEnvVars(shard.Spec.Observability); len(otelVars) > 0 {
+	if otelVars := buildRuntimeOTELEnvVars(shard, "pgctld"); len(otelVars) > 0 {
 		env = append(env, otelVars...)
 	}
 
@@ -222,7 +223,6 @@ func buildPgctldContainer(
 		Args:            args,
 		Resources:       pool.Postgres.Resources,
 		Env:             env,
-		Ports:           buildPgctldContainerPorts(),
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
 		VolumeMounts:    volumeMounts,
 		StartupProbe: &corev1.Probe{
@@ -400,7 +400,7 @@ func buildMultiPoolerSidecar(
 		pgPasswordEnvVar(shard.Name),
 	}
 	env = append(env, s3EnvVars(shard.Spec.Backup)...)
-	if otelVars := multigresv1alpha1.BuildOTELEnvVars(shard.Spec.Observability); len(otelVars) > 0 {
+	if otelVars := buildRuntimeOTELEnvVars(shard, "multipooler"); len(otelVars) > 0 {
 		env = append(env, otelVars...)
 	}
 	c.Env = env
@@ -490,7 +490,7 @@ func buildMultiOrchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 			PeriodSeconds: 5,
 		},
 	}
-	if envVars := multigresv1alpha1.BuildOTELEnvVars(shard.Spec.Observability); len(envVars) > 0 {
+	if envVars := buildRuntimeOTELEnvVars(shard, MultiOrchComponentName); len(envVars) > 0 {
 		c.Env = append(c.Env, envVars...)
 	}
 	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
@@ -499,6 +499,21 @@ func buildMultiOrchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 		c.VolumeMounts = append(c.VolumeMounts, *otelMount)
 	}
 	return c
+}
+
+func buildRuntimeOTELEnvVars(
+	shard *multigresv1alpha1.Shard,
+	component string,
+) []corev1.EnvVar {
+	clusterName := shard.Labels[metadata.LabelMultigresCluster]
+	return multigresv1alpha1.BuildOTELEnvVarsWithResourceAttributes(
+		shard.Spec.Observability,
+		map[string]string{
+			"multigres.project":   metadata.ResolveProjectRef(shard.Annotations, clusterName),
+			"multigres.cluster":   clusterName,
+			"multigres.component": component,
+		},
+	)
 }
 
 // buildPoolVolumes assembles the complete list of volumes for a pool pod.

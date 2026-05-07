@@ -2,6 +2,7 @@ package shard
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -556,7 +557,15 @@ func TestBuildMultiOrchContainer(t *testing.T) {
 // OTEL env var injection branch in each container builder.
 func otelShard() *multigresv1alpha1.Shard {
 	return &multigresv1alpha1.Shard{
-		ObjectMeta: metav1.ObjectMeta{Name: "otel-shard"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "otel-shard",
+			Labels: map[string]string{
+				"multigres.com/cluster": "test-cluster",
+			},
+			Annotations: map[string]string{
+				"multigres.com/project-ref": "project-ref-123",
+			},
+		},
 		Spec: multigresv1alpha1.ShardSpec{
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
@@ -567,7 +576,10 @@ func otelShard() *multigresv1alpha1.Shard {
 				Implementation: "etcd",
 			},
 			Observability: &multigresv1alpha1.ObservabilityConfig{
-				OTLPEndpoint: "http://tempo:4318",
+				OTLPEndpoint:         "http://tempo:4318",
+				OTLPMetricsEndpoint:  "http://vmagent:4318/v1/metrics",
+				MetricsExporter:      "otlp",
+				MetricExportInterval: "30000",
 			},
 		},
 	}
@@ -610,6 +622,10 @@ func TestBuildPgctldContainer(t *testing.T) {
 	t.Run("with observability", func(t *testing.T) {
 		c := buildPgctldContainer(otelShard(), multigresv1alpha1.PoolSpec{})
 		assertContainsOTELEnvVar(t, c.Env, "buildPgctldContainer")
+		assertEnvVarValue(t, c.Env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+		assertOTELResourceAttribute(t, c.Env, "multigres.project=project-ref-123")
+		assertOTELResourceAttribute(t, c.Env, "multigres.cluster=test-cluster")
+		assertOTELResourceAttribute(t, c.Env, "multigres.component=pgctld")
 	})
 
 	t.Run("with backup filesystem", func(t *testing.T) {
@@ -929,11 +945,19 @@ func TestBuildMultiPoolerSidecar_WithObservability(t *testing.T) {
 		"p-otel1234",
 	)
 	assertContainsOTELEnvVar(t, c.Env, "buildMultiPoolerSidecar")
+	assertEnvVarValue(t, c.Env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+	assertOTELResourceAttribute(t, c.Env, "multigres.project=project-ref-123")
+	assertOTELResourceAttribute(t, c.Env, "multigres.cluster=test-cluster")
+	assertOTELResourceAttribute(t, c.Env, "multigres.component=multipooler")
 }
 
 func TestBuildMultiOrchContainer_WithObservability(t *testing.T) {
 	c := buildMultiOrchContainer(otelShard(), "zone1")
 	assertContainsOTELEnvVar(t, c.Env, "buildMultiOrchContainer")
+	assertEnvVarValue(t, c.Env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+	assertOTELResourceAttribute(t, c.Env, "multigres.project=project-ref-123")
+	assertOTELResourceAttribute(t, c.Env, "multigres.cluster=test-cluster")
+	assertOTELResourceAttribute(t, c.Env, "multigres.component=multiorch")
 }
 
 func assertContainsOTELEnvVar(t *testing.T, envVars []corev1.EnvVar, fnName string) {
@@ -967,6 +991,19 @@ func assertEnvVarValue(t *testing.T, envVars []corev1.EnvVar, name, want string)
 		}
 	}
 	t.Errorf("expected env var %q, got none", name)
+}
+
+func assertOTELResourceAttribute(t *testing.T, envVars []corev1.EnvVar, want string) {
+	t.Helper()
+	for _, e := range envVars {
+		if e.Name == "OTEL_RESOURCE_ATTRIBUTES" {
+			if !strings.Contains(e.Value, want) {
+				t.Errorf("OTEL_RESOURCE_ATTRIBUTES = %q, want it to contain %q", e.Value, want)
+			}
+			return
+		}
+	}
+	t.Errorf("expected OTEL_RESOURCE_ATTRIBUTES to contain %q, got none", want)
 }
 
 func assertNotContainsEnvVar(t *testing.T, envVars []corev1.EnvVar, name string) {

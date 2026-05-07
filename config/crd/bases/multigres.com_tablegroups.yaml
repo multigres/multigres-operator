@@ -367,6 +367,12 @@ spec:
                       Example: "http://otel-collector:4318"
                       Set to "disabled" to explicitly disable telemetry.
                     type: string
+                  otlpMetricsEndpoint:
+                    description: |-
+                      OTLPMetricsEndpoint is the OTLP collector endpoint URL for metrics.
+                      Maps to OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
+                      Example: "http://vmagent:4318/v1/metrics"
+                    type: string
                   otlpProtocol:
                     description: |-
                       OTLPProtocol is the OTLP transport protocol.

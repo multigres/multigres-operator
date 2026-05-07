@@ -29,6 +29,12 @@ type ObservabilityConfig struct {
 	// +optional
 	OTLPEndpoint string `json:"otlpEndpoint,omitempty"`
 
+	// OTLPMetricsEndpoint is the OTLP collector endpoint URL for metrics.
+	// Maps to OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.
+	// Example: "http://vmagent:4318/v1/metrics"
+	// +optional
+	OTLPMetricsEndpoint string `json:"otlpMetricsEndpoint,omitempty"`
+
 	// OTLPProtocol is the OTLP transport protocol.
 	// Maps to OTEL_EXPORTER_OTLP_PROTOCOL.
 	// +optional

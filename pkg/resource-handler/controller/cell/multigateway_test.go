@@ -1,6 +1,7 @@
 package cell
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -1960,10 +1961,15 @@ func TestBuildMultiGatewayDeployment_Observability(t *testing.T) {
 			Name:      "test-otel",
 			Namespace: "default",
 			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			Annotations: map[string]string{
+				metadata.AnnotationProjectRef: "project-ref-123",
+			},
 		},
 		Spec: multigresv1alpha1.CellSpec{
 			Name: "zone-otel",
 			Observability: &multigresv1alpha1.ObservabilityConfig{
+				OTLPMetricsEndpoint: "http://vmagent:4318/v1/metrics",
+				MetricsExporter:     "otlp",
 				SamplingConfigRef: &multigresv1alpha1.SamplingConfigRef{
 					Name: "otel-sampler-config",
 				},
@@ -1977,6 +1983,38 @@ func TestBuildMultiGatewayDeployment_Observability(t *testing.T) {
 	if len(deploy.Spec.Template.Spec.Volumes) == 0 {
 		t.Errorf("expected volumes to contain otel config")
 	}
+	env := deploy.Spec.Template.Spec.Containers[0].Env
+	assertMultiGatewayEnvVar(t, env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+	assertMultiGatewayEnvVar(t, env, "OTEL_METRICS_EXPORTER", "otlp")
+	assertMultiGatewayResourceAttribute(t, env, "multigres.project=project-ref-123")
+	assertMultiGatewayResourceAttribute(t, env, "multigres.cluster=test-cluster")
+	assertMultiGatewayResourceAttribute(t, env, "multigres.component=multigateway")
+}
+
+func assertMultiGatewayEnvVar(t *testing.T, envVars []corev1.EnvVar, name, want string) {
+	t.Helper()
+	for _, envVar := range envVars {
+		if envVar.Name == name {
+			if envVar.Value != want {
+				t.Fatalf("env var %q = %q, want %q", name, envVar.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected env var %q, got none", name)
+}
+
+func assertMultiGatewayResourceAttribute(t *testing.T, envVars []corev1.EnvVar, want string) {
+	t.Helper()
+	for _, envVar := range envVars {
+		if envVar.Name == "OTEL_RESOURCE_ATTRIBUTES" {
+			if !strings.Contains(envVar.Value, want) {
+				t.Fatalf("OTEL_RESOURCE_ATTRIBUTES = %q, want it to contain %q", envVar.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected OTEL_RESOURCE_ATTRIBUTES to contain %q, got none", want)
 }
 
 func TestBuildMultiGatewayDeployment_TLS(t *testing.T) {

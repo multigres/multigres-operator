@@ -84,28 +84,35 @@ This deploys the operator with tracing enabled and opens port-forwards to:
 | Prometheus | [http://localhost:9090](http://localhost:9090) |
 | Tempo | [http://localhost:3200](http://localhost:3200) |
 
-**Metrics collection:** Prometheus scrapes the operator, Multigres runtimes, and
-Postgres exporter endpoints:
+**Metrics collection:** The operator and data-plane components use different metric collection models:
 
 | Component | Metric Model | How it works |
 | :--- | :--- | :--- |
 | **Operator** | **Pull** (Prometheus scrape) | Prometheus scrapes the operator's `/metrics` endpoint via controller-runtime's built-in Prometheus integration |
-| **Data plane runtimes** (`multigateway`, `multiorch`, `multipooler`, `pgctld`) | **Pull** (Prometheus scrape) | Multigres exposes `/metrics` on each runtime's shared servenv HTTP endpoint, and the operator wires those HTTP ports into Services and ServiceMonitors |
+| **Data plane runtimes** (`multigateway`, `multiorch`, `multipooler`, `pgctld`) | **Push** (OTLP) | Multigres binaries push metrics via OpenTelemetry to the configured OTLP endpoint |
 | **Postgres engine metrics** (`postgres_exporter` sidecar on shard pool pods) | **Pull** (Prometheus scrape) | Prometheus scrapes the `metrics` port on shard-pool headless Services via ServiceMonitor |
 
-Pool headless Services expose `metrics` for `postgres_exporter`, `http` for
-`multipooler`, and `pgctld-http` for `pgctld`. `multiorch` and
-`multigateway` are scraped through their existing `http` Service ports.
-ServiceMonitors add the `project`, `cluster`, and `component` labels at scrape
-time.
+Data-plane pods inherit OTel settings from `spec.observability` or, when a
+field is empty, from the operator's own `OTEL_*` environment. For metrics, set
+`metricsExporter: otlp` and either the generic `otlpEndpoint` or the
+metrics-specific `otlpMetricsEndpoint`.
 
-The OTel Collector remains in the local stack for OTLP tracing. Data-plane
-metrics are scraped by Prometheus directly.
+```yaml
+observability:
+  otlpMetricsEndpoint: "http://vmagent.monitoring.svc:4318/v1/metrics"
+  otlpProtocol: "http/protobuf"
+  metricsExporter: "otlp"
+  metricExportInterval: "30000"
+  metricsTemporality: "cumulative"
+  histogramAggregation: "base2_exponential_bucket_histogram"
+```
 
-**Choosing a metrics path:** Multigres supports Kubernetes-native Prometheus
-scraping for Prometheus-first stacks and inherited OTel metrics export for
-OpenTelemetry-first stacks. If both are enabled for the same data-plane pods,
-make sure your backend separates or deduplicates the two streams.
+The operator also injects `OTEL_RESOURCE_ATTRIBUTES` into Multigres runtime
+containers so exported metrics carry `multigres.project`, `multigres.cluster`,
+and `multigres.component`. The project value comes from the
+`multigres.com/project-ref` annotation and falls back to the cluster name.
+These attributes are merged with any existing `OTEL_RESOURCE_ATTRIBUTES`
+configured on the operator.
 
 ## Distributed Tracing
 

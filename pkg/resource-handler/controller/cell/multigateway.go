@@ -145,7 +145,17 @@ func BuildMultiGatewayDeployment(
 								string(cell.Spec.LogLevels.Multigateway),
 							},
 							Resources: cell.Spec.MultiGateway.Resources,
-							Env:       multigresv1alpha1.BuildOTELEnvVars(cell.Spec.Observability),
+							Env: multigresv1alpha1.BuildOTELEnvVarsWithResourceAttributes(
+								cell.Spec.Observability,
+								map[string]string{
+									"multigres.project": metadata.ResolveProjectRef(
+										cell.Annotations,
+										clusterName,
+									),
+									"multigres.cluster":   clusterName,
+									"multigres.component": MultiGatewayComponentName,
+								},
+							),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",

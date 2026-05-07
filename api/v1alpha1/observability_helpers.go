@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -31,28 +32,45 @@ const (
 	OTELSamplingMountPath = "/etc/otel"
 )
 
-// BuildOTELEnvVars converts an ObservabilityConfig into a slice of
-// environment variables suitable for injection into data-plane containers.
-//
-// Fallback behaviour: when cfg is nil or a field is empty, the operator's
-// own environment variable (if set) is used as the default. This means
-// data-plane pods automatically inherit the operator's telemetry endpoint
-// unless explicitly overridden or disabled.
-//
-// Setting cfg.OTLPEndpoint to "disabled" suppresses all OTEL variables,
-// returning nil regardless of other field values.
+// BuildOTELEnvVars returns OTEL env vars resolved from cfg or the operator env.
+// Set otlpEndpoint to "disabled" to suppress all OTEL vars.
 func BuildOTELEnvVars(cfg *ObservabilityConfig) []corev1.EnvVar {
+	return BuildOTELEnvVarsWithResourceAttributes(cfg, nil)
+}
+
+// BuildOTELEnvVarsWithResourceAttributes appends OTEL_RESOURCE_ATTRIBUTES for
+// runtime containers.
+func BuildOTELEnvVarsWithResourceAttributes(
+	cfg *ObservabilityConfig,
+	resourceAttributes map[string]string,
+) []corev1.EnvVar {
 	endpoint := envOrCRD(
 		cfg,
 		func(c *ObservabilityConfig) string { return c.OTLPEndpoint },
 		"OTEL_EXPORTER_OTLP_ENDPOINT",
 	)
-	if endpoint == "" || endpoint == "disabled" {
+	if endpoint == "disabled" {
 		return nil
 	}
 
-	vars := []corev1.EnvVar{
-		{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: endpoint},
+	metricsEndpoint := envOrCRD(
+		cfg,
+		func(c *ObservabilityConfig) string { return c.OTLPMetricsEndpoint },
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+	)
+	if endpoint == "" && metricsEndpoint == "" {
+		return nil
+	}
+
+	var vars []corev1.EnvVar
+	if endpoint != "" {
+		vars = append(vars, corev1.EnvVar{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: endpoint})
+	}
+	if metricsEndpoint != "" {
+		vars = append(vars, corev1.EnvVar{
+			Name:  "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+			Value: metricsEndpoint,
+		})
 	}
 
 	appendIfSet := func(envName string, crdValue, fallbackEnv string) {
@@ -93,6 +111,9 @@ func BuildOTELEnvVars(cfg *ObservabilityConfig) []corev1.EnvVar {
 		"OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION",
 	)
 	appendIfSet("OTEL_TRACES_SAMPLER", sampler, "OTEL_TRACES_SAMPLER")
+	if attrs := buildOTELResourceAttributes(resourceAttributes); attrs != "" {
+		vars = append(vars, corev1.EnvVar{Name: "OTEL_RESOURCE_ATTRIBUTES", Value: attrs})
+	}
 
 	if cfg != nil && cfg.SamplingConfigRef != nil {
 		key := cfg.SamplingConfigRef.Key
@@ -106,6 +127,78 @@ func BuildOTELEnvVars(cfg *ObservabilityConfig) []corev1.EnvVar {
 	}
 
 	return vars
+}
+
+func buildOTELResourceAttributes(attrs map[string]string) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+
+	orderedKeys := []string{
+		"multigres.project",
+		"multigres.cluster",
+		"multigres.component",
+	}
+	generated := make(map[string]string, len(attrs))
+	for _, key := range orderedKeys {
+		if value := attrs[key]; value != "" {
+			generated[key] = value
+		}
+	}
+	if len(generated) == 0 {
+		return ""
+	}
+
+	parts := filterOTELResourceAttributes(os.Getenv("OTEL_RESOURCE_ATTRIBUTES"), generated)
+	for _, key := range orderedKeys {
+		if value := generated[key]; value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func filterOTELResourceAttributes(raw string, generated map[string]string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := splitOTELResourceAttributes(raw)
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, _, ok := strings.Cut(part, "=")
+		if ok {
+			if _, replace := generated[strings.TrimSpace(key)]; replace {
+				continue
+			}
+		}
+		filtered = append(filtered, part)
+	}
+	return filtered
+}
+
+func splitOTELResourceAttributes(raw string) []string {
+	var parts []string
+	start := 0
+	escaped := false
+	for i, r := range raw {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == ',' {
+			parts = append(parts, raw[start:i])
+			start = i + 1
+		}
+	}
+	return append(parts, raw[start:])
 }
 
 // BuildOTELSamplingVolume returns a Volume and VolumeMount for the sampling
