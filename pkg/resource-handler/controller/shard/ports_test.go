@@ -104,6 +104,12 @@ func TestBuildPoolHeadlessServicePorts(t *testing.T) {
 					TargetPort: intstr.FromString("metrics"),
 					Protocol:   corev1.ProtocolTCP,
 				},
+				{
+					Name:       "pgctld-http",
+					Port:       DefaultPgctldHTTPPort,
+					TargetPort: intstr.FromString("pgctld-http"),
+					Protocol:   corev1.ProtocolTCP,
+				},
 			},
 		},
 	}

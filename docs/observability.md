@@ -84,15 +84,28 @@ This deploys the operator with tracing enabled and opens port-forwards to:
 | Prometheus | [http://localhost:9090](http://localhost:9090) |
 | Tempo | [http://localhost:3200](http://localhost:3200) |
 
-**Metrics collection:** The operator and data-plane components use different metric collection models:
+**Metrics collection:** Prometheus scrapes the operator, Multigres runtimes, and
+Postgres exporter endpoints:
 
 | Component | Metric Model | How it works |
 | :--- | :--- | :--- |
 | **Operator** | **Pull** (Prometheus scrape) | Prometheus scrapes the operator's `/metrics` endpoint via controller-runtime's built-in Prometheus integration |
-| **Data plane runtimes** (multiorch, multipooler, multigateway, etc.) | **Push** (OTLP) | Multigres binaries push metrics via OpenTelemetry to the configured OTLP endpoint |
+| **Data plane runtimes** (`multigateway`, `multiorch`, `multipooler`, `pgctld`) | **Pull** (Prometheus scrape) | Multigres exposes `/metrics` on each runtime's shared servenv HTTP endpoint, and the operator wires those HTTP ports into Services and ServiceMonitors |
 | **Postgres engine metrics** (`postgres_exporter` sidecar on shard pool pods) | **Pull** (Prometheus scrape) | Prometheus scrapes the `metrics` port on shard-pool headless Services via ServiceMonitor |
 
-The OTel Collector receives all pushed OTLP signals from the data plane and routes them: **traces → Tempo**, **metrics → Prometheus** (via its OTLP receiver). This is necessary because multigres components send all signals to a single OTLP endpoint and cannot split them by signal type.
+Pool headless Services expose `metrics` for `postgres_exporter`, `http` for
+`multipooler`, and `pgctld-http` for `pgctld`. `multiorch` and
+`multigateway` are scraped through their existing `http` Service ports.
+ServiceMonitors add the `project`, `cluster`, and `component` labels at scrape
+time.
+
+The OTel Collector remains in the local stack for OTLP tracing. Data-plane
+metrics are scraped by Prometheus directly.
+
+**Choosing a metrics path:** Multigres supports Kubernetes-native Prometheus
+scraping for Prometheus-first stacks and inherited OTel metrics export for
+OpenTelemetry-first stacks. If both are enabled for the same data-plane pods,
+make sure your backend separates or deduplicates the two streams.
 
 ## Distributed Tracing
 

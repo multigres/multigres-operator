@@ -222,6 +222,7 @@ func buildPgctldContainer(
 		Args:            args,
 		Resources:       pool.Postgres.Resources,
 		Env:             env,
+		Ports:           buildPgctldContainerPorts(),
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
 		VolumeMounts:    volumeMounts,
 		StartupProbe: &corev1.Probe{

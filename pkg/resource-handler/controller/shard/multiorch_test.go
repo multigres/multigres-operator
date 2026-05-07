@@ -942,8 +942,16 @@ func TestBuildMultiOrchService(t *testing.T) {
 				return
 			}
 
+			wantPorts := buildMultiOrchServicePorts()
+			tc.want.Spec.Ports = nil
+			gotPorts := got.Spec.Ports
+			got.Spec.Ports = nil
+
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("BuildMultiOrchService() mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(wantPorts, gotPorts); diff != "" {
+				t.Errorf("BuildMultiOrchService() ports mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

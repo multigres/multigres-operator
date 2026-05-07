@@ -65,16 +65,19 @@ When the phase changes, `SetClusterInfo` calls `DeletePartialMatch` first to cle
 
 ---
 
-## Metrics Collection: Pull vs Push
+## Metrics Collection
 
-### The Two Models
+### Prometheus Scrape Targets
 
-The operator ecosystem uses **two different metric collection models** simultaneously:
+The canonical metrics path is Prometheus scraping. The local observability
+overlay may still propagate `OTEL_METRICS_EXPORTER=otlp` through
+`BuildOTELEnvVars()` for compatibility with the OTel Collector, but the
+operator monitoring manifests use these scrape targets:
 
 | Component | Model | Transport | Why |
 |:---|:---|:---|:---|
 | **Operator** | **Pull** (Prometheus scrape) | HTTP `/metrics` on `:8443` | controller-runtime uses `prometheus/client_golang` natively |
-| **Data plane runtimes** (multiorch, multipooler, multigateway) | **Push** (OTLP) | gRPC/HTTP to OTLP endpoint | Multigres binaries use the OpenTelemetry SDK with `autoexport` |
+| **Data plane runtimes** (multiorch, multipooler, multigateway, pgctld) | **Pull** (Prometheus scrape) | HTTP `/metrics` on each runtime's servenv HTTP port | Multigres binaries expose OpenTelemetry SDK metrics through the shared servenv Prometheus handler |
 | **Postgres engine metrics** (`postgres_exporter` sidecar on shard pool pods) | **Pull** (Prometheus scrape) | HTTP `/metrics` on pool headless Service `metrics` port | Scraped by ServiceMonitor targeting `app.kubernetes.io/component=shard-pool` |
 
 ### Why the Operator Uses Pull
@@ -87,26 +90,41 @@ We **could** add one by programmatically creating an `otelsdkmetric.MeterProvide
 2. **Duplicate signals** — Prometheus would still scrape `/metrics`, so every metric would exist in two places unless we disabled scraping entirely, which breaks standard monitoring patterns.
 3. **Be unnecessary** — the Prometheus pull model works well for a single long-lived operator pod. Push-based metrics exist to solve problems the operator doesn't have (short-lived processes, scale-to-zero, high cardinality per-request metrics).
 
-### Why the Data Plane Uses Push
+### Why the Data Plane Exposes Prometheus Metrics
 
-Multigres binaries (multiorch, multipooler, multigateway) are built with the OpenTelemetry SDK and the `autoexport` library, which reads `OTEL_*` environment variables to configure exporters automatically. They have no `/metrics` HTTP endpoint — all telemetry (traces, metrics, logs) is pushed to a single OTLP endpoint.
+Multigres binaries are built with the OpenTelemetry SDK and shared `servenv`
+runtime. The runtime exposes `/metrics` on the same HTTP server that already
+serves health endpoints. The operator does not configure separate Prometheus
+exporter ports; it exposes the HTTP ports through Kubernetes Services and
+ServiceMonitors.
 
-This design is intentional: multigres components are data-plane workloads that may run at high scale across many pods. Push-based telemetry avoids the complexity of service discovery and scrape configuration for hundreds of pool replicas.
+Prometheus then scrapes these ports through ServiceMonitors:
 
-### The OTel Collector Bridge
+| Component | Service port |
+|:---|:---|
+| `postgres_exporter` | `metrics` (`9187`) |
+| `multipooler` | `http` (`15200`) |
+| `pgctld` | `pgctld-http` (`15400`) |
+| `multiorch` | `http` (`15300`) |
+| `multigateway` | `http` (`15100`) |
 
-Because multigres sends **all signals** (traces + metrics) to a single OTLP endpoint, the local observability stack uses an **OTel Collector** to split them:
+ServiceMonitor relabeling attaches `project`, `cluster`, and `component`
+labels to the scraped series.
+
+### The OTel Collector
 
 ```
 multigres pods ──OTLP──▶ OTel Collector ──▶ Tempo      (traces)
-                                          ──▶ Prometheus (metrics, via OTLP receiver)
+
+multigres pods ◀── Prometheus scrapes /metrics (pull)
 
 operator pod   ◀── Prometheus scrapes /metrics (pull, unchanged)
 ```
 
-Without the collector, metrics would be sent to Tempo (which only handles traces) and silently dropped. The collector's pipeline configuration routes each signal type to the appropriate backend.
-
-In production, organizations typically already have an OTel Collector or a managed observability backend that accepts OTLP natively, making this split transparent.
+The local OTel Collector remains responsible for OTLP traces. When
+`OTEL_METRICS_EXPORTER=otlp` is present in the operator environment, data-plane
+pods can also continue exporting OTLP metrics through the inherited OTel config;
+Prometheus scraping is the operator-managed metrics path.
 
 ---
 

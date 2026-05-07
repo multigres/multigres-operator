@@ -108,6 +108,85 @@ spec:
     - port: metrics
       scheme: http
       path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_multigres_com_project_ref]
+          targetLabel: project
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_instance]
+          targetLabel: cluster
+        - targetLabel: component
+          replacement: postgres-exporter
+    - port: http
+      scheme: http
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_multigres_com_project_ref]
+          targetLabel: project
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_instance]
+          targetLabel: cluster
+        - targetLabel: component
+          replacement: multipooler
+    - port: pgctld-http
+      scheme: http
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_multigres_com_project_ref]
+          targetLabel: project
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_instance]
+          targetLabel: cluster
+        - targetLabel: component
+          replacement: pgctld
+---
+# ServiceMonitor: Scrape multiorch service metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: multiorch
+  labels:
+    app.kubernetes.io/name: multigres-operator
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: multigres
+      app.kubernetes.io/component: multiorch
+  endpoints:
+    - port: http
+      scheme: http
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_multigres_com_project_ref]
+          targetLabel: project
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_instance]
+          targetLabel: cluster
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_component]
+          targetLabel: component
+---
+# ServiceMonitor: Scrape multigateway service metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: multigateway
+  labels:
+    app.kubernetes.io/name: multigres-operator
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: multigres
+      app.kubernetes.io/component: multigateway
+  endpoints:
+    - port: http
+      scheme: http
+      path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_multigres_com_project_ref]
+          targetLabel: project
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_instance]
+          targetLabel: cluster
+        - sourceLabels: [__meta_kubernetes_service_label_app_kubernetes_io_component]
+          targetLabel: component
 ---
 # Service: ClusterIP service for the managed Prometheus pods.
 # The operator creates a headless "prometheus-operated" service; this provides
