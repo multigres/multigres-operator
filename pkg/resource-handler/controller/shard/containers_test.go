@@ -622,7 +622,12 @@ func TestBuildPgctldContainer(t *testing.T) {
 	t.Run("with observability", func(t *testing.T) {
 		c := buildPgctldContainer(otelShard(), multigresv1alpha1.PoolSpec{})
 		assertContainsOTELEnvVar(t, c.Env, "buildPgctldContainer")
-		assertEnvVarValue(t, c.Env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+		assertEnvVarValue(
+			t,
+			c.Env,
+			"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+			"http://vmagent:4318/v1/metrics",
+		)
 		assertOTELResourceAttribute(t, c.Env, "multigres.project=project-ref-123")
 		assertOTELResourceAttribute(t, c.Env, "multigres.cluster=test-cluster")
 		assertOTELResourceAttribute(t, c.Env, "multigres.component=pgctld")
@@ -945,7 +950,12 @@ func TestBuildMultiPoolerSidecar_WithObservability(t *testing.T) {
 		"p-otel1234",
 	)
 	assertContainsOTELEnvVar(t, c.Env, "buildMultiPoolerSidecar")
-	assertEnvVarValue(t, c.Env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+	assertEnvVarValue(
+		t,
+		c.Env,
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+		"http://vmagent:4318/v1/metrics",
+	)
 	assertOTELResourceAttribute(t, c.Env, "multigres.project=project-ref-123")
 	assertOTELResourceAttribute(t, c.Env, "multigres.cluster=test-cluster")
 	assertOTELResourceAttribute(t, c.Env, "multigres.component=multipooler")
@@ -954,7 +964,12 @@ func TestBuildMultiPoolerSidecar_WithObservability(t *testing.T) {
 func TestBuildMultiOrchContainer_WithObservability(t *testing.T) {
 	c := buildMultiOrchContainer(otelShard(), "zone1")
 	assertContainsOTELEnvVar(t, c.Env, "buildMultiOrchContainer")
-	assertEnvVarValue(t, c.Env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+	assertEnvVarValue(
+		t,
+		c.Env,
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+		"http://vmagent:4318/v1/metrics",
+	)
 	assertOTELResourceAttribute(t, c.Env, "multigres.project=project-ref-123")
 	assertOTELResourceAttribute(t, c.Env, "multigres.cluster=test-cluster")
 	assertOTELResourceAttribute(t, c.Env, "multigres.component=multiorch")

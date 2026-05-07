@@ -1984,7 +1984,12 @@ func TestBuildMultiGatewayDeployment_Observability(t *testing.T) {
 		t.Errorf("expected volumes to contain otel config")
 	}
 	env := deploy.Spec.Template.Spec.Containers[0].Env
-	assertMultiGatewayEnvVar(t, env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://vmagent:4318/v1/metrics")
+	assertMultiGatewayEnvVar(
+		t,
+		env,
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+		"http://vmagent:4318/v1/metrics",
+	)
 	assertMultiGatewayEnvVar(t, env, "OTEL_METRICS_EXPORTER", "otlp")
 	assertMultiGatewayResourceAttribute(t, env, "multigres.project=project-ref-123")
 	assertMultiGatewayResourceAttribute(t, env, "multigres.cluster=test-cluster")

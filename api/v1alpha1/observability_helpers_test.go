@@ -71,7 +71,10 @@ func TestBuildOTELEnvVars(t *testing.T) {
 				MetricsExporter:     "otlp",
 			},
 			want: []corev1.EnvVar{
-				{Name: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", Value: "http://vmagent:4318/v1/metrics"},
+				{
+					Name:  "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+					Value: "http://vmagent:4318/v1/metrics",
+				},
 				{Name: "OTEL_METRICS_EXPORTER", Value: "otlp"},
 			},
 		},
@@ -90,7 +93,10 @@ func TestBuildOTELEnvVars(t *testing.T) {
 			},
 			want: []corev1.EnvVar{
 				{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: "http://tempo:4318"},
-				{Name: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", Value: "http://vmagent:4318/v1/metrics"},
+				{
+					Name:  "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+					Value: "http://vmagent:4318/v1/metrics",
+				},
 				{Name: "OTEL_EXPORTER_OTLP_PROTOCOL", Value: "grpc"},
 				{Name: "OTEL_TRACES_EXPORTER", Value: "otlp"},
 				{Name: "OTEL_METRICS_EXPORTER", Value: "otlp"},
@@ -160,8 +166,13 @@ func TestBuildOTELEnvVarsWithResourceAttributes(t *testing.T) {
 	}
 
 	if len(got) != len(want) {
-		t.Fatalf("len(BuildOTELEnvVarsWithResourceAttributes()) = %d, want %d\n  got:  %v\n  want: %v",
-			len(got), len(want), got, want)
+		t.Fatalf(
+			"len(BuildOTELEnvVarsWithResourceAttributes()) = %d, want %d\n  got:  %v\n  want: %v",
+			len(got),
+			len(want),
+			got,
+			want,
+		)
 	}
 	for i := range got {
 		if got[i].Name != want[i].Name || got[i].Value != want[i].Value {
@@ -185,7 +196,11 @@ func TestBuildOTELEnvVars_FallbackToEnv(t *testing.T) {
 		t.Errorf("endpoint = %q, want %q", got[0].Value, "http://from-env:4318")
 	}
 	if got[1].Value != "http://metrics-from-env:4318/v1/metrics" {
-		t.Errorf("metrics endpoint = %q, want %q", got[1].Value, "http://metrics-from-env:4318/v1/metrics")
+		t.Errorf(
+			"metrics endpoint = %q, want %q",
+			got[1].Value,
+			"http://metrics-from-env:4318/v1/metrics",
+		)
 	}
 	if got[2].Value != "http/protobuf" {
 		t.Errorf("protocol = %q, want %q", got[2].Value, "http/protobuf")
