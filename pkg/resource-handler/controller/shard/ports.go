@@ -78,12 +78,6 @@ func buildPoolHeadlessServicePorts() []corev1.ServicePort {
 			TargetPort: intstr.FromString("metrics"),
 			Protocol:   corev1.ProtocolTCP,
 		},
-		{
-			Name:       "pgctld-http",
-			Port:       DefaultPgctldHTTPPort,
-			TargetPort: intstr.FromString("pgctld-http"),
-			Protocol:   corev1.ProtocolTCP,
-		},
 	}
 }
 
@@ -130,17 +124,6 @@ func buildMultiOrchServicePorts() []corev1.ServicePort {
 			Port:       DefaultMultiOrchGRPCPort,
 			TargetPort: intstr.FromString("grpc"),
 			Protocol:   corev1.ProtocolTCP,
-		},
-	}
-}
-
-// buildPgctldContainerPorts creates the port definitions for pgctld.
-func buildPgctldContainerPorts() []corev1.ContainerPort {
-	return []corev1.ContainerPort{
-		{
-			Name:          "pgctld-http",
-			ContainerPort: DefaultPgctldHTTPPort,
-			Protocol:      corev1.ProtocolTCP,
 		},
 	}
 }

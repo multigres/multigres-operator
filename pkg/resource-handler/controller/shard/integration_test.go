@@ -303,9 +303,14 @@ func TestShardReconciliation(t *testing.T) {
 						OwnerReferences: shardOwnerRefs(t, "test-shard"),
 					},
 					Spec: corev1.ServiceSpec{
-						Type:                     corev1.ServiceTypeClusterIP,
-						ClusterIP:                corev1.ClusterIPNone,
-						Ports:                    poolHeadlessServicePorts(t),
+						Type:      corev1.ServiceTypeClusterIP,
+						ClusterIP: corev1.ClusterIPNone,
+						Ports: []corev1.ServicePort{
+							tcpServicePort(t, "http", 15200),
+							tcpServicePort(t, "grpc", 15270),
+							tcpServicePort(t, "postgres", 5432),
+							tcpServicePort(t, "metrics", 9187),
+						},
 						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "test-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
 						PublishNotReadyAddresses: true,
 					},
@@ -463,9 +468,14 @@ func TestShardReconciliation(t *testing.T) {
 						OwnerReferences: shardOwnerRefs(t, "delete-policy-shard"),
 					},
 					Spec: corev1.ServiceSpec{
-						Type:                     corev1.ServiceTypeClusterIP,
-						ClusterIP:                corev1.ClusterIPNone,
-						Ports:                    poolHeadlessServicePorts(t),
+						Type:      corev1.ServiceTypeClusterIP,
+						ClusterIP: corev1.ClusterIPNone,
+						Ports: []corev1.ServicePort{
+							tcpServicePort(t, "http", 15200),
+							tcpServicePort(t, "grpc", 15270),
+							tcpServicePort(t, "postgres", 5432),
+							tcpServicePort(t, "metrics", 9187),
+						},
 						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "delete-policy-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
 						PublishNotReadyAddresses: true,
 					},
@@ -710,9 +720,14 @@ func TestShardReconciliation(t *testing.T) {
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: corev1.ServiceSpec{
-						Type:                     corev1.ServiceTypeClusterIP,
-						ClusterIP:                corev1.ClusterIPNone,
-						Ports:                    poolHeadlessServicePorts(t),
+						Type:      corev1.ServiceTypeClusterIP,
+						ClusterIP: corev1.ClusterIPNone,
+						Ports: []corev1.ServicePort{
+							tcpServicePort(t, "http", 15200),
+							tcpServicePort(t, "grpc", 15270),
+							tcpServicePort(t, "postgres", 5432),
+							tcpServicePort(t, "metrics", 9187),
+						},
 						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-pool-primary-zone1", "shard-pool", "zone1")),
 						PublishNotReadyAddresses: true,
 					},
@@ -726,9 +741,14 @@ func TestShardReconciliation(t *testing.T) {
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: corev1.ServiceSpec{
-						Type:                     corev1.ServiceTypeClusterIP,
-						ClusterIP:                corev1.ClusterIPNone,
-						Ports:                    poolHeadlessServicePorts(t),
+						Type:      corev1.ServiceTypeClusterIP,
+						ClusterIP: corev1.ClusterIPNone,
+						Ports: []corev1.ServicePort{
+							tcpServicePort(t, "http", 15200),
+							tcpServicePort(t, "grpc", 15270),
+							tcpServicePort(t, "postgres", 5432),
+							tcpServicePort(t, "metrics", 9187),
+						},
 						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-pool-primary-zone2", "shard-pool", "zone2")),
 						PublishNotReadyAddresses: true,
 					},
@@ -980,17 +1000,6 @@ func tcpPort(t testing.TB, name string, port int32) corev1.ContainerPort {
 func tcpServicePort(t testing.TB, name string, port int32) corev1.ServicePort {
 	t.Helper()
 	return corev1.ServicePort{Name: name, Port: port, TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP}
-}
-
-func poolHeadlessServicePorts(t testing.TB) []corev1.ServicePort {
-	t.Helper()
-	return []corev1.ServicePort{
-		tcpServicePort(t, "http", shardcontroller.DefaultMultiPoolerHTTPPort),
-		tcpServicePort(t, "grpc", shardcontroller.DefaultMultiPoolerGRPCPort),
-		tcpServicePort(t, "postgres", shardcontroller.DefaultPostgresPort),
-		tcpServicePort(t, "metrics", shardcontroller.DefaultPostgresExporterPort),
-		tcpServicePort(t, "pgctld-http", shardcontroller.DefaultPgctldHTTPPort),
-	}
 }
 
 // multipoolerPorts returns the standard multipooler container ports

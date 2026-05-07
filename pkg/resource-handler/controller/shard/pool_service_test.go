@@ -338,16 +338,8 @@ func TestBuildPoolHeadlessService(t *testing.T) {
 				return
 			}
 
-			wantPorts := buildPoolHeadlessServicePorts()
-			tc.want.Spec.Ports = nil
-			gotPorts := got.Spec.Ports
-			got.Spec.Ports = nil
-
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("BuildPoolHeadlessService() mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(wantPorts, gotPorts); diff != "" {
-				t.Errorf("BuildPoolHeadlessService() ports mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
