@@ -1,0 +1,70 @@
+name: Sync Multigres Proto
+on:
+  repository_dispatch:
+    types: [proto-updated]
+
+permissions: {}
+
+concurrency:
+  group: sync-proto
+  cancel-in-progress: false
+
+jobs:
+  update-dependency:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token for creating a PR
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
+          private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
+          owner: multigres
+          repositories: multigres,multigres-operator
+
+      - name: Validate SHA is on main
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad SHA"; exit 1; }
+          # confirm SHA is ancestor of multigres/main
+          gh api "repos/multigres/multigres/compare/main...$SHA" --jq '.status' \
+            | grep -qE '^(identical|behind)$' || { echo "SHA not on main"; exit 1; }
+
+      - name: Check out code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set short SHA
+        id: vars
+        env:
+          SHA: ${{ github.event.client_payload.sha }}
+        run: echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+            
+      - name: Update multigres dependency
+        env:
+          GOPRIVATE: "github.com/multigres/*"
+          SHA: ${{ github.event.client_payload.sha }}
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          go get github.com/multigres/multigres@"$SHA"
+          go mod tidy
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@5e914681df9dc83ac74969da89efb39d9f0ee814 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore(deps): bump multigres to ${{ steps.vars.outputs.short_sha }}"
+          title: "chore(deps): sync multigres proto to ${{ steps.vars.outputs.short_sha }}"
+          body: "Automated sync triggered by changes in multigres@${{ github.event.client_payload.sha }}."
+          branch: chore/sync-proto-${{ steps.vars.outputs.short_sha }}
+          base: main
+          delete-branch: true
