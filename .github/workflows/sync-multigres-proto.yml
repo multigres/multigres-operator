@@ -65,7 +65,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           commit-message: "chore(deps): bump multigres to ${{ steps.vars.outputs.short_sha }}"
           title: "chore(deps): sync multigres proto to ${{ steps.vars.outputs.short_sha }}"
-          body: "Automated sync triggered by changes in multigres@${{ github.event.client_payload.sha }}."
+          body: "Automated sync triggered by changes in multigres/multigres@${{ github.event.client_payload.sha }}."
           branch: chore/sync-proto-${{ steps.vars.outputs.short_sha }}
           base: main
           delete-branch: true
