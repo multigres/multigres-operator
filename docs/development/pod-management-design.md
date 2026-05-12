@@ -265,16 +265,42 @@ Naming pods like `primary-0` or `replica-1` would be misleading because:
 
 ## 6. Pod Lifecycle & Decommissioning
 
+### Container Shutdown Ordering
+
+In Kubernetes native sidecar semantics (see [KEP-753](https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/753-sidecar-containers/README.md)), regular containers receive SIGTERM first and shut down before sidecars. For the pooler pod, this ordering
+is important: multipooler's shutdown sequence drains in-flight queries,
+closes the connection pool, and then calls `pgctld.Stop()` over gRPC to stop
+PostgreSQL cleanly before announcing `STOPPED` to the orchestrator.
+
+The operator therefore runs:
+
+- **pgctld** as a native sidecar (init container with `restartPolicy: Always`)
+- **multipooler** as a regular container
+
+This guarantees pgctld outlives multipooler during pod termination: multipooler
+receives SIGTERM first, runs its full graceful shutdown against a live pgctld
+gRPC server, and only after multipooler exits does Kubernetes send SIGTERM to
+pgctld. No preStop hooks, polling, or external coordination is required —
+ordering is enforced by Kubernetes itself.
+
+`TerminationGracePeriodSeconds` on the pool pod is sized to fit
+multipooler's full shutdown sequence (drain + close pool + `pgctld.Stop()` +
+announce STOPPED + multipooler's own safety-net timer) plus pgctld's own
+`onterm-timeout` and headroom for slow `pg_ctl stop` before SIGKILL fires.
+
 ### What Happens on Multipooler Shutdown (SIGTERM)
 
-When a pod receives SIGTERM (e.g., from `kubectl delete pod` or operator-initiated deletion):
+When a pool pod receives SIGTERM (e.g., from `kubectl delete pod` or
+operator-initiated deletion), the sequence is:
 
-1. Multipooler's `Shutdown()` is called:
-   - Calls `toporeg.Unregister()` → which executes the `unregisterFunc`
-   - `unregisterFunc` sets `ServingStatus = NOT_SERVING` in etcd
-   - Closes the topology store connection
-2. The multipooler process exits
-3. Kubernetes terminates the pod
+1. Kubernetes sends SIGTERM to **multipooler** only (the regular container).
+   pgctld is a native sidecar and does not receive SIGTERM yet.
+2. Multipooler runs its graceful shutdown.
+3. The multipooler process exits.
+4. **Only now** does Kubernetes send SIGTERM to pgctld. pgctld runs its
+   `OnTermSync` hooks (gRPC `GracefulStop`, etc.) with no in-flight RPCs
+   outstanding and exits.
+5. Kubernetes terminates the pod.
 
 **Critical: the multipooler does NOT delete its registration from etcd.** The entry persists with `ServingStatus = NOT_SERVING`. The rationale in the code is: *"For poolers, we don't un-register them on shutdown (they are persistent component). If they are actually deleted, they need to be cleaned up outside the lifecycle of starting/stopping."*
 

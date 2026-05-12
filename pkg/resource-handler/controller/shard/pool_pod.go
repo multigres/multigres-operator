@@ -99,11 +99,13 @@ func BuildPoolPod(
 		Spec: corev1.PodSpec{
 			SecurityContext:               buildPoolPodSecurityContext(poolSpec),
 			TerminationGracePeriodSeconds: ptr.To(defaultTerminationGracePeriod),
+			// pgctld is the native sidecar so it outlives multipooler on pod
+			// termination, see docs/development/pod-management-design.md §6.
 			InitContainers: []corev1.Container{
-				buildMultiPoolerSidecar(shard, poolSpec, poolName, cellName, serviceID),
+				buildPgctldSidecar(shard, poolSpec),
 			},
 			Containers: []corev1.Container{
-				buildPgctldContainer(shard, poolSpec),
+				buildMultiPoolerContainer(shard, poolSpec, poolName, cellName, serviceID),
 				buildPostgresExporterContainer(shard, poolSpec),
 			},
 			Volumes:      volumes,

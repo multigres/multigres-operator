@@ -8,7 +8,7 @@ The operator currently uses a single all-in-one image (`ghcr.io/multigres/pgctld
 - pgctld binary (manages the PostgreSQL lifecycle)
 - pgbackrest (backup/restore)
 
-This approach was chosen for simplicity and compatibility during the initial release. The `buildPgctldContainer()` function in `containers.go` is the sole code path for building the postgres container spec.
+This approach was chosen for simplicity and compatibility during the initial release. The `buildPgctldSidecar()` function in `containers.go` is the sole code path for building the postgres container spec.
 
 ## Future Plan: Custom PostgreSQL Image Support
 

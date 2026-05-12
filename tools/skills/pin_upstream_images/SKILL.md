@@ -91,7 +91,7 @@ For every potentially impactful upstream change:
 
 3. **Do not speculate.** Every recommendation must be backed by a concrete search result (or confirmed absence) in the operator codebase. No "if the operator does X" phrasing -- either it does or it doesn't.
 
-4. **Per-container analysis is mandatory.** When an upstream change affects a component's requirements (env vars, flags, volumes, config files), verify the requirement is satisfied on the **specific container** for that component in `containers.go`. Finding a reference elsewhere in the operator is NOT sufficient — each container builder (`buildPgctldContainer`, `buildMultiPoolerSidecar`, `buildMultiOrchContainer`, etc.) is independent. A requirement met on one container does NOT mean it is met on another.
+4. **Per-container analysis is mandatory.** When an upstream change affects a component's requirements (env vars, flags, volumes, config files), verify the requirement is satisfied on the **specific container** for that component in `containers.go`. Finding a reference elsewhere in the operator is NOT sufficient — each container builder (`buildPgctldSidecar`, `buildMultiPoolerContainer`, `buildMultiOrchContainer`, etc.) is independent. A requirement met on one container does NOT mean it is met on another.
 
 ### 4a. Flag Compatibility Audit
 
@@ -129,8 +129,8 @@ For every potentially impactful upstream change:
    ```
 
 2. For each required env var found, check `containers.go` to confirm it is set on the **specific container** for that component:
-   - `multipooler` env vars → must be in `buildMultiPoolerSidecar`
-   - `pgctld` env vars → must be in `buildPgctldContainer`
+   - `multipooler` env vars → must be in `buildMultiPoolerContainer`
+   - `pgctld` env vars → must be in `buildPgctldSidecar`
    - `multiorch` env vars → must be in `buildMultiOrchContainer`
    - `multigateway` env vars → must be in `buildMultiGatewayContainer` (if exists)
 

@@ -119,12 +119,15 @@ func buildPgHbaVolume(shardName string) corev1.Volume {
 // sidecarRestartPolicy is the restart policy for native sidecar containers
 var sidecarRestartPolicy = corev1.ContainerRestartPolicyAlways
 
-// buildPgctldContainer creates the postgres container spec using the pgctld image.
+// buildPgctldSidecar creates the postgres container spec using the pgctld image.
+// Runs as a native sidecar so it outlives multipooler on pod termination;
+// see docs/development/pod-management-design.md §6 for the full rationale.
+//
 // Uses DefaultPostgresImage (ghcr.io/multigres/pgctld:main) which includes:
 //   - PostgreSQL 17
 //   - pgctld binary at /usr/local/bin/pgctld
 //   - pgbackrest for backup/restore operations
-func buildPgctldContainer(
+func buildPgctldSidecar(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
 ) corev1.Container {
@@ -225,6 +228,7 @@ func buildPgctldContainer(
 		Command:         []string{"/usr/local/bin/pgctld"},
 		Args:            args,
 		Resources:       pool.Postgres.Resources,
+		RestartPolicy:   &sidecarRestartPolicy,
 		Env:             env,
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
 		VolumeMounts:    volumeMounts,
@@ -306,10 +310,11 @@ func BuildPoolServiceID(podName string) string {
 	return "p-" + nameutil.Hash([]string{podName})
 }
 
-// buildMultiPoolerSidecar creates the multipooler sidecar container spec.
-// Implemented as native sidecar (init container with restartPolicy: Always) because
-// multipooler must restart with postgres to maintain connection pool consistency.
-func buildMultiPoolerSidecar(
+// buildMultiPoolerContainer creates the multipooler container spec.
+// Runs as a regular (non-sidecar) container so it receives SIGTERM before
+// pgctld and can call pgctld.Stop() during its graceful shutdown; see
+// docs/development/pod-management-design.md §6 for the full rationale.
+func buildMultiPoolerContainer(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
 	poolName string,
@@ -362,7 +367,6 @@ func buildMultiPoolerSidecar(
 		Args:            args,
 		Ports:           buildMultiPoolerContainerPorts(),
 		Resources:       pool.Multipooler.Resources,
-		RestartPolicy:   &sidecarRestartPolicy,
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{

@@ -79,7 +79,7 @@ Returns `true` if any container (regular or init) in the pod matches one of:
 
 The restart threshold (3) catches the gap between backoff restarts when the container is briefly in `Completed`/`Error` state before Kubernetes starts the next attempt.
 
-**Note:** Both `ContainerStatuses` and `InitContainerStatuses` are checked. This is necessary because native sidecars (init containers with `restartPolicy: Always`, such as multipooler) report their status under `InitContainerStatuses`, not `ContainerStatuses`.
+**Note:** Both `ContainerStatuses` and `InitContainerStatuses` are checked. This is necessary because native sidecars (init containers with `restartPolicy: Always`, such as pgctld) report their status under `InitContainerStatuses`, not `ContainerStatuses`.
 
 ### `AnyCrashLooping(pods)`
 

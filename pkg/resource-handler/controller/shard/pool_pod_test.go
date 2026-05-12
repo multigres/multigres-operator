@@ -151,26 +151,26 @@ func TestBuildPoolPod_Containers(t *testing.T) {
 
 	if len(pod.Spec.InitContainers) != 1 {
 		t.Fatalf(
-			"expected 1 init container (multipooler sidecar), got %d",
+			"expected 1 init container (pgctld sidecar), got %d",
 			len(pod.Spec.InitContainers),
 		)
 	}
-	if pod.Spec.InitContainers[0].Name != "multipooler" {
+	if pod.Spec.InitContainers[0].Name != "postgres" {
 		t.Errorf(
 			"init container name = %q, want %q",
 			pod.Spec.InitContainers[0].Name,
-			"multipooler",
+			"postgres",
 		)
 	}
 
 	if len(pod.Spec.Containers) != 2 {
 		t.Fatalf(
-			"expected 2 containers (postgres + postgres-exporter), got %d",
+			"expected 2 containers (multipooler + postgres-exporter), got %d",
 			len(pod.Spec.Containers),
 		)
 	}
-	if pod.Spec.Containers[0].Name != "postgres" {
-		t.Errorf("container name = %q, want %q", pod.Spec.Containers[0].Name, "postgres")
+	if pod.Spec.Containers[0].Name != "multipooler" {
+		t.Errorf("container name = %q, want %q", pod.Spec.Containers[0].Name, "multipooler")
 	}
 	if pod.Spec.Containers[1].Name != "postgres-exporter" {
 		t.Errorf(

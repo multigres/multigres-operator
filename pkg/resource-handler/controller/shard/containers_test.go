@@ -15,7 +15,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
-func TestBuildMultiPoolerSidecar(t *testing.T) {
+func TestBuildMultiPoolerContainer(t *testing.T) {
 	tests := map[string]struct {
 		shard     *multigresv1alpha1.Shard
 		poolSpec  multigresv1alpha1.PoolSpec
@@ -72,9 +72,8 @@ func TestBuildMultiPoolerSidecar(t *testing.T) {
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
 				},
-				Ports:         buildMultiPoolerContainerPorts(),
-				Resources:     corev1.ResourceRequirements{},
-				RestartPolicy: &sidecarRestartPolicy,
+				Ports:     buildMultiPoolerContainerPorts(),
+				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
 				},
@@ -179,9 +178,8 @@ func TestBuildMultiPoolerSidecar(t *testing.T) {
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
 				},
-				Ports:         buildMultiPoolerContainerPorts(),
-				Resources:     corev1.ResourceRequirements{},
-				RestartPolicy: &sidecarRestartPolicy,
+				Ports:     buildMultiPoolerContainerPorts(),
+				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
 				},
@@ -306,7 +304,6 @@ func TestBuildMultiPoolerSidecar(t *testing.T) {
 						corev1.ResourceMemory: resource.MustParse("512Mi"),
 					},
 				},
-				RestartPolicy: &sidecarRestartPolicy,
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
 				},
@@ -363,7 +360,7 @@ func TestBuildMultiPoolerSidecar(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := buildMultiPoolerSidecar(
+			got := buildMultiPoolerContainer(
 				tc.shard,
 				tc.poolSpec,
 				"primary",
@@ -372,7 +369,7 @@ func TestBuildMultiPoolerSidecar(t *testing.T) {
 			)
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildMultiPoolerSidecar() mismatch (-want +got):\n%s", diff)
+				t.Errorf("buildMultiPoolerContainer() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -453,12 +450,12 @@ func TestPoolContainers_CustomPostgresSuperuser(t *testing.T) {
 	}
 
 	t.Run("pgctld", func(t *testing.T) {
-		c := buildPgctldContainer(shard, pool)
+		c := buildPgctldSidecar(shard, pool)
 		assertEnvVarValue(t, c.Env, "POSTGRES_USER", customSuperuser)
 	})
 
 	t.Run("multipooler", func(t *testing.T) {
-		c := buildMultiPoolerSidecar(shard, pool, "primary", "zone1", "p-test-id")
+		c := buildMultiPoolerContainer(shard, pool, "primary", "zone1", "p-test-id")
 		assertEnvVarValue(t, c.Env, "POSTGRES_USER", customSuperuser)
 	})
 
@@ -585,10 +582,10 @@ func otelShard() *multigresv1alpha1.Shard {
 	}
 }
 
-func TestBuildPgctldContainer(t *testing.T) {
+func TestBuildPgctldSidecar(t *testing.T) {
 	t.Run("default image", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		if c.Image != multigresv1alpha1.DefaultPostgresImage {
 			t.Errorf("Image = %q, want %q", c.Image, multigresv1alpha1.DefaultPostgresImage)
 		}
@@ -613,15 +610,15 @@ func TestBuildPgctldContainer(t *testing.T) {
 				Images: multigresv1alpha1.ShardImages{Postgres: "custom/pgctld:v1"},
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		if c.Image != "custom/pgctld:v1" {
 			t.Errorf("Image = %q, want %q", c.Image, "custom/pgctld:v1")
 		}
 	})
 
 	t.Run("with observability", func(t *testing.T) {
-		c := buildPgctldContainer(otelShard(), multigresv1alpha1.PoolSpec{})
-		assertContainsOTELEnvVar(t, c.Env, "buildPgctldContainer")
+		c := buildPgctldSidecar(otelShard(), multigresv1alpha1.PoolSpec{})
+		assertContainsOTELEnvVar(t, c.Env, "buildPgctldSidecar")
 		assertEnvVarValue(
 			t,
 			c.Env,
@@ -644,7 +641,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				},
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsFlag(t, c.Args, "--pgbackrest-cert-dir="+PgBackRestCertMountPath)
 		assertContainsFlag(t, c.Args, "--pgbackrest-port=8432")
 		assertNotContainsFlag(t, c.Args, "--backup-type")
@@ -663,7 +660,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				},
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsFlag(t, c.Args, "--pgbackrest-cert-dir="+PgBackRestCertMountPath)
 		assertContainsFlag(t, c.Args, "--pgbackrest-port=8432")
 		assertNotContainsFlag(t, c.Args, "--backup-type")
@@ -675,7 +672,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-dir")
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-port")
 		assertNotContainsFlag(t, c.Args, "--backup-type")
@@ -694,7 +691,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				},
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsEnvVar(t, c.Env, "AWS_REGION")
 		assertContainsEnvVar(t, c.Env, "AWS_ACCESS_KEY_ID")
 		assertContainsEnvVar(t, c.Env, "AWS_SECRET_ACCESS_KEY")
@@ -708,7 +705,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				},
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertNotContainsEnvVar(t, c.Env, "AWS_REGION")
 		assertNotContainsEnvVar(t, c.Env, "AWS_ACCESS_KEY_ID")
 	})
@@ -719,7 +716,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				InitdbArgs: "--locale-provider=icu --icu-locale=en_US.UTF-8",
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_ARGS")
 		for _, e := range c.Env {
 			if e.Name == "POSTGRES_INITDB_ARGS" {
@@ -736,7 +733,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INITDB_ARGS")
 	})
 
@@ -747,7 +744,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				Key:  "custom.conf",
 			},
 		}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
 		for _, e := range c.Env {
 			if e.Name == "POSTGRES_INITDB_EXTRA_CONF" {
@@ -764,7 +761,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 
 	t.Run("no POSTGRES_INITDB_EXTRA_CONF env when postgresConfigRef nil", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
 	})
 
@@ -775,7 +772,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 				Key:  "custom.conf",
 			},
 		}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsVolumeMount(t, c.VolumeMounts, PostgresConfigVolumeName)
 		for _, m := range c.VolumeMounts {
 			if m.Name == PostgresConfigVolumeName {
@@ -795,7 +792,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 
 	t.Run("no postgres config volume mount when postgresConfigRef nil", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		for _, m := range c.VolumeMounts {
 			if m.Name == PostgresConfigVolumeName {
 				t.Error(
@@ -948,15 +945,15 @@ func assertContainsFlag(t *testing.T, args []string, want string) {
 	t.Errorf("args %v does not contain flag %q", args, want)
 }
 
-func TestBuildMultiPoolerSidecar_WithObservability(t *testing.T) {
-	c := buildMultiPoolerSidecar(
+func TestBuildMultiPoolerContainer_WithObservability(t *testing.T) {
+	c := buildMultiPoolerContainer(
 		otelShard(),
 		multigresv1alpha1.PoolSpec{},
 		"primary",
 		"zone1",
 		"p-otel1234",
 	)
-	assertContainsOTELEnvVar(t, c.Env, "buildMultiPoolerSidecar")
+	assertContainsOTELEnvVar(t, c.Env, "buildMultiPoolerContainer")
 	assertEnvVarValue(
 		t,
 		c.Env,
@@ -1232,7 +1229,7 @@ func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
 				},
 			},
 		}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertContainsFlag(t, c.Args, "--pgbackrest-cert-dir=/certs/pgbackrest")
 		assertContainsFlag(t, c.Args, "--pgbackrest-port=8432")
 		assertContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
@@ -1247,7 +1244,7 @@ func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
 
 	t.Run("no cert args when no backup", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-dir")
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-port")
 		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
@@ -1276,7 +1273,7 @@ func TestMultiPoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 			Type: multigresv1alpha1.BackupTypeS3,
 			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
 		}
-		c := buildMultiPoolerSidecar(
+		c := buildMultiPoolerContainer(
 			shard,
 			multigresv1alpha1.PoolSpec{},
 			"primary",
@@ -1291,7 +1288,7 @@ func TestMultiPoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 
 	t.Run("no cert args when no backup", func(t *testing.T) {
 		shard := baseShard.DeepCopy()
-		c := buildMultiPoolerSidecar(
+		c := buildMultiPoolerContainer(
 			shard,
 			multigresv1alpha1.PoolSpec{},
 			"primary",
