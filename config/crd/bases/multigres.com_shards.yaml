@@ -2681,8 +2681,10 @@ spec:
                   rule: self.all(key, size(key) < 63)
               postgresConfigRef:
                 description: |-
-                  PostgresConfigRef references a ConfigMap containing custom postgresql.conf overrides.
-                  When set, the operator mounts it and passes --postgres-config-template to pgctld.
+                  PostgresConfigRef references a ConfigMap containing extra postgresql.conf
+                  lines appended to pgctld's auto-tuned defaults. The operator mounts it and
+                  sets POSTGRES_INITDB_EXTRA_CONF on pgctld; PostgreSQL's last-write-wins
+                  rule lets you override specific params without replacing the whole config.
                 properties:
                   key:
                     description: Key is the key within the ConfigMap's data that contains

@@ -6,9 +6,9 @@ metadata:
 data:
   postgresql.conf: |
     # Custom PostgreSQL configuration for exerciser testing.
-    # pgctld renders this as a Go template — use placeholders like
-    # the upstream template.cnf (e.g. shared_buffers = {{.SharedBuffers}}).
-    # Plain values without template directives are passed through as-is.
+    # These lines are appended to pgctld's auto-tuned postgresql.conf via
+    # POSTGRES_INITDB_EXTRA_CONF; PostgreSQL's last-write-wins rule lets each
+    # assignment below override the matching auto-tuned value.
 
     # Override shared_buffers from the default auto-tuned value
     shared_buffers = '256MB'

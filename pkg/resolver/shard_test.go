@@ -822,7 +822,13 @@ func TestMergeShardConfig(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			orch, pools, _, _, _, _ := mergeShardConfig(tc.tpl, tc.overrides, tc.inline, nil, nil)
+			orch, pools, _, _, _, _ := mergeShardConfig(
+				tc.tpl,
+				tc.overrides,
+				tc.inline,
+				nil,
+				nil,
+			)
 
 			if diff := cmp.Diff(
 				tc.wantOrch,
@@ -1142,13 +1148,17 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 			},
 		}
 
-		_, _, _, backupCfg, _, _, err := r.ResolveShard(t.Context(), &multigresv1alpha1.ShardConfig{
-			Spec: &multigresv1alpha1.ShardInlineSpec{
-				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
-					"default": {Type: "readWrite"},
+		_, _, _, backupCfg, _, _, err := r.ResolveShard(
+			t.Context(),
+			&multigresv1alpha1.ShardConfig{
+				Spec: &multigresv1alpha1.ShardInlineSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"default": {Type: "readWrite"},
+					},
 				},
 			},
-		}, ResolveShardOptions{InheritedBackup: inherited})
+			ResolveShardOptions{InheritedBackup: inherited},
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1175,19 +1185,23 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 			},
 		}
 
-		_, _, _, backupCfg, _, _, err := r.ResolveShard(t.Context(), &multigresv1alpha1.ShardConfig{
-			Spec: &multigresv1alpha1.ShardInlineSpec{
-				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
-					"default": {Type: "readWrite"},
+		_, _, _, backupCfg, _, _, err := r.ResolveShard(
+			t.Context(),
+			&multigresv1alpha1.ShardConfig{
+				Spec: &multigresv1alpha1.ShardInlineSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"default": {Type: "readWrite"},
+					},
+				},
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+						Path: "/shard-override",
+					},
 				},
 			},
-			Backup: &multigresv1alpha1.BackupConfig{
-				Type: multigresv1alpha1.BackupTypeFilesystem,
-				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
-					Path: "/shard-override",
-				},
-			},
-		}, ResolveShardOptions{InheritedBackup: inherited})
+			ResolveShardOptions{InheritedBackup: inherited},
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1201,13 +1215,17 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := NewResolver(c, "default")
 
-		_, _, _, backupCfg, _, _, err := r.ResolveShard(t.Context(), &multigresv1alpha1.ShardConfig{
-			Spec: &multigresv1alpha1.ShardInlineSpec{
-				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
-					"default": {Type: "readWrite"},
+		_, _, _, backupCfg, _, _, err := r.ResolveShard(
+			t.Context(),
+			&multigresv1alpha1.ShardConfig{
+				Spec: &multigresv1alpha1.ShardInlineSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"default": {Type: "readWrite"},
+					},
 				},
 			},
-		}, ResolveShardOptions{})
+			ResolveShardOptions{},
+		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

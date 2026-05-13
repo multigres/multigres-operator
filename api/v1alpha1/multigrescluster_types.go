@@ -385,9 +385,10 @@ type ShardOverrides struct {
 	// +optional
 	InitdbArgs InitdbArgs `json:"initdbArgs,omitempty"`
 
-	// PostgresConfigRef references a ConfigMap containing custom postgresql.conf overrides.
-	// The ConfigMap must exist in the same namespace. When set, the operator mounts it
-	// and passes --postgres-config-template to pgctld.
+	// PostgresConfigRef references a ConfigMap containing extra postgresql.conf
+	// lines appended to pgctld's auto-tuned defaults. The ConfigMap must exist in
+	// the same namespace. When set, the operator mounts it and sets
+	// POSTGRES_INITDB_EXTRA_CONF on pgctld.
 	// +optional
 	PostgresConfigRef *PostgresConfigRef `json:"postgresConfigRef,omitempty"`
 
@@ -412,9 +413,10 @@ type ShardInlineSpec struct {
 	// +optional
 	InitdbArgs InitdbArgs `json:"initdbArgs,omitempty"`
 
-	// PostgresConfigRef references a ConfigMap containing custom postgresql.conf overrides.
-	// The ConfigMap must exist in the same namespace. When set, the operator mounts it
-	// and passes --postgres-config-template to pgctld.
+	// PostgresConfigRef references a ConfigMap containing extra postgresql.conf
+	// lines appended to pgctld's auto-tuned defaults. The ConfigMap must exist in
+	// the same namespace. When set, the operator mounts it and sets
+	// POSTGRES_INITDB_EXTRA_CONF on pgctld.
 	// +optional
 	PostgresConfigRef *PostgresConfigRef `json:"postgresConfigRef,omitempty"`
 

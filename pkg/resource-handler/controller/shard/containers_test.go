@@ -740,7 +740,7 @@ func TestBuildPgctldContainer(t *testing.T) {
 		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INITDB_ARGS")
 	})
 
-	t.Run("has postgres-config-template arg when postgresConfigRef set", func(t *testing.T) {
+	t.Run("has POSTGRES_INITDB_EXTRA_CONF env when postgresConfigRef set", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{
 			PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{
 				Name: "my-pg-config",
@@ -748,17 +748,24 @@ func TestBuildPgctldContainer(t *testing.T) {
 			},
 		}}
 		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsFlag(t, c.Args, "--postgres-config-template="+PostgresConfigFilePath)
-	})
-
-	t.Run("no postgres-config-template arg when postgresConfigRef nil", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
-		for _, arg := range c.Args {
-			if arg == "--postgres-config-template="+PostgresConfigFilePath {
-				t.Error("should not have --postgres-config-template when postgresConfigRef is nil")
+		assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
+		for _, e := range c.Env {
+			if e.Name == "POSTGRES_INITDB_EXTRA_CONF" {
+				if e.Value != PostgresConfigFilePath {
+					t.Errorf(
+						"POSTGRES_INITDB_EXTRA_CONF = %q, want %q",
+						e.Value,
+						PostgresConfigFilePath,
+					)
+				}
 			}
 		}
+	})
+
+	t.Run("no POSTGRES_INITDB_EXTRA_CONF env when postgresConfigRef nil", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
+		c := buildPgctldContainer(shard, multigresv1alpha1.PoolSpec{})
+		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
 	})
 
 	t.Run("has postgres config volume mount when postgresConfigRef set", func(t *testing.T) {
@@ -1365,9 +1372,9 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 							v.ConfigMap.Name, "my-pg-config")
 					}
 					if len(v.ConfigMap.Items) != 1 || v.ConfigMap.Items[0].Key != "custom.conf" ||
-						v.ConfigMap.Items[0].Path != "postgresql.conf.tmpl" {
+						v.ConfigMap.Items[0].Path != "postgresql.conf" {
 						t.Errorf(
-							"postgres config ConfigMap items = %+v, want [{Key:custom.conf Path:postgresql.conf.tmpl}]",
+							"postgres config ConfigMap items = %+v, want [{Key:custom.conf Path:postgresql.conf}]",
 							v.ConfigMap.Items,
 						)
 					}
@@ -1376,7 +1383,7 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Error("expected postgres-config-template volume in pool volumes")
+			t.Error("expected postgres-config volume in pool volumes")
 		}
 	})
 

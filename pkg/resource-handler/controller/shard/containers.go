@@ -52,14 +52,15 @@ const (
 	// PgHbaTemplatePath is the full path to the pg_hba template file
 	PgHbaTemplatePath = PgHbaMountPath + "/pg_hba_template.conf"
 
-	// PostgresConfigVolumeName is the name of the volume for the postgresql.conf template
-	PostgresConfigVolumeName = "postgres-config-template"
+	// PostgresConfigVolumeName is the name of the volume for the extra postgresql.conf
+	PostgresConfigVolumeName = "postgres-config"
 
-	// PostgresConfigMountPath is where the postgresql.conf template is mounted
-	PostgresConfigMountPath = "/etc/pgctld/postgres"
+	// PostgresConfigMountPath is where the extra postgresql.conf is mounted
+	PostgresConfigMountPath = "/etc/pgctld/postgres-config"
 
-	// PostgresConfigFilePath is the full path to the postgresql.conf template file
-	PostgresConfigFilePath = PostgresConfigMountPath + "/postgresql.conf.tmpl"
+	// PostgresConfigFilePath is the full path to the extra postgresql.conf file
+	// passed to pgctld via POSTGRES_INITDB_EXTRA_CONF.
+	PostgresConfigFilePath = PostgresConfigMountPath + "/postgresql.conf"
 
 	// PostgresPasswordSecretKey is the key within the Secret that holds the password
 	PostgresPasswordSecretKey = "password"
@@ -144,10 +145,6 @@ func buildPgctldContainer(
 		"--http-port=15400",
 	}
 
-	if shard.Spec.PostgresConfigRef != nil {
-		args = append(args, "--postgres-config-template="+PostgresConfigFilePath)
-	}
-
 	if shard.Spec.Backup != nil {
 		// pgBackRest TLS cert dir and port (enables the pgBackRest TLS server).
 		// Backup type/path/S3 config is resolved by multipooler from the etcd
@@ -170,6 +167,12 @@ func buildPgctldContainer(
 		env = append(env, corev1.EnvVar{
 			Name:  "POSTGRES_INITDB_ARGS",
 			Value: string(shard.Spec.InitdbArgs),
+		})
+	}
+	if shard.Spec.PostgresConfigRef != nil {
+		env = append(env, corev1.EnvVar{
+			Name:  "POSTGRES_INITDB_EXTRA_CONF",
+			Value: PostgresConfigFilePath,
 		})
 	}
 	env = append(env, s3EnvVars(shard.Spec.Backup)...)
@@ -519,7 +522,8 @@ func buildRuntimeOTELEnvVars(
 // buildPoolVolumes assembles the complete list of volumes for a pool pod.
 // Conditionally includes the pgBackRest cert volume when backup is configured.
 // buildPostgresConfigVolume creates a volume that projects a specific key from
-// the user-provided ConfigMap to the expected postgresql.conf.tmpl filename.
+// the user-provided ConfigMap to the expected postgresql.conf filename so
+// pgctld picks it up via POSTGRES_INITDB_EXTRA_CONF.
 func buildPostgresConfigVolume(ref *multigresv1alpha1.PostgresConfigRef) corev1.Volume {
 	return corev1.Volume{
 		Name: PostgresConfigVolumeName,
@@ -529,7 +533,7 @@ func buildPostgresConfigVolume(ref *multigresv1alpha1.PostgresConfigRef) corev1.
 					Name: ref.Name,
 				},
 				Items: []corev1.KeyToPath{
-					{Key: ref.Key, Path: "postgresql.conf.tmpl"},
+					{Key: ref.Key, Path: "postgresql.conf"},
 				},
 			},
 		},

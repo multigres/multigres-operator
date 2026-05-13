@@ -1,10 +1,10 @@
 # PostgreSQL Configuration
 
-The operator supports custom PostgreSQL runtime configuration via the `postgresConfigRef` field. This lets you provide a ConfigMap containing postgresql.conf overrides without building custom container images.
+The operator supports custom PostgreSQL runtime configuration via the `postgresConfigRef` field. This lets you provide a ConfigMap containing extra postgresql.conf lines that are appended to pgctld's auto-tuned defaults — PostgreSQL's last-write-wins rule then lets you override specific params without replacing the whole config.
 
 ## Configuration
 
-Create a ConfigMap with your postgresql.conf content, then reference it from the shard spec:
+Create a ConfigMap with your postgresql.conf overrides, then reference it from the shard spec:
 
 ```yaml
 # User creates their own ConfigMap with postgresql.conf overrides
@@ -68,10 +68,11 @@ spec:
 When `postgresConfigRef` is set:
 
 1. The operator mounts the referenced ConfigMap into every pool pod as a read-only volume
-2. The specified key is projected to the expected `postgresql.conf.tmpl` filename
-3. pgctld reads it via the `--postgres-config-template` flag and renders the final `postgresql.conf`
+2. The specified key is projected to the `postgresql.conf` filename inside the mount
+3. pgctld reads its path from the `POSTGRES_INITDB_EXTRA_CONF` env var and appends the content to its auto-tuned `postgresql.conf`
+4. PostgreSQL applies the merged config using last-write-wins, so your overrides win for any param you set
 
-When `postgresConfigRef` is not set, pgctld uses its built-in template with auto-tuned values based on available resources. No flag is passed and no extra volume is mounted.
+When `postgresConfigRef` is not set, pgctld uses only its auto-tuned values based on available resources. No env var is set and no extra volume is mounted.
 
 ## Override Chain
 
@@ -116,9 +117,7 @@ Different shards can have different configurations since they are independent Po
 
 ## ConfigMap Contents
 
-The ConfigMap value is processed by pgctld as a Go template via `text/template`. For most use cases, plain postgresql.conf settings (without template directives) work because pgctld passes them through as-is. You can also use pgctld's template variables (e.g., `{{.SharedBuffers}}`) if you want pgctld to fill in auto-tuned values for specific parameters.
-
-> **Warning:** Go template delimiters `{{...}}` are parsed everywhere in the file, including inside comments. Avoid writing `{{...}}` in comments or documentation lines within the ConfigMap -- use plain text to describe template usage instead. Invalid template syntax causes pgctld to silently fall back to initdb defaults.
+The ConfigMap value is plain `postgresql.conf` syntax. pgctld appends it verbatim to its auto-tuned config, so you can include just the params you want to override — there is no template processing and no need to restate auto-tuned defaults.
 
 ### Common Parameters
 
@@ -159,4 +158,4 @@ Both are shard-level settings with the same override chain. Use `initdbArgs` for
 
 ## No Defaulting
 
-When `postgresConfigRef` is nil (the default), pgctld uses its built-in template with auto-tuned values. There is no webhook materialization -- the field stays nil unless you set it. This is intentional: the auto-tuned defaults are appropriate for most workloads.
+When `postgresConfigRef` is nil (the default), pgctld uses only its auto-tuned values. There is no webhook materialization -- the field stays nil unless you set it. This is intentional: the auto-tuned defaults are appropriate for most workloads.

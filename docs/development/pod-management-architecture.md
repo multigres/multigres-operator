@@ -429,7 +429,7 @@ All pod management code lives in `pkg/resource-handler/controller/shard/`:
 | `drain_helpers.go` | Drain utilities: `resolvePodRole` (reads `PodRoles` from shard status), `initiateDrain` (sets drain annotation). |
 | `labels.go` | Label builder: `buildPoolLabelsWithCell` — creates the standard label set for pool resources. |
 | `status.go` | Status aggregation: `updateStatus`, `updatePoolsStatus` (counts pods directly), `updateMultiOrchStatus`, `setConditions`. |
-| `containers.go` | Container builders for pgctld and multipooler. Injects `POSTGRES_INITDB_ARGS` env var on pgctld when `shard.Spec.InitdbArgs` is set. Mounts the postgresql.conf ConfigMap and passes `--postgres-config-template` to pgctld. |
+| `containers.go` | Container builders for pgctld and multipooler. Injects `POSTGRES_INITDB_ARGS` env var on pgctld when `shard.Spec.InitdbArgs` is set. Mounts the postgresql.conf ConfigMap and sets `POSTGRES_INITDB_EXTRA_CONF` on pgctld so the user-supplied lines are appended to pgctld's auto-tuned config. |
 | `configmap.go` | ConfigMap builders: `BuildPgHbaConfigMap` (pg_hba template), `BuildPostgresConfigConfigMap` (postgresql.conf template with user overrides from `shard.Spec.PostgresConfig` appended). |
 | `multiorch.go` | MultiOrch deployment and service builders. |
 | `doc.go` | Package documentation. |

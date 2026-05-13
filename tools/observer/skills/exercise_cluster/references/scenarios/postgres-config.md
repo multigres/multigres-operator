@@ -7,25 +7,26 @@ Scenarios for testing `postgresConfigRef` — ConfigMap-based postgresql.conf ov
 - The hash is stored as pod annotation `multigres.com/postgres-config-hash`
 - The hash is included in the spec-hash computation, so content changes trigger rolling updates
 - The shard controller watches all ConfigMaps and re-enqueues shards that reference a changed ConfigMap
-- pgctld receives the config via `--postgres-config-template=/etc/pgctld/postgres/postgresql.conf.tmpl`
+- pgctld receives the config path via env var `POSTGRES_INITDB_EXTRA_CONF=/etc/pgctld/postgres-config/postgresql.conf`. Its contents are appended to pgctld's auto-tuned `postgresql.conf`; PostgreSQL's last-write-wins rule lets the appended lines override matching params.
 
 ---
 
 ### verify-postgres-config-ref
 **Tier:** quick | **Fast-path:** yes
-**Tests:** Baseline verification that postgresConfigRef is correctly wired — volume mounted, pgctld arg present, hash annotation set
+**Tests:** Baseline verification that postgresConfigRef is correctly wired — volume mounted, pgctld env var present, hash annotation set
 **Applicable fixtures:** `postgres-config-ref`
 
 **How to execute:**
 1. Deploy the `postgres-config-ref` fixture (prerequisites first).
 2. Wait for CRD phase `Healthy` and all pods Running+Ready.
-3. Verify pgctld has the `--postgres-config-template` arg:
+3. Verify pgctld has the `POSTGRES_INITDB_EXTRA_CONF` env var:
    ```bash
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.containers[?(@.name=="postgres")].args[*]}{@}{" "}{end}{"\n"}{end}' | grep postgres-config-template
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.containers[?(@.name=="postgres")].env[?(@.name=="POSTGRES_INITDB_EXTRA_CONF")]}{.value}{end}{"\n"}{end}'
+   # Expected: /etc/pgctld/postgres-config/postgresql.conf for all pods
    ```
-4. Verify the `postgres-config-template` volume is mounted from the correct ConfigMap:
+4. Verify the `postgres-config` volume is mounted from the correct ConfigMap:
    ```bash
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.volumes[?(@.name=="postgres-config-template")]}{.configMap.name}{end}{"\n"}{end}'
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.volumes[?(@.name=="postgres-config")]}{.configMap.name}{end}{"\n"}{end}'
    # Expected: custom-pg-config for all pods
    ```
 5. Verify the `multigres.com/postgres-config-hash` annotation is present and non-empty:
@@ -35,8 +36,8 @@ Scenarios for testing `postgresConfigRef` — ConfigMap-based postgresql.conf ov
 6. Verify all pods have the same hash value (they all reference the same ConfigMap key).
 
 **Success criteria:**
-- All pool pods have `--postgres-config-template=/etc/pgctld/postgres/postgresql.conf.tmpl` in pgctld args
-- All pool pods have `postgres-config-template` volume sourced from `custom-pg-config` ConfigMap
+- All pool pods have `POSTGRES_INITDB_EXTRA_CONF=/etc/pgctld/postgres-config/postgresql.conf` in pgctld env
+- All pool pods have `postgres-config` volume sourced from `custom-pg-config` ConfigMap
 - All pool pods have `multigres.com/postgres-config-hash` annotation with a 64-char hex string
 - All pods share the same hash value
 - Observer reports no errors
@@ -76,10 +77,10 @@ Scenarios for testing `postgresConfigRef` — ConfigMap-based postgresql.conf ov
    KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- psql -h 127.0.0.1 -p 5432 -U postgres -tAc "SHOW shared_buffers"
    # Expected: 512MB (NOT the original 256MB)
    ```
-   Also verify the on-disk `postgresql.conf` was re-rendered from the updated template:
+   Also verify the on-disk `postgresql.conf` has the updated overrides appended:
    ```bash
    KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- grep shared_buffers /var/lib/pooler/pg_data/postgresql.conf
-   # Expected: shared_buffers = '512MB'
+   # Expected: a shared_buffers line with the updated value (last-write-wins)
    ```
 8. Run full Stability Verification Protocol.
 
@@ -89,13 +90,11 @@ Scenarios for testing `postgresConfigRef` — ConfigMap-based postgresql.conf ov
 - All pool pods are replaced (new names or new creation timestamps)
 - Rolling update goes through drain state machine (one pod at a time, no concurrent drains)
 - New pods have the updated volume content (ConfigMap propagation)
-- pgctld still has `--postgres-config-template` arg
-- **`SHOW shared_buffers` returns `512MB`** (verifies pgctld re-rendered the template, not just that pods restarted)
-- **On-disk `postgresql.conf` contains the updated values** (not stale values from the previous template)
+- pgctld still has `POSTGRES_INITDB_EXTRA_CONF` env var
+- **`SHOW shared_buffers` returns `512MB`** (verifies pgctld re-applied the appended config, not just that pods restarted)
+- **On-disk `postgresql.conf` contains the updated overrides appended after auto-tuned defaults**
 - Observer reports no persistent errors after stabilization
 - Replication re-establishes after rolling update
-
-> **Known upstream bug:** As of multigres sha-0faa227, pgctld's `LoadOrCreatePostgresServerConfig()` skips template re-rendering when `postgresql.conf` already exists on the PVC. This means steps 7's checks will **fail** — `SHOW shared_buffers` will still return `256MB`. See the upstream issue. If this is still failing, note it as a known upstream issue and proceed.
 
 **What to observe:**
 - Drain annotations should progress: `requested` -> `draining` -> `acknowledged` -> `ready-for-deletion`
@@ -113,25 +112,25 @@ Then wait for another rolling update to complete and verify stability.
 
 ### remove-postgres-config-ref
 **Tier:** standard | **Fast-path:** no
-**Tests:** Removing `postgresConfigRef` from the CR triggers a rolling update that removes the volume mount, pgctld arg, and hash annotation
+**Tests:** Removing `postgresConfigRef` from the CR triggers a rolling update that removes the volume mount, pgctld env var, and hash annotation
 **Applicable fixtures:** `postgres-config-ref`
 
 **How to execute:**
-1. Record baseline pod names and confirm `--postgres-config-template` arg is present.
+1. Record baseline pod names and confirm `POSTGRES_INITDB_EXTRA_CONF` env var is present.
 2. **Mutation**: Remove `postgresConfigRef` from the shard spec using a JSON patch:
    ```bash
    KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl patch multigrescluster pg-config-ref -n default --type json -p '[{"op":"remove","path":"/spec/databases/0/tablegroups/0/shards/0/spec/postgresConfigRef"}]'
    ```
 3. Wait for rolling update to complete (all pods replaced).
-4. Verify the `--postgres-config-template` arg is no longer present:
+4. Verify the `POSTGRES_INITDB_EXTRA_CONF` env var is no longer present:
    ```bash
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.containers[?(@.name=="postgres")].args[*]}{@}{" "}{end}{"\n"}{end}'
-   # Should NOT contain --postgres-config-template
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: {range .spec.containers[?(@.name=="postgres")].env[*]}{.name}{","}{end}{"\n"}{end}'
+   # Should NOT contain POSTGRES_INITDB_EXTRA_CONF
    ```
-5. Verify the `postgres-config-template` volume is no longer present:
+5. Verify the `postgres-config` volume is no longer present:
    ```bash
    KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{range .items[*]}{.metadata.name}: volumes={range .spec.volumes[*]}{.name}{","}{end}{"\n"}{end}'
-   # Should NOT contain postgres-config-template
+   # Should NOT contain postgres-config
    ```
 6. Verify the `multigres.com/postgres-config-hash` annotation is absent:
    ```bash
@@ -142,10 +141,10 @@ Then wait for another rolling update to complete and verify stability.
 
 **Success criteria:**
 - Removing `postgresConfigRef` triggers rolling update
-- New pods do NOT have `--postgres-config-template` in pgctld args
-- New pods do NOT have `postgres-config-template` volume
+- New pods do NOT have `POSTGRES_INITDB_EXTRA_CONF` in pgctld env
+- New pods do NOT have `postgres-config` volume
 - New pods do NOT have `multigres.com/postgres-config-hash` annotation
-- pgctld uses its built-in template (default auto-tuned values)
+- pgctld uses only its auto-tuned values
 - Observer reports no persistent errors
 
 **Teardown:** Re-add the ref to restore the fixture to its original state. Use JSON patch (merge patch fails because it interprets the missing `pools` key as removal):
@@ -158,10 +157,8 @@ Wait for rolling update and verify stability.
 
 ### verify-postgres-config-settings
 **Tier:** quick | **Fast-path:** yes
-**Tests:** The custom PostgreSQL settings from the ConfigMap are applied in the running database. Verifies the full end-to-end path: operator mounts ConfigMap → pgctld renders template → PostgreSQL uses settings.
+**Tests:** The custom PostgreSQL settings from the ConfigMap are applied in the running database. Verifies the full end-to-end path: operator mounts ConfigMap → pgctld appends to auto-tuned config → PostgreSQL uses settings via last-write-wins.
 **Applicable fixtures:** `postgres-config-ref`
-
-**Important:** The ConfigMap content is processed by pgctld as a Go template via `text/template`. Any `{{...}}` directives in the content (including in comments) will be parsed and executed. If the template contains invalid Go template syntax or references non-existent fields, `GeneratePostgresServerConfig` will fail silently and PostgreSQL will start with `initdb` defaults instead. Avoid `{{...}}` in comments — describe template usage in plain text instead.
 
 **How to execute:**
 1. Deploy the `postgres-config-ref` fixture and wait for stability.
@@ -170,18 +167,16 @@ Wait for rolling update and verify stability.
    SECRET=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get secrets -n default -o name | grep postgres-password)
    PGPASS=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get $SECRET -n default -o jsonpath='{.data.password}' | base64 -d)
    ```
-3. Verify the mounted config template file matches the ConfigMap content:
+3. Verify the mounted extra-conf file matches the ConfigMap content:
    ```bash
    POD=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{.items[0].metadata.name}')
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- cat /etc/pgctld/postgres/postgresql.conf.tmpl
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- cat /etc/pgctld/postgres-config/postgresql.conf
    # Should match the ConfigMap content exactly
    ```
-4. Verify the on-disk `postgresql.conf` is the rendered template (not initdb defaults):
+4. Verify the on-disk `postgresql.conf` contains the user overrides appended after pgctld's auto-tuned defaults:
    ```bash
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- wc -l /var/lib/pooler/pg_data/postgresql.conf
-   # Should be ~13 lines (rendered template), NOT ~844 lines (initdb defaults)
    KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- grep -E "^(shared_buffers|work_mem|max_connections)" /var/lib/pooler/pg_data/postgresql.conf
-   # Should show the ConfigMap values, not initdb defaults
+   # Should include the ConfigMap-supplied values (possibly alongside earlier auto-tuned values — PostgreSQL takes the last assignment)
    ```
 5. Check PostgreSQL runtime settings (requires TCP + password):
    ```bash
@@ -194,11 +189,11 @@ Wait for rolling update and verify stability.
    ```
 
 **Success criteria:**
-- Mounted template file at `/etc/pgctld/postgres/postgresql.conf.tmpl` matches ConfigMap content
-- On-disk `postgresql.conf` is the rendered template (~13 lines), not initdb defaults (~844 lines)
-- `shared_buffers` = `256MB` (not the initdb default `128MB`)
-- `work_mem` = `16MB` (not the initdb default `4MB`)
-- `max_connections` = `50` (not the initdb default `100`)
+- Mounted file at `/etc/pgctld/postgres-config/postgresql.conf` matches ConfigMap content
+- On-disk `postgresql.conf` contains the user overrides appended after auto-tuned defaults
+- `shared_buffers` = `256MB` (override wins over auto-tuned value)
+- `work_mem` = `16MB` (override wins over auto-tuned value)
+- `max_connections` = `50` (override wins over auto-tuned value)
 - Settings are consistent across all pool pods
 
 **Teardown:** Not needed.

@@ -263,7 +263,8 @@ type CellName string
 // +kubebuilder:validation:MaxLength=512
 type InitdbArgs string
 
-// PostgresConfigRef references a ConfigMap containing custom postgresql.conf content.
+// PostgresConfigRef references a ConfigMap containing extra postgresql.conf lines
+// appended to pgctld's auto-tuned defaults via POSTGRES_INITDB_EXTRA_CONF.
 // The referenced ConfigMap must exist in the same namespace as the MultigresCluster.
 type PostgresConfigRef struct {
 	// Name is the name of the ConfigMap.

@@ -1537,7 +1537,7 @@ spec:
   * **2026-02-20:** Pool management migrated from StatefulSets to direct operator-managed Pods and PVCs. Added scale subresource to Shard CRD (`.spec.replicas` / `.status.readyReplicas`). Added `PodRoles`, `LastBackupTime`, `LastBackupType` to `ShardStatus`.
   * **2026-03-10:** Added `DurabilityPolicy` as a configurable string field at cluster level (`spec.durabilityPolicy`) and per-database override (`databases[].durabilityPolicy`). Propagated through TableGroup and Shard to the topology registration. Previously hardcoded to `"AT_LEAST_2"`. Also fixed `UpdateDatabaseFields()` to sync DurabilityPolicy on re-registration.
   * **2026-03-17:** Changed `WhenScaled` PVC deletion default from `Retain` to `Delete` — pgbackrest should be the source of truth for data recovery. Added DRAINED pod handling: operator keeps DRAINED pods alive for investigation and provisions stand-in replicas to maintain availability.
-  * **2026-03-20:** Added `PostgresConfigRef` type (ConfigMap reference) at the shard level for custom `postgresql.conf` parameters. Operator mounts the user-provided ConfigMap and passes `--postgres-config-template` to pgctld. See design rationale below.
+  * **2026-03-20:** Added `PostgresConfigRef` type (ConfigMap reference) at the shard level for custom `postgresql.conf` parameters. Operator mounts the user-provided ConfigMap and sets `POSTGRES_INITDB_EXTRA_CONF` on pgctld so the user-supplied lines are appended to pgctld's auto-tuned config. See design rationale below.
   * **2026-03-20:** Added `ExternalGatewayConfig` (`spec.externalGateway`) for external exposure of the global multigateway Service via `externalIPs` and user-provided annotations. Added `GatewayStatus` (`status.gateway.externalEndpoint`) and `GatewayExternalReady` condition. Added `InitdbArgs` field to `ShardTemplateSpec`, `ShardInlineSpec`, and `ShardOverrides` for passing extra arguments to `initdb` during PostgreSQL data directory initialization. Added `IPAddress` and `InitdbArgs` validated types to `common_types.go`.
   * **2026-03-20:** Added `ExternalAdminWebConfig` (`spec.externalAdminWeb`) for external exposure of the global multiadmin-web Service via `externalIPs` and user-provided annotations. Mirrors the `ExternalGatewayConfig` pattern. Added `AdminWebStatus` (`status.adminWeb.externalEndpoint`) and `AdminWebExternalReady` condition. Readiness is driven by the admin-web Deployment's `ReadyReplicas` (unlike the gateway which aggregates across Cell CRs).
 
@@ -1545,7 +1545,7 @@ spec:
 
 ### The Problem
 
-Users need to tune PostgreSQL runtime parameters (`shared_buffers`, `max_connections`, `work_mem`, etc.) for their workloads. Upstream pgctld supports `--postgres-config-template`, which accepts a file path to a Go template that replaces the built-in `postgresql.conf` template. The operator needs to expose this capability through the CRD.
+Users need to tune PostgreSQL runtime parameters (`shared_buffers`, `max_connections`, `work_mem`, etc.) for their workloads. Upstream pgctld honors the `POSTGRES_INITDB_EXTRA_CONF` env var, which points at a file whose contents are appended to pgctld's auto-tuned `postgresql.conf`. PostgreSQL's last-write-wins rule then lets the appended lines override matching params. The operator needs to expose this capability through the CRD.
 
 ### Approaches Considered
 
@@ -1611,10 +1611,10 @@ spec:
 **Chosen because:**
 - The operator does not need to carry a copy of upstream's default template -- eliminates drift risk entirely.
 - Works with any PostgreSQL parameter, including extension settings, without CRD changes.
-- Users have full control over the template content and can use Go template syntax if they want.
+- Users only need to know plain `postgresql.conf` syntax for the params they want to override; pgctld's auto-tuned defaults stay in effect for everything else thanks to PostgreSQL's last-write-wins behavior.
 - The ConfigMap is a standard Kubernetes resource that can be managed separately (GitOps, Helm, Kustomize).
 - Simple pointer override semantics through the override chain (last non-nil wins).
-- When not set, pgctld uses its built-in template -- zero operator involvement in the default path.
+- When not set, pgctld uses only its auto-tuned values -- zero operator involvement in the default path.
 
 #### Option D: Key-Value Map with Template Append (rejected)
 
@@ -1636,11 +1636,11 @@ spec:
 
 When `postgresConfigRef` is set on a shard:
 
-1. The operator mounts the referenced ConfigMap as a volume using the `Items` field to project the user's key to the expected `postgresql.conf.tmpl` filename.
-2. pgctld reads it via `--postgres-config-template=/etc/pgctld/postgres/postgresql.conf.tmpl`.
-3. pgctld renders the template and writes the final `postgresql.conf`.
+1. The operator mounts the referenced ConfigMap as a volume using the `Items` field to project the user's key to the `postgresql.conf` filename under `/etc/pgctld/postgres-config/`.
+2. The operator sets `POSTGRES_INITDB_EXTRA_CONF=/etc/pgctld/postgres-config/postgresql.conf` on the pgctld container.
+3. pgctld reads its auto-tuned defaults and appends the user-supplied lines, so PostgreSQL's last-write-wins rule lets the user's params override matching defaults.
 
-When `postgresConfigRef` is nil, no volume is mounted and no `--postgres-config-template` flag is passed. pgctld uses its built-in template with auto-tuned values.
+When `postgresConfigRef` is nil, no volume is mounted and no env var is set. pgctld uses only its auto-tuned values.
 
 ### Scope
 
@@ -1648,7 +1648,7 @@ When `postgresConfigRef` is nil, no volume is mounted and no `--postgres-config-
 
 ### Upstream Dependency
 
-No upstream change is required -- the `--postgres-config-template` flag already exists in pgctld. The operator no longer carries a copy of upstream's template, eliminating drift risk.
+No upstream change is required -- `POSTGRES_INITDB_EXTRA_CONF` is already honored by pgctld. The operator never carries a copy of upstream's template, eliminating drift risk.
 
 ## Drawbacks
 
