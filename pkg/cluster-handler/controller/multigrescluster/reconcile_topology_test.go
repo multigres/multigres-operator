@@ -34,8 +34,10 @@ func TestReconcileTopologySharedTopo(t *testing.T) {
 				Spec: &multigresv1alpha1.CellInlineSpec{
 					LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
 						External: &multigresv1alpha1.ExternalTopoServerSpec{
-							Endpoints: []multigresv1alpha1.EndpointUrl{"http://cell1-local-etcd:2379"},
-							RootPath:  "/multigres/clusters/cluster/cells/cell1",
+							Endpoints: []multigresv1alpha1.EndpointUrl{
+								"http://cell1-local-etcd:2379",
+							},
+							RootPath: "/multigres/clusters/cluster/cells/cell1",
 						},
 					},
 				},

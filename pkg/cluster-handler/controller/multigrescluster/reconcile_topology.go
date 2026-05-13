@@ -63,7 +63,8 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 	// Register all cells.
 	for _, cellCfg := range cluster.Spec.Cells {
 		cellCfgForResolution := cellCfg
-		if cellCfgForResolution.CellTemplate == "" && cluster.Spec.TemplateDefaults.CellTemplate != "" {
+		if cellCfgForResolution.CellTemplate == "" &&
+			cluster.Spec.TemplateDefaults.CellTemplate != "" {
 			cellCfgForResolution.CellTemplate = cluster.Spec.TemplateDefaults.CellTemplate
 		}
 		_, _, localTopoSpec, err := res.ResolveCell(ctx, &cellCfgForResolution)

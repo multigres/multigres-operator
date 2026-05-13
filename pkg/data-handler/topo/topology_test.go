@@ -407,11 +407,15 @@ func TestRegisterCellFromSpec(t *testing.T) {
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
 
-		if err := store.UpdateCellFields(ctx, "cell1", func(existing *clustermetadatapb.Cell) error {
-			existing.ServerAddresses = []string{"http://stale-cell1-local:2379"}
-			existing.Root = "/stale/cell1"
-			return nil
-		}); err != nil {
+		if err := store.UpdateCellFields(
+			ctx,
+			"cell1",
+			func(existing *clustermetadatapb.Cell) error {
+				existing.ServerAddresses = []string{"http://stale-cell1-local:2379"}
+				existing.Root = "/stale/cell1"
+				return nil
+			},
+		); err != nil {
 			t.Fatalf("seeding stale cell: %v", err)
 		}
 

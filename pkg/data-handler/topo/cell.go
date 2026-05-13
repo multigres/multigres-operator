@@ -24,7 +24,9 @@ func RegisterCell(
 
 	cellName := string(cell.Spec.Name)
 
-	cellMetadata := cellMetadataFromTopoRefs(cellName, cell.Spec.TopoServer, cell.Spec.GlobalTopoServer)
+	cellMetadata := cellMetadataFromTopoRefs(
+		cellName, cell.Spec.TopoServer, cell.Spec.GlobalTopoServer,
+	)
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
 	if err != nil {
