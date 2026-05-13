@@ -81,12 +81,12 @@ func TestFindPrimaryPooler(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
 			Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell2", Name: "primary-pod"},
 			Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -233,17 +233,17 @@ func TestPrunePoolers(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
 			Hostname: "active-pod", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
 			Hostname: "stale-pod", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "dead-pod"},
 			Hostname: "dead-pod", Type: clustermetadata.PoolerType_DRAINED,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -286,7 +286,7 @@ func TestPrunePoolers(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "pod-1"},
 			Hostname: "pod-1", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -349,13 +349,13 @@ func TestPrunePoolers(t *testing.T) {
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
 			Hostname: "active-pod.headless-svc.ns.svc.cluster.local",
 			Type:     clustermetadata.PoolerType_PRIMARY,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
 			Hostname: "stale-pod.headless-svc.ns.svc.cluster.local",
 			Type:     clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -412,8 +412,13 @@ func TestPrunePoolers(t *testing.T) {
 				p := &topoclient.MultiPoolerInfo{
 					MultiPooler: &clustermetadata.MultiPooler{
 						Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
-						Hostname: "stale-pod", Type: clustermetadata.PoolerType_REPLICA,
-						Database: "db", TableGroup: "tg", Shard: "0",
+						Hostname: "stale-pod",
+						Type:     clustermetadata.PoolerType_REPLICA,
+						ShardKey: &clustermetadata.ShardKey{
+							Database:   "db",
+							TableGroup: "tg",
+							Shard:      "0",
+						},
 					},
 				}
 				return []*topoclient.MultiPoolerInfo{p}, nil
@@ -448,8 +453,13 @@ func TestPrunePoolers(t *testing.T) {
 				p := &topoclient.MultiPoolerInfo{
 					MultiPooler: &clustermetadata.MultiPooler{
 						Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod-no-hostname"},
-						Hostname: "", Type: clustermetadata.PoolerType_REPLICA,
-						Database: "db", TableGroup: "tg", Shard: "0",
+						Hostname: "",
+						Type:     clustermetadata.PoolerType_REPLICA,
+						ShardKey: &clustermetadata.ShardKey{
+							Database:   "db",
+							TableGroup: "tg",
+							Shard:      "0",
+						},
 					},
 				}
 				return []*topoclient.MultiPoolerInfo{p}, nil
@@ -508,7 +518,7 @@ func TestForceUnregisterPod(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "other-pod"},
 			Hostname: "other-pod", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -540,7 +550,7 @@ func TestForceUnregisterPod(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "my-pod"},
 			Hostname: "my-pod", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -633,17 +643,17 @@ func TestGetPoolerStatus(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary"},
 			Hostname: "primary", Type: clustermetadata.PoolerType_PRIMARY,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica"},
 			Hostname: "replica", Type: clustermetadata.PoolerType_REPLICA,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "drained"},
 			Hostname: "drained", Type: clustermetadata.PoolerType_DRAINED,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -683,7 +693,7 @@ func TestGetPoolerStatus(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "orphaned-pod"},
 			Hostname: "orphaned-pod", Type: clustermetadata.PoolerType_PRIMARY,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -737,7 +747,7 @@ func TestGetPoolerStatus(t *testing.T) {
 		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "my-pod-0"},
 			Hostname: "", Type: clustermetadata.PoolerType_PRIMARY,
-			Database: "db", TableGroup: "tg", Shard: "0",
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
