@@ -1,6 +1,6 @@
 # Containerfile for multigres-operator
 
-FROM --platform=$BUILDPLATFORM golang:1.25.9-alpine3.23 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.10-alpine3.23 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
