@@ -118,21 +118,25 @@ func TestReplicaDrainFlow(t *testing.T) {
 
 	// Add primary
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
-		Id:         &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname:   "primary-pod",
-		Type:       clustermetadata.PoolerType_PRIMARY,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname: "primary-pod",
+		Type:     clustermetadata.PoolerType_PRIMARY,
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	// Add our replica pod
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
-		Id:         &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
-		Hostname:   "test-pod-0",
-		Type:       clustermetadata.PoolerType_REPLICA,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
+		Hostname: "test-pod-0",
+		Type:     clustermetadata.PoolerType_REPLICA,
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// Step 1: Requested -> Draining
@@ -230,16 +234,20 @@ func TestPrimaryDrainFlow(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_PRIMARY,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
 		Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// PRIMARY drain should advance to DrainStateDraining without calling Promote.
@@ -308,16 +316,20 @@ func TestPrimaryDrainFlowNilRPCClient(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_PRIMARY,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
 		Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// With nil rpcClient, drain should proceed instead of looping forever
@@ -385,9 +397,11 @@ func TestStuckTerminatingPod(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// Delete the pod using the client to set DeletionTimestamp
@@ -537,20 +551,24 @@ func TestReplicaDrain_SkipsRPCWhenPrimaryDraining(t *testing.T) {
 
 	// Register primary and replica in topo
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
-		Id:         &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname:   "primary-pod",
-		Type:       clustermetadata.PoolerType_PRIMARY,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname: "primary-pod",
+		Type:     clustermetadata.PoolerType_PRIMARY,
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
-		Id:         &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname:   "replica-pod-0",
-		Type:       clustermetadata.PoolerType_REPLICA,
-		Database:   "test-db",
-		TableGroup: "test-tg",
-		Shard:      "0",
+		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
+		Hostname: "replica-pod-0",
+		Type:     clustermetadata.PoolerType_REPLICA,
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// Execute drain for replica while primary is draining
@@ -629,7 +647,7 @@ func TestReplicaDrain_DrainingState_FindPrimaryError(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	// Since there's no primary in topo, findPrimaryPooler returns nil,nil.
@@ -702,12 +720,12 @@ func TestReplicaDrain_DrainingState_PrimaryDraining(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	// In DrainStateDraining, if primary is draining, should requeue without advancing
@@ -861,12 +879,12 @@ func TestReplicaDrain_PrimaryTerminatingOrMissing(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	requeue, err := drain.ExecuteDrainStateMachine(
@@ -948,12 +966,12 @@ func TestReplicaDrain_DrainingState_PrimaryTerminating(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	// In DrainStateDraining, primary is terminating, should skip standby verification
@@ -1084,7 +1102,7 @@ func TestDrain_StuckDrainTimeout_DeletionTimestampFallback(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	requeue, err := drain.ExecuteDrainStateMachine(ctx, c, nil, recorder, store, shardObj, pod)
@@ -1230,12 +1248,12 @@ func TestReplicaDrain_RPCError(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	// RPC error on UpdateConsensusRule should requeue
@@ -1314,12 +1332,12 @@ func TestReplicaDrain_DrainingState_RPCError(t *testing.T) {
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		Database: "test-db", TableGroup: "test-tg", Shard: "0",
+		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
 
 	requeue, err := drain.ExecuteDrainStateMachine(
@@ -1475,12 +1493,14 @@ func TestDrainStateMachine_RandomizedInvariants(t *testing.T) {
 
 		for j := range numPods {
 			_ = store.RegisterMultiPooler(context.Background(), &clustermetadata.MultiPooler{
-				Id:         &clustermetadata.ID{Cell: "cell1", Name: podNames[j]},
-				Hostname:   podNames[j],
-				Type:       podTypes[j],
-				Database:   "db",
-				TableGroup: "tg",
-				Shard:      "0",
+				Id:       &clustermetadata.ID{Cell: "cell1", Name: podNames[j]},
+				Hostname: podNames[j],
+				Type:     podTypes[j],
+				ShardKey: &clustermetadata.ShardKey{
+					Database:   "db",
+					TableGroup: "tg",
+					Shard:      "0",
+				},
 			}, false)
 		}
 
