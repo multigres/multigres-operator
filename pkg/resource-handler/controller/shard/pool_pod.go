@@ -24,6 +24,11 @@ const (
 	// connections and set NOT_SERVING in etcd before SIGKILL.
 	defaultTerminationGracePeriod int64 = 30
 
+	// Default container UIDs used when fsGroup is not provided.
+	defaultPostgresRunAsUserUID         int64 = 999
+	defaultPostgresExporterRunAsUserUID int64 = 65534
+	defaultMultiPoolerRunAsUserUID      int64 = 999
+
 	// DefaultPoolReplicas is the default number of replicas for a pool cell if not specified.
 	DefaultPoolReplicas int32 = 1
 )
@@ -142,17 +147,24 @@ func buildPoolPodSecurityContext(poolSpec multigresv1alpha1.PoolSpec) *corev1.Po
 	}
 }
 
-// buildContainerSecurityContext returns a non-root SecurityContext. When fsGroup
-// is set, RunAsUser and RunAsGroup are pinned to that value so all containers
-// in the pod share the same filesystem identity on shared volumes.
-func buildContainerSecurityContext(fsGroup *int64) *corev1.SecurityContext {
+// buildContainerSecurityContext returns a non-root SecurityContext.
+//
+// If fsGroup is set, RunAsUser and RunAsGroup are pinned to that value so all
+// containers in the pod share the same filesystem identity on shared volumes.
+// Otherwise, a container-specific fallback UID is used to ensure kubelet can
+// verify runAsNonRoot against a numeric user.
+func buildContainerSecurityContext(fsGroup *int64, fallbackUID int64) *corev1.SecurityContext {
 	sc := &corev1.SecurityContext{
 		RunAsNonRoot: ptr.To(true),
 	}
 	if fsGroup != nil {
 		sc.RunAsUser = fsGroup
 		sc.RunAsGroup = fsGroup
+		return sc
 	}
+
+	sc.RunAsUser = ptr.To(fallbackUID)
+	sc.RunAsGroup = ptr.To(fallbackUID)
 	return sc
 }
 
