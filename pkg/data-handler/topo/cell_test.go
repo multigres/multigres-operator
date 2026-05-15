@@ -3,6 +3,7 @@ package topo_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -24,14 +25,24 @@ func newTestCell(name string) *multigresv1alpha1.Cell {
 				Address:  "localhost:2379",
 				RootPath: "/test",
 			},
+			TopoServer: &multigresv1alpha1.LocalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{
+						"http://local-etcd-1:2379",
+						"http://local-etcd-2:2379",
+					},
+					RootPath: "/multigres/cells/" + name,
+				},
+			},
 		},
 	}
 }
 
 type mockTopoStore struct {
 	topoclient.Store
-	createCellFunc func(ctx context.Context, cellName string, cell *clustermetadata.Cell) error
-	deleteCellFunc func(ctx context.Context, cellName string, force bool) error
+	createCellFunc       func(ctx context.Context, cellName string, cell *clustermetadata.Cell) error
+	updateCellFieldsFunc func(ctx context.Context, cellName string, updater func(*clustermetadata.Cell) error) error
+	deleteCellFunc       func(ctx context.Context, cellName string, force bool) error
 }
 
 func (m *mockTopoStore) CreateCell(
@@ -41,6 +52,17 @@ func (m *mockTopoStore) CreateCell(
 ) error {
 	if m.createCellFunc != nil {
 		return m.createCellFunc(ctx, cellName, cell)
+	}
+	return nil
+}
+
+func (m *mockTopoStore) UpdateCellFields(
+	ctx context.Context,
+	cellName string,
+	updater func(*clustermetadata.Cell) error,
+) error {
+	if m.updateCellFieldsFunc != nil {
+		return m.updateCellFieldsFunc(ctx, cellName, updater)
 	}
 	return nil
 }
@@ -78,6 +100,15 @@ func TestRegisterCell(t *testing.T) {
 		if got.Name != "cell2" {
 			t.Errorf("expected cell name cell2, got %s", got.Name)
 		}
+		if !reflect.DeepEqual(
+			got.ServerAddresses,
+			[]string{"http://local-etcd-1:2379", "http://local-etcd-2:2379"},
+		) {
+			t.Errorf("expected local topo addresses, got %v", got.ServerAddresses)
+		}
+		if got.Root != "/multigres/cells/cell2" {
+			t.Errorf("expected local topo root, got %s", got.Root)
+		}
 	})
 
 	t.Run("returns error on failure", func(t *testing.T) {
@@ -113,6 +144,75 @@ func TestRegisterCell(t *testing.T) {
 		}
 		if err := topo.RegisterCell(context.Background(), store, recorder, cell); err != nil {
 			t.Fatalf("second registration should succeed (idempotent), got: %v", err)
+		}
+	})
+
+	t.Run("updates stale cell topology on re-registration", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		recorder := record.NewFakeRecorder(10)
+		cell := newTestCell("cell1")
+		if err := store.UpdateCellFields(
+			context.Background(),
+			"cell1",
+			func(existing *clustermetadata.Cell) error {
+				existing.ServerAddresses = []string{"http://stale-local-etcd:2379"}
+				existing.Root = "/stale/root"
+				return nil
+			},
+		); err != nil {
+			t.Fatalf("seeding stale cell: %v", err)
+		}
+
+		if err := topo.RegisterCell(context.Background(), store, recorder, cell); err != nil {
+			t.Fatalf("re-registration should update stale cell, got: %v", err)
+		}
+
+		got, err := store.GetCell(context.Background(), "cell1")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if !reflect.DeepEqual(
+			got.ServerAddresses,
+			[]string{"http://local-etcd-1:2379", "http://local-etcd-2:2379"},
+		) {
+			t.Errorf("expected local topo addresses, got %v", got.ServerAddresses)
+		}
+		if got.Root != "/multigres/cells/cell1" {
+			t.Errorf("expected local topo root, got %s", got.Root)
+		}
+	})
+
+	t.Run("falls back to global topology when no local topology is configured", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		recorder := record.NewFakeRecorder(10)
+		cell := newTestCell("cell2")
+		cell.Spec.TopoServer = nil
+
+		if err := topo.RegisterCell(context.Background(), store, recorder, cell); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		got, err := store.GetCell(context.Background(), "cell2")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if !reflect.DeepEqual(got.ServerAddresses, []string{"localhost:2379"}) {
+			t.Errorf("expected global topo address fallback, got %v", got.ServerAddresses)
+		}
+		if got.Root != "/test" {
+			t.Errorf("expected global topo root fallback, got %s", got.Root)
 		}
 	})
 }

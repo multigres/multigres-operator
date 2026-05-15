@@ -3,6 +3,7 @@ package topo_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -31,6 +32,7 @@ type mockTopologyStore struct {
 	createDatabaseFunc       func(ctx context.Context, dbName string, db *clustermetadatapb.Database) error
 	updateDatabaseFieldsFunc func(ctx context.Context, dbName string, updater func(*clustermetadatapb.Database) error) error
 	createCellFunc           func(ctx context.Context, cellName string, cell *clustermetadatapb.Cell) error
+	updateCellFieldsFunc     func(ctx context.Context, cellName string, updater func(*clustermetadatapb.Cell) error) error
 	getDatabaseNamesFunc     func(ctx context.Context) ([]string, error)
 	deleteDatabaseFunc       func(ctx context.Context, dbName string, force bool) error
 	getCellNamesFunc         func(ctx context.Context) ([]string, error)
@@ -68,6 +70,17 @@ func (s *mockTopologyStore) CreateCell(
 		return s.createCellFunc(ctx, cellName, cell)
 	}
 	return s.Store.CreateCell(ctx, cellName, cell)
+}
+
+func (s *mockTopologyStore) UpdateCellFields(
+	ctx context.Context,
+	cellName string,
+	updater func(*clustermetadatapb.Cell) error,
+) error {
+	if s.updateCellFieldsFunc != nil {
+		return s.updateCellFieldsFunc(ctx, cellName, updater)
+	}
+	return s.Store.UpdateCellFields(ctx, cellName, updater)
 }
 
 func (s *mockTopologyStore) GetDatabaseNames(ctx context.Context) ([]string, error) {
@@ -322,9 +335,15 @@ func TestRegisterCellFromSpec(t *testing.T) {
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
+		localTopo := &multigresv1alpha1.LocalTopoServerSpec{
+			External: &multigresv1alpha1.ExternalTopoServerSpec{
+				Endpoints: []multigresv1alpha1.EndpointUrl{"http://cell2-local:2379"},
+				RootPath:  "/multigres/cells/cell2",
+			},
+		}
 		cellCfg := multigresv1alpha1.CellConfig{Name: "cell2"} // cell2 does not exist yet!
 		err := topo.RegisterCellFromSpec(
-			context.Background(), store, recorder, owner, cellCfg, topoRef,
+			context.Background(), store, recorder, owner, cellCfg, localTopo, topoRef,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -337,6 +356,12 @@ func TestRegisterCellFromSpec(t *testing.T) {
 		if cell.Name != "cell2" {
 			t.Errorf("expected cell2, got %s", cell.Name)
 		}
+		if !reflect.DeepEqual(cell.ServerAddresses, []string{"http://cell2-local:2379"}) {
+			t.Errorf("expected local topo addresses, got %v", cell.ServerAddresses)
+		}
+		if cell.Root != "/multigres/cells/cell2" {
+			t.Errorf("expected local topo root, got %s", cell.Root)
+		}
 	})
 
 	t.Run("idempotent on re-registration", func(t *testing.T) {
@@ -346,12 +371,19 @@ func TestRegisterCellFromSpec(t *testing.T) {
 		ctx := context.Background()
 
 		cellCfg := multigresv1alpha1.CellConfig{Name: "cell1"}
+		localTopo := &multigresv1alpha1.LocalTopoServerSpec{
+			External: &multigresv1alpha1.ExternalTopoServerSpec{
+				Endpoints: []multigresv1alpha1.EndpointUrl{"http://cell1-local:2379"},
+				RootPath:  "/multigres/cells/cell1",
+			},
+		}
 		if err := topo.RegisterCellFromSpec(
 			ctx,
 			store,
 			recorder,
 			owner,
 			cellCfg,
+			localTopo,
 			topoRef,
 		); err != nil {
 			t.Fatalf("first: %v", err)
@@ -362,9 +394,94 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			recorder,
 			owner,
 			cellCfg,
+			localTopo,
 			topoRef,
 		); err != nil {
 			t.Fatalf("second: %v", err)
+		}
+	})
+
+	t.Run("updates stale cell topology on re-registration", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+		ctx := context.Background()
+
+		if err := store.UpdateCellFields(
+			ctx,
+			"cell1",
+			func(existing *clustermetadatapb.Cell) error {
+				existing.ServerAddresses = []string{"http://stale-cell1-local:2379"}
+				existing.Root = "/stale/cell1"
+				return nil
+			},
+		); err != nil {
+			t.Fatalf("seeding stale cell: %v", err)
+		}
+
+		localTopo := &multigresv1alpha1.LocalTopoServerSpec{
+			External: &multigresv1alpha1.ExternalTopoServerSpec{
+				Endpoints: []multigresv1alpha1.EndpointUrl{
+					"http://cell1-local-a:2379",
+					"http://cell1-local-b:2379",
+				},
+				RootPath: "/multigres/cells/cell1",
+			},
+		}
+		if err := topo.RegisterCellFromSpec(
+			ctx,
+			store,
+			recorder,
+			owner,
+			multigresv1alpha1.CellConfig{Name: "cell1"},
+			localTopo,
+			topoRef,
+		); err != nil {
+			t.Fatalf("re-registration should update stale cell, got: %v", err)
+		}
+
+		cell, err := store.GetCell(ctx, "cell1")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if !reflect.DeepEqual(
+			cell.ServerAddresses,
+			[]string{"http://cell1-local-a:2379", "http://cell1-local-b:2379"},
+		) {
+			t.Errorf("expected local topo addresses, got %v", cell.ServerAddresses)
+		}
+		if cell.Root != "/multigres/cells/cell1" {
+			t.Errorf("expected local topo root, got %s", cell.Root)
+		}
+	})
+
+	t.Run("falls back to global topology when no local topology is configured", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+
+		err := topo.RegisterCellFromSpec(
+			context.Background(),
+			store,
+			recorder,
+			owner,
+			multigresv1alpha1.CellConfig{Name: "cell2"},
+			nil,
+			topoRef,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cell, err := store.GetCell(context.Background(), "cell2")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if !reflect.DeepEqual(cell.ServerAddresses, []string{"global:2379"}) {
+			t.Errorf("expected global topo address fallback, got %v", cell.ServerAddresses)
+		}
+		if cell.Root != "/multigres/global" {
+			t.Errorf("expected global topo root fallback, got %s", cell.Root)
 		}
 	})
 
@@ -378,7 +495,7 @@ func TestRegisterCellFromSpec(t *testing.T) {
 
 		err := topo.RegisterCellFromSpec(
 			context.Background(), store, record.NewFakeRecorder(10), owner,
-			multigresv1alpha1.CellConfig{Name: "cell1"}, topoRef,
+			multigresv1alpha1.CellConfig{Name: "cell1"}, nil, topoRef,
 		)
 		if err == nil {
 			t.Fatal("expected error, got nil")
@@ -535,7 +652,7 @@ func TestPruneCells(t *testing.T) {
 		for _, c := range []string{"cell1", "cell2"} {
 			if err := topo.RegisterCellFromSpec(
 				ctx, store, recorder, owner,
-				multigresv1alpha1.CellConfig{Name: multigresv1alpha1.CellName(c)}, topoRef,
+				multigresv1alpha1.CellConfig{Name: multigresv1alpha1.CellName(c)}, nil, topoRef,
 			); err != nil {
 				t.Fatalf("registering %s: %v", c, err)
 			}
@@ -562,7 +679,7 @@ func TestPruneCells(t *testing.T) {
 
 		if err := topo.RegisterCellFromSpec(
 			ctx, store, recorder, owner,
-			multigresv1alpha1.CellConfig{Name: "cell1"}, topoRef,
+			multigresv1alpha1.CellConfig{Name: "cell1"}, nil, topoRef,
 		); err != nil {
 			t.Fatalf("registering: %v", err)
 		}

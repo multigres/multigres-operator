@@ -62,8 +62,19 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 
 	// Register all cells.
 	for _, cellCfg := range cluster.Spec.Cells {
+		cellCfgForResolution := cellCfg
+		if cellCfgForResolution.CellTemplate == "" &&
+			cluster.Spec.TemplateDefaults.CellTemplate != "" {
+			cellCfgForResolution.CellTemplate = cluster.Spec.TemplateDefaults.CellTemplate
+		}
+		_, _, localTopoSpec, err := res.ResolveCell(ctx, &cellCfgForResolution)
+		if err != nil {
+			r.Recorder.Event(cluster, "Warning", "TemplateMissing", err.Error())
+			return ctrl.Result{}, fmt.Errorf("failed to resolve cell '%s': %w", cellCfg.Name, err)
+		}
+
 		if err := topo.RegisterCellFromSpec(
-			topoCtx, store, r.Recorder, cluster, cellCfg, globalTopoRef,
+			topoCtx, store, r.Recorder, cluster, cellCfg, localTopoSpec, globalTopoRef,
 		); err != nil {
 			if topo.IsTopoUnavailable(err) {
 				return r.handleTopoUnavailable(cluster, logger)

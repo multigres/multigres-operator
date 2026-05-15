@@ -106,34 +106,32 @@ func RegisterDatabaseFromSpec(
 	return nil
 }
 
-// RegisterCellFromSpec registers a cell in the topology using the cluster
-// spec. It uses the GlobalTopoServerRef to build the cell metadata.
+// RegisterCellFromSpec registers a cell in the global topology using the
+// cluster spec. The cell record points clients at the cell-local topology
+// server when one is configured, and falls back to the global topology for
+// existing clusters without local topology.
 func RegisterCellFromSpec(
 	ctx context.Context,
 	store topoclient.Store,
 	recorder record.EventRecorder,
 	owner runtime.Object,
 	cellConfig multigresv1alpha1.CellConfig,
+	localTopo *multigresv1alpha1.LocalTopoServerSpec,
 	topoRef multigresv1alpha1.GlobalTopoServerRef,
 ) error {
 	logger := log.FromContext(ctx)
 	cellName := string(cellConfig.Name)
 
-	cellMetadata := &clustermetadatapb.Cell{
-		Name:            cellName,
-		ServerAddresses: []string{topoRef.Address},
-		Root:            topoRef.RootPath,
+	cellMetadata := cellMetadataFromTopoRefs(cellName, localTopo, topoRef)
+
+	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
+	if err != nil {
+		return err
 	}
 
-	if err := store.CreateCell(ctx, cellName, cellMetadata); err != nil {
-		var topoErr topoclient.TopoError
-		if isNodeExists(err, &topoErr) {
-			logger.Info("Cell already registered in topology, skipping update "+
-				"(cell fields are immutable in v1alpha1)",
-				"cellName", cellName)
-			return nil
-		}
-		return fmt.Errorf("failed to create cell in topology: %w", err)
+	if !created {
+		logger.Info("Updated existing cell in topology", "cellName", cellName)
+		return nil
 	}
 
 	logger.Info("Cell metadata stored in topology", "cellName", cellName)
