@@ -219,6 +219,11 @@ build: manifests generate fmt vet ## Build manager binary with version metadata
 	@echo "==> Building operator binary (version: $(VERSION))"
 	go build -ldflags="$(LDFLAGS)" -o bin/multigres-operator cmd/multigres-operator/main.go
 
+.PHONY: build-multigres-gc
+build-multigres-gc: fmt vet ## Build the multigres garbage-collector binary
+	@echo "==> Building multigres-gc binary (version: $(VERSION))"
+	go build -ldflags="$(LDFLAGS)" -o bin/multigres-gc cmd/multigres-gc/main.go
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/multigres-operator/main.go

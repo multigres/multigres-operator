@@ -125,6 +125,14 @@ const (
 	// Used as the durable signal for DRAINED PVC cleanup, since PodRoles may be
 	// cleared by the data-handler during drain before cleanup runs.
 	LabelPodRole = "multigres.com/role"
+
+	// LabelOrphan marks a resource as orphaned (no longer referenced by an owner)
+	// and eligible for garbage collection. Value is the UTC timestamp when the
+	// resource became orphaned, formatted as OrphanTimestampFormat.
+	LabelOrphan = "multigres.com/orphan-since"
+
+	// OrphanTimestampFormat is the layout used for LabelOrphan values (RFC 3339).
+	OrphanTimestampFormat = "2006-01-02T15-04-05Z"
 )
 
 const (
