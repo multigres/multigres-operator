@@ -45,10 +45,10 @@ func (m *mockRPCClient) Promote(
 func (m *mockRPCClient) UpdateConsensusRule(
 	ctx context.Context,
 	pooler *clustermetadata.MultiPooler,
-	request *multipoolermanagerdatapb.UpdateSynchronousStandbyListRequest,
-) (*multipoolermanagerdatapb.UpdateSynchronousStandbyListResponse, error) {
+	request *multipoolermanagerdatapb.UpdateConsensusRuleRequest,
+) (*multipoolermanagerdatapb.UpdateConsensusRuleResponse, error) {
 	m.updateConsensusRuleCalled = true
-	return &multipoolermanagerdatapb.UpdateSynchronousStandbyListResponse{}, nil
+	return &multipoolermanagerdatapb.UpdateConsensusRuleResponse{}, nil
 }
 
 func (m *mockRPCClient) ExpireBackups(
@@ -1371,8 +1371,8 @@ type failingRPCClient struct {
 func (m *failingRPCClient) UpdateConsensusRule(
 	ctx context.Context,
 	pooler *clustermetadata.MultiPooler,
-	request *multipoolermanagerdatapb.UpdateSynchronousStandbyListRequest,
-) (*multipoolermanagerdatapb.UpdateSynchronousStandbyListResponse, error) {
+	request *multipoolermanagerdatapb.UpdateConsensusRuleRequest,
+) (*multipoolermanagerdatapb.UpdateConsensusRuleResponse, error) {
 	return nil, fmt.Errorf("rpc error: connection refused")
 }
 
