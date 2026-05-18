@@ -18,4 +18,5 @@ spec:
   #    - Default Database ("postgres") with Default TableGroup ("default")
   cells:
     - name: "zone-a"
+      zoneId: us-central1-a
       # zone: "us-east-1a"

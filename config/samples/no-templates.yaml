@@ -41,6 +41,7 @@ spec:
   # ----------------------------------------------------------------
   cells:
     - name: "z1"
+      zoneId: us-central1-a
       # zone: "z1"
       spec:
          multigateway:

@@ -25,6 +25,7 @@ spec:
     # Cell A: Standard Configuration
     # Uses the Global External Etcd defined above.
     - name: "zone-a"
+      zoneId: us-central1-a
       # zone: "us-east-1a"
 
     # Cell B: High-Isolation Configuration
