@@ -50,16 +50,16 @@ func (m *mockTopoStore) UnregisterMultiPooler(ctx context.Context, id *clusterme
 
 type mockMultiPoolerClient struct {
 	rpcclient.MultiPoolerClient
-	updateSynchronousStandbyListFunc func(ctx context.Context, pooler *clustermetadata.MultiPooler, req *multipoolermanagerdata.UpdateSynchronousStandbyListRequest) (*multipoolermanagerdata.UpdateSynchronousStandbyListResponse, error)
+	UpdateConsensusRuleFunc func(ctx context.Context, pooler *clustermetadata.MultiPooler, req *multipoolermanagerdata.UpdateConsensusRuleRequest) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error)
 }
 
 func (m *mockMultiPoolerClient) UpdateConsensusRule(
 	ctx context.Context,
 	pooler *clustermetadata.MultiPooler,
-	req *multipoolermanagerdata.UpdateSynchronousStandbyListRequest,
-) (*multipoolermanagerdata.UpdateSynchronousStandbyListResponse, error) {
-	if m.updateSynchronousStandbyListFunc != nil {
-		return m.updateSynchronousStandbyListFunc(ctx, pooler, req)
+	req *multipoolermanagerdata.UpdateConsensusRuleRequest,
+) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error) {
+	if m.UpdateConsensusRuleFunc != nil {
+		return m.UpdateConsensusRuleFunc(ctx, pooler, req)
 	}
 	return nil, nil
 }

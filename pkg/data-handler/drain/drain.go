@@ -162,10 +162,9 @@ func ExecuteDrainStateMachine(
 					)
 					return true, nil
 				} else {
-					req := &multipoolermanagerdatapb.UpdateSynchronousStandbyListRequest{
-						Operation:    multipoolermanagerdatapb.StandbyUpdateOperation_STANDBY_UPDATE_OPERATION_REMOVE,
-						StandbyIds:   []*clustermetadatapb.ID{myPooler.Id},
-						ReloadConfig: true,
+					req := &multipoolermanagerdatapb.UpdateConsensusRuleRequest{
+						Operation:  multipoolermanagerdatapb.CohortUpdateOperation_COHORT_UPDATE_OPERATION_REMOVE,
+						StandbyIds: []*clustermetadatapb.ID{myPooler.Id},
 					}
 					_, rpcErr := rpcClient.UpdateConsensusRule(ctx, primary, req)
 					if rpcErr != nil {
@@ -217,10 +216,9 @@ func ExecuteDrainStateMachine(
 					)
 					return true, nil
 				} else {
-					req := &multipoolermanagerdatapb.UpdateSynchronousStandbyListRequest{
-						Operation:    multipoolermanagerdatapb.StandbyUpdateOperation_STANDBY_UPDATE_OPERATION_REMOVE,
-						StandbyIds:   []*clustermetadatapb.ID{myPooler.Id},
-						ReloadConfig: true,
+					req := &multipoolermanagerdatapb.UpdateConsensusRuleRequest{
+						Operation:  multipoolermanagerdatapb.CohortUpdateOperation_COHORT_UPDATE_OPERATION_REMOVE,
+						StandbyIds: []*clustermetadatapb.ID{myPooler.Id},
 					}
 					_, rpcErr := rpcClient.UpdateConsensusRule(ctx, primary, req)
 					if rpcErr != nil {
