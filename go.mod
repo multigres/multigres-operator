@@ -5,7 +5,7 @@ go 1.25.10
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
-	github.com/multigres/multigres v0.0.0-20260518183703-7835f7774939
+	github.com/multigres/multigres v0.0.0-20260519055014-e87b65ddb6fe
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/stretchr/testify v1.11.1
