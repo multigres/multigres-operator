@@ -93,8 +93,8 @@ func TestHandleDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleDeletion returned error: %v", err)
 		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue during best-effort cleanup")
+		if result.RequeueAfter != podTerminationRequeueDelay {
+			t.Errorf("Expected requeue while pod still terminating, got %v", result.RequeueAfter)
 		}
 
 		// Pod should be deleted
@@ -132,8 +132,11 @@ func TestHandleDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleDeletion returned error: %v", err)
 		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue for unscheduled pod")
+		if result.RequeueAfter != podTerminationRequeueDelay {
+			t.Errorf(
+				"Expected requeue while unscheduled pod terminating, got %v",
+				result.RequeueAfter,
+			)
 		}
 
 		// Pod should be deleted
@@ -171,8 +174,8 @@ func TestHandleDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleDeletion returned error: %v", err)
 		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue when drain is complete")
+		if result.RequeueAfter != podTerminationRequeueDelay {
+			t.Errorf("Expected requeue while drained pod terminating, got %v", result.RequeueAfter)
 		}
 
 		// Pod should be deleted
@@ -211,8 +214,8 @@ func TestHandleDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleDeletion returned error: %v", err)
 		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue during best-effort cleanup")
+		if result.RequeueAfter != podTerminationRequeueDelay {
+			t.Errorf("Expected requeue while pod still terminating, got %v", result.RequeueAfter)
 		}
 
 		// Pod should be deleted directly, no drain wait
@@ -254,8 +257,8 @@ func TestHandleDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleDeletion returned error: %v", err)
 		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue during best-effort cleanup")
+		if result.RequeueAfter != podTerminationRequeueDelay {
+			t.Errorf("Expected requeue while pod still terminating, got %v", result.RequeueAfter)
 		}
 
 		// Pod should be deleted
@@ -294,6 +297,118 @@ func TestHandleDeletion(t *testing.T) {
 		}
 		if result.RequeueAfter != 0 {
 			t.Error("Expected no requeue when no pods exist")
+		}
+	})
+
+	t.Run("PVC orphaned only after pods are gone", func(t *testing.T) {
+		t.Parallel()
+
+		shard := baseShard.DeepCopy()
+		shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
+			WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
+		}
+		pod := makePod("pod-0", true, "")
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "data-pvc-0",
+				Namespace: "default",
+				Labels:    shardLabels,
+			},
+		}
+
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(shard, pod, pvc).
+			WithStatusSubresource(&multigresv1alpha1.Shard{}).
+			Build()
+
+		r := &ShardReconciler{
+			Client:          c,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		// First pass: pod still present -> requeue, PVC must NOT be orphaned yet.
+		result, err := r.handleDeletion(context.Background(), shard)
+		if err != nil {
+			t.Fatalf("handleDeletion returned error: %v", err)
+		}
+		if result.RequeueAfter != podTerminationRequeueDelay {
+			t.Errorf("Expected requeue while pod alive, got %v", result.RequeueAfter)
+		}
+		got := &corev1.PersistentVolumeClaim{}
+		if err := c.Get(context.Background(),
+			types.NamespacedName{Name: "data-pvc-0", Namespace: "default"}, got); err != nil {
+			t.Fatalf("failed to get PVC: %v", err)
+		}
+		if _, ok := got.Labels[metadata.LabelOrphan]; ok {
+			t.Error("PVC must not be orphaned while a pod still references it")
+		}
+
+		// Second pass: pod deleted by the first pass -> PVC orphaned now.
+		result, err = r.handleDeletion(context.Background(), shard)
+		if err != nil {
+			t.Fatalf("handleDeletion (2nd pass) returned error: %v", err)
+		}
+		if result.RequeueAfter != 0 {
+			t.Errorf("Expected no requeue once pods are gone, got %v", result.RequeueAfter)
+		}
+		if err := c.Get(context.Background(),
+			types.NamespacedName{Name: "data-pvc-0", Namespace: "default"}, got); err != nil {
+			t.Fatalf("failed to get PVC after cleanup: %v", err)
+		}
+		if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
+			t.Error("PVC should be orphaned once all pods are gone")
+		}
+	})
+
+	t.Run("pod stuck terminating past timeout does not block PVC cleanup", func(t *testing.T) {
+		t.Parallel()
+
+		shard := baseShard.DeepCopy()
+		shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
+			WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
+		}
+		// Pod stuck Terminating well past terminatingTimeout (dead kubelet).
+		pod := makePod("pod-stuck", true, "")
+		pod.DeletionTimestamp = &metav1.Time{Time: metav1.Now().Add(-2 * terminatingTimeout)}
+		pod.Finalizers = []string{"kubernetes.io/test"} // keep it around despite DeletionTimestamp
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "data-pvc-stuck",
+				Namespace: "default",
+				Labels:    shardLabels,
+			},
+		}
+
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(shard, pod, pvc).
+			WithStatusSubresource(&multigresv1alpha1.Shard{}).
+			Build()
+
+		r := &ShardReconciler{
+			Client:          c,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		result, err := r.handleDeletion(context.Background(), shard)
+		if err != nil {
+			t.Fatalf("handleDeletion returned error: %v", err)
+		}
+		if result.RequeueAfter != 0 {
+			t.Errorf("Expected no requeue for pod stuck past timeout, got %v", result.RequeueAfter)
+		}
+		got := &corev1.PersistentVolumeClaim{}
+		if err := c.Get(context.Background(),
+			types.NamespacedName{Name: "data-pvc-stuck", Namespace: "default"}, got); err != nil {
+			t.Fatalf("failed to get PVC: %v", err)
+		}
+		if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
+			t.Error("PVC should be orphaned even when a pod is stuck terminating past the timeout")
 		}
 	})
 }
