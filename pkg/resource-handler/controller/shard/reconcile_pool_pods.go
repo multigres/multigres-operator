@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +20,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 // reconcilePoolPods ensures all pods and PVCs for a pool in a specific cell
@@ -171,6 +173,22 @@ func (r *ShardReconciler) createMissingResources(
 			}
 			logger.Info("Created missing pool PVC", "pvc", pvcName)
 		} else {
+			// This deterministically-named PVC is desired again. If a prior
+			// scale-down / drain marked it orphan, clear the label so the
+			// multigres-gc cronjob does not delete storage we are putting back
+			// into service.
+			if err := pvcutil.ClearOrphan(
+				ctx,
+				logger,
+				r.Client,
+				existingPVCs[pvcName],
+			); err != nil {
+				return 0, false, fmt.Errorf(
+					"failed to clear orphan label on PVC %s: %w",
+					pvcName,
+					err,
+				)
+			}
 			if err := r.expandPVCIfNeeded(ctx, shard, existingPVCs[pvcName], poolSpec); err != nil {
 				return 0, false, err
 			}
@@ -703,11 +721,12 @@ func (r *ShardReconciler) cleanupDrainedPod(
 ) error {
 	logger := log.FromContext(ctx)
 
-	// DRAINED pods always get their PVC deleted — data is known-bad.
+	// DRAINED pods always get their PVC marked orphan — data is known-bad.
+	// The multigres-gc CronJob deletes the PVC after the retention window.
 	// We check the pod label (not PodRoles) because the data-handler clears
 	// the topology entry during drain before this cleanup point.
 	if pod.Labels[metadata.LabelPodRole] == "DRAINED" {
-		if err := r.deletePodPVC(
+		if err := r.cleanupPodPVC(
 			ctx,
 			shard,
 			pod,
@@ -718,7 +737,7 @@ func (r *ShardReconciler) cleanupDrainedPod(
 		}
 		logger.Info("Drained pod cleanup complete", "pod", pod.Name)
 		r.Recorder.Eventf(shard, "Normal", "DrainCompleted",
-			"Completed drain for DRAINED pod %s — PVC deleted", pod.Name)
+			"Completed drain for DRAINED pod %s — PVC cleanup queued", pod.Name)
 		return nil
 	}
 
@@ -739,7 +758,7 @@ func (r *ShardReconciler) cleanupDrainedPod(
 		if !idxOK {
 			logger.Info("Skipping PVC deletion for pod with unparseable index", "pod", pod.Name)
 		} else if idx >= int(replicas) {
-			if err := r.deletePodPVC(ctx, shard, pod, poolName, "scaled down"); err != nil {
+			if err := r.cleanupPodPVC(ctx, shard, pod, poolName, "scaled down"); err != nil {
 				return err
 			}
 		} else {
@@ -762,8 +781,13 @@ func (r *ShardReconciler) cleanupDrainedPod(
 	return nil
 }
 
-// deletePodPVC fetches and deletes the data PVC for a pod. reason is used for logging.
-func (r *ShardReconciler) deletePodPVC(
+// cleanupPodPVC removes a pod's data PVC from the operator's care. The choice
+// between orphaning (deferred deletion via multigres-gc) and in-line deletion
+// is based on how many sibling PVCs remain in the same pool+cell: if removing
+// this one still leaves >= pvcOrphanReplicasThreshold volumes, it is excess and
+// is deleted, otherwise it is orphaned so the data can be recovered. See
+// orphanByRemainingCount.
+func (r *ShardReconciler) cleanupPodPVC(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	pod *corev1.Pod,
@@ -773,7 +797,7 @@ func (r *ShardReconciler) deletePodPVC(
 
 	idx, ok := resolvePodIndex(pod.Name)
 	if !ok {
-		logger.Info("Skipping PVC deletion for pod with unparseable index", "pod", pod.Name)
+		logger.Info("Skipping PVC cleanup for pod with unparseable index", "pod", pod.Name)
 		return nil
 	}
 
@@ -788,16 +812,67 @@ func (r *ShardReconciler) deletePodPVC(
 		if errors.IsNotFound(err) {
 			return nil
 		}
-		logger.Error(err, "Failed to fetch PVC for deletion", "pvc", pvcName)
-		return fmt.Errorf("failed to fetch PVC %s for deletion: %w", pvcName, err)
+		logger.Error(err, "Failed to fetch PVC for cleanup", "pvc", pvcName)
+		return fmt.Errorf("failed to fetch PVC %s for cleanup: %w", pvcName, err)
+	}
+
+	liveCount, err := r.countPoolCellPVCs(ctx, shard, poolName, cellName)
+	if err != nil {
+		return err
+	}
+
+	if orphanByRemainingCount(liveCount) {
+		if err := pvcutil.MarkOrphan(ctx, r.Client, pvc, shard.GetUID(), time.Now()); err != nil {
+			logger.Error(err, "Failed to mark PVC orphan for "+reason+" pod", "pvc", pvcName)
+			return fmt.Errorf("failed to mark PVC %s orphan: %w", pvcName, err)
+		}
+		logger.Info("Marked PVC orphan for "+reason+" pod", "pvc", pvcName, "liveCount", liveCount)
+		return nil
 	}
 
 	if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
 		logger.Error(err, "Failed to delete PVC for "+reason+" pod", "pvc", pvcName)
 		return fmt.Errorf("failed to delete PVC %s: %w", pvcName, err)
 	}
-	logger.Info("Deleted PVC for "+reason+" pod", "pvc", pvcName)
+	logger.Info("Deleted PVC for "+reason+" pod", "pvc", pvcName, "liveCount", liveCount)
 	return nil
+}
+
+// countPoolCellPVCs returns the number of PVCs currently present for the given
+// pool+cell, used to decide orphan-vs-delete. Already-orphaned PVCs are
+// excluded: they are no longer part of the live serving set, so they must not
+// inflate the count and cause a still-needed volume to be hard-deleted.
+func (r *ShardReconciler) countPoolCellPVCs(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	poolName, cellName string,
+) (int, error) {
+	labels := buildPoolLabelsWithCell(shard, poolName, cellName)
+	selector := metadata.GetSelectorLabels(labels)
+
+	pvcList := &corev1.PersistentVolumeClaimList{}
+	if err := r.List(
+		ctx,
+		pvcList,
+		client.InNamespace(shard.Namespace),
+		client.MatchingLabels(selector),
+	); err != nil {
+		return 0, fmt.Errorf(
+			"failed to list PVCs for pool %s cell %s: %w",
+			poolName,
+			cellName,
+			err,
+		)
+	}
+
+	count := 0
+	for i := range pvcList.Items {
+		if pvcutil.HasOrphanLabel(&pvcList.Items[i]) {
+			continue
+		}
+		count++
+	}
+	return count, nil
 }
 
 // podNeedsUpdate checks if a pod requires recreation due to spec changes.
