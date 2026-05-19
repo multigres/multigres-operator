@@ -1,0 +1,18 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: multigres-operator
+    app.kubernetes.io/component: gc
+    app.kubernetes.io/managed-by: kustomize
+  name: gc-role
+rules:
+# multigres-gc only needs to list orphaned PVCs and delete them.
+# Scoped cluster-wide because PVCs live in user namespaces.
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  verbs:
+  - list
+  - delete
