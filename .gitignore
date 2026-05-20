@@ -27,3 +27,6 @@ multigres-operator
 
 # Results of Agent runs
 agent-docs/
+
+# DevSpace
+.devspace
