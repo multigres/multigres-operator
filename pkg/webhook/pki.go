@@ -188,11 +188,18 @@ func FindOperatorDeployment(
 		); err != nil {
 			return nil, fmt.Errorf("failed to list deployments by labels: %w", err)
 		}
-		if len(list.Items) > 1 {
-			return nil, fmt.Errorf("found multiple deployments matching operator labels")
-		}
-		if len(list.Items) == 1 {
-			return &list.Items[0], nil
+		if len(list.Items) > 0 {
+			// Developer tools such as DevSpace may temporarily scale down the
+			// deployed operator Deployment and create a dev Deployment with
+			// similar labels, in which case the oldest Deployment should be
+			// used.
+			oldest := &list.Items[0]
+			for i := 1; i < len(list.Items); i++ {
+				if list.Items[i].CreationTimestamp.Before(&oldest.CreationTimestamp) {
+					oldest = &list.Items[i]
+				}
+			}
+			return oldest, nil
 		}
 	}
 
