@@ -263,7 +263,9 @@ func hashContainers(h hash.Hash32, containers []corev1.Container) {
 			_, _ = fmt.Fprintf(h, "res=%s", b)
 		}
 		for _, vm := range c.VolumeMounts {
-			_, _ = fmt.Fprintf(h, "vm=%s:%s", vm.Name, vm.MountPath)
+			if b, err := json.Marshal(vm); err == nil {
+				_, _ = fmt.Fprintf(h, "vm=%s", b)
+			}
 		}
 		if c.SecurityContext != nil {
 			if b, err := json.Marshal(c.SecurityContext); err == nil {

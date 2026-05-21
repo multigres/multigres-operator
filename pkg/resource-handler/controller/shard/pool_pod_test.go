@@ -192,7 +192,13 @@ func TestBuildPoolPod_Volumes(t *testing.T) {
 		volumeNames[v.Name] = true
 	}
 
-	required := []string{DataVolumeName, "backup-data", "socket-dir", PgHbaVolumeName}
+	required := []string{
+		DataVolumeName,
+		"backup-data",
+		"socket-dir",
+		PgHbaVolumeName,
+		PostgresPasswordVolumeName,
+	}
 	for _, name := range required {
 		if !volumeNames[name] {
 			t.Errorf("missing required volume %q", name)
@@ -211,6 +217,54 @@ func TestBuildPoolPod_Volumes(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
+	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	passwordVolume := findVolume(pod.Spec.Volumes, PostgresPasswordVolumeName)
+	if passwordVolume == nil {
+		t.Fatalf("missing postgres password volume %q", PostgresPasswordVolumeName)
+	}
+	if passwordVolume.Secret == nil {
+		t.Fatal("postgres password volume should use Secret source")
+	}
+	if passwordVolume.Secret.SecretName != PostgresPasswordSecretName("test-shard") {
+		t.Errorf(
+			"postgres password SecretName = %q, want %q",
+			passwordVolume.Secret.SecretName,
+			PostgresPasswordSecretName("test-shard"),
+		)
+	}
+	if passwordVolume.Secret.DefaultMode == nil || *passwordVolume.Secret.DefaultMode != 0o444 {
+		t.Errorf("postgres password defaultMode = %v, want 0444", passwordVolume.Secret.DefaultMode)
+	}
+
+	postgres := pod.Spec.InitContainers[0]
+	multipooler := pod.Spec.Containers[0]
+	for name, c := range map[string]corev1.Container{
+		"postgres":    postgres,
+		"multipooler": multipooler,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertEnvVarValue(t, c.Env, "POSTGRES_PASSWORD_FILE", PostgresPasswordFilePath)
+			assertNotContainsEnvVar(t, c.Env, "POSTGRES_PASSWORD")
+			assertReadOnlyVolumeMount(
+				t,
+				c.VolumeMounts,
+				PostgresPasswordVolumeName,
+				PostgresPasswordMountPath,
+			)
+		})
+	}
+
+	exporter := pod.Spec.Containers[1]
+	assertContainsEnvVar(t, exporter.Env, "DATA_SOURCE_PASS")
+	assertNotContainsEnvVar(t, exporter.Env, "POSTGRES_PASSWORD")
+	assertNotContainsEnvVar(t, exporter.Env, "POSTGRES_PASSWORD_FILE")
 }
 
 func TestBuildPoolPod_SecurityContext(t *testing.T) {
@@ -291,6 +345,61 @@ func TestBuildPoolPod_SpecHash(t *testing.T) {
 	if len(hash) != 8 {
 		t.Errorf("spec-hash length = %d, want 8 (FNV-1a 32-bit hex)", len(hash))
 	}
+}
+
+func TestComputeSpecHash_ChangesOnPostgresPasswordFileSpec(t *testing.T) {
+	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantHash := ComputeSpecHash(pod)
+
+	t.Run("volume", func(t *testing.T) {
+		oldPod := pod.DeepCopy()
+		oldPod.Spec.Volumes = removeVolume(oldPod.Spec.Volumes, PostgresPasswordVolumeName)
+		if got := ComputeSpecHash(oldPod); got == wantHash {
+			t.Error("spec hash should differ when postgres password volume is removed")
+		}
+	})
+
+	t.Run("pgctld env", func(t *testing.T) {
+		oldPod := pod.DeepCopy()
+		useLegacyPasswordEnv(&oldPod.Spec.InitContainers[0])
+		if got := ComputeSpecHash(oldPod); got == wantHash {
+			t.Error("spec hash should differ when pgctld password env changes")
+		}
+	})
+
+	t.Run("multipooler env", func(t *testing.T) {
+		oldPod := pod.DeepCopy()
+		useLegacyPasswordEnv(&oldPod.Spec.Containers[0])
+		if got := ComputeSpecHash(oldPod); got == wantHash {
+			t.Error("spec hash should differ when multipooler password env changes")
+		}
+	})
+
+	t.Run("volume mount", func(t *testing.T) {
+		oldPod := pod.DeepCopy()
+		oldPod.Spec.Containers[0].VolumeMounts = removeVolumeMount(
+			oldPod.Spec.Containers[0].VolumeMounts,
+			PostgresPasswordVolumeName,
+		)
+		if got := ComputeSpecHash(oldPod); got == wantHash {
+			t.Error("spec hash should differ when postgres password volume mount is removed")
+		}
+	})
+
+	t.Run("volume mount read-only", func(t *testing.T) {
+		changedPod := pod.DeepCopy()
+		for i := range changedPod.Spec.Containers[0].VolumeMounts {
+			if changedPod.Spec.Containers[0].VolumeMounts[i].Name == PostgresPasswordVolumeName {
+				changedPod.Spec.Containers[0].VolumeMounts[i].ReadOnly = false
+			}
+		}
+		if got := ComputeSpecHash(changedPod); got == wantHash {
+			t.Error("spec hash should differ when postgres password volume mount readOnly changes")
+		}
+	})
 }
 
 func TestBuildPoolPod_NoFinalizers(t *testing.T) {
@@ -713,5 +822,57 @@ func TestBuildPoolPod_OmitsPostgresConfigHashWhenAbsent(t *testing.T) {
 
 	if _, ok := pod.Annotations[metadata.AnnotationPostgresConfigHash]; ok {
 		t.Error("postgres config hash annotation should not be present when shard has none")
+	}
+}
+
+func findVolume(volumes []corev1.Volume, name string) *corev1.Volume {
+	for i := range volumes {
+		if volumes[i].Name == name {
+			return &volumes[i]
+		}
+	}
+	return nil
+}
+
+func removeVolume(volumes []corev1.Volume, name string) []corev1.Volume {
+	filtered := make([]corev1.Volume, 0, len(volumes))
+	for _, v := range volumes {
+		if v.Name != name {
+			filtered = append(filtered, v)
+		}
+	}
+	return filtered
+}
+
+func removeVolumeMount(mounts []corev1.VolumeMount, name string) []corev1.VolumeMount {
+	filtered := make([]corev1.VolumeMount, 0, len(mounts))
+	for _, m := range mounts {
+		if m.Name != name {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+func useLegacyPasswordEnv(container *corev1.Container) {
+	for i, e := range container.Env {
+		if e.Name == "POSTGRES_PASSWORD_FILE" {
+			container.Env[i] = oldPostgresPasswordEnvVar()
+			return
+		}
+	}
+}
+
+func oldPostgresPasswordEnvVar() corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: "POSTGRES_PASSWORD",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: PostgresPasswordSecretName("test-shard"),
+				},
+				Key: PostgresPasswordSecretKey,
+			},
+		},
 	}
 }

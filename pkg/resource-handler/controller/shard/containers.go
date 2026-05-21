@@ -65,6 +65,15 @@ const (
 	// PostgresPasswordSecretKey is the key within the Secret that holds the password
 	PostgresPasswordSecretKey = "password"
 
+	// PostgresPasswordVolumeName is the Secret volume containing the postgres password file.
+	PostgresPasswordVolumeName = "postgres-password"
+
+	// PostgresPasswordMountPath is where the postgres password Secret is mounted.
+	PostgresPasswordMountPath = "/etc/postgres-password"
+
+	// PostgresPasswordFilePath is consumed by pgctld and multipooler via POSTGRES_PASSWORD_FILE.
+	PostgresPasswordFilePath = PostgresPasswordMountPath + "/" + PostgresPasswordSecretKey
+
 	// PgBackRestCertVolumeName is the name of the volume for pgBackRest TLS certificates
 	PgBackRestCertVolumeName = "pgbackrest-certs"
 
@@ -116,6 +125,35 @@ func buildPgHbaVolume(shardName string) corev1.Volume {
 	}
 }
 
+func buildPostgresPasswordVolume(shardName string) corev1.Volume {
+	// Keep the Secret world-readable inside the pod because the default pool
+	// pod may not set fsGroup, while containers still run as non-root users.
+	defaultMode := int32(0o444)
+	return corev1.Volume{
+		Name: PostgresPasswordVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName:  PostgresPasswordSecretName(shardName),
+				DefaultMode: &defaultMode,
+				Items: []corev1.KeyToPath{
+					{
+						Key:  PostgresPasswordSecretKey,
+						Path: PostgresPasswordSecretKey,
+					},
+				},
+			},
+		},
+	}
+}
+
+func postgresPasswordVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{
+		Name:      PostgresPasswordVolumeName,
+		MountPath: PostgresPasswordMountPath,
+		ReadOnly:  true,
+	}
+}
+
 // sidecarRestartPolicy is the restart policy for native sidecar containers
 var sidecarRestartPolicy = corev1.ContainerRestartPolicyAlways
 
@@ -123,10 +161,11 @@ var sidecarRestartPolicy = corev1.ContainerRestartPolicyAlways
 // Runs as a native sidecar so it outlives multipooler on pod termination;
 // see docs/development/pod-management-design.md §6 for the full rationale.
 //
-// Uses DefaultPostgresImage (ghcr.io/multigres/pgctld:main) which includes:
+// Uses DefaultPostgresImage which includes:
 //   - PostgreSQL 17
 //   - pgctld binary at /usr/local/bin/pgctld
 //   - pgbackrest for backup/restore operations
+//   - POSTGRES_PASSWORD_FILE support for file-backed superuser credentials
 func buildPgctldSidecar(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
@@ -164,7 +203,7 @@ func buildPgctldSidecar(
 			Value: PgDataPath,
 		},
 		pgUserEnvVar(shard.Spec.PostgresSuperuser),
-		pgPasswordEnvVar(shard.Name),
+		pgPasswordFileEnvVar(),
 	}
 	if shard.Spec.InitdbArgs != "" {
 		env = append(env, corev1.EnvVar{
@@ -201,6 +240,7 @@ func buildPgctldSidecar(
 			MountPath: PgHbaMountPath,
 			ReadOnly:  true,
 		},
+		postgresPasswordVolumeMount(),
 	}
 	if shard.Spec.PostgresConfigRef != nil {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -404,7 +444,7 @@ func buildMultiPoolerContainer(
 			Value: PgDataPath,
 		},
 		pgUserEnvVar(shard.Spec.PostgresSuperuser),
-		pgPasswordEnvVar(shard.Name),
+		pgPasswordFileEnvVar(),
 	}
 	env = append(env, s3EnvVars(shard.Spec.Backup)...)
 	if otelVars := buildRuntimeOTELEnvVars(shard, "multipooler"); len(otelVars) > 0 {
@@ -425,6 +465,7 @@ func buildMultiPoolerContainer(
 			Name:      SocketDirVolumeName,
 			MountPath: SocketDirMountPath,
 		},
+		postgresPasswordVolumeMount(),
 	}
 	if shard.Spec.Backup != nil {
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
@@ -549,6 +590,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		buildSharedBackupVolume(shard, cellName),
 		buildSocketDirVolume(),
 		buildPgHbaVolume(shard.Name),
+		buildPostgresPasswordVolume(shard.Name),
 	}
 	if shard.Spec.PostgresConfigRef != nil {
 		volumes = append(volumes, buildPostgresConfigVolume(shard.Spec.PostgresConfigRef))
@@ -680,19 +722,13 @@ func buildPgBackRestCertVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
 	}
 }
 
-// pgPasswordEnvVar returns a POSTGRES_PASSWORD env var sourced from the per-shard postgres password Secret.
-// pgctld reads this during initdb to set the superuser password in pg_authid.
-func pgPasswordEnvVar(shardName string) corev1.EnvVar {
+// pgPasswordFileEnvVar returns a POSTGRES_PASSWORD_FILE env var pointing at the mounted
+// per-shard postgres password Secret. pgctld reads this during initdb to set the
+// superuser password in pg_authid, and multipooler uses it for admin connections.
+func pgPasswordFileEnvVar() corev1.EnvVar {
 	return corev1.EnvVar{
-		Name: "POSTGRES_PASSWORD",
-		ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: PostgresPasswordSecretName(shardName),
-				},
-				Key: PostgresPasswordSecretKey,
-			},
-		},
+		Name:  "POSTGRES_PASSWORD_FILE",
+		Value: PostgresPasswordFilePath,
 	}
 }
 

@@ -108,7 +108,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 				Env: []corev1.EnvVar{
 					{Name: "PGDATA", Value: PgDataPath},
 					{Name: "POSTGRES_USER", Value: "postgres"},
-					pgPasswordEnvVar("test-shard"),
+					pgPasswordFileEnvVar(),
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{
@@ -123,6 +123,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 						Name:      SocketDirVolumeName,
 						MountPath: SocketDirMountPath,
 					},
+					postgresPasswordVolumeMount(),
 				},
 			},
 		},
@@ -214,7 +215,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 				Env: []corev1.EnvVar{
 					{Name: "PGDATA", Value: PgDataPath},
 					{Name: "POSTGRES_USER", Value: "postgres"},
-					pgPasswordEnvVar("custom-shard"),
+					pgPasswordFileEnvVar(),
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{
@@ -229,6 +230,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 						Name:      SocketDirVolumeName,
 						MountPath: SocketDirMountPath,
 					},
+					postgresPasswordVolumeMount(),
 				},
 			},
 		},
@@ -338,7 +340,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 				Env: []corev1.EnvVar{
 					{Name: "PGDATA", Value: PgDataPath},
 					{Name: "POSTGRES_USER", Value: "postgres"},
-					pgPasswordEnvVar("resource-shard"),
+					pgPasswordFileEnvVar(),
 				},
 				VolumeMounts: []corev1.VolumeMount{
 					{
@@ -353,6 +355,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 						Name:      SocketDirVolumeName,
 						MountPath: SocketDirMountPath,
 					},
+					postgresPasswordVolumeMount(),
 				},
 			},
 		},
@@ -463,6 +466,40 @@ func TestPoolContainers_CustomPostgresSuperuser(t *testing.T) {
 		c := buildPostgresExporterContainer(shard, pool)
 		assertEnvVarValue(t, c.Env, "DATA_SOURCE_USER", customSuperuser)
 	})
+}
+
+func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      "0",
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:  "global-topo:2379",
+				RootPath: "/multigres/global",
+			},
+		},
+	}
+	pool := multigresv1alpha1.PoolSpec{
+		Cells: []multigresv1alpha1.CellName{"zone1"},
+	}
+
+	for name, c := range map[string]corev1.Container{
+		"pgctld":      buildPgctldSidecar(shard, pool),
+		"multipooler": buildMultiPoolerContainer(shard, pool, "primary", "zone1", "p-test-id"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assertEnvVarValue(t, c.Env, "POSTGRES_PASSWORD_FILE", PostgresPasswordFilePath)
+			assertNotContainsEnvVar(t, c.Env, "POSTGRES_PASSWORD")
+			assertReadOnlyVolumeMount(
+				t,
+				c.VolumeMounts,
+				PostgresPasswordVolumeName,
+				PostgresPasswordMountPath,
+			)
+		})
+	}
 }
 
 func TestBuildMultiOrchContainer(t *testing.T) {
@@ -1055,6 +1092,23 @@ func assertContainsVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name s
 	t.Errorf("volume mounts %v does not contain mount %q", mounts, name)
 }
 
+func assertReadOnlyVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name, mountPath string) {
+	t.Helper()
+	for _, m := range mounts {
+		if m.Name != name {
+			continue
+		}
+		if m.MountPath != mountPath {
+			t.Errorf("mount %q path = %q, want %q", name, m.MountPath, mountPath)
+		}
+		if !m.ReadOnly {
+			t.Errorf("mount %q should be read-only", name)
+		}
+		return
+	}
+	t.Errorf("volume mounts %v does not contain mount %q", mounts, name)
+}
+
 func assertNotContainsVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name string) {
 	t.Helper()
 	for _, m := range mounts {
@@ -1303,6 +1357,45 @@ func TestMultiPoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 }
 
 func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
+	t.Run("postgres password secret volume present", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-shard",
+				Labels: map[string]string{"multigres.com/cluster": "test"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{},
+		}
+		volumes := buildPoolVolumes(shard, "zone1")
+		for _, v := range volumes {
+			if v.Name != PostgresPasswordVolumeName {
+				continue
+			}
+			if v.Secret == nil {
+				t.Fatal("postgres password volume should use Secret source")
+			}
+			if v.Secret.SecretName != PostgresPasswordSecretName("test-shard") {
+				t.Errorf(
+					"postgres password SecretName = %q, want %q",
+					v.Secret.SecretName,
+					PostgresPasswordSecretName("test-shard"),
+				)
+			}
+			if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
+				t.Errorf("postgres password defaultMode = %v, want 0444", v.Secret.DefaultMode)
+			}
+			if len(v.Secret.Items) != 1 ||
+				v.Secret.Items[0].Key != PostgresPasswordSecretKey ||
+				v.Secret.Items[0].Path != PostgresPasswordSecretKey {
+				t.Errorf(
+					"postgres password Secret items = %+v, want password key projected to password",
+					v.Secret.Items,
+				)
+			}
+			return
+		}
+		t.Fatalf("expected postgres password Secret volume in pool volumes")
+	})
+
 	t.Run("cert volume present when backup configured", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{

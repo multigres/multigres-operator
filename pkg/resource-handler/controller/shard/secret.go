@@ -18,8 +18,8 @@ import (
 const DefaultPostgresPassword = "postgres"
 
 // BuildPostgresPasswordSecret creates a Secret containing the PostgreSQL
-// superuser password. Both pgctld (via POSTGRES_PASSWORD env var) and multipooler
-// (via POSTGRES_PASSWORD env var) source credentials from this Secret.
+// superuser password. Pool pods mount this Secret and point pgctld and
+// multipooler at the mounted file via POSTGRES_PASSWORD_FILE.
 func BuildPostgresPasswordSecret(
 	shard *multigresv1alpha1.Shard,
 	scheme *runtime.Scheme,
