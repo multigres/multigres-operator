@@ -69,6 +69,7 @@ const (
 	PostgresPasswordVolumeName = "postgres-password"
 
 	// PostgresPasswordMountPath is where the postgres password Secret is mounted.
+	//nolint:gosec // Mount path only; the password value is sourced from a Kubernetes Secret.
 	PostgresPasswordMountPath = "/etc/postgres-password"
 
 	// PostgresPasswordFilePath is consumed by pgctld and multipooler via POSTGRES_PASSWORD_FILE.
