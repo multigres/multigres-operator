@@ -140,7 +140,7 @@ func TestDefaultPgHbaTemplateEmbedded(t *testing.T) {
 		},
 		{
 			desc:        "replication scram-sha-256 rule",
-			mustContain: []string{"host", "replication", "all", "127.0.0.1/32", "scram-sha-256"},
+			mustContain: []string{"host", "replication", "all", "0.0.0.0/0", "scram-sha-256"},
 		},
 	}
 
