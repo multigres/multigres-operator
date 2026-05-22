@@ -97,20 +97,8 @@ func PgHbaConfigMapName(shardName string) string {
 	return shardName + "-pg-hba"
 }
 
-// PostgresPasswordSecretName returns the per-shard Secret name for the postgres password.
-func PostgresPasswordSecretName(shardName string) string {
-	return shardName + "-postgres-password"
-}
-
 func postgresPasswordSecretRef(shard *multigresv1alpha1.Shard) (name, key string) {
-	if shard.Spec.PostgresPasswordSecretRef == nil {
-		return PostgresPasswordSecretName(shard.Name), PostgresPasswordSecretKey
-	}
-	key = shard.Spec.PostgresPasswordSecretRef.Key
-	if key == "" {
-		key = PostgresPasswordSecretKey
-	}
-	return shard.Spec.PostgresPasswordSecretRef.Name, key
+	return shard.Spec.PostgresPasswordSecretRef.Name, shard.Spec.PostgresPasswordSecretRef.Key
 }
 
 // buildSocketDirVolume creates the shared emptyDir volume for unix sockets.
@@ -732,7 +720,7 @@ func buildPgBackRestCertVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
 }
 
 // pgPasswordFileEnvVar returns a POSTGRES_PASSWORD_FILE env var pointing at the mounted
-// per-shard postgres password Secret. pgctld reads this during initdb to set the
+// postgres password Secret. pgctld reads this during initdb to set the
 // superuser password in pg_authid, and multipooler uses it for admin connections.
 func pgPasswordFileEnvVar() corev1.EnvVar {
 	return corev1.EnvVar{

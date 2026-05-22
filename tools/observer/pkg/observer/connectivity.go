@@ -12,6 +12,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -891,9 +893,20 @@ func (o *Observer) fetchGatewayPassword(ctx context.Context, svc *corev1.Service
 	return ""
 }
 
-// fetchShardPassword reads the postgres superuser password from the per-shard secret.
+// fetchShardPassword reads the postgres superuser password from the Secret referenced by the Shard.
 func (o *Observer) fetchShardPassword(ctx context.Context, shard *multigresv1alpha1.Shard) string {
-	secretName := shard.Name + "-postgres-password"
+	secretName, secretKey, ok := o.fetchShardPasswordSecretRef(ctx, shard)
+	if !ok {
+		o.logger.Debug(
+			"shard is missing postgres password secret reference",
+			"shard",
+			shard.Name,
+			"namespace",
+			shard.Namespace,
+		)
+		return ""
+	}
+
 	var secret corev1.Secret
 	if err := o.client.Get(ctx, types.NamespacedName{
 		Namespace: shard.Namespace,
@@ -909,11 +922,59 @@ func (o *Observer) fetchShardPassword(ctx context.Context, shard *multigresv1alp
 		return ""
 	}
 
-	pw, ok := secret.Data["password"]
+	pw, ok := secret.Data[secretKey]
 	if !ok {
+		o.logger.Debug(
+			"postgres password secret is missing key",
+			"secret",
+			secretName,
+			"key",
+			secretKey,
+		)
 		return ""
 	}
 	return string(pw)
+}
+
+func (o *Observer) fetchShardPasswordSecretRef(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (name, key string, ok bool) {
+	current := &unstructured.Unstructured{}
+	current.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "multigres.com",
+		Version: "v1alpha1",
+		Kind:    "Shard",
+	})
+	if err := o.client.Get(ctx, types.NamespacedName{
+		Namespace: shard.Namespace,
+		Name:      shard.Name,
+	}, current); err != nil {
+		o.logger.Debug(
+			"failed to read shard for postgres password secret reference",
+			"shard",
+			shard.Name,
+			"namespace",
+			shard.Namespace,
+			"error",
+			err,
+		)
+		return "", "", false
+	}
+
+	name, nameFound, _ := unstructured.NestedString(
+		current.Object,
+		"spec",
+		"postgresPasswordSecretRef",
+		"name",
+	)
+	key, keyFound, _ := unstructured.NestedString(
+		current.Object,
+		"spec",
+		"postgresPasswordSecretRef",
+		"key",
+	)
+	return name, key, nameFound && keyFound && name != "" && key != ""
 }
 
 // probeOperatorMetrics checks that the operator's /metrics endpoint is reachable

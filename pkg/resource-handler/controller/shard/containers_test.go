@@ -508,15 +508,16 @@ func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
 	}
 }
 
-func TestPoolContainers_PostgresPasswordSecretRefDefaultKey(t *testing.T) {
+func TestPoolContainers_PostgresPasswordSecretRef(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 		Spec: multigresv1alpha1.ShardSpec{
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "0",
-			PostgresPasswordSecretRef: &multigresv1alpha1.PostgresPasswordSecretRef{
+			PostgresPasswordSecretRef: multigresv1alpha1.PostgresPasswordSecretRef{
 				Name: "multigres-admin-password",
+				Key:  PostgresPasswordSecretKey,
 			},
 		},
 	}
@@ -1409,7 +1410,12 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				Name:   "test-shard",
 				Labels: map[string]string{"multigres.com/cluster": "test"},
 			},
-			Spec: multigresv1alpha1.ShardSpec{},
+			Spec: multigresv1alpha1.ShardSpec{
+				PostgresPasswordSecretRef: multigresv1alpha1.PostgresPasswordSecretRef{
+					Name: "multigres-admin-password",
+					Key:  PostgresPasswordSecretKey,
+				},
+			},
 		}
 		volumes := buildPoolVolumes(shard, "zone1")
 		for _, v := range volumes {
@@ -1419,11 +1425,11 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 			if v.Secret == nil {
 				t.Fatal("postgres password volume should use Secret source")
 			}
-			if v.Secret.SecretName != PostgresPasswordSecretName("test-shard") {
+			if v.Secret.SecretName != "multigres-admin-password" {
 				t.Errorf(
 					"postgres password SecretName = %q, want %q",
 					v.Secret.SecretName,
-					PostgresPasswordSecretName("test-shard"),
+					"multigres-admin-password",
 				)
 			}
 			if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {

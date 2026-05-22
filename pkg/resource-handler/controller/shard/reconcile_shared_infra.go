@@ -41,37 +41,13 @@ func (r *ShardReconciler) reconcilePgHbaConfigMap(
 	return nil
 }
 
-// reconcilePostgresPasswordSecret ensures the postgres password Secret exists
-// or validates the user-provided Secret reference.
+// reconcilePostgresPasswordSecret validates the referenced postgres password Secret.
 func (r *ShardReconciler) reconcilePostgresPasswordSecret(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) error {
-	if shard.Spec.PostgresPasswordSecretRef != nil {
-		if _, err := r.postgresPasswordSecretData(ctx, shard); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	desired, err := BuildPostgresPasswordSecret(shard, r.Scheme)
-	if err != nil {
-		return fmt.Errorf("failed to build postgres password Secret: %w", err)
-	}
-
-	// Server Side Apply
-	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
-	); err != nil {
-		return fmt.Errorf("failed to apply postgres password Secret: %w", err)
-	}
-
-	return nil
+	_, err := r.postgresPasswordSecretData(ctx, shard)
+	return err
 }
 
 func (r *ShardReconciler) postgresPasswordSecretData(

@@ -26,6 +26,10 @@ func newTestShard() *multigresv1alpha1.Shard {
 			DatabaseName:   "postgres",
 			TableGroupName: "default",
 			ShardName:      "0-inf",
+			PostgresPasswordSecretRef: multigresv1alpha1.PostgresPasswordSecretRef{
+				Name: "multigres-admin-password",
+				Key:  PostgresPasswordSecretKey,
+			},
 		},
 	}
 }
@@ -232,11 +236,11 @@ func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
 	if passwordVolume.Secret == nil {
 		t.Fatal("postgres password volume should use Secret source")
 	}
-	if passwordVolume.Secret.SecretName != PostgresPasswordSecretName("test-shard") {
+	if passwordVolume.Secret.SecretName != "multigres-admin-password" {
 		t.Errorf(
 			"postgres password SecretName = %q, want %q",
 			passwordVolume.Secret.SecretName,
-			PostgresPasswordSecretName("test-shard"),
+			"multigres-admin-password",
 		)
 	}
 	if passwordVolume.Secret.DefaultMode == nil || *passwordVolume.Secret.DefaultMode != 0o444 {
@@ -276,7 +280,7 @@ func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
 
 func TestBuildPoolPod_PostgresPasswordSecretRef(t *testing.T) {
 	shard := newTestShard()
-	shard.Spec.PostgresPasswordSecretRef = &multigresv1alpha1.PostgresPasswordSecretRef{
+	shard.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
 		Name: "multigres-admin-password",
 		Key:  "current",
 	}
@@ -921,7 +925,7 @@ func oldPostgresPasswordEnvVar() corev1.EnvVar {
 		ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{
-					Name: PostgresPasswordSecretName("test-shard"),
+					Name: "multigres-admin-password",
 				},
 				Key: PostgresPasswordSecretKey,
 			},
