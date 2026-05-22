@@ -25,7 +25,6 @@ import (
 // ============================================================================
 
 // CellTemplateSpec defines reusable config for Cell components (Gateway, LocalTopo).
-// +kubebuilder:validation:XValidation:rule="!has(self.localTopoServer)",message="local topology servers (localTopoServer) are not yet supported"
 type CellTemplateSpec struct {
 	// MultiGateway configuration.
 	// +optional

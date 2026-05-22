@@ -190,28 +190,6 @@ func (r *MultigresClusterReconciler) Reconcile(
 	}
 
 	{
-		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileTopology")
-		result, err := r.reconcileTopology(ctx, cluster, res)
-		if err != nil {
-			monitoring.RecordSpanError(childSpan, err)
-			childSpan.End()
-			l.Error(err, "Failed to reconcile topology")
-			r.Recorder.Eventf(
-				cluster,
-				"Warning",
-				"FailedApply",
-				"Failed to reconcile topology: %v",
-				err,
-			)
-			return ctrl.Result{}, err
-		}
-		childSpan.End()
-		if result.RequeueAfter > 0 {
-			return result, nil
-		}
-	}
-
-	{
 		ctx, childSpan := monitoring.StartChildSpan(
 			ctx,
 			"MultigresCluster.ReconcileCertificate",
@@ -252,6 +230,28 @@ func (r *MultigresClusterReconciler) Reconcile(
 			return ctrl.Result{}, err
 		}
 		childSpan.End()
+	}
+
+	{
+		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileTopology")
+		result, err := r.reconcileTopology(ctx, cluster, res, pendingCells)
+		if err != nil {
+			monitoring.RecordSpanError(childSpan, err)
+			childSpan.End()
+			l.Error(err, "Failed to reconcile topology")
+			r.Recorder.Eventf(
+				cluster,
+				"Warning",
+				"FailedApply",
+				"Failed to reconcile topology: %v",
+				err,
+			)
+			return ctrl.Result{}, err
+		}
+		childSpan.End()
+		if result.RequeueAfter > 0 {
+			return result, nil
+		}
 	}
 
 	{

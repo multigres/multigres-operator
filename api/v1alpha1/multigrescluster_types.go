@@ -281,7 +281,6 @@ type CellOverrides struct {
 }
 
 // CellInlineSpec defines the inline configuration for a Cell.
-// +kubebuilder:validation:XValidation:rule="!has(self.localTopoServer)",message="local topology servers (localTopoServer) are not yet supported"
 type CellInlineSpec struct {
 	// MultiGateway configuration.
 	// +optional

@@ -485,6 +485,43 @@ func TestRegisterCellFromSpec(t *testing.T) {
 		}
 	})
 
+	t.Run("uses managed local topology address for etcd local topology", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+
+		localTopo := &multigresv1alpha1.LocalTopoServerSpec{
+			Etcd: &multigresv1alpha1.EtcdSpec{
+				RootPath: "/multigres/cells/cell2",
+			},
+		}
+		managedAddress := topo.ManagedLocalTopoServerAddress("cluster-cell2", "default")
+		err := topo.RegisterCellFromSpec(
+			context.Background(),
+			store,
+			recorder,
+			owner,
+			multigresv1alpha1.CellConfig{Name: "cell2"},
+			localTopo,
+			topoRef,
+			managedAddress,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cell, err := store.GetCell(context.Background(), "cell2")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if !reflect.DeepEqual(cell.ServerAddresses, []string{managedAddress}) {
+			t.Errorf("expected managed local topo address, got %v", cell.ServerAddresses)
+		}
+		if cell.Root != "/multigres/cells/cell2" {
+			t.Errorf("expected managed local topo root, got %s", cell.Root)
+		}
+	})
+
 	t.Run("returns error on CreateCell failure", func(t *testing.T) {
 		t.Parallel()
 		store := &mockTopologyStore{

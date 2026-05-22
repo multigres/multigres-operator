@@ -2529,10 +2529,6 @@ spec:
                               type: array
                           type: object
                       type: object
-                      x-kubernetes-validations:
-                      - message: local topology servers (localTopoServer) are not
-                          yet supported
-                        rule: '!has(self.localTopoServer)'
                     zoneId:
                       description: |-
                         ZoneID indicates the physical availability zone ID (e.g. use1-az1).

@@ -31,6 +31,11 @@ const (
 	// Cell is not Healthy. This allows detection of pod-level issues like
 	// CrashLoopBackOff that don't trigger Deployment watch events.
 	statusRecheckDelay = 30 * time.Second
+
+	// localTopoServerRecheckDelay is the interval for rechecking a managed local
+	// TopoServer while waiting to create dependent gateway resources or complete
+	// Cell deletion.
+	localTopoServerRecheckDelay = 5 * time.Second
 )
 
 // CellReconciler reconciles a Cell object.
@@ -69,43 +74,43 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// If this Cell is pending deletion (from MultigresCluster pruning),
-	// set ReadyForDeletion immediately since Cells are stateless gateways.
+	// wait for any managed local topology server before marking it ready.
 	if cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion] != "" {
-		if !meta.IsStatusConditionTrue(
-			cell.Status.Conditions,
-			multigresv1alpha1.ConditionReadyForDeletion,
-		) {
-			meta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
-				Type:               multigresv1alpha1.ConditionReadyForDeletion,
-				Status:             metav1.ConditionTrue,
-				Reason:             "StatelessComponent",
-				Message:            "Cell is stateless; ready for deletion",
-				ObservedGeneration: cell.Generation,
-			})
-			patchObj := &multigresv1alpha1.Cell{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: multigresv1alpha1.GroupVersion.String(),
-					Kind:       "Cell",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      cell.Name,
-					Namespace: cell.Namespace,
-				},
-				Status: cell.Status,
-			}
-			if err := r.Status().Patch(ctx, patchObj, client.Apply,
-				client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to set ReadyForDeletion on Cell: %w", err)
-			}
-			r.Recorder.Eventf(cell, "Normal", "ReadyForDeletion",
-				"Cell %s marked ready for deletion", cell.Name)
-		}
-		return ctrl.Result{}, nil
+		return r.handlePendingDeletion(ctx, cell)
 	}
 
 	// If being deleted, let Kubernetes GC handle cleanup
 	if !cell.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
+	}
+
+	// Reconcile managed local TopoServer, when configured.
+	{
+		ctx, childSpan := monitoring.StartChildSpan(ctx, "Cell.ReconcileLocalTopoServer")
+		if err := r.reconcileLocalTopoServer(ctx, cell); err != nil {
+			monitoring.RecordSpanError(childSpan, err)
+			childSpan.End()
+			logger.Error(err, "Failed to reconcile local TopoServer")
+			r.Recorder.Eventf(
+				cell,
+				"Warning",
+				"FailedApply",
+				"Failed to reconcile local TopoServer: %v",
+				err,
+			)
+			return ctrl.Result{}, err
+		}
+		childSpan.End()
+	}
+	if ready, err := r.localTopoServerReady(ctx, cell); err != nil {
+		logger.Error(err, "Failed to check local TopoServer readiness")
+		return ctrl.Result{}, err
+	} else if !ready {
+		logger.V(1).Info("Waiting for local TopoServer before reconciling gateway")
+		if err := r.patchLocalTopoServerWaitingStatus(ctx, cell); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: localTopoServerRecheckDelay}, nil
 	}
 
 	// Reconcile MultiGateway Deployment
@@ -233,6 +238,266 @@ func (r *CellReconciler) reconcileMultiGatewayService(
 		desired.Name,
 	)
 
+	return nil
+}
+
+// reconcileLocalTopoServer creates or updates the managed local TopoServer for a Cell.
+func (r *CellReconciler) reconcileLocalTopoServer(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) error {
+	desired, err := BuildLocalTopoServer(cell, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to build local TopoServer: %w", err)
+	}
+	if desired == nil {
+		deleted, err := r.deleteOwnedLocalTopoServerIfExists(ctx, cell)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			r.Recorder.Eventf(cell, "Normal", "Deleted",
+				"Deleted stale local TopoServer %s", BuildLocalTopoServerName(cell))
+		}
+		return nil
+	}
+
+	existing := &multigresv1alpha1.TopoServer{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      desired.Name,
+		Namespace: desired.Namespace,
+	}, existing); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get local TopoServer: %w", err)
+		}
+	} else if !isControlledByCell(existing, cell) {
+		return fmt.Errorf("refusing to manage local TopoServer %s/%s not controlled by Cell %s/%s",
+			existing.Namespace, existing.Name, cell.Namespace, cell.Name)
+	}
+
+	desired.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("TopoServer"))
+	if err := r.Patch(
+		ctx,
+		desired,
+		client.Apply,
+		client.ForceOwnership,
+		client.FieldOwner("multigres-operator"),
+	); err != nil {
+		return fmt.Errorf("failed to apply local TopoServer: %w", err)
+	}
+
+	r.Recorder.Eventf(
+		cell,
+		"Normal",
+		"Applied",
+		"Applied %s %s",
+		desired.GroupVersionKind().Kind,
+		desired.Name,
+	)
+
+	return nil
+}
+
+func (r *CellReconciler) localTopoServerReady(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) (bool, error) {
+	if !hasManagedLocalTopoServer(cell) {
+		return true, nil
+	}
+
+	toposerver := &multigresv1alpha1.TopoServer{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      BuildLocalTopoServerName(cell),
+		Namespace: cell.Namespace,
+	}, toposerver); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get local TopoServer: %w", err)
+	}
+	if !isControlledByCell(toposerver, cell) {
+		return false, fmt.Errorf("refusing to use local TopoServer %s/%s not controlled by Cell %s/%s",
+			toposerver.Namespace, toposerver.Name, cell.Namespace, cell.Name)
+	}
+
+	return toposerver.Status.ObservedGeneration == toposerver.Generation &&
+		toposerver.Status.Phase == multigresv1alpha1.PhaseHealthy, nil
+}
+
+func (r *CellReconciler) handlePendingDeletion(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) (ctrl.Result, error) {
+	reason := "StatelessComponent"
+	message := "Cell has no managed local TopoServer; ready for deletion"
+
+	absent, err := r.ensureLocalTopoServerDeleted(ctx, cell)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !absent {
+		if err := r.patchReadyForDeletionCondition(ctx, cell, metav1.Condition{
+			Type:               multigresv1alpha1.ConditionReadyForDeletion,
+			Status:             metav1.ConditionFalse,
+			Reason:             "LocalTopoServerDeleting",
+			Message:            "Waiting for managed local TopoServer deletion",
+			ObservedGeneration: cell.Generation,
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: localTopoServerRecheckDelay}, nil
+	}
+
+	if hasManagedLocalTopoServer(cell) {
+		reason = "LocalTopoServerDeleted"
+		message = "Managed local TopoServer is deleted; ready for deletion"
+	}
+
+	if !meta.IsStatusConditionTrue(
+		cell.Status.Conditions,
+		multigresv1alpha1.ConditionReadyForDeletion,
+	) {
+		if err := r.patchReadyForDeletionCondition(ctx, cell, metav1.Condition{
+			Type:               multigresv1alpha1.ConditionReadyForDeletion,
+			Status:             metav1.ConditionTrue,
+			Reason:             reason,
+			Message:            message,
+			ObservedGeneration: cell.Generation,
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Eventf(cell, "Normal", "ReadyForDeletion",
+			"Cell %s marked ready for deletion", cell.Name)
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *CellReconciler) ensureLocalTopoServerDeleted(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) (bool, error) {
+	deleted, err := r.deleteLocalTopoServerIfExists(ctx, cell)
+	if err != nil {
+		return false, err
+	}
+	return !deleted, nil
+}
+
+func (r *CellReconciler) deleteOwnedLocalTopoServerIfExists(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) (bool, error) {
+	toposerver := &multigresv1alpha1.TopoServer{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      BuildLocalTopoServerName(cell),
+		Namespace: cell.Namespace,
+	}, toposerver); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get local TopoServer: %w", err)
+	}
+	if !isControlledByCell(toposerver, cell) {
+		return false, nil
+	}
+	if !toposerver.DeletionTimestamp.IsZero() {
+		return true, nil
+	}
+	if err := r.Delete(ctx, toposerver); err != nil && !errors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to delete local TopoServer: %w", err)
+	}
+	return true, nil
+}
+
+func (r *CellReconciler) deleteLocalTopoServerIfExists(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) (bool, error) {
+	toposerver := &multigresv1alpha1.TopoServer{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      BuildLocalTopoServerName(cell),
+		Namespace: cell.Namespace,
+	}, toposerver); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get local TopoServer: %w", err)
+	}
+	if !isControlledByCell(toposerver, cell) {
+		return false, fmt.Errorf("refusing to delete local TopoServer %s/%s not controlled by Cell %s/%s",
+			toposerver.Namespace, toposerver.Name, cell.Namespace, cell.Name)
+	}
+	if !toposerver.DeletionTimestamp.IsZero() {
+		return true, nil
+	}
+	if err := r.Delete(ctx, toposerver); err != nil && !errors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to delete local TopoServer: %w", err)
+	}
+	return true, nil
+}
+
+func (r *CellReconciler) patchReadyForDeletionCondition(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+	condition metav1.Condition,
+) error {
+	meta.SetStatusCondition(&cell.Status.Conditions, condition)
+	patchObj := &multigresv1alpha1.Cell{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: multigresv1alpha1.GroupVersion.String(),
+			Kind:       "Cell",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cell.Name,
+			Namespace: cell.Namespace,
+		},
+		Status: cell.Status,
+	}
+	if err := r.Status().Patch(ctx, patchObj, client.Apply,
+		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+		return fmt.Errorf("failed to patch ReadyForDeletion on Cell: %w", err)
+	}
+	return nil
+}
+
+func (r *CellReconciler) patchLocalTopoServerWaitingStatus(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+) error {
+	meta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
+		Type:               "Available",
+		Status:             metav1.ConditionFalse,
+		Reason:             "LocalTopoServerNotReady",
+		Message:            "Waiting for managed local TopoServer to become ready",
+		ObservedGeneration: cell.Generation,
+	})
+	meta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionFalse,
+		Reason:             "LocalTopoServerNotReady",
+		Message:            "Waiting for managed local TopoServer to become ready",
+		ObservedGeneration: cell.Generation,
+	})
+	cell.Status.Phase = multigresv1alpha1.PhaseProgressing
+	cell.Status.Message = "Waiting for managed local TopoServer to become ready"
+	cell.Status.ObservedGeneration = cell.Generation
+
+	patchObj := &multigresv1alpha1.Cell{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: multigresv1alpha1.GroupVersion.String(),
+			Kind:       "Cell",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cell.Name,
+			Namespace: cell.Namespace,
+		},
+		Status: cell.Status,
+	}
+	if err := r.Status().Patch(ctx, patchObj, client.Apply,
+		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+		return fmt.Errorf("failed to patch local TopoServer waiting status on Cell: %w", err)
+	}
 	return nil
 }
 
@@ -397,6 +662,7 @@ func (r *CellReconciler) SetupWithManager(mgr ctrl.Manager, opts ...controller.O
 		For(&multigresv1alpha1.Cell{},
 			builder.WithPredicates(projectRefOrGenerationChangedPredicate()),
 		).
+		Owns(&multigresv1alpha1.TopoServer{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		WithOptions(controllerOpts).

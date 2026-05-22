@@ -118,11 +118,17 @@ func RegisterCellFromSpec(
 	cellConfig multigresv1alpha1.CellConfig,
 	localTopo *multigresv1alpha1.LocalTopoServerSpec,
 	topoRef multigresv1alpha1.GlobalTopoServerRef,
+	managedTopoAddress ...string,
 ) error {
 	logger := log.FromContext(ctx)
 	cellName := string(cellConfig.Name)
 
-	cellMetadata := cellMetadataFromTopoRefs(cellName, localTopo, topoRef)
+	managedAddress := ""
+	if len(managedTopoAddress) > 0 {
+		managedAddress = managedTopoAddress[0]
+	}
+
+	cellMetadata := cellMetadataFromTopoRefs(cellName, localTopo, topoRef, managedAddress)
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
 	if err != nil {

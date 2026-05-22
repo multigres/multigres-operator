@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/util/name"
 )
 
 // RegisterCell registers the cell metadata in the global topology.
@@ -24,9 +25,8 @@ func RegisterCell(
 
 	cellName := string(cell.Spec.Name)
 
-	cellMetadata := cellMetadataFromTopoRefs(
-		cellName, cell.Spec.TopoServer, cell.Spec.GlobalTopoServer,
-	)
+	cellMetadata := cellMetadataFromTopoRefs(cellName, cell.Spec.TopoServer, cell.Spec.GlobalTopoServer,
+		ManagedLocalTopoServerAddress(cell.Name, cell.Namespace))
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
 	if err != nil {
@@ -60,6 +60,7 @@ func cellMetadataFromTopoRefs(
 	cellName string,
 	localTopo *multigresv1alpha1.LocalTopoServerSpec,
 	globalTopo multigresv1alpha1.GlobalTopoServerRef,
+	managedTopoAddress string,
 ) *clustermetadata.Cell {
 	if localTopo != nil && localTopo.External != nil && len(localTopo.External.Endpoints) > 0 {
 		addresses := make([]string, 0, len(localTopo.External.Endpoints))
@@ -70,6 +71,17 @@ func cellMetadataFromTopoRefs(
 			Name:            cellName,
 			ServerAddresses: addresses,
 			Root:            localTopo.External.RootPath,
+		}
+	}
+	if localTopo != nil && localTopo.Etcd != nil && managedTopoAddress != "" {
+		rootPath := localTopo.Etcd.RootPath
+		if rootPath == "" {
+			rootPath = fmt.Sprintf("/multigres/%s", cellName)
+		}
+		return &clustermetadata.Cell{
+			Name:            cellName,
+			ServerAddresses: []string{managedTopoAddress},
+			Root:            rootPath,
 		}
 	}
 
@@ -106,6 +118,18 @@ func createOrUpdateCell(
 		return false, fmt.Errorf("failed to create cell in topology: %w", err)
 	}
 	return true, nil
+}
+
+// ManagedLocalTopoServerName returns the operator-managed local TopoServer name
+// for a Cell resource name.
+func ManagedLocalTopoServerName(cellResourceName string) string {
+	return name.JoinWithConstraints(name.StatefulSetConstraints, cellResourceName, "topo")
+}
+
+// ManagedLocalTopoServerAddress returns the in-cluster client Service address
+// for a managed local TopoServer.
+func ManagedLocalTopoServerAddress(cellResourceName, namespace string) string {
+	return fmt.Sprintf("%s.%s.svc:2379", ManagedLocalTopoServerName(cellResourceName), namespace)
 }
 
 // UnregisterCell removes the cell metadata from the global topology.
