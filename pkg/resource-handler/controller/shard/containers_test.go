@@ -530,7 +530,10 @@ func TestPoolContainers_PostgresPasswordSecretRefDefaultKey(t *testing.T) {
 			t.Fatal("postgres password volume should use Secret source")
 		}
 		if v.Secret.SecretName != "multigres-admin-password" {
-			t.Errorf("postgres password SecretName = %q, want multigres-admin-password", v.Secret.SecretName)
+			t.Errorf(
+				"postgres password SecretName = %q, want multigres-admin-password",
+				v.Secret.SecretName,
+			)
 		}
 		if len(v.Secret.Items) != 1 ||
 			v.Secret.Items[0].Key != PostgresPasswordSecretKey ||

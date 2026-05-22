@@ -97,15 +97,27 @@ func (r *ShardReconciler) postgresPasswordSecret(
 		Namespace: shard.Namespace,
 		Name:      secretName,
 	}, secret); err != nil {
-		return nil, "", nil, fmt.Errorf("failed to get postgres password Secret %q: %w", secretName, err)
+		return nil, "", nil, fmt.Errorf(
+			"failed to get postgres password Secret %q: %w",
+			secretName,
+			err,
+		)
 	}
 
 	data, ok := secret.Data[secretKey]
 	if !ok {
-		return nil, "", nil, fmt.Errorf("key %q not found in postgres password Secret %q", secretKey, secretName)
+		return nil, "", nil, fmt.Errorf(
+			"key %q not found in postgres password Secret %q",
+			secretKey,
+			secretName,
+		)
 	}
 	if len(data) == 0 {
-		return nil, "", nil, fmt.Errorf("key %q in postgres password Secret %q is empty", secretKey, secretName)
+		return nil, "", nil, fmt.Errorf(
+			"key %q in postgres password Secret %q is empty",
+			secretKey,
+			secretName,
+		)
 	}
 	return secret, secretKey, data, nil
 }

@@ -192,8 +192,8 @@ type TableGroup struct {
 
 // TableGroupList contains a list of TableGroup
 type TableGroupList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `             json:",inline"`
+	metav1.ListMeta `             json:"metadata,omitempty"`
 	Items           []TableGroup `json:"items"`
 }
 

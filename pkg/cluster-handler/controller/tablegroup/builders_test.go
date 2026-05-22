@@ -127,7 +127,10 @@ func TestBuildShard(t *testing.T) {
 			)
 		}
 		if got.Spec.PostgresPasswordSecretRef.Key != "current" {
-			t.Errorf("Spec.PostgresPasswordSecretRef.Key = %v, want current", got.Spec.PostgresPasswordSecretRef.Key)
+			t.Errorf(
+				"Spec.PostgresPasswordSecretRef.Key = %v, want current",
+				got.Spec.PostgresPasswordSecretRef.Key,
+			)
 		}
 	})
 
