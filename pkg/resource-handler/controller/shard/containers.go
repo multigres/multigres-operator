@@ -102,6 +102,17 @@ func PostgresPasswordSecretName(shardName string) string {
 	return shardName + "-postgres-password"
 }
 
+func postgresPasswordSecretRef(shard *multigresv1alpha1.Shard) (name, key string) {
+	if shard.Spec.PostgresPasswordSecretRef == nil {
+		return PostgresPasswordSecretName(shard.Name), PostgresPasswordSecretKey
+	}
+	key = shard.Spec.PostgresPasswordSecretRef.Key
+	if key == "" {
+		key = PostgresPasswordSecretKey
+	}
+	return shard.Spec.PostgresPasswordSecretRef.Name, key
+}
+
 // buildSocketDirVolume creates the shared emptyDir volume for unix sockets.
 func buildSocketDirVolume() corev1.Volume {
 	return corev1.Volume{
@@ -126,19 +137,20 @@ func buildPgHbaVolume(shardName string) corev1.Volume {
 	}
 }
 
-func buildPostgresPasswordVolume(shardName string) corev1.Volume {
+func buildPostgresPasswordVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 	// Keep the Secret world-readable inside the pod because the default pool
 	// pod may not set fsGroup, while containers still run as non-root users.
 	defaultMode := int32(0o444)
+	secretName, secretKey := postgresPasswordSecretRef(shard)
 	return corev1.Volume{
 		Name: PostgresPasswordVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName:  PostgresPasswordSecretName(shardName),
+				SecretName:  secretName,
 				DefaultMode: &defaultMode,
 				Items: []corev1.KeyToPath{
 					{
-						Key:  PostgresPasswordSecretKey,
+						Key:  secretKey,
 						Path: PostgresPasswordSecretKey,
 					},
 				},
@@ -326,18 +338,14 @@ func buildPostgresExporterContainer(
 				Value: postgresSuperuserOrDefault(shard.Spec.PostgresSuperuser),
 			},
 			{
-				Name: "DATA_SOURCE_PASS",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: PostgresPasswordSecretName(shard.Name),
-						},
-						Key: PostgresPasswordSecretKey,
-					},
-				},
+				Name:  "DATA_SOURCE_PASS_FILE",
+				Value: PostgresPasswordFilePath,
 			},
 		},
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
+		VolumeMounts: []corev1.VolumeMount{
+			postgresPasswordVolumeMount(),
+		},
 	}
 }
 
@@ -591,7 +599,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		buildSharedBackupVolume(shard, cellName),
 		buildSocketDirVolume(),
 		buildPgHbaVolume(shard.Name),
-		buildPostgresPasswordVolume(shard.Name),
+		buildPostgresPasswordVolume(shard),
 	}
 	if shard.Spec.PostgresConfigRef != nil {
 		volumes = append(volumes, buildPostgresConfigVolume(shard.Spec.PostgresConfigRef))

@@ -1,13 +1,17 @@
 package shard
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
@@ -90,5 +94,54 @@ func TestBuildPostgresPasswordSecret(t *testing.T) {
 				t.Errorf("BuildPostgresPasswordSecret() mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestReconcilePostgresPasswordSecret_SkipsExternalRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			UID:       "test-uid",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			PostgresPasswordSecretRef: &multigresv1alpha1.PostgresPasswordSecretRef{
+				Name: "multigres-admin-password",
+				Key:  "current",
+			},
+		},
+	}
+
+	externalSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multigres-admin-password",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{"current": []byte("secret-password")},
+	}
+
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalSecret).Build()
+	reconciler := &ShardReconciler{
+		Client: client,
+		Scheme: scheme,
+	}
+
+	if err := reconciler.reconcilePostgresPasswordSecret(context.Background(), shard); err != nil {
+		t.Fatalf("reconcilePostgresPasswordSecret() error = %v", err)
+	}
+
+	secret := &corev1.Secret{}
+	err := client.Get(
+		context.Background(),
+		types.NamespacedName{Name: PostgresPasswordSecretName("test-shard"), Namespace: "default"},
+		secret,
+	)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("default postgres password Secret should not be created, got err %v and secret %#v", err, secret)
 	}
 }

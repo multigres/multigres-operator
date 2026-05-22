@@ -192,6 +192,11 @@ type ShardSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	PostgresSuperuser string `json:"postgresSuperuser,omitempty"`
 
+	// PostgresPasswordSecretRef is the resolved Postgres superuser password
+	// Secret.
+	// +optional
+	PostgresPasswordSecretRef *PostgresPasswordSecretRef `json:"postgresPasswordSecretRef,omitempty"`
+
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Each entry is a map like {"topology.kubernetes.io/zone": "us-east-1a"}.
 	// Propagated from the cluster's cell configs so the shard controller

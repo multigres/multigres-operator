@@ -262,9 +262,58 @@ func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
 	}
 
 	exporter := pod.Spec.Containers[1]
-	assertContainsEnvVar(t, exporter.Env, "DATA_SOURCE_PASS")
+	assertEnvVarValue(t, exporter.Env, "DATA_SOURCE_PASS_FILE", PostgresPasswordFilePath)
+	assertNotContainsEnvVar(t, exporter.Env, "DATA_SOURCE_PASS")
+	assertReadOnlyVolumeMount(
+		t,
+		exporter.VolumeMounts,
+		PostgresPasswordVolumeName,
+		PostgresPasswordMountPath,
+	)
 	assertNotContainsEnvVar(t, exporter.Env, "POSTGRES_PASSWORD")
 	assertNotContainsEnvVar(t, exporter.Env, "POSTGRES_PASSWORD_FILE")
+}
+
+func TestBuildPoolPod_PostgresPasswordSecretRef(t *testing.T) {
+	shard := newTestShard()
+	shard.Spec.PostgresPasswordSecretRef = &multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "current",
+	}
+
+	pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	passwordVolume := findVolume(pod.Spec.Volumes, PostgresPasswordVolumeName)
+	if passwordVolume == nil {
+		t.Fatalf("missing postgres password volume %q", PostgresPasswordVolumeName)
+	}
+	if passwordVolume.Secret == nil {
+		t.Fatal("postgres password volume should use Secret source")
+	}
+	if passwordVolume.Secret.SecretName != "multigres-admin-password" {
+		t.Errorf("postgres password SecretName = %q, want multigres-admin-password", passwordVolume.Secret.SecretName)
+	}
+	if len(passwordVolume.Secret.Items) != 1 ||
+		passwordVolume.Secret.Items[0].Key != "current" ||
+		passwordVolume.Secret.Items[0].Path != PostgresPasswordSecretKey {
+		t.Errorf(
+			"postgres password Secret items = %+v, want key current projected to password",
+			passwordVolume.Secret.Items,
+		)
+	}
+
+	exporter := pod.Spec.Containers[1]
+	assertEnvVarValue(t, exporter.Env, "DATA_SOURCE_PASS_FILE", PostgresPasswordFilePath)
+	assertNotContainsEnvVar(t, exporter.Env, "DATA_SOURCE_PASS")
+	assertReadOnlyVolumeMount(
+		t,
+		exporter.VolumeMounts,
+		PostgresPasswordVolumeName,
+		PostgresPasswordMountPath,
+	)
 }
 
 func TestBuildPoolPod_SecurityContext(t *testing.T) {

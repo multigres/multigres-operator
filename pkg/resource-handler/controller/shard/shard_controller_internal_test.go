@@ -5213,6 +5213,10 @@ func TestEnqueueFromPostgresConfigMap(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	shardWithRef := &multigresv1alpha1.Shard{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "multigres.com/v1alpha1",
+			Kind:       "Shard",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "shard-with-ref",
 			Namespace: "default",
@@ -5226,6 +5230,10 @@ func TestEnqueueFromPostgresConfigMap(t *testing.T) {
 	}
 
 	shardNoRef := &multigresv1alpha1.Shard{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "multigres.com/v1alpha1",
+			Kind:       "Shard",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "shard-no-ref",
 			Namespace: "default",
@@ -5234,6 +5242,10 @@ func TestEnqueueFromPostgresConfigMap(t *testing.T) {
 	}
 
 	shardDifferentRef := &multigresv1alpha1.Shard{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "multigres.com/v1alpha1",
+			Kind:       "Shard",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "shard-different-ref",
 			Namespace: "default",
