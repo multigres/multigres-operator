@@ -403,19 +403,19 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 				Value: "postgres",
 			},
 			{
-				Name: "DATA_SOURCE_PASS",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: PostgresPasswordSecretName("test-shard"),
-						},
-						Key: PostgresPasswordSecretKey,
-					},
-				},
+				Name:  "DATA_SOURCE_PASS_FILE",
+				Value: PostgresPasswordFilePath,
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: ptr.To(true),
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      PostgresPasswordVolumeName,
+				MountPath: PostgresPasswordMountPath,
+				ReadOnly:  true,
+			},
 		},
 	}
 
@@ -486,11 +486,17 @@ func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
 	}
 
 	for name, c := range map[string]corev1.Container{
-		"pgctld":      buildPgctldSidecar(shard, pool),
-		"multipooler": buildMultiPoolerContainer(shard, pool, "primary", "zone1", "p-test-id"),
+		"pgctld":            buildPgctldSidecar(shard, pool),
+		"multipooler":       buildMultiPoolerContainer(shard, pool, "primary", "zone1", "p-test-id"),
+		"postgres-exporter": buildPostgresExporterContainer(shard, pool),
 	} {
 		t.Run(name, func(t *testing.T) {
-			assertEnvVarValue(t, c.Env, "POSTGRES_PASSWORD_FILE", PostgresPasswordFilePath)
+			if name == "postgres-exporter" {
+				assertEnvVarValue(t, c.Env, "DATA_SOURCE_PASS_FILE", PostgresPasswordFilePath)
+				assertNotContainsEnvVar(t, c.Env, "DATA_SOURCE_PASS")
+			} else {
+				assertEnvVarValue(t, c.Env, "POSTGRES_PASSWORD_FILE", PostgresPasswordFilePath)
+			}
 			assertNotContainsEnvVar(t, c.Env, "POSTGRES_PASSWORD")
 			assertReadOnlyVolumeMount(
 				t,
@@ -500,6 +506,43 @@ func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestPoolContainers_PostgresPasswordSecretRefDefaultKey(t *testing.T) {
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      "0",
+			PostgresPasswordSecretRef: &multigresv1alpha1.PostgresPasswordSecretRef{
+				Name: "multigres-admin-password",
+			},
+		},
+	}
+
+	volumes := buildPoolVolumes(shard, "zone1")
+	for _, v := range volumes {
+		if v.Name != PostgresPasswordVolumeName {
+			continue
+		}
+		if v.Secret == nil {
+			t.Fatal("postgres password volume should use Secret source")
+		}
+		if v.Secret.SecretName != "multigres-admin-password" {
+			t.Errorf("postgres password SecretName = %q, want multigres-admin-password", v.Secret.SecretName)
+		}
+		if len(v.Secret.Items) != 1 ||
+			v.Secret.Items[0].Key != PostgresPasswordSecretKey ||
+			v.Secret.Items[0].Path != PostgresPasswordSecretKey {
+			t.Errorf(
+				"postgres password Secret items = %+v, want default key projected to password",
+				v.Secret.Items,
+			)
+		}
+		return
+	}
+	t.Fatalf("expected postgres password Secret volume in pool volumes")
 }
 
 func TestBuildMultiOrchContainer(t *testing.T) {
