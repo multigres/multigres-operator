@@ -23,6 +23,7 @@ func TestMultigresCluster_Validation(t *testing.T) {
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{}, // Not nil, but empty
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		err := k8sClient.Create(t.Context(), cluster)
 		if err == nil {
 			t.Fatal("Expected error creating cluster with empty GlobalTopoServer struct, got nil")
@@ -45,6 +46,7 @@ func TestMultigresCluster_Validation(t *testing.T) {
 				},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		err := k8sClient.Create(t.Context(), cluster)
 		if err == nil {
 			t.Fatal("Expected error creating cluster with MultiAdmin XOR violation, got nil")
@@ -66,6 +68,7 @@ func TestMultigresCluster_Validation(t *testing.T) {
 				},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		err := k8sClient.Create(t.Context(), cluster)
 		if err == nil {
 			t.Fatal("Expected error creating cluster with multiple databases, got nil")

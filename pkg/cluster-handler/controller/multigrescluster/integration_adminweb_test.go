@@ -55,6 +55,8 @@ func TestExternalAdminWeb_EnableDisableLifecycle(t *testing.T) {
 		},
 	}
 
+	setTestPostgresPasswordSecretRef(cluster)
+
 	require.NoError(t, k8sClient.Create(t.Context(), cluster))
 
 	watcher.SetCmpOpts(
@@ -217,6 +219,8 @@ func TestExternalAdminWeb_NoReadyAdminWebTransition(t *testing.T) {
 			},
 		},
 	}
+
+	setTestPostgresPasswordSecretRef(cluster)
 
 	require.NoError(t, k8sClient.Create(t.Context(), cluster))
 

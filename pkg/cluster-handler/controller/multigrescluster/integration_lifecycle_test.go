@@ -57,6 +57,8 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			},
 		}
 
+		setTestPostgresPasswordSecretRef(cluster)
+
 		if err := k8sClient.Create(t.Context(), cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
@@ -109,6 +111,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		if err := k8sClient.Create(t.Context(), cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
@@ -220,6 +223,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				Images: multigresv1alpha1.ClusterImages{MultiAdmin: "admin:v1"},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		if err := k8sClient.Create(t.Context(), cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}

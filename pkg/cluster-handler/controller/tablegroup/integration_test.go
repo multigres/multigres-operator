@@ -75,6 +75,26 @@ func TestSetupWithManager_Failure(t *testing.T) {
 	}
 }
 
+func setTestPostgresPasswordSecretRef(tableGroup *multigresv1alpha1.TableGroup) {
+	if tableGroup == nil || tableGroup.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	tableGroup.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
+func setTestShardPostgresPasswordSecretRef(shard *multigresv1alpha1.Shard) {
+	if shard == nil || shard.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	shard.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
 func TestTableGroupReconciliation(t *testing.T) {
 	t.Parallel()
 
@@ -259,6 +279,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 			}
 
 			// 4. Create the Input
+			setTestPostgresPasswordSecretRef(tc.tableGroup)
 			if err := k8sClient.Create(ctx, tc.tableGroup); err != nil {
 				t.Fatalf("Failed to create the initial tablegroup, %v", err)
 			}
@@ -275,6 +296,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 						string(shard.Spec.ShardName),
 					)
 					shard.Name = expectedName
+					setTestShardPostgresPasswordSecretRef(shard)
 				}
 			}
 

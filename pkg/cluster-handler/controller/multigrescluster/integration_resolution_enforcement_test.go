@@ -90,6 +90,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			},
 		}
 
+		setTestPostgresPasswordSecretRef(cluster)
+
 		if err := k8sClient.Create(t.Context(), cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
@@ -180,6 +182,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		if err := k8sClient.Create(t.Context(), cluster); err != nil {
 			t.Fatal(err)
@@ -285,6 +289,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			},
 		}
 
+		setTestPostgresPasswordSecretRef(cluster)
+
 		if err := k8sClient.Create(t.Context(), cluster); err != nil {
 			t.Fatal(err)
 		}
@@ -374,6 +380,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				PostgresSuperuser: "postgres",
 			},
 		}
+		setTestTableGroupPostgresPasswordSecretRef(wantTG)
 
 		if err := watcher.WaitForMatch(wantTG); err != nil {
 			t.Errorf("List replacement failed: %v", err)
@@ -401,6 +408,8 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 			},
 		},
 	}
+
+	setTestPostgresPasswordSecretRef(cluster)
 
 	if err := k8sClient.Create(t.Context(), cluster); err != nil {
 		t.Fatal(err)
@@ -523,6 +532,7 @@ func TestMultigresCluster_V1Alpha1Constraints(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: strings.ToLower(strings.ReplaceAll(tc.name, " ", "-")), Namespace: testNamespace},
 				Spec:       tc.clusterSpec,
 			}
+			setTestPostgresPasswordSecretRef(cluster)
 			err := k8sClient.Create(t.Context(), cluster)
 			if err == nil {
 				t.Error("Expected validation error, got nil")
@@ -580,6 +590,8 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 			},
 		},
 	}
+
+	setTestPostgresPasswordSecretRef(cluster)
 
 	if err := k8sClient.Create(t.Context(), cluster); err != nil {
 		t.Fatal(err)
@@ -672,6 +684,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 			PostgresSuperuser: "postgres",
 		},
 	}
+	setTestTableGroupPostgresPasswordSecretRef(wantTG)
 
 	if err := watcher.WaitForMatch(wantTG); err != nil {
 		t.Errorf("Template override validation failed: %v", err)

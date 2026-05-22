@@ -54,6 +54,23 @@ func getPrivilegedClient(t *testing.T) client.Client {
 	return c
 }
 
+func setTestObjectPostgresPasswordSecretRef(obj client.Object) {
+	switch typed := obj.(type) {
+	case *multigresv1alpha1.Shard:
+		setTestShardPostgresPasswordSecretRef(typed)
+	case *unstructured.Unstructured:
+		spec, ok := typed.Object["spec"].(map[string]interface{})
+		if !ok {
+			spec = map[string]interface{}{}
+			typed.Object["spec"] = spec
+		}
+		spec["postgresPasswordSecretRef"] = map[string]interface{}{
+			"name": "multigres-admin-password",
+			"key":  "password",
+		}
+	}
+}
+
 func TestCEL_MultigresCluster(t *testing.T) {
 	t.Parallel()
 
@@ -214,6 +231,7 @@ func TestCEL_MultigresCluster(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestPostgresPasswordSecretRef(tc.cluster)
 			err := k8sClient.Create(ctx, tc.cluster)
 			if err == nil {
 				t.Fatal("Expected error, got nil")
@@ -257,6 +275,7 @@ func TestCEL_TopoServer(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestPostgresPasswordSecretRef(tc.cluster)
 			err := k8sClient.Create(ctx, tc.cluster)
 			if err == nil {
 				t.Fatal("Expected error, got nil")
@@ -324,6 +343,7 @@ func TestCEL_Limits(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestPostgresPasswordSecretRef(tc.cluster)
 			err := k8sClient.Create(ctx, tc.cluster)
 			if err == nil {
 				t.Fatal("Expected error, got nil")
@@ -391,6 +411,7 @@ func TestCEL_Database(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestPostgresPasswordSecretRef(tc.cluster)
 			err := k8sClient.Create(ctx, tc.cluster)
 			if err == nil {
 				t.Fatal("Expected error, got nil")
@@ -445,6 +466,7 @@ func TestCEL_MultiAdmin(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestPostgresPasswordSecretRef(tc.cluster)
 			err := k8sClient.Create(ctx, tc.cluster)
 			if err == nil {
 				t.Fatal("Expected error, got nil")
@@ -496,6 +518,7 @@ func TestCEL_ShardImmutability(t *testing.T) {
 
 	// Create
 	privClient := getPrivilegedClient(t)
+	setTestShardPostgresPasswordSecretRef(shard)
 	if err := privClient.Create(ctx, shard); err != nil {
 		t.Fatalf("Failed to create Shard: %v", err)
 	}
@@ -656,6 +679,7 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			privClient := getPrivilegedClient(t)
+			setTestObjectPostgresPasswordSecretRef(tc.shard)
 			err := privClient.Create(ctx, tc.shard)
 			if err == nil {
 				t.Fatal("Expected error, got nil")
@@ -758,6 +782,7 @@ func TestCEL_S3ServiceAccountName(t *testing.T) {
 	privClient := getPrivilegedClient(t)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			setTestObjectPostgresPasswordSecretRef(tc.shard)
 			err := privClient.Create(ctx, tc.shard)
 			if tc.shouldPass {
 				if err != nil {
@@ -789,6 +814,8 @@ func TestCEL_StatelessReplicasLimit(t *testing.T) {
 			},
 		},
 	}
+
+	setTestPostgresPasswordSecretRef(cluster)
 
 	err := k8sClient.Create(ctx, cluster)
 	if err == nil {
