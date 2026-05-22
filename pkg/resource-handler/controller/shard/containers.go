@@ -126,19 +126,42 @@ func buildPgHbaVolume(shardName string) corev1.Volume {
 	}
 }
 
-func buildPostgresPasswordVolume(shardName string) corev1.Volume {
+// resolvedPostgresPasswordSecretRef returns the Secret name and key that should
+// back POSTGRES_PASSWORD_FILE. When shard.Spec.PostgresPasswordSecretRef is set
+// the operator mounts that user-supplied Secret instead of creating its own —
+// this lets callers (e.g. the platform provisioning worker) generate the final
+// superuser password before reconciliation so pgctld's initdb hashes the
+// correct value into pg_authid from the start, eliminating any post-initdb
+// ALTER USER pass.
+//
+// The returned key is always projected as the on-disk file named
+// PostgresPasswordSecretKey, so PostgresPasswordFilePath stays stable
+// regardless of the source Secret's own key.
+func resolvedPostgresPasswordSecretRef(shard *multigresv1alpha1.Shard) (name, key string) {
+	if ref := shard.Spec.PostgresPasswordSecretRef; ref != nil && ref.Name != "" {
+		k := ref.Key
+		if k == "" {
+			k = PostgresPasswordSecretKey
+		}
+		return ref.Name, k
+	}
+	return PostgresPasswordSecretName(shard.Name), PostgresPasswordSecretKey
+}
+
+func buildPostgresPasswordVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 	// Keep the Secret world-readable inside the pod because the default pool
 	// pod may not set fsGroup, while containers still run as non-root users.
 	defaultMode := int32(0o444)
+	secretName, secretKey := resolvedPostgresPasswordSecretRef(shard)
 	return corev1.Volume{
 		Name: PostgresPasswordVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{
-				SecretName:  PostgresPasswordSecretName(shardName),
+				SecretName:  secretName,
 				DefaultMode: &defaultMode,
 				Items: []corev1.KeyToPath{
 					{
-						Key:  PostgresPasswordSecretKey,
+						Key:  secretKey,
 						Path: PostgresPasswordSecretKey,
 					},
 				},
@@ -325,17 +348,20 @@ func buildPostgresExporterContainer(
 				Name:  "DATA_SOURCE_USER",
 				Value: postgresSuperuserOrDefault(shard.Spec.PostgresSuperuser),
 			},
-			{
-				Name: "DATA_SOURCE_PASS",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: PostgresPasswordSecretName(shard.Name),
+			func() corev1.EnvVar {
+				name, key := resolvedPostgresPasswordSecretRef(shard)
+				return corev1.EnvVar{
+					Name: "DATA_SOURCE_PASS",
+					ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: name,
+							},
+							Key: key,
 						},
-						Key: PostgresPasswordSecretKey,
 					},
-				},
-			},
+				}
+			}(),
 		},
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
 	}
@@ -591,7 +617,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		buildSharedBackupVolume(shard, cellName),
 		buildSocketDirVolume(),
 		buildPgHbaVolume(shard.Name),
-		buildPostgresPasswordVolume(shard.Name),
+		buildPostgresPasswordVolume(shard),
 	}
 	if shard.Spec.PostgresConfigRef != nil {
 		volumes = append(volumes, buildPostgresConfigVolume(shard.Spec.PostgresConfigRef))

@@ -2701,6 +2701,39 @@ spec:
                 - key
                 - name
                 type: object
+              postgresPasswordSecretRef:
+                description: |-
+                  PostgresPasswordSecretRef references a user-provided Secret containing the
+                  bootstrap superuser password used by pgctld at initdb time. The same value
+                  is mounted as POSTGRES_PASSWORD on pgctld, multipooler, and postgres-exporter
+                  so every component authenticates with the same SCRAM hash the server stores
+                  in pg_authid.
+
+                  When unset, the operator creates a per-shard Secret with the default
+                  password value (v1alpha1 placeholder). When set, the operator does NOT
+                  create a Secret and the referenced one must exist before reconciliation.
+                  Inherited from MultigresCluster.
+                properties:
+                  key:
+                    description: The key of the secret to select from.  Must be a
+                      valid secret key.
+                    type: string
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  optional:
+                    description: Specify whether the Secret or its key must be defined
+                    type: boolean
+                required:
+                - key
+                type: object
+                x-kubernetes-map-type: atomic
               postgresSuperuser:
                 description: |-
                   PostgresSuperuser is the resolved Postgres superuser name propagated from

@@ -10519,6 +10519,38 @@ spec:
                       Use "multigres_custom" for file-based sampling (requires SamplingConfigRef).
                     type: string
                 type: object
+              postgresPasswordSecretRef:
+                description: |-
+                  PostgresPasswordSecretRef references a user-provided Secret containing the
+                  bootstrap superuser password. The operator mounts the same value as
+                  POSTGRES_PASSWORD on pgctld, multipooler, and postgres-exporter so all
+                  components SCRAM-authenticate against pg_authid with the value initdb hashes
+                  at bootstrap. Removes the need for any post-initdb password rotation flow.
+
+                  When unset, the operator falls back to creating a per-shard Secret with a
+                  placeholder default password (v1alpha1 only). The referenced Secret must
+                  exist before the operator reconciles the shard.
+                properties:
+                  key:
+                    description: The key of the secret to select from.  Must be a
+                      valid secret key.
+                    type: string
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                  optional:
+                    description: Specify whether the Secret or its key must be defined
+                    type: boolean
+                required:
+                - key
+                type: object
+                x-kubernetes-map-type: atomic
               postgresSuperuser:
                 default: postgres
                 description: |-

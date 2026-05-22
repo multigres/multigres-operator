@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -98,6 +99,11 @@ type TableGroupSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	PostgresSuperuser string `json:"postgresSuperuser,omitempty"`
+
+	// PostgresPasswordSecretRef references a user-provided Secret containing the
+	// bootstrap superuser password. Inherited from MultigresCluster.
+	// +optional
+	PostgresPasswordSecretRef *corev1.SecretKeySelector `json:"postgresPasswordSecretRef,omitempty"`
 }
 
 // ShardResolvedSpec represents the fully calculated spec for a shard,

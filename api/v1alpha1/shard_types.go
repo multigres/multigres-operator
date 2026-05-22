@@ -192,6 +192,19 @@ type ShardSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	PostgresSuperuser string `json:"postgresSuperuser,omitempty"`
 
+	// PostgresPasswordSecretRef references a user-provided Secret containing the
+	// bootstrap superuser password used by pgctld at initdb time. The same value
+	// is mounted as POSTGRES_PASSWORD on pgctld, multipooler, and postgres-exporter
+	// so every component authenticates with the same SCRAM hash the server stores
+	// in pg_authid.
+	//
+	// When unset, the operator creates a per-shard Secret with the default
+	// password value (v1alpha1 placeholder). When set, the operator does NOT
+	// create a Secret and the referenced one must exist before reconciliation.
+	// Inherited from MultigresCluster.
+	// +optional
+	PostgresPasswordSecretRef *corev1.SecretKeySelector `json:"postgresPasswordSecretRef,omitempty"`
+
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Each entry is a map like {"topology.kubernetes.io/zone": "us-east-1a"}.
 	// Propagated from the cluster's cell configs so the shard controller

@@ -143,6 +143,18 @@ type MultigresClusterSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	PostgresSuperuser string `json:"postgresSuperuser,omitempty"`
 
+	// PostgresPasswordSecretRef references a user-provided Secret containing the
+	// bootstrap superuser password. The operator mounts the same value as
+	// POSTGRES_PASSWORD on pgctld, multipooler, and postgres-exporter so all
+	// components SCRAM-authenticate against pg_authid with the value initdb hashes
+	// at bootstrap. Removes the need for any post-initdb password rotation flow.
+	//
+	// When unset, the operator falls back to creating a per-shard Secret with a
+	// placeholder default password (v1alpha1 only). The referenced Secret must
+	// exist before the operator reconciles the shard.
+	// +optional
+	PostgresPasswordSecretRef *corev1.SecretKeySelector `json:"postgresPasswordSecretRef,omitempty"`
+
 	// CertCommonName is the DNS name used as the Common Name and SAN for the
 	// multigateway TLS certificate (e.g., "db.abc123.supabase.red").
 	// When set, the cluster controller creates a cert-manager Certificate resource

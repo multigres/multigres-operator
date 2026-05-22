@@ -41,12 +41,52 @@ func (r *ShardReconciler) reconcilePgHbaConfigMap(
 	return nil
 }
 
-// reconcilePostgresPasswordSecret creates or updates the postgres password Secret for a shard.
-// This Secret is shared across all pools and provides credentials to pgctld and multipooler.
+// reconcilePostgresPasswordSecret ensures the postgres-password Secret used by
+// every component is available.
+//
+// Two modes:
+//
+//  1. If shard.Spec.PostgresPasswordSecretRef is set, the user owns the Secret.
+//     The operator does not create one — it only validates the referenced Secret
+//     exists and contains the named key. This is the recommended production
+//     mode: it lets the password be generated and rotated outside the operator
+//     (e.g. via the customer-provisioning worker, sops, vault, etc.) and mounted
+//     into pgctld at initdb time so pg_authid is seeded with the final SCRAM
+//     hash, eliminating the need for a post-initdb ALTER USER pass.
+//
+//  2. Otherwise, the operator creates a per-shard managed Secret with a
+//     placeholder default value (v1alpha1 only).
 func (r *ShardReconciler) reconcilePostgresPasswordSecret(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) error {
+	if ref := shard.Spec.PostgresPasswordSecretRef; ref != nil && ref.Name != "" {
+		key := ref.Key
+		if key == "" {
+			key = PostgresPasswordSecretKey
+		}
+		secret := &corev1.Secret{}
+		// Use APIReader (uncached) — the operator's informer cache filters by
+		// managed-by label, so externally-owned Secrets are invisible to r.Get.
+		if err := r.APIReader.Get(ctx, types.NamespacedName{
+			Name:      ref.Name,
+			Namespace: shard.Namespace,
+		}, secret); err != nil {
+			return fmt.Errorf(
+				"postgres password secret %q not found (referenced by shard.spec.postgresPasswordSecretRef): %w",
+				ref.Name,
+				err,
+			)
+		}
+		if _, ok := secret.Data[key]; !ok {
+			return fmt.Errorf(
+				"postgres password secret %q missing key %q",
+				ref.Name, key,
+			)
+		}
+		return nil
+	}
+
 	desired, err := BuildPostgresPasswordSecret(shard, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build postgres password Secret: %w", err)
