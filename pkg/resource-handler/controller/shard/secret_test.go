@@ -142,6 +142,10 @@ func TestReconcilePostgresPasswordSecret_SkipsExternalRef(t *testing.T) {
 		secret,
 	)
 	if !apierrors.IsNotFound(err) {
-		t.Fatalf("default postgres password Secret should not be created, got err %v and secret %#v", err, secret)
+		t.Fatalf(
+			"default postgres password Secret should not be created, got err %v and secret %#v",
+			err,
+			secret,
+		)
 	}
 }

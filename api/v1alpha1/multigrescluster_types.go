@@ -640,8 +640,8 @@ type MultigresCluster struct {
 
 // MultigresClusterList contains a list of MultigresCluster
 type MultigresClusterList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `                   json:",inline"`
+	metav1.ListMeta `                   json:"metadata,omitempty"`
 	Items           []MultigresCluster `json:"items"`
 }
 
