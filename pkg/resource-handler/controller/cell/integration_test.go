@@ -4,14 +4,18 @@
 package cell_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -665,6 +669,7 @@ func TestCellReconciliation(t *testing.T) {
 			if err := client.Create(ctx, tc.cell); err != nil {
 				t.Fatalf("Failed to create the initial item, %v", err)
 			}
+			markManagedLocalTopoServerHealthy(t, ctx, client, tc.cell)
 
 			// Patch wantResources with hashed names
 			for _, obj := range tc.wantResources {
@@ -718,6 +723,42 @@ func TestCellReconciliation(t *testing.T) {
 }
 
 // Test helpers
+
+func markManagedLocalTopoServerHealthy(
+	t testing.TB,
+	ctx context.Context,
+	k8sClient client.Client,
+	cell *multigresv1alpha1.Cell,
+) {
+	t.Helper()
+	if cell.Spec.TopoServer == nil || cell.Spec.TopoServer.Etcd == nil {
+		return
+	}
+
+	toposerver := &multigresv1alpha1.TopoServer{}
+	key := client.ObjectKey{
+		Namespace: cell.Namespace,
+		Name:      cellcontroller.BuildLocalTopoServerName(cell),
+	}
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 10*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			if err := k8sClient.Get(ctx, key, toposerver); err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, err
+			}
+			return true, nil
+		}); err != nil {
+		t.Fatalf("Timed out waiting for managed local TopoServer %s/%s: %v", key.Namespace, key.Name, err)
+	}
+
+	toposerver.Status.Phase = multigresv1alpha1.PhaseHealthy
+	toposerver.Status.ObservedGeneration = toposerver.Generation
+	if err := k8sClient.Status().Update(ctx, toposerver); err != nil {
+		t.Fatalf("Failed to mark managed local TopoServer %s/%s healthy: %v", key.Namespace, key.Name, err)
+	}
+}
 
 // cellLabels returns standard labels for cell resources in tests
 func cellLabels(t testing.TB, instanceName, component, cellName, zoneID string) map[string]string {
