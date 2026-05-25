@@ -48,7 +48,25 @@ jobs:
         env:
           SHA: ${{ github.event.client_payload.sha }}
         run: echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
-            
+
+      - name: Authenticate to GHCR
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+        run: echo "$TOKEN" | docker login ghcr.io -u x-access-token --password-stdin
+
+      - name: Verify upstream runtime images exist
+        env:
+          SHORT: ${{ steps.vars.outputs.short_sha }}
+        run: |
+          for image in multigres pgctld; do
+            ref="ghcr.io/multigres/${image}:sha-${SHORT}"
+            echo "Checking $ref"
+            if ! docker manifest inspect "$ref" > /dev/null 2>&1; then
+              echo "::error::Image $ref does not exist in GHCR — aborting sync. The upstream image build may not have completed yet; re-dispatch once it has."
+              exit 1
+            fi
+          done
+
       - name: Update multigres dependency
         env:
           GOPRIVATE: "github.com/multigres/*"
@@ -59,13 +77,24 @@ jobs:
           go get github.com/multigres/multigres@"$SHA"
           go mod tidy
 
+      - name: Bump default runtime images
+        env:
+          SHORT: ${{ steps.vars.outputs.short_sha }}
+        run: |
+          sed -i -E "s#ghcr\.io/multigres/pgctld:sha-[a-f0-9]+#ghcr.io/multigres/pgctld:sha-${SHORT}#g" api/v1alpha1/image_defaults.go
+          sed -i -E "s#ghcr\.io/multigres/multigres:sha-[a-f0-9]+#ghcr.io/multigres/multigres:sha-${SHORT}#g" api/v1alpha1/image_defaults.go
+
       - name: Create pull request
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
           token: ${{ steps.app-token.outputs.token }}
           commit-message: "chore(deps): bump multigres to ${{ steps.vars.outputs.short_sha }}"
           title: "chore(deps): sync multigres proto to ${{ steps.vars.outputs.short_sha }}"
-          body: "Automated sync triggered by changes in multigres/multigres@${{ github.event.client_payload.sha }}."
+          body: |
+            Automated sync triggered by changes in multigres/multigres@${{ github.event.client_payload.sha }}.
+
+            - `go.mod` bumped to `${{ steps.vars.outputs.short_sha }}`
+            - Default runtime image tags in `api/v1alpha1/image_defaults.go` bumped to `sha-${{ steps.vars.outputs.short_sha }}` (verified to exist in GHCR before commit)
           branch: chore/sync-proto-${{ steps.vars.outputs.short_sha }}
           base: main
           delete-branch: true
