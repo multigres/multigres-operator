@@ -9,9 +9,7 @@ on:
       - "**/*.txt"
 
 permissions:
-  contents: write
-  packages: write
-  security-events: write
+  contents: read
 
 jobs:
   build:
@@ -19,6 +17,10 @@ jobs:
     uses: ./.github/workflows/_reusable-build-changed.yaml
 
   run:
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
     uses: ./.github/workflows/build-and-release.yaml
     with:
       push-container-image: true
@@ -43,12 +45,13 @@ jobs:
 
       - name: Create or update current pre-release
         env:
+          COMMIT_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           BODY="## Current Build
 
-          **Commit:** \`${{ github.sha }}\`
+          **Commit:** \`$COMMIT_SHA\`
           **Updated:** \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
 
           This is a rolling pre-release that tracks the latest successful build from \`main\`.
@@ -57,7 +60,7 @@ jobs:
           ### Quick Install
 
           \`\`\`
-          curl -LO https://github.com/${{ github.repository }}/releases/download/current/install.yaml
+          curl -LO https://github.com/$GH_REPO/releases/download/current/install.yaml
           kubectl apply -f install.yaml
           \`\`\`"
 
@@ -71,7 +74,7 @@ jobs:
             --prerelease \
             --title "Current (latest main)" \
             --notes "$BODY" \
-            --target "${{ github.sha }}" \
+            --target "$COMMIT_SHA" \
             dist/install*.yaml
 
   coverage:

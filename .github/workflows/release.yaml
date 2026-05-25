@@ -6,28 +6,36 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
-  contents: write
-  packages: write
-  security-events: write
+  contents: read
 
 jobs:
   verify-tag:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check out code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Verify tag is on main
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
-          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
-            echo "::error::Tag ${{ github.ref_name }} does not point to a commit on the main branch. Delete the tag, ensure the commit is on main, and re-tag."
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $TAG_NAME does not point to a commit on the main branch. Delete the tag, ensure the commit is on main, and re-tag."
             exit 1
           fi
 
   build:
     needs: verify-tag
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
     uses: ./.github/workflows/build-and-release.yaml
     with:
       push-container-image: true
@@ -45,6 +53,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Download install manifests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -56,6 +65,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
