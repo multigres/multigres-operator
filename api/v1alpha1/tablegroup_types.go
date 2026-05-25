@@ -98,6 +98,9 @@ type TableGroupSpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
 	PostgresSuperuser string `json:"postgresSuperuser,omitempty"`
+
+	// PostgresPasswordSecretRef is inherited from the MultigresCluster.
+	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
 }
 
 // ShardResolvedSpec represents the fully calculated spec for a shard,

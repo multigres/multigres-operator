@@ -4,6 +4,9 @@ metadata:
   name: standard-ha-cluster
   namespace: default
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   # 1. Define Cluster-Wide Defaults
   templateDefaults:
     coreTemplate: "standard-core"

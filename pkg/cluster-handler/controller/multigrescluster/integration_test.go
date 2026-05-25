@@ -127,6 +127,26 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 	return k8sClient, watcher
 }
 
+func setTestPostgresPasswordSecretRef(cluster *multigresv1alpha1.MultigresCluster) {
+	if cluster == nil || cluster.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	cluster.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
+func setTestTableGroupPostgresPasswordSecretRef(tableGroup *multigresv1alpha1.TableGroup) {
+	if tableGroup == nil || tableGroup.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	tableGroup.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
 func clusterLabels(t testing.TB, clusterName, oldApp, cell string) map[string]string {
 	t.Helper()
 	var component string
@@ -1312,10 +1332,12 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 				if tg, ok := obj.(*multigresv1alpha1.TableGroup); ok {
 					hashedName := nameutil.JoinWithConstraints(nameutil.DefaultConstraints, tc.cluster.Name, string(tg.Spec.DatabaseName), string(tg.Spec.TableGroupName))
 					tg.Name = hashedName
+					setTestTableGroupPostgresPasswordSecretRef(tg)
 				}
 			}
 
 			// Create Cluster
+			setTestPostgresPasswordSecretRef(tc.cluster)
 			if err := k8sClient.Create(t.Context(), tc.cluster); err != nil {
 				t.Fatalf("Failed to create the initial cluster, %v", err)
 			}

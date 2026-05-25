@@ -217,6 +217,23 @@ type PgBackRestTLSConfig struct {
 	SecretName string `json:"secretName,omitempty"`
 }
 
+// PostgresPasswordSecretRef references a same-namespace Secret containing the
+// final Postgres superuser password. The operator reads this Secret for
+// password-file mounts but does not own, mutate, or delete it.
+type PostgresPasswordSecretRef struct {
+	// Name is the name of the Secret.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Key is the Secret data key containing the password.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
+	Key string `json:"key"`
+}
+
 const (
 	// CertSecretName is the Secret name used by cert-manager for the
 	// multigateway TLS certificate, matching the non-HA project convention.

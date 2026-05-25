@@ -972,6 +972,12 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
+			setTestPostgresPasswordSecretRef(tc.shard)
+			tc.existingObjects = append(
+				tc.existingObjects,
+				testPostgresPasswordSecretForShard(tc.shard),
+			)
+
 			// Patch existing objects names to use hashed names
 			for i, obj := range tc.existingObjects {
 				name := obj.GetName()

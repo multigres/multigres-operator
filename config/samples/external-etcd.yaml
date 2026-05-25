@@ -4,6 +4,9 @@ metadata:
   name: ext-etcd
   namespace: default
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   # ----------------------------------------------------------------
   # 1. Global Topology (External)
   # ----------------------------------------------------------------

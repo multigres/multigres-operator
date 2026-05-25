@@ -135,16 +135,12 @@ func TestDefaultPgHbaTemplateEmbedded(t *testing.T) {
 			mustContain: []string{"# PostgreSQL Client Authentication"},
 		},
 		{
-			desc:        "local trust rule",
-			mustContain: []string{"local", "all", "{{.User}}", "trust"},
+			desc:        "local scram-sha-256 rule",
+			mustContain: []string{"local", "all", "all", "scram-sha-256"},
 		},
 		{
-			desc:        "replication trust rule",
-			mustContain: []string{"host", "replication", "all", "0.0.0.0/0", "trust"},
-		},
-		{
-			desc:        "production warning",
-			mustContain: []string{"PRODUCTION:", "scram-sha-256"},
+			desc:        "replication scram-sha-256 rule",
+			mustContain: []string{"host", "replication", "all", "0.0.0.0/0", "scram-sha-256"},
 		},
 	}
 

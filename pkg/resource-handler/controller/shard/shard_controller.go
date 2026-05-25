@@ -45,7 +45,8 @@ type ShardReconciler struct {
 	// The default cached client (r.Get) only sees Secrets labeled with
 	// "app.kubernetes.io/managed-by: multigres-operator" due to the informer
 	// cache's label filter. External Secrets (e.g., cert-manager) lack this
-	// label, so we need APIReader to validate user-provided pgBackRest TLS Secrets.
+	// label, so we need APIReader to validate user-provided pgBackRest TLS Secrets
+	// and external postgres password Secrets.
 	APIReader       client.Reader
 	RPCClient       rpcclient.MultiPoolerClient
 	CreateTopoStore func(*multigresv1alpha1.Shard) (topoclient.Store, error)
@@ -127,7 +128,7 @@ func (r *ShardReconciler) Reconcile(
 			shard,
 			"Warning",
 			"ConfigError",
-			"Failed to generate postgres password Secret: %v",
+			"Failed to reconcile postgres password Secret: %v",
 			err,
 		)
 		return ctrl.Result{}, err

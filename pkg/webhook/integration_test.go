@@ -221,6 +221,26 @@ func waitForClusterList(t *testing.T, c client.Client, clusterName string) {
 	}
 }
 
+func setTestPostgresPasswordSecretRef(cluster *multigresv1alpha1.MultigresCluster) {
+	if cluster == nil || cluster.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	cluster.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
+func setTestShardPostgresPasswordSecretRef(shard *multigresv1alpha1.Shard) {
+	if shard == nil || shard.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	shard.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
 // ============================================================================
 // Core Integration Tests
 // ============================================================================
@@ -236,6 +256,8 @@ func TestWebhook_Mutation(t *testing.T) {
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
@@ -280,6 +302,8 @@ func TestWebhook_Validation(t *testing.T) {
 			},
 		}
 
+		setTestPostgresPasswordSecretRef(cluster)
+
 		if err := k8sClient.Create(ctx, cluster); err == nil {
 			t.Fatal("Expected error creating cluster with missing template, got nil")
 		}
@@ -309,6 +333,7 @@ func TestWebhook_TemplateProtection(t *testing.T) {
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
@@ -359,6 +384,8 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 			},
 		}
 
+		setTestPostgresPasswordSecretRef(cluster)
+
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
@@ -392,6 +419,8 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 				},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
@@ -427,6 +456,8 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 				},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
@@ -475,6 +506,7 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
@@ -511,6 +543,7 @@ func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatal(err)
 		}
@@ -546,6 +579,8 @@ func TestWebhook_SystemCatalogIdempotency(t *testing.T) {
 				},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatal(err)
@@ -605,6 +640,7 @@ func TestWebhook_DeepTemplateProtection(t *testing.T) {
 				},
 			},
 		}
+		setTestPostgresPasswordSecretRef(cluster)
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatal(err)
 		}
@@ -638,6 +674,8 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		err := k8sClient.Create(ctx, cluster)
 		if err == nil {
@@ -704,6 +742,8 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 				}},
 			},
 		}
+
+		setTestPostgresPasswordSecretRef(cluster)
 
 		if err := k8sClient.Create(ctx, cluster); err != nil {
 			t.Fatalf("Expected acceptance with explicit storage class, got: %v", err)

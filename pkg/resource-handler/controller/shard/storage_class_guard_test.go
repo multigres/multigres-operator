@@ -229,6 +229,10 @@ func TestReconcile_MissingStorageClassReturnsDependencyRequeueEvenWhenPVCExists(
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
+			PostgresPasswordSecretRef: multigresv1alpha1.PostgresPasswordSecretRef{
+				Name: testPostgresAuthRefName,
+				Key:  PostgresPasswordSecretKey,
+			},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"primary": {
 					ReplicasPerCell: ptr.To(int32(1)),
@@ -256,7 +260,7 @@ func TestReconcile_MissingStorageClassReturnsDependencyRequeueEvenWhenPVCExists(
 
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shard, existingPVC).
+		WithObjects(shard, existingPVC, testPostgresPasswordSecretForShard(shard)).
 		WithStatusSubresource(&multigresv1alpha1.Shard{}).
 		Build()
 

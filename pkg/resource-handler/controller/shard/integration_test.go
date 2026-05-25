@@ -53,6 +53,37 @@ func TestSetupWithManager(t *testing.T) {
 	}
 }
 
+func setTestPostgresPasswordSecretRef(shard *multigresv1alpha1.Shard) {
+	if shard == nil || shard.Spec.PostgresPasswordSecretRef.Name != "" {
+		return
+	}
+	shard.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+		Name: "multigres-admin-password",
+		Key:  "password",
+	}
+}
+
+func createTestPostgresPasswordSecret(
+	t *testing.T,
+	ctx context.Context,
+	c client.Client,
+	namespace string,
+) {
+	t.Helper()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multigres-admin-password",
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			"password": []byte("postgres"),
+		},
+	}
+	if err := c.Create(ctx, secret); client.IgnoreAlreadyExists(err) != nil {
+		t.Fatalf("Failed to create postgres password Secret: %v", err)
+	}
+}
+
 func TestShardReconciliation(t *testing.T) {
 	t.Parallel()
 
@@ -834,6 +865,8 @@ func TestShardReconciliation(t *testing.T) {
 				t.Fatalf("Failed to create controller, %v", err)
 			}
 
+			setTestPostgresPasswordSecretRef(tc.shard)
+			createTestPostgresPasswordSecret(t, ctx, k8sClient, tc.shard.Namespace)
 			if err := k8sClient.Create(ctx, tc.shard); err != nil {
 				t.Fatalf("Failed to create the initial item, %v", err)
 			}
@@ -1089,6 +1122,8 @@ func TestReconcileDeletions(t *testing.T) {
 		},
 	}
 
+	setTestPostgresPasswordSecretRef(shard)
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
 	if err := k8sClient.Create(ctx, shard); err != nil {
 		t.Fatalf("Failed to create Shard: %v", err)
 	}

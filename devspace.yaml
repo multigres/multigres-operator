@@ -1,0 +1,35 @@
+version: v2beta1
+name: multigres-operator
+dev:
+  multigres-operator:
+    command: ["/manager"]
+    devImage: ghcr.io/loft-sh/devspace-containers/go:1.24-alpine
+    imageSelector: ghcr.io/multigres/multigres-operator
+    logs:
+      enabled: true
+    patches:
+      - op: replace
+        path: spec.securityContext.runAsNonRoot
+        value: false
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    sync:
+      - path: ./bin/manager
+        disableDownload: true
+        file: true
+        onUpload:
+          exec:
+            - command: mv bin/manager /manager
+          restartContainer: true
+        printLogs: true
+        startContainer: true
+pipelines:
+  dev:
+    run: |-
+      GOOS=linux GOARCH=arm64 go build -o bin/manager cmd/multigres-operator/main.go
+      start_dev multigres-operator

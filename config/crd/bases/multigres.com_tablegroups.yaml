@@ -417,6 +417,25 @@ spec:
                       Use "multigres_custom" for file-based sampling (requires SamplingConfigRef).
                     type: string
                 type: object
+              postgresPasswordSecretRef:
+                description: PostgresPasswordSecretRef is inherited from the MultigresCluster.
+                properties:
+                  key:
+                    description: Key is the Secret data key containing the password.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[-._a-zA-Z0-9]+$
+                    type: string
+                  name:
+                    description: Name is the name of the Secret.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - key
+                - name
+                type: object
               postgresSuperuser:
                 description: |-
                   PostgresSuperuser is the resolved Postgres superuser name.
@@ -2930,6 +2949,7 @@ spec:
             - databaseName
             - globalTopoServer
             - images
+            - postgresPasswordSecretRef
             - shards
             - tableGroupName
             type: object

@@ -4,6 +4,9 @@ metadata:
   name: e2e-log-levels
   namespace: default
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   pvcDeletionPolicy:
     whenDeleted: Delete
     whenScaled: Delete

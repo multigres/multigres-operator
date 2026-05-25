@@ -41,30 +41,61 @@ func (r *ShardReconciler) reconcilePgHbaConfigMap(
 	return nil
 }
 
-// reconcilePostgresPasswordSecret creates or updates the postgres password Secret for a shard.
-// This Secret is shared across all pools and provides credentials to pgctld and multipooler.
+// reconcilePostgresPasswordSecret validates the referenced postgres password Secret.
 func (r *ShardReconciler) reconcilePostgresPasswordSecret(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) error {
-	desired, err := BuildPostgresPasswordSecret(shard, r.Scheme)
-	if err != nil {
-		return fmt.Errorf("failed to build postgres password Secret: %w", err)
+	_, err := r.postgresPasswordSecretData(ctx, shard)
+	return err
+}
+
+func (r *ShardReconciler) postgresPasswordSecretData(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) ([]byte, error) {
+	_, _, data, err := r.postgresPasswordSecret(ctx, shard)
+	return data, err
+}
+
+func (r *ShardReconciler) postgresPasswordSecret(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (*corev1.Secret, string, []byte, error) {
+	secretName, secretKey := postgresPasswordSecretRef(shard)
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
 	}
 
-	// Server Side Apply
-	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Secret"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
-	); err != nil {
-		return fmt.Errorf("failed to apply postgres password Secret: %w", err)
+	secret := &corev1.Secret{}
+	if err := reader.Get(ctx, types.NamespacedName{
+		Namespace: shard.Namespace,
+		Name:      secretName,
+	}, secret); err != nil {
+		return nil, "", nil, fmt.Errorf(
+			"failed to get postgres password Secret %q: %w",
+			secretName,
+			err,
+		)
 	}
 
-	return nil
+	data, ok := secret.Data[secretKey]
+	if !ok {
+		return nil, "", nil, fmt.Errorf(
+			"key %q not found in postgres password Secret %q",
+			secretKey,
+			secretName,
+		)
+	}
+	if len(data) == 0 {
+		return nil, "", nil, fmt.Errorf(
+			"key %q in postgres password Secret %q is empty",
+			secretKey,
+			secretName,
+		)
+	}
+	return secret, secretKey, data, nil
 }
 
 // reconcilePgBackRestCerts ensures pgBackRest TLS certificates are available.

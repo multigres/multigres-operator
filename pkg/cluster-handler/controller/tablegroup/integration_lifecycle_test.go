@@ -101,6 +101,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		}
 
 		// 1. Create Initial State
+		setTestPostgresPasswordSecretRef(tg)
 		if err := k8sClient.Create(ctx, tg); err != nil {
 			t.Fatal(err)
 		}
@@ -146,6 +147,8 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				Replicas:  ptr.To(int32(0)),
 			},
 		}
+		setTestShardPostgresPasswordSecretRef(shard1)
+		setTestShardPostgresPasswordSecretRef(shard2)
 
 		// Using WaitForMatch with CompareSpecOnly to avoid needing full metadata/status matching
 		watcher.SetCmpOpts(testutil.CompareSpecOnly()...)
@@ -251,6 +254,8 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			},
 		}
 
+		setTestPostgresPasswordSecretRef(tg)
+
 		if err := k8sClient.Create(ctx, tg); err != nil {
 			t.Fatal(err)
 		}
@@ -281,6 +286,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				Replicas: ptr.To(int32(0)),
 			},
 		}
+		setTestShardPostgresPasswordSecretRef(goodShard)
 		if err := watcher.WaitForMatch(goodShard); err != nil {
 			t.Fatalf("Initial shard creation failed: %v", err)
 		}

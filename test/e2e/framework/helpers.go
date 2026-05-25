@@ -40,6 +40,20 @@ func (c *Cluster) CreateNamespace(t testing.TB) string {
 	if err != nil {
 		t.Fatalf("create namespace: %v", err)
 	}
+	_, err = c.Clientset.CoreV1().Secrets(ns).Create(
+		context.Background(),
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "multigres-admin-password"},
+			Type:       corev1.SecretTypeOpaque,
+			Data: map[string][]byte{
+				"password": []byte("postgres"),
+			},
+		},
+		metav1.CreateOptions{},
+	)
+	if err != nil {
+		t.Fatalf("create postgres password secret: %v", err)
+	}
 	t.Cleanup(func() {
 		_ = c.Clientset.CoreV1().Namespaces().Delete(
 			context.Background(), ns, metav1.DeleteOptions{})

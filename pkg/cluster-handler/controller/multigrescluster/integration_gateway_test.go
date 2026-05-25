@@ -57,6 +57,8 @@ func TestExternalGateway_EnableDisableLifecycle(t *testing.T) {
 		},
 	}
 
+	setTestPostgresPasswordSecretRef(cluster)
+
 	require.NoError(t, k8sClient.Create(t.Context(), cluster))
 
 	// Add extra comparison options for Service runtime fields.
@@ -278,6 +280,8 @@ func TestExternalGateway_NoReadyGatewaysTransition(t *testing.T) {
 			},
 		},
 	}
+
+	setTestPostgresPasswordSecretRef(cluster)
 
 	require.NoError(t, k8sClient.Create(t.Context(), cluster))
 

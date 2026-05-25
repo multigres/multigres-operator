@@ -4,6 +4,7 @@ This directory contains various sample configurations to help you understand how
 
 | File | Description |
 | :--- | :--- |
+| `postgres-password-secret.yaml` | Example Secret referenced by the cluster samples for the Postgres superuser password. |
 | `minimal.yaml` | The simplest possible cluster. Relies entirely on system defaults. |
 | `templated-cluster.yaml` | Demonstrates how to use reusable `Templates` for configuration. |
 | `overrides.yaml` | Advanced usage showing how to patch/override specific fields on top of templates. |
@@ -12,6 +13,9 @@ This directory contains various sample configurations to help you understand how
 | `external-etcd.yaml` | Demonstrates connecting to an existing external Etcd cluster instead of deploying one. |
 | `no-templates.yaml` | A verbose example where all configuration is defined inline (no templates used). |
 | `topology.yaml` | Multi-cell deployment with region/zone topology, cell-specific overrides, and topology-aware scheduling. |
+
+Before applying any cluster sample, create the Postgres superuser password Secret:
+`kubectl apply -f config/samples/postgres-password-secret.yaml`
 
 ---
 
@@ -25,6 +29,9 @@ kind: MultigresCluster
 metadata:
   name: minimal-cluster
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   cells:
     - name: "zone-a"
       zoneId: "use1-az1"
@@ -132,8 +139,9 @@ Pools default to `replicasPerCell: 1`. `AT_LEAST_2` requires 2 total poolers; `M
 
 If you create your **Default Templates** *before* deploying a minimal cluster, the cluster will automatically pick them up.
 
-1.  **Create Templates**: `kubectl apply -f config/samples/default-templates`
-2.  **Create Cluster**: `kubectl apply -f config/samples/minimal.yaml`
+1.  **Create Secret**: `kubectl apply -f config/samples/postgres-password-secret.yaml`
+2.  **Create Templates**: `kubectl apply -f config/samples/default-templates`
+3.  **Create Cluster**: `kubectl apply -f config/samples/minimal.yaml`
 
 **Result**:
 The Operator validates the cluster. It sees you have no inline spec, but it finds the templates named `default` in the namespace. It links them automatically.
@@ -152,11 +160,12 @@ The cluster is now "bound" to your templates. If you update the `default` CoreTe
 
 If you create a **Minimal Cluster** *before* the templates exist, the operator is forced to inject **Operator Defaults** directly into the inline `spec`. This creates a permanent divergence.
 
-1.  **Create Cluster**: `kubectl apply -f config/samples/minimal.yaml`
+1.  **Create Secret**: `kubectl apply -f config/samples/postgres-password-secret.yaml`
+2.  **Create Cluster**: `kubectl apply -f config/samples/minimal.yaml`
     *   *Result*: The webhook sees no templates. It injects operator defaults (e.g., GlobalTopoServer replicas: 3) directly into `spec.globalTopoServer`.
-2.  **Create Templates**: `kubectl apply -f config/samples/default-templates`
+3.  **Create Templates**: `kubectl apply -f config/samples/default-templates`
     *   (Assume these templates define replicas: 5)
-3.  **Re-Apply Cluster**: `kubectl apply -f config/samples/minimal.yaml`
+4.  **Re-Apply Cluster**: `kubectl apply -f config/samples/minimal.yaml`
 
 **Result**:
 The webhook detects the new templates and updates `spec.templateDefaults` to point to them. **HOWEVER**, the cluster **does not** switch to 5 replicas.

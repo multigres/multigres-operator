@@ -14,8 +14,7 @@ import (
 )
 
 // DefaultPgHbaTemplate is the default pg_hba.conf template for pooler instances.
-// Uses trust authentication for testing/development. Production deployments should
-// override this with proper authentication (scram-sha-256, SSL certificates, etc.).
+// It requires SCRAM authentication for local, client, and replication connections.
 //
 //go:embed templates/pg_hba_template.conf
 var DefaultPgHbaTemplate string

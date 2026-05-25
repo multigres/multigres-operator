@@ -79,6 +79,33 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("PostgresPasswordSecretRef", func(t *testing.T) {
+		c := *cluster
+		c.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+			Name: "multigres-admin-password",
+			Key:  "current",
+		}
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-password"}
+		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.PostgresPasswordSecretRef.Name != "multigres-admin-password" {
+			t.Errorf(
+				"PostgresPasswordSecretRef.Name = %q, want %q",
+				got.Spec.PostgresPasswordSecretRef.Name,
+				"multigres-admin-password",
+			)
+		}
+		if got.Spec.PostgresPasswordSecretRef.Key != "current" {
+			t.Errorf(
+				"PostgresPasswordSecretRef.Key = %q, want %q",
+				got.Spec.PostgresPasswordSecretRef.Key,
+				"current",
+			)
+		}
+	})
+
 	t.Run("Name Truncation", func(t *testing.T) {
 		longName := strings.Repeat("a", 250) // Very long name
 		tgCfg := &multigresv1alpha1.TableGroupConfig{

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -401,20 +402,35 @@ func TestFindOperatorDeployment(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Multiple Matches", func(t *testing.T) {
+	t.Run("Multiple Matches Picks Oldest", func(t *testing.T) {
 		t.Parallel()
 
+		older := metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		newer := metav1.NewTime(time.Now())
 		dep1 := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "op1", Namespace: namespace, Labels: labels},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "op-newer",
+				Namespace:         namespace,
+				Labels:            labels,
+				CreationTimestamp: newer,
+			},
 		}
 		dep2 := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: "op2", Namespace: namespace, Labels: labels},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "op-older",
+				Namespace:         namespace,
+				Labels:            labels,
+				CreationTimestamp: older,
+			},
 		}
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(dep1, dep2).Build()
-		_, err := FindOperatorDeployment(context.Background(), cl, namespace, labels, "")
-		if err == nil || !strings.Contains(err.Error(), "found multiple deployments") {
-			t.Errorf("expected multiple match error, got: %v", err)
+		got, err := FindOperatorDeployment(context.Background(), cl, namespace, labels, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got == nil || got.Name != "op-older" {
+			t.Errorf("expected oldest deployment 'op-older', got %v", got)
 		}
 	})
 

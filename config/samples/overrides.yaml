@@ -4,6 +4,9 @@ metadata:
   name: overrides-cluster
   namespace: default
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   # Reference the global templates
   templateDefaults:
     coreTemplate: "standard-core"

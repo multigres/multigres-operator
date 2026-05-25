@@ -1,0 +1,9 @@
+# Overlay: CRDs only, intended for downstream consumers that install CRDs
+# separately from the operator workload (e.g. for distinct lifecycle, RBAC, or
+# GitOps sync waves).
+# Usage: kustomize build config/installer-crds
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../crd

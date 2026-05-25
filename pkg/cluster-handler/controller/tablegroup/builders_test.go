@@ -106,6 +106,31 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 
+	t.Run("PostgresPasswordSecretRef propagates from TableGroup to Shard", func(t *testing.T) {
+		tgWithRef := tg.DeepCopy()
+		tgWithRef.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
+			Name: "multigres-admin-password",
+			Key:  "current",
+		}
+
+		got, err := BuildShard(tgWithRef, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if got.Spec.PostgresPasswordSecretRef.Name != "multigres-admin-password" {
+			t.Errorf(
+				"Spec.PostgresPasswordSecretRef.Name = %v, want multigres-admin-password",
+				got.Spec.PostgresPasswordSecretRef.Name,
+			)
+		}
+		if got.Spec.PostgresPasswordSecretRef.Key != "current" {
+			t.Errorf(
+				"Spec.PostgresPasswordSecretRef.Key = %v, want current",
+				got.Spec.PostgresPasswordSecretRef.Key,
+			)
+		}
+	})
+
 	t.Run("DurabilityPolicy empty when not set on TableGroup", func(t *testing.T) {
 		got, err := BuildShard(tg, shardSpec, scheme)
 		if err != nil {

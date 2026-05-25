@@ -30,21 +30,24 @@ on:
         type: string
 
 permissions:
-  contents: write
-  packages: write
-  security-events: write
+  contents: read
 
 jobs:
   test-go:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check out code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Run tests
         run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
@@ -53,9 +56,15 @@ jobs:
   build-scan-push-container:
     needs: [ test-go ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
     steps:
       - name: Check out code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -102,9 +111,11 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
 
       - name: Push to registry (sha)
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_SHA: ${{ github.sha }}
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}"
-          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:$IMAGE_SHA"
 
       # grype requires that the container image be pushed already because
       # the scanner runs in a container with a different local registry
@@ -129,25 +140,33 @@ jobs:
 
       - name: Apply additional tags
         if: ${{ inputs.additional-tags != '' }}
+        env:
+          ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          IMAGE_SHA: ${{ github.sha }}
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}"
-          for TAG in ${{ inputs.additional-tags }}; do
+          for TAG in $ADDITIONAL_TAGS; do
             docker buildx imagetools create \
               --tag "$IMAGE:$TAG" \
-              "$IMAGE:${{ github.sha }}"
+              "$IMAGE:$IMAGE_SHA"
           done
 
   validate-installer:
     needs: [ test-go ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check out code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Validate install manifests
         run: make build-installer
@@ -156,17 +175,24 @@ jobs:
     if: ${{ inputs.generate-manifests }}
     needs: [ build-scan-push-container ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check out code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+          cache: false
 
       - name: Generate install manifests
-        run: make build-installer IMG=${{ inputs.manifest-image-ref }}
+        env:
+          MANIFEST_IMAGE_REF: ${{ inputs.manifest-image-ref }}
+        run: make build-installer IMG="$MANIFEST_IMAGE_REF"
 
       - name: Upload install manifests
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -174,5 +200,7 @@ jobs:
           name: install-manifests
           path: |
             dist/install.yaml
+            dist/install-crds.yaml
+            dist/install-rbac.yaml
             dist/install-certmanager.yaml
             dist/install-observability.yaml

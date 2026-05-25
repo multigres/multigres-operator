@@ -143,6 +143,10 @@ type MultigresClusterSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	PostgresSuperuser string `json:"postgresSuperuser,omitempty"`
 
+	// PostgresPasswordSecretRef references a Secret containing the final
+	// Postgres superuser password.
+	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
+
 	// CertCommonName is the DNS name used as the Common Name and SAN for the
 	// multigateway TLS certificate (e.g., "db.abc123.supabase.red").
 	// When set, the cluster controller creates a cert-manager Certificate resource
