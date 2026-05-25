@@ -1,0 +1,13 @@
+# Overlay: RBAC only, intended for downstream consumers that install RBAC
+# separately from the operator workload. Applies the same namespace and
+# namePrefix transformations as config/default so the rendered names match
+# what the controller Deployment expects.
+# Usage: kustomize build config/installer-rbac
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: multigres-operator
+namePrefix: multigres-operator-
+
+resources:
+  - ../rbac

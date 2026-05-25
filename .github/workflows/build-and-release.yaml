@@ -200,5 +200,7 @@ jobs:
           name: install-manifests
           path: |
             dist/install.yaml
+            dist/install-crds.yaml
+            dist/install-rbac.yaml
             dist/install-certmanager.yaml
             dist/install-observability.yaml

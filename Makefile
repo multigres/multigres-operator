@@ -266,6 +266,8 @@ build-installer: manifests generate kustomize ## Generate consolidated install Y
 	# kustomize has no build-time image override, so we mutate then restore.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > dist/install.yaml
+	$(KUSTOMIZE) build config/installer-crds > dist/install-crds.yaml
+	$(KUSTOMIZE) build config/installer-rbac > dist/install-rbac.yaml
 	$(KUSTOMIZE) build config/deploy-certmanager > dist/install-certmanager.yaml
 	$(KUSTOMIZE) build config/deploy-observability > dist/install-observability.yaml
 	@git checkout -- config/manager/kustomization.yaml 2>/dev/null || true
