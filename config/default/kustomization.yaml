@@ -1,9 +1,7 @@
 # Adds namespace to all resources.
 namespace: multigres-operator
 
-# Value of this field is prepended to the
-# names of all resources, e.g. a deployment named
-# "wordpress" becomes "alices-wordpress".
+# Value of this field is prepended to the names of all resources.
 # Note that it should also match with the prefix (text before '-') of the namespace
 # field above.
 namePrefix: multigres-operator-

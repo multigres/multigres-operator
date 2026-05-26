@@ -155,6 +155,8 @@ github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFd
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/multigres/multigres v0.0.0-20260522175741-d2c61f288514 h1:DoRWlAxurekyDSeBFfJgpUuJdhe9AB2jrr58653XkxY=
 github.com/multigres/multigres v0.0.0-20260522175741-d2c61f288514/go.mod h1:aPCcP/x+KTupMMYXIhcsBkTCru+jEDO7gxWEFY8onHI=
+github.com/multigres/multigres v0.0.0-20260526142213-50045f6f555b h1:uXSgTHPEpNKxGFFm01Ij8FYz4D+at3Eid88kL/QgCTY=
+github.com/multigres/multigres v0.0.0-20260526142213-50045f6f555b/go.mod h1:aPCcP/x+KTupMMYXIhcsBkTCru+jEDO7gxWEFY8onHI=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f h1:y5//uYreIhSUg3J1GEMiLbxo1LJaP8RfCpH6pymGZus=

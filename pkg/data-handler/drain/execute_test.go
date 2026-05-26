@@ -29,17 +29,7 @@ import (
 type mockRPCClient struct {
 	rpcclient.MultiPoolerClient
 
-	promoteCalled             bool
 	updateConsensusRuleCalled bool
-}
-
-func (m *mockRPCClient) Promote(
-	ctx context.Context,
-	pooler *clustermetadata.MultiPooler,
-	request *multipoolermanagerdatapb.PromoteRequest,
-) (*multipoolermanagerdatapb.PromoteResponse, error) {
-	m.promoteCalled = true
-	return &multipoolermanagerdatapb.PromoteResponse{}, nil
 }
 
 func (m *mockRPCClient) UpdateConsensusRule(
@@ -264,9 +254,6 @@ func TestPrimaryDrainFlow(t *testing.T) {
 	if pod.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateDraining {
 		t.Fatalf("expected PRIMARY pod to advance to draining, got %v",
 			pod.Annotations[metadata.AnnotationDrainState])
-	}
-	if rpcMock.promoteCalled {
-		t.Fatalf("Promote should not be called; failover is multiorch's responsibility")
 	}
 	if rpcMock.updateConsensusRuleCalled {
 		t.Fatalf("UpdateConsensusRule should not be called when draining the PRIMARY")
