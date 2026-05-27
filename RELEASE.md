@@ -64,7 +64,7 @@ curl -sL https://github.com/multigres/multigres-operator/releases/download/vX.Y.
 
 ### Pre-releases
 
-Tags with a pre-release suffix (e.g., `v1.0.0-rc.1`) are automatically marked as pre-releases on GitHub. The pipeline is identical.
+Tags with a semver pre-release suffix (e.g., `v1.0.0-rc.1`, `v1.0.0-beta.2`, `v1.0.0-alpha.3`) trigger the same stable-lane pipeline and are automatically marked as pre-releases on GitHub by GoReleaser. The `latest` and `current` container tags are not moved by pre-release tag pushes, those are only updated on `main` pushes by the current lane.
 
 ## Container image tags on GHCR
 
