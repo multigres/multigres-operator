@@ -18,6 +18,7 @@ spec:
     multigateway: "debug"
   cells:
     - name: "zone-a"
+      zoneId: us-central1-a
   databases:
     - name: "postgres"
       default: true

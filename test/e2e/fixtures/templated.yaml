@@ -13,6 +13,7 @@ spec:
   coreTemplateRef: "e2e-core"
   cells:
     - name: "zone-a"
+      zoneId: us-central1-a
       cellTemplateRef: "e2e-cell"
   databases:
     - name: "postgres"
