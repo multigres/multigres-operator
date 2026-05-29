@@ -9,6 +9,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
@@ -117,6 +118,10 @@ func MustLoadShardTemplate(repoRelPath, namespace string) *multigresv1alpha1.Sha
 	for name, pool := range tmpl.Spec.Pools {
 		pool.Postgres = CIContainerConfig()
 		pool.Multipooler = CIContainerConfig()
+		// Pin fsGroup so containers get a numeric RunAsUser; the
+		// pgctld/multigres images declare USER postgres (=999), which
+		// kubelet can't verify against runAsNonRoot without a numeric uid.
+		pool.FSGroup = ptr.To(int64(999))
 		tmpl.Spec.Pools[name] = pool
 	}
 	return tmpl

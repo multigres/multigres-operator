@@ -129,6 +129,15 @@ func setupCluster(name string) (*Cluster, error) {
 		provider:   p,
 	}
 
+	// Label nodes with cloud topology labels so pods with nodeSelectors
+	// derived from zoneId/region fields can be scheduled in Kind.
+	if err := labelAllNodes(kubecfg, map[string]string{
+		"topology.k8s.aws/zone-id":     "us-central1-a",
+		"topology.kubernetes.io/region": "us-central1",
+	}); err != nil {
+		return nil, fmt.Errorf("label kind nodes: %w", err)
+	}
+
 	// Load images (batch — single CLI call, idempotent).
 	preset := testutil.DefaultOperatorPreset()
 	imgs := append([]string{preset.Image}, testutil.MultigresImages...)
@@ -240,6 +249,22 @@ func lockSetup(name string) (unlock func(), err error) {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
 	}, nil
+}
+
+// labelAllNodes applies the given labels to all nodes in the cluster.
+// Uses --overwrite so repeated calls are idempotent.
+func labelAllNodes(kubecfg string, labels map[string]string) error {
+	for k, v := range labels {
+		label := fmt.Sprintf("%s=%s", k, v)
+		cmd := exec.Command("kubectl", "--kubeconfig", kubecfg,
+			"label", "nodes", "--all", "--overwrite", label)
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("label nodes %s: %w", label, err)
+		}
+	}
+	return nil
 }
 
 func logf(format string, args ...any) {

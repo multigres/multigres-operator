@@ -225,8 +225,10 @@ func startManager(t testing.TB, ctx context.Context, mgr manager.Manager) <-chan
 		}
 	}()
 
-	// Wait for cache to sync
-	if !mgr.GetCache().WaitForCacheSync(ctx) {
+	// Wait for cache to sync. WaitForCacheSync returns true immediately when
+	// there are no informers to wait on (e.g. an empty scheme), so also check
+	// the context: a cancelled/expired context means startup did not complete.
+	if !mgr.GetCache().WaitForCacheSync(ctx) || ctx.Err() != nil {
 		t.Fatal("Cache failed to sync")
 	}
 
