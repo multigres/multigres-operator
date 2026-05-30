@@ -1,11 +1,14 @@
 # Multigres Operator
 
-The **[Multigres](https://github.com/multigres/multigres) Operator** is a Kubernetes operator for managing distributed, sharded PostgreSQL clusters across multiple failure domains (zones or regions). It provides a unified API to define the topology of your database system, handling the complex orchestration of `shards`, `cells` (failure domains), and `gateways`.
+The **[Multigres](https://github.com/multigres/multigres) Operator** is the Kubernetes entry point for **[Multigres v0.1.0 Alpha](https://github.com/multigres/multigres/releases/tag/v0.1.0)**. It manages distributed, sharded PostgreSQL clusters across multiple failure domains (zones or regions) and provides a unified API to define the topology of your database system, handling the complex orchestration of `shards`, `cells` (failure domains), and `gateways`.
+
+This alpha release is suitable for experimentation, demos, local testing, and feedback. It is not production-ready.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Installation](#installation)
+- [Compatibility](#compatibility)
 - [How it Works](#how-it-works)
 - [Configuration & Defaults](#configuration--defaults)
 - [Backup & Restore](#backup--restore)
@@ -41,7 +44,7 @@ Install the operator with built-in self-signed certificate management:
 
 ```bash
 kubectl apply --server-side -f \
-  https://github.com/multigres/multigres-operator/releases/latest/download/install.yaml
+  https://github.com/multigres/multigres-operator/releases/download/v0.11.0/install.yaml
 ```
 
 This deploys the operator into the `multigres-operator` namespace with:
@@ -54,7 +57,11 @@ This deploys the operator into the `multigres-operator` namespace with:
 Once the operator is running, try a sample cluster:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/multigres/multigres-operator/main/config/samples/minimal.yaml
+kubectl apply -f \
+  https://raw.githubusercontent.com/multigres/multigres-operator/v0.11.0/config/samples/postgres-password-secret.yaml
+
+kubectl apply -f \
+  https://raw.githubusercontent.com/multigres/multigres-operator/v0.11.0/config/samples/minimal.yaml
 ```
 
 For more sample configurations, see the [samples directory](config/samples/README.md).
@@ -66,6 +73,18 @@ For more sample configurations, see the [samples directory](config/samples/READM
 | **Self-signed certs** (default) | Zero-config TLS — operator generates and rotates its own CA. | *(Installed above)* |
 | **cert-manager** | External certificate management via cert-manager. | [Cert-Manager Demo](demo/cert-manager/) |
 | **Observability stack** | Full metrics, tracing, and dashboards (Prometheus, Tempo, Grafana). | [Observability Demo](demo/observability/) |
+
+---
+
+## Compatibility
+
+Multigres core and Multigres Operator are versioned separately. Documented release pairings are listed in the Multigres core [release documentation](https://github.com/multigres/multigres/blob/main/RELEASE.md#compatibility).
+
+| Release | Operator | Core | Kubernetes | PostgreSQL | Primary install path | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Initial OSS release | `v0.11.x` | `v0.1.x` | Kubernetes v1.25+ | PostgreSQL 17.x | Multigres Operator release manifests | Supported alpha |
+
+The quick start above uses Multigres Operator `v0.11.0`, which defaults runtime images to Multigres core `v0.1.0`.
 
 ---
 
@@ -287,3 +306,6 @@ Please be aware of the following constraints in the current version:
 | [Developer Documentation](docs/development/) | Internal architecture, controller patterns, caching strategy |
 | [Contributing](CONTRIBUTING.md) | Development setup, local Kind deployment, code style |
 | [Changelog](CHANGELOG.md) | Release history |
+| [Multigres v0.1.0 Alpha](https://github.com/multigres/multigres/releases/tag/v0.1.0) | Core alpha release paired with this operator release |
+| [Multigres Discussions](https://github.com/multigres/multigres/discussions) | Feedback, questions, and community discussion |
+| [Operator Releases](https://github.com/multigres/multigres-operator/releases) | Published operator versions and install manifests |
