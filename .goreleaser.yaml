@@ -31,7 +31,7 @@ release:
     owner: multigres
     name: multigres-operator
   extra_files:
-    - glob: dist/install*.yaml
+    - glob: manifests/install*.yaml
   prerelease: auto
   footer: |
     ---
