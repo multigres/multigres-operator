@@ -363,11 +363,13 @@ func TestBuildPoolPod_SecurityContextWithFSGroup(t *testing.T) {
 }
 
 func TestBuildContainerSecurityContext(t *testing.T) {
-	t.Run("nil fsGroup", func(t *testing.T) {
+	t.Run("nil fsGroup defaults to postgres UID", func(t *testing.T) {
 		sc := buildContainerSecurityContext(nil)
 		assert.True(t, *sc.RunAsNonRoot)
-		assert.Nil(t, sc.RunAsUser)
-		assert.Nil(t, sc.RunAsGroup)
+		// A numeric uid is required so kubelet can verify runAsNonRoot against
+		// the pgctld/multigres images whose USER is the name "postgres".
+		assert.Equal(t, DefaultPostgresUID, *sc.RunAsUser)
+		assert.Equal(t, DefaultPostgresUID, *sc.RunAsGroup)
 	})
 
 	t.Run("with fsGroup", func(t *testing.T) {

@@ -619,6 +619,13 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 							Shards: []multigresv1alpha1.ShardConfig{{
 								Name:          "s0",
 								ShardTemplate: "prod-shard",
+								// Force a single pooler to exercise the
+								// durability warning (default is now 2).
+								Overrides: &multigresv1alpha1.ShardOverrides{
+									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+										"default": {ReplicasPerCell: ptr.To(int32(1))},
+									},
+								},
 							}},
 						}},
 					}},
@@ -713,7 +720,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			},
 			wantNoWarnings: true,
 		},
-		"No Quorum Warning: three cells with omitted replicas default to 1 per cell": {
+		"No Quorum Warning: three cells with omitted replicas (1 per cell, 3 total)": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -773,7 +780,8 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 								Spec: &multigresv1alpha1.ShardInlineSpec{
 									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 										"main-rw": {
-											Type: "readWrite",
+											Type:            "readWrite",
+											ReplicasPerCell: ptr.To(int32(1)),
 										},
 									},
 								},

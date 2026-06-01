@@ -18,7 +18,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
@@ -168,18 +167,10 @@ func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 				for name, pool := range shard.Spec.Pools {
 					pool.Postgres = CIContainerConfig()
 					pool.Multipooler = CIContainerConfig()
-					// Pin fsGroup so containers get a numeric RunAsUser. The
-					// pgctld/multigres images declare USER postgres (=999), a
-					// non-numeric name kubelet can't verify against
-					// runAsNonRoot without an explicit numeric uid.
-					pool.FSGroup = ptr.To(int64(999))
-					// The default durability policy is AT_LEAST_2, so multiorch
-					// needs >= 2 poolers to elect a primary. Single-replica
-					// pools (e.g. minimal's injected default) stay all-standby
-					// and never serve, so bump them to 2.
-					if pool.ReplicasPerCell == nil || *pool.ReplicasPerCell < 2 {
-						pool.ReplicasPerCell = ptr.To(int32(2))
-					}
+					// Note: no fsGroup or replicasPerCell overrides here on
+					// purpose. The operator defaults containers to a numeric
+					// uid and single-cell pools to 2 replicas, so e2e exercises
+					// those defaults directly and catches regressions.
 					shard.Spec.Pools[name] = pool
 				}
 			}

@@ -144,18 +144,28 @@ func buildPoolPodSecurityContext(poolSpec multigresv1alpha1.PoolSpec) *corev1.Po
 	}
 }
 
-// buildContainerSecurityContext returns a non-root SecurityContext. When fsGroup
-// is set, RunAsUser and RunAsGroup are pinned to that value so all containers
-// in the pod share the same filesystem identity on shared volumes.
+// DefaultPostgresUID is the postgres user's UID/GID in the pgctld/multigres
+// container images. Pool containers share the postgres data directory, so they
+// run as this identity unless a pool overrides it via fsGroup.
+const DefaultPostgresUID int64 = 999
+
+// buildContainerSecurityContext returns a non-root SecurityContext with a
+// numeric RunAsUser/RunAsGroup. A numeric uid is required: without it, kubelet
+// cannot verify runAsNonRoot against images whose USER is a name (the
+// pgctld/multigres images declare `USER postgres`) and refuses to start the
+// container with CreateContainerConfigError. fsGroup, when set, overrides the
+// default so all containers share the caller's chosen filesystem identity on
+// shared volumes.
 func buildContainerSecurityContext(fsGroup *int64) *corev1.SecurityContext {
-	sc := &corev1.SecurityContext{
-		RunAsNonRoot: ptr.To(true),
-	}
+	uid := DefaultPostgresUID
 	if fsGroup != nil {
-		sc.RunAsUser = fsGroup
-		sc.RunAsGroup = fsGroup
+		uid = *fsGroup
 	}
-	return sc
+	return &corev1.SecurityContext{
+		RunAsNonRoot: ptr.To(true),
+		RunAsUser:    ptr.To(uid),
+		RunAsGroup:   ptr.To(uid),
+	}
 }
 
 // buildHeadlessServiceName constructs the headless service name for DNS

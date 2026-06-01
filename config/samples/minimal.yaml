@@ -1,3 +1,15 @@
+# Postgres superuser password. The operator reads this Secret (referenced by
+# spec.postgresPasswordSecretRef) to set the postgres password. It must exist
+# in the cluster's namespace. Replace the demo value before any real use.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multigres-admin-password
+  namespace: default
+type: Opaque
+stringData:
+  password: postgres
+---
 apiVersion: multigres.com/v1alpha1
 kind: MultigresCluster
 metadata:

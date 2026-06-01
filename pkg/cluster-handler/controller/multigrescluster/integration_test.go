@@ -924,9 +924,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								// FIX: Expect the injected default pool
 								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 									"default": {
-										Type:            "readWrite",
-										Cells:           []multigresv1alpha1.CellName{"zone-a"},
-										ReplicasPerCell: ptr.To(resolver.DefaultPoolReplicasPerCell),
+										Type:  "readWrite",
+										Cells: []multigresv1alpha1.CellName{"zone-a"},
+										// Single-cell pool defaults to 2 (AT_LEAST_2 minimum).
+										ReplicasPerCell: ptr.To(int32(2)),
 										Storage:         multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize}, // "1Gi"
 										Postgres: multigresv1alpha1.ContainerConfig{
 											Resources: resolver.DefaultResourcesPostgres(),
@@ -1282,9 +1283,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								// FIX: Expect the injected default pool
 								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 									"default": {
-										Type:            "readWrite",
-										Cells:           []multigresv1alpha1.CellName{"zone-a"},
-										ReplicasPerCell: ptr.To(resolver.DefaultPoolReplicasPerCell),
+										Type:  "readWrite",
+										Cells: []multigresv1alpha1.CellName{"zone-a"},
+										// Single-cell pool defaults to 2 (AT_LEAST_2 minimum).
+										ReplicasPerCell: ptr.To(int32(2)),
 										Storage:         multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize}, // "1Gi"
 										Postgres: multigresv1alpha1.ContainerConfig{
 											Resources: resolver.DefaultResourcesPostgres(),

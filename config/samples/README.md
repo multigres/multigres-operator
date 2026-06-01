@@ -129,7 +129,7 @@ This allows you to set "sane defaults" at the Namespace level (Level 3), overrid
 
 ## 5. Pool Replica Requirements
 
-Pools default to `replicasPerCell: 1`. `AT_LEAST_2` requires 2 total poolers; `MULTI_CELL_AT_LEAST_2` requires poolers in 2 cells. For high availability, use at least 3 total poolers so the policy remains achievable while one pooler is unavailable.
+Pools default to `replicasPerCell: 1`, except a pool that spans a single cell defaults to `replicasPerCell: 2` so it meets the default `AT_LEAST_2` durability policy (which needs 2 total poolers) and can elect a primary. `MULTI_CELL_AT_LEAST_2` requires poolers in 2 cells. For high availability, use at least 3 total poolers so the policy remains achievable while one pooler is unavailable.
 
 ---
 

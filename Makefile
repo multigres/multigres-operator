@@ -53,7 +53,9 @@ endif
 # Be aware that the target commands are only tested with Docker which is
 # scaffolded by default. However, you might want to replace it to use other
 # tools. (i.e. podman)
+# Defaults to docker when unset
 CONTAINER_TOOL ?= docker
+CONTAINER_TOOL := $(if $(strip $(CONTAINER_TOOL)),$(CONTAINER_TOOL),docker)
 
 # Kind cluster name for local development
 KIND_CLUSTER ?= multigres-operator-dev
@@ -369,6 +371,14 @@ define kind-install-crds
 		KUBECONFIG=$(KIND_KUBECONFIG) $(KUBECTL) apply --server-side -f -
 endef
 
+# Load a single image into every node of the kind cluster.
+define kind-load-image
+	@echo "  Loading $(1)..."
+	@for node in $$($(KIND) get nodes --name $(KIND_CLUSTER)); do \
+		$(CONTAINER_TOOL) save $(1) | $(CONTAINER_TOOL) exec -i $$node ctr -n k8s.io images import -; \
+	done
+endef
+
 ##@ Kind Cluster (Local Development)
 
 .PHONY: kind-up
@@ -386,7 +396,16 @@ kind-up: ## Create a kind cluster for local development
 		echo "Creating kind cluster '$(KIND_CLUSTER)'..."; \
 		$(KIND) create cluster --name $(KIND_CLUSTER) --kubeconfig $(KIND_KUBECONFIG); \
 	fi
+	$(MAKE) kind-label-nodes
 	@echo "==> Cluster ready. Use: export KUBECONFIG=$(KIND_KUBECONFIG)"
+
+# Single-zone topology labels for the dev cluster.
+.PHONY: kind-label-nodes
+kind-label-nodes: ## Label kind nodes with the single-zone topology labels samples select on
+	@echo "==> Labeling nodes with zone us-central1-a / region us-central1..."
+	@KUBECONFIG=$(KIND_KUBECONFIG) $(KUBECTL) label nodes --all --overwrite \
+		topology.k8s.aws/zone-id=us-central1-a \
+		topology.kubernetes.io/region=us-central1
 
 .PHONY: kind-up-topology
 kind-up-topology: ## Create a multi-node kind cluster with topology zone ID labels
@@ -420,7 +439,7 @@ kind-deploy-topology: kind-up-topology manifests kustomize kind-load kind-load-i
 .PHONY: kind-load
 kind-load: container ## Build and load image into kind cluster
 	@echo "==> Loading image $(IMG) into kind cluster..."
-	$(KIND) load docker-image $(IMG) --name $(KIND_CLUSTER)
+	$(call kind-load-image,$(IMG))
 
 .PHONY: kind-load-images
 kind-load-images: ## Pull latest upstream images and load into kind (incremental, skips unchanged)
@@ -432,7 +451,9 @@ kind-load-images: ## Pull latest upstream images and load into kind (incremental
 	@echo "==> Loading upstream images into kind cluster..."
 	@for img in $(MULTIGRES_IMAGES); do \
 		echo "  Loading $$img..."; \
-		$(KIND) load docker-image $$img --name $(KIND_CLUSTER); \
+		for node in $$($(KIND) get nodes --name $(KIND_CLUSTER)); do \
+			$(CONTAINER_TOOL) save $$img | $(CONTAINER_TOOL) exec -i $$node ctr -n k8s.io images import -; \
+		done; \
 	done
 	@echo "==> All upstream images loaded"
 
@@ -446,7 +467,9 @@ kind-load-observability-images: ## Pull and load observability stack images into
 	@echo "==> Loading observability images into kind cluster..."
 	@for img in $(OBSERVABILITY_IMAGES); do \
 		echo "  Loading $$img..."; \
-		$(KIND) load docker-image $$img --name $(KIND_CLUSTER); \
+		for node in $$($(KIND) get nodes --name $(KIND_CLUSTER)); do \
+			$(CONTAINER_TOOL) save $$img | $(CONTAINER_TOOL) exec -i $$node ctr -n k8s.io images import -; \
+		done; \
 	done
 	@echo "==> All observability images loaded"
 
@@ -522,8 +545,8 @@ kind-portforward: ## Port-forward Grafana (3000), Prometheus (9090), Tempo (3200
 .PHONY: kind-redeploy
 kind-redeploy: container manifests kustomize ## Rebuild image, reload to kind, and redeploy
 	@echo "==> Clearing cached image from kind node..."
-	docker exec $(KIND_CLUSTER)-control-plane crictl rmi $(IMG) 2>/dev/null || true
-	$(KIND) load docker-image $(IMG) --name $(KIND_CLUSTER)
+	$(CONTAINER_TOOL) exec $(KIND_CLUSTER)-control-plane crictl rmi $(IMG) 2>/dev/null || true
+	$(call kind-load-image,$(IMG))
 	$(call kind-install-crds)
 	@echo "==> Deploying operator..."
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
@@ -547,7 +570,7 @@ observer-build: ## Build the observer container image
 
 .PHONY: kind-load-observer
 kind-load-observer: observer-build ## Build and load observer image into kind
-	$(KIND) load docker-image $(OBSERVER_IMG) --name $(KIND_CLUSTER)
+	$(call kind-load-image,$(OBSERVER_IMG))
 
 .PHONY: kind-deploy-observer
 kind-deploy-observer: kind-load-observer ## Deploy observer alongside the operator

@@ -140,9 +140,10 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 														Type: "readWrite",
 														// Cells should be nil to avoid sticky defaults
 														Cells: nil,
-														ReplicasPerCell: ptr.To(
-															resolver.DefaultPoolReplicasPerCell,
-														),
+														// Single-cell cluster: defaults to 2 so the
+														// pool reaches the 2 total poolers AT_LEAST_2
+														// needs.
+														ReplicasPerCell: ptr.To(int32(2)),
 														Storage: multigresv1alpha1.StorageSpec{
 															Size: "1Gi",
 														},

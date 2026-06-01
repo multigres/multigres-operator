@@ -76,6 +76,8 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
+					RunAsUser:    ptr.To(DefaultPostgresUID),
+					RunAsGroup:   ptr.To(DefaultPostgresUID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -183,6 +185,8 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
+					RunAsUser:    ptr.To(DefaultPostgresUID),
+					RunAsGroup:   ptr.To(DefaultPostgresUID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -308,6 +312,8 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 				},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
+					RunAsUser:    ptr.To(DefaultPostgresUID),
+					RunAsGroup:   ptr.To(DefaultPostgresUID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -409,6 +415,8 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 		},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: ptr.To(true),
+			RunAsUser:    ptr.To(DefaultPostgresUID),
+			RunAsGroup:   ptr.To(DefaultPostgresUID),
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
