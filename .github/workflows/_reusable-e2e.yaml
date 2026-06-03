@@ -32,6 +32,23 @@ on:
         default: ''
         required: false
         type: string
+      multigres-image:
+        description: >
+          Override for the multigres mono-image (multigateway, multiorch,
+          multipooler, multiadmin). Empty uses the operator default.
+        default: ''
+        required: false
+        type: string
+      pgctld-image:
+        description: Override for the pgctld image (postgres pools). Empty uses the operator default.
+        default: ''
+        required: false
+        type: string
+      multiadminweb-image:
+        description: Override for the multiadmin-web image. Empty uses the operator default.
+        default: ''
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -85,6 +102,10 @@ jobs:
 
       - name: Pull e2e images
         run: make pull-e2e-images
+        env:
+          E2E_MULTIGRES_IMAGE: ${{ inputs.multigres-image }}
+          E2E_PGCTLD_IMAGE: ${{ inputs.pgctld-image }}
+          E2E_MULTIADMINWEB_IMAGE: ${{ inputs.multiadminweb-image }}
 
       - name: Compute test packages
         id: packages
@@ -108,6 +129,9 @@ jobs:
           go test -tags=e2e ${{ steps.packages.outputs.packages }} -v -count=1 -timeout=${{ inputs.timeout-minutes }}m
         env:
           E2E_KEEP_CLUSTERS: never
+          E2E_MULTIGRES_IMAGE: ${{ inputs.multigres-image }}
+          E2E_PGCTLD_IMAGE: ${{ inputs.pgctld-image }}
+          E2E_MULTIADMINWEB_IMAGE: ${{ inputs.multiadminweb-image }}
 
       - name: Collect Kind logs on failure
         if: failure()

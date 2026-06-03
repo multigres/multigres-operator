@@ -1,0 +1,40 @@
+name: E2E (custom data-plane image)
+
+on:
+  workflow_dispatch:
+    inputs:
+      multigres-image:
+        description: "multigres mono-image (gateway/orch/pooler/admin), e.g. ghcr.io/multigres/multigres:sha-abc123"
+        required: false
+        default: ''
+        type: string
+      pgctld-image:
+        description: "pgctld image (postgres pools)"
+        required: false
+        default: ''
+        type: string
+      multiadminweb-image:
+        description: "multiadmin-web image"
+        required: false
+        default: ''
+        type: string
+      test-spec:
+        description: "Comma-separated tests to run (empty = all)"
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      test-spec: ${{ inputs.test-spec }}
+      mode: shared
+      multigres-image: ${{ inputs.multigres-image }}
+      pgctld-image: ${{ inputs.pgctld-image }}
+      multiadminweb-image: ${{ inputs.multiadminweb-image }}
