@@ -54,6 +54,7 @@ func MustLoadCluster(repoRelPath, namespace string) *multigresv1alpha1.Multigres
 	}
 	cr.Namespace = namespace
 	WithCIResources(&cr.Spec)
+	ApplyImageOverrides(&cr.Spec)
 	return cr
 }
 

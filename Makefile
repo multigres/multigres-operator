@@ -26,9 +26,15 @@ print-img: ## Print the full operator container image reference
 # Images required by MultigresCluster pods (must match pkg/testutil/e2e.go MultigresImages)
 E2E_IMAGES ?= ghcr.io/multigres/multigres:main ghcr.io/multigres/pgctld:main ghcr.io/multigres/multiadmin-web:main gcr.io/etcd-development/etcd:v3.6.7
 
+# Optional per-image overrides for validating freshly built data-plane images.
+# Mirror the E2E_* env vars consumed by the Go e2e harness (see
+# test/e2e/framework/images.go). When set, these images are pulled and loaded
+# into Kind alongside the defaults.
+E2E_OVERRIDE_IMAGES ?= $(strip $(E2E_MULTIGRES_IMAGE) $(E2E_PGCTLD_IMAGE) $(E2E_MULTIADMINWEB_IMAGE))
+
 .PHONY: pull-e2e-images
 pull-e2e-images: ## Pull container images needed by e2e tests
-	@for img in $(E2E_IMAGES); do \
+	@for img in $(E2E_IMAGES) $(E2E_OVERRIDE_IMAGES); do \
 		echo "Pulling $$img..."; \
 		docker pull $$img; \
 	done
