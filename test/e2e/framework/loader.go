@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 
@@ -18,6 +19,7 @@ var decoder runtime.Decoder
 func init() {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 	codecFactory := serializer.NewCodecFactory(scheme)
 	decoder = codecFactory.UniversalDeserializer()
 }
