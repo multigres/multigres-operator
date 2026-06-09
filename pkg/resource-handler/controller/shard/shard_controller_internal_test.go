@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1319,10 +1320,35 @@ func TestSetupWithManager(t *testing.T) {
 	})
 }
 
-// TestCleanupDrainedPod_PVCDeletion verifies that cleanupDrainedPod handles
-// PVC deletion correctly for DRAINED replacement pods (idx < replicas),
-// scale-down pods (idx >= replicas), and rolling-update pods under different
+// TestOrphanByRemainingCount verifies that cleanupDrainedPod handles
+// PVC deletion correctly for DRAINED replacement pods (idx < deletion threshold),
+// scale-down pods (idx >= deletion threshold), and rolling-update pods under different
 // PVC deletion policies.
+func TestOrphanByRemainingCount(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		liveCount  int
+		wantOrphan bool
+	}{
+		"scale 4->3 keeps enough -> delete":    {liveCount: 4, wantOrphan: false},
+		"exactly threshold+1 -> delete":        {liveCount: 4, wantOrphan: false},
+		"scale 3->2 below threshold -> orphan": {liveCount: 3, wantOrphan: true},
+		"single PVC -> orphan":                 {liveCount: 1, wantOrphan: true},
+		"large pool -> delete":                 {liveCount: 10, wantOrphan: false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := orphanByRemainingCount(tc.liveCount); got != tc.wantOrphan {
+				t.Errorf("orphanByRemainingCount(%d) = %v, want %v",
+					tc.liveCount, got, tc.wantOrphan)
+			}
+		})
+	}
+}
+
 func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1368,11 +1394,14 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			},
 		}
 	}
+	// makePVC builds a PVC carrying the pool+cell labels so countPoolCellPVCs
+	// finds it when deciding orphan-vs-delete.
 	makePVC := func(n string) *corev1.PersistentVolumeClaim {
 		return &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      n,
 				Namespace: "default",
+				Labels:    buildPoolLabelsWithCell(baseShard, poolName, cellName),
 			},
 		}
 	}
@@ -1385,39 +1414,68 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		podName  string
-		pvcName  string
-		podRoles map[string]string
-		policy   *multigresv1alpha1.PVCDeletionPolicy
-		wantPVC  bool
+		podName string
+		pvcName string
+		// siblingCount is the number of PVCs present in the pool+cell (including
+		// pvcName). orphanByRemainingCount uses this: siblingCount-1 >= threshold
+		// deletes, otherwise orphans.
+		siblingCount int
+		podRoles     map[string]string
+		policy       *multigresv1alpha1.PVCDeletionPolicy
+		wantPVC      bool
+		wantOrphan   bool
 	}{
-		"DRAINED replacement (idx<replicas) with Delete policy deletes PVC": {
-			podName:  podName0,
-			pvcName:  pvcName0,
-			podRoles: map[string]string{podName0: "DRAINED"},
-			policy:   deletePolicy,
-			wantPVC:  false,
+		"DRAINED small pool (3) -> orphan": {
+			podName:      podName0,
+			pvcName:      pvcName0,
+			siblingCount: 3,
+			podRoles:     map[string]string{podName0: "DRAINED"},
+			policy:       deletePolicy,
+			wantPVC:      true,
+			wantOrphan:   true,
 		},
-		"DRAINED replacement (idx<replicas) with Retain policy deletes PVC": {
-			podName:  podName1,
-			pvcName:  pvcName1,
-			podRoles: map[string]string{podName1: "DRAINED"},
-			policy:   retainPolicy,
-			wantPVC:  false,
+		"DRAINED Retain policy small pool (3) -> orphan": {
+			podName:      podName1,
+			pvcName:      pvcName1,
+			siblingCount: 3,
+			podRoles:     map[string]string{podName1: "DRAINED"},
+			policy:       retainPolicy,
+			wantPVC:      true,
+			wantOrphan:   true,
 		},
-		"non-DRAINED pod (idx<replicas) with Delete policy keeps PVC": {
-			podName:  podName0,
-			pvcName:  pvcName0,
-			podRoles: map[string]string{podName0: "REPLICA"},
-			policy:   deletePolicy,
-			wantPVC:  true,
+		"non-DRAINED idx<replicas Delete policy keeps PVC": {
+			podName:      podName0,
+			pvcName:      pvcName0,
+			siblingCount: 3,
+			podRoles:     map[string]string{podName0: "REPLICA"},
+			policy:       deletePolicy,
+			wantPVC:      true,
+			wantOrphan:   false,
 		},
-		"scale-down (idx>=replicas) with Delete policy deletes PVC": {
-			podName:  podName5,
-			pvcName:  pvcName5,
-			podRoles: map[string]string{},
-			policy:   deletePolicy,
-			wantPVC:  false,
+		"scale-down small pool (3) -> orphan": {
+			podName:      podName5,
+			pvcName:      pvcName5,
+			siblingCount: 3,
+			podRoles:     map[string]string{},
+			policy:       deletePolicy,
+			wantPVC:      true,
+			wantOrphan:   true,
+		},
+		"DRAINED large pool (4, scaling to 3) -> in-line delete": {
+			podName:      podName0,
+			pvcName:      pvcName0,
+			siblingCount: 4,
+			podRoles:     map[string]string{podName0: "DRAINED"},
+			policy:       deletePolicy,
+			wantPVC:      false,
+		},
+		"scale-down large pool (4, scaling to 3) -> in-line delete": {
+			podName:      podName5,
+			pvcName:      pvcName5,
+			siblingCount: 4,
+			podRoles:     map[string]string{},
+			policy:       deletePolicy,
+			wantPVC:      false,
 		},
 	}
 
@@ -1430,11 +1488,17 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			if tc.podRoles[tc.podName] == "DRAINED" {
 				pod.Labels[metadata.LabelPodRole] = "DRAINED"
 			}
-			pvc := makePVC(tc.pvcName)
+
+			// Create the target PVC plus filler siblings so the pool+cell has
+			// exactly siblingCount PVCs.
+			objs := []client.Object{shard, pod, makePVC(tc.pvcName)}
+			for i := 0; i < tc.siblingCount-1; i++ {
+				objs = append(objs, makePVC(fmt.Sprintf("filler-pvc-%d", i)))
+			}
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithObjects(shard, pod, pvc).
+				WithObjects(objs...).
 				Build()
 
 			reconciler := &ShardReconciler{
@@ -1463,12 +1527,19 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			)
 			pvcExists := getErr == nil
 			if pvcExists != tc.wantPVC {
-				t.Errorf(
+				t.Fatalf(
 					"PVC %s exists = %v, want %v (err=%v)",
-					tc.pvcName,
-					pvcExists,
-					tc.wantPVC,
-					getErr,
+					tc.pvcName, pvcExists, tc.wantPVC, getErr,
+				)
+			}
+			if !pvcExists {
+				return
+			}
+			_, hasOrphanLabel := pvcAfter.Labels[metadata.LabelOrphan]
+			if hasOrphanLabel != tc.wantOrphan {
+				t.Errorf(
+					"PVC %s orphan-since present = %v, want %v",
+					tc.pvcName, hasOrphanLabel, tc.wantOrphan,
 				)
 			}
 
@@ -1878,6 +1949,67 @@ func TestCreateMissingResources(t *testing.T) {
 		)
 		if !errors.IsNotFound(err) {
 			t.Errorf("terminal pod should be deleted, but Get returned: %v", err)
+		}
+	})
+
+	t.Run("reused orphan PVC has orphan-since label cleared", func(t *testing.T) {
+		shard := baseShard.DeepCopy()
+		podName := BuildPoolPodName(shard, poolName, cellName, 0)
+		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
+
+		// PVC left over from an earlier scale-down: orphan-since stamped, pod gone.
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcName,
+				Namespace: "default",
+				Labels: map[string]string{
+					metadata.LabelOrphan:       "2026-05-01T00-00-00Z",
+					metadata.LabelAppManagedBy: metadata.ManagedByMultigres,
+				},
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pvc).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		existingPods := map[string]*corev1.Pod{}
+		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName: pvc}
+
+		_, _, err := r.createMissingResources(
+			context.Background(),
+			shard,
+			poolName,
+			cellName,
+			poolSpec,
+			existingPods,
+			existingPVCs,
+			1,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		got := &corev1.PersistentVolumeClaim{}
+		if err := c.Get(
+			context.Background(),
+			types.NamespacedName{Name: pvcName, Namespace: "default"},
+			got,
+		); err != nil {
+			t.Fatalf("PVC must still exist: %v", err)
+		}
+		if _, ok := got.Labels[metadata.LabelOrphan]; ok {
+			t.Errorf(
+				"orphan-since label should be cleared when PVC is reused, still present: %v",
+				got.Labels,
+			)
+		}
+		// pod (re)created on the reused PVC
+		if err := c.Get(
+			context.Background(),
+			types.NamespacedName{Name: podName, Namespace: "default"},
+			&corev1.Pod{},
+		); err != nil {
+			t.Errorf("pod should be created on reused PVC: %v", err)
 		}
 	})
 
@@ -3148,7 +3280,7 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("error deleting PVC", func(t *testing.T) {
+	t.Run("error orphaning PVC", func(t *testing.T) {
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 5)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 5)
@@ -3167,7 +3299,7 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 
 		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
 		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
-			OnDelete: func(obj client.Object) error {
+			OnPatch: func(obj client.Object) error {
 				if _, ok := obj.(*corev1.PersistentVolumeClaim); ok {
 					return testutil.ErrNetworkTimeout
 				}
@@ -3184,11 +3316,11 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3)
 		if err == nil {
-			t.Error("expected error on PVC delete failure")
+			t.Error("expected error on PVC orphan-patch failure")
 		}
 	})
 
-	t.Run("nil PVC deletion policy deletes PVC", func(t *testing.T) {
+	t.Run("nil PVC deletion policy orphans PVC", func(t *testing.T) {
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 5)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 5)
@@ -3208,7 +3340,7 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		// nil PVCDeletionPolicy defaults to Delete
+		// nil PVCDeletionPolicy defaults to Delete -> orphans the PVC.
 		err := r.cleanupDrainedPod(
 			context.Background(),
 			shard,
@@ -3221,13 +3353,16 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// PVC should be deleted
+		got := &corev1.PersistentVolumeClaim{}
 		if err := c.Get(
 			context.Background(),
 			types.NamespacedName{Name: pvcName, Namespace: "default"},
-			&corev1.PersistentVolumeClaim{},
-		); !errors.IsNotFound(err) {
-			t.Errorf("PVC should be deleted with nil policy, got err: %v", err)
+			got,
+		); err != nil {
+			t.Fatalf("PVC must still exist, got err: %v", err)
+		}
+		if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
+			t.Errorf("PVC %s missing orphan-since label", pvcName)
 		}
 	})
 }
@@ -5465,8 +5600,8 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("deletePodPVC network error", func(t *testing.T) {
-		// Mock a DRAINED pod so deletePodPVC is called during cleanupDrainedPod
+	t.Run("markPodPVCOrphan network error", func(t *testing.T) {
+		// Mock a DRAINED pod so markPodPVCOrphan is called during cleanupDrainedPod
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      BuildPoolPodName(shard, "main", "z1", 0),
@@ -5499,13 +5634,13 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 			WithObjects(shard, pod, pvc).
 			Build()
 		fails := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
-			OnDelete: testutil.FailOnObjectName(pvcName, testutil.ErrPermissionError),
+			OnPatch: testutil.FailOnObjectName(pvcName, testutil.ErrPermissionError),
 		})
 
 		r := &ShardReconciler{Client: fails, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, "main", poolSpec, 1)
-		if err == nil || !strings.Contains(err.Error(), "failed to delete PVC") {
-			t.Fatalf("expected PVC deletion error, got %v", err)
+		if err == nil || !strings.Contains(err.Error(), "failed to mark PVC") {
+			t.Fatalf("expected PVC orphan-patch error, got %v", err)
 		}
 	})
 }

@@ -28,13 +28,38 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 const (
 	// topoUnavailableRequeueDelay is the delay before retrying when the topology
 	// server is unavailable during the grace period.
 	topoUnavailableRequeueDelay = 5 * time.Second
+
+	// shardFinalizer gates Shard deletion until the operator has stripped its
+	// ownerRef from associated PVCs and labelled them orphan, so the downstream
+	// multigres-gc cronjob can clean them up instead of k8s cascade-GC
+	// nuking them the moment the Shard CR is deleted.
+	shardFinalizer = "multigres.com/shard-pvc-orphan"
+
+	// pvcOrphanReplicasThreshold is the number of pool pod PVCs that are
+	// kept (orphaned, deferred to the multigres-gc cronjob) rather than deleted
+	// in-line when a pod is scaled down, drained, or the shard is removed.
+	// Keeping a few volumes around lets an accidental scale-down/removal be
+	// rolled back, beyond the threshold the excess is deleted immediately.
+	pvcOrphanReplicasThreshold = 3
 )
+
+// orphanByRemainingCount decides between orphaning and in-line deletion based
+// on how many sibling PVCs currently exist.
+//
+// liveCount includes the PVC being cleaned up. After it is removed, liveCount-1
+// PVCs remain: if that is still >= pvcOrphanReplicasThreshold we have plenty of
+// volumes left, so this one is excess and is hard-deleted, otherwise we keep it
+// as an orphan so the data can be recovered.
+func orphanByRemainingCount(liveCount int) bool {
+	return liveCount-1 < pvcOrphanReplicasThreshold
+}
 
 // ShardReconciler reconciles a Shard object.
 type ShardReconciler struct {
@@ -83,9 +108,17 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	// Best-effort cleanup on deletion — no finalizers are used.
+	// Finalizer gates deletion so PVCs can be detached + labelled orphan
+	// before Kubernetes cascade-GC fires.
 	if !shard.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, shard)
+	}
+	if !slices.Contains(shard.Finalizers, shardFinalizer) {
+		patch := client.MergeFrom(shard.DeepCopy())
+		shard.Finalizers = append(shard.Finalizers, shardFinalizer)
+		if err := r.Patch(ctx, shard, patch); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to add shard finalizer: %w", err)
+		}
 	}
 
 	// Handle graceful deletion via PendingDeletion annotation.
@@ -510,6 +543,12 @@ func (r *ShardReconciler) reconcilePVCOwnerRefs(
 
 	for i := range pvcList.Items {
 		pvc := &pvcList.Items[i]
+
+		// Skip PVCs already marked orphan. Their Shard ownerRef was deliberately
+		// stripped so the multigres-gc cronjob owns the delayed deletion.
+		if pvcutil.HasOrphanLabel(pvc) {
+			continue
+		}
 
 		// Resolve effective policy for this PVC.
 		poolName := pvc.Labels[metadata.LabelMultigresPool]
