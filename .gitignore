@@ -8,6 +8,10 @@ result-*
 # distribution files are added to github releases
 dist/
 
+# install manifests downloaded as a CI artifact during the release workflow;
+# keeps the tree clean so goreleaser's dirty-state check passes
+manifests/
+
 # Go
 cover.out
 *cover.out
