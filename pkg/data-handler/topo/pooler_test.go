@@ -106,6 +106,41 @@ func TestFindPrimaryPooler(t *testing.T) {
 			t.Errorf("expected primary-pod, got %s", primary.Id.Name)
 		}
 	})
+
+	t.Run("skips a shut-down primary", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		ctx := context.Background()
+		// A dead primary whose pod is gone, marked LIFECYCLE_SHUTDOWN, must not
+		// be returned as the live primary.
+		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+			Id:       &clustermetadata.ID{Cell: "cell1", Name: "dead-primary"},
+			Hostname: "dead-primary", Type: clustermetadata.PoolerType_PRIMARY,
+			LifecycleStatus: &clustermetadata.PoolerLifecycle{
+				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
+			},
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false)
+
+		shard := &multigresv1alpha1.Shard{
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName: "db", TableGroupName: "tg", ShardName: "0",
+			},
+		}
+
+		primary, err := topo.FindPrimaryPooler(ctx, store, shard, []string{"cell1"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if primary != nil {
+			t.Errorf("expected nil primary (dead primary skipped), got %s", primary.Id.Name)
+		}
+	})
 }
 
 // multiCellStore is a mock store that returns different results per cell.
@@ -115,11 +150,11 @@ type multiCellStore struct {
 	errorCells map[string]error
 }
 
-// mockPoolerTopoStore allows mocking more functions for pooler pruning tests.
+// mockPoolerTopoStore allows mocking more functions for dead-pooler tests.
 type mockPoolerTopoStore struct {
 	topoclient.Store
-	getMultiPoolersByCellFunc func(ctx context.Context, cell string, opts *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error)
-	unregisterMultiPoolerFunc func(ctx context.Context, id *clustermetadata.ID) error
+	getMultiPoolersByCellFunc   func(ctx context.Context, cell string, opts *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error)
+	updateMultiPoolerFieldsFunc func(ctx context.Context, id *clustermetadata.ID, update func(*clustermetadata.MultiPooler) error) (*clustermetadata.MultiPooler, error)
 }
 
 func (s *mockPoolerTopoStore) GetMultiPoolersByCell(
@@ -131,14 +166,15 @@ func (s *mockPoolerTopoStore) GetMultiPoolersByCell(
 	return nil, nil
 }
 
-func (s *mockPoolerTopoStore) UnregisterMultiPooler(
+func (s *mockPoolerTopoStore) UpdateMultiPoolerFields(
 	ctx context.Context,
 	id *clustermetadata.ID,
-) error {
-	if s.unregisterMultiPoolerFunc != nil {
-		return s.unregisterMultiPoolerFunc(ctx, id)
+	update func(*clustermetadata.MultiPooler) error,
+) (*clustermetadata.MultiPooler, error) {
+	if s.updateMultiPoolerFieldsFunc != nil {
+		return s.updateMultiPoolerFieldsFunc(ctx, id, update)
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *multiCellStore) GetMultiPoolersByCell(
@@ -218,10 +254,15 @@ func TestFindPrimaryPooler_TopoUnavailableSkip(t *testing.T) {
 	})
 }
 
-func TestPrunePoolers(t *testing.T) {
+func TestMarkDeadPoolers(t *testing.T) {
 	t.Parallel()
 
-	t.Run("prunes stale poolers", func(t *testing.T) {
+	isShutdown := func(mp *clustermetadata.MultiPooler) bool {
+		return mp.LifecycleStatus != nil &&
+			mp.LifecycleStatus.Status == clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN
+	}
+
+	t.Run("marks dead poolers shut down without deleting them", func(t *testing.T) {
 		t.Parallel()
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
 		store := topoclient.NewWithFactory(
@@ -256,21 +297,76 @@ func TestPrunePoolers(t *testing.T) {
 		}
 
 		activePods := map[string]bool{"active-pod": true}
-		pruned, err := topo.PrunePoolers(ctx, store, shard, activePods)
+		marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePods)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if pruned != 2 {
-			t.Errorf("expected 2 pruned, got %d", pruned)
+		if marked != 2 {
+			t.Errorf("expected 2 marked, got %d", marked)
 		}
 
-		// Verify only active-pod remains.
+		// Entries are left in place (tombstones), not deleted.
 		remaining, _ := store.GetMultiPoolersByCell(ctx, "cell1", nil)
-		if len(remaining) != 1 {
-			t.Fatalf("expected 1 remaining pooler, got %d", len(remaining))
+		if len(remaining) != 3 {
+			t.Fatalf("expected 3 remaining poolers (none deleted), got %d", len(remaining))
 		}
-		if remaining[0].Id.Name != "active-pod" {
-			t.Errorf("expected active-pod to remain, got %s", remaining[0].Id.Name)
+
+		byName := make(map[string]*clustermetadata.MultiPooler, len(remaining))
+		for _, p := range remaining {
+			byName[p.Id.Name] = p.MultiPooler
+		}
+
+		// Dead poolers marked LIFECYCLE_SHUTDOWN. Type (role) is left as-is —
+		// lifecycle is the source of truth and role-readers skip shut-down entries.
+		for _, name := range []string{"stale-pod", "dead-pod"} {
+			mp := byName[name]
+			if !isShutdown(mp) {
+				t.Errorf("expected %s to be LIFECYCLE_SHUTDOWN, got %v", name, mp.LifecycleStatus)
+			}
+		}
+		if mp := byName["stale-pod"]; mp.Type != clustermetadata.PoolerType_REPLICA {
+			t.Errorf("expected stale-pod Type left untouched (REPLICA), got %v", mp.Type)
+		}
+
+		// Active pooler left untouched.
+		if active := byName["active-pod"]; isShutdown(active) {
+			t.Error("expected active-pod to be left untouched, but it was marked shut down")
+		}
+	})
+
+	t.Run("is idempotent for already-shutdown poolers", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		ctx := context.Background()
+		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+			Id:       &clustermetadata.ID{Cell: "cell1", Name: "already-dead"},
+			Hostname: "already-dead", Type: clustermetadata.PoolerType_DRAINED,
+			LifecycleStatus: &clustermetadata.PoolerLifecycle{
+				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
+			},
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false)
+
+		shard := &multigresv1alpha1.Shard{
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName: "db", TableGroupName: "tg", ShardName: "0",
+				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+					"pool1": {Cells: []multigresv1alpha1.CellName{"cell1"}},
+				},
+			},
+		}
+
+		marked, err := topo.MarkDeadPoolers(ctx, store, shard, map[string]bool{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if marked != 0 {
+			t.Errorf("expected 0 marked for already-shutdown pooler, got %d", marked)
 		}
 	})
 
@@ -299,12 +395,12 @@ func TestPrunePoolers(t *testing.T) {
 		}
 
 		activePods := map[string]bool{"pod-1": true}
-		pruned, err := topo.PrunePoolers(ctx, store, shard, activePods)
+		marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePods)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if pruned != 0 {
-			t.Errorf("expected 0 pruned, got %d", pruned)
+		if marked != 0 {
+			t.Errorf("expected 0 marked, got %d", marked)
 		}
 	})
 
@@ -325,18 +421,18 @@ func TestPrunePoolers(t *testing.T) {
 			},
 		}
 
-		pruned, err := topo.PrunePoolers(
+		marked, err := topo.MarkDeadPoolers(
 			context.Background(), store, shard, map[string]bool{},
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if pruned != 0 {
-			t.Errorf("expected 0 pruned for unavailable cell, got %d", pruned)
+		if marked != 0 {
+			t.Errorf("expected 0 marked for unavailable cell, got %d", marked)
 		}
 	})
 
-	t.Run("does not prune active poolers with FQDN hostnames", func(t *testing.T) {
+	t.Run("does not mark active poolers with FQDN hostnames", func(t *testing.T) {
 		t.Parallel()
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
 		store := topoclient.NewWithFactory(
@@ -369,20 +465,25 @@ func TestPrunePoolers(t *testing.T) {
 
 		// active-pod is in the active set; stale-pod is NOT.
 		activePods := map[string]bool{"active-pod": true}
-		pruned, err := topo.PrunePoolers(ctx, store, shard, activePods)
+		marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePods)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if pruned != 1 {
-			t.Errorf("expected 1 pruned (stale-pod), got %d", pruned)
+		if marked != 1 {
+			t.Errorf("expected 1 marked (stale-pod), got %d", marked)
 		}
 
 		remaining, _ := store.GetMultiPoolersByCell(ctx, "cell1", nil)
-		if len(remaining) != 1 {
-			t.Fatalf("expected 1 remaining pooler, got %d", len(remaining))
+		if len(remaining) != 2 {
+			t.Fatalf("expected 2 remaining poolers (none deleted), got %d", len(remaining))
 		}
-		if remaining[0].Id.Name != "active-pod" {
-			t.Errorf("expected active-pod to remain, got %s", remaining[0].Id.Name)
+		for _, p := range remaining {
+			if p.Id.Name == "active-pod" && isShutdown(p.MultiPooler) {
+				t.Error("expected active-pod to be left untouched")
+			}
+			if p.Id.Name == "stale-pod" && !isShutdown(p.MultiPooler) {
+				t.Error("expected stale-pod to be marked LIFECYCLE_SHUTDOWN")
+			}
 		}
 	})
 
@@ -399,13 +500,13 @@ func TestPrunePoolers(t *testing.T) {
 			},
 		}
 
-		_, err := topo.PrunePoolers(context.Background(), store, shard, map[string]bool{})
+		_, err := topo.MarkDeadPoolers(context.Background(), store, shard, map[string]bool{})
 		if err == nil {
 			t.Error("expected error when GetMultiPoolersByCell fails")
 		}
 	})
 
-	t.Run("continues and logs error on UnregisterMultiPooler failure", func(t *testing.T) {
+	t.Run("continues and logs error on UpdateMultiPoolerFields failure", func(t *testing.T) {
 		t.Parallel()
 		store := &mockPoolerTopoStore{
 			getMultiPoolersByCellFunc: func(ctx context.Context, cell string, opts *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
@@ -423,8 +524,8 @@ func TestPrunePoolers(t *testing.T) {
 				}
 				return []*topoclient.MultiPoolerInfo{p}, nil
 			},
-			unregisterMultiPoolerFunc: func(ctx context.Context, id *clustermetadata.ID) error {
-				return errors.New("fake unregister error")
+			updateMultiPoolerFieldsFunc: func(ctx context.Context, id *clustermetadata.ID, update func(*clustermetadata.MultiPooler) error) (*clustermetadata.MultiPooler, error) {
+				return nil, errors.New("fake update error")
 			},
 		}
 
@@ -437,16 +538,16 @@ func TestPrunePoolers(t *testing.T) {
 			},
 		}
 
-		pruned, err := topo.PrunePoolers(context.Background(), store, shard, map[string]bool{})
+		marked, err := topo.MarkDeadPoolers(context.Background(), store, shard, map[string]bool{})
 		if err != nil {
 			t.Fatalf("expected nil error (caught and logged), got %v", err)
 		}
-		if pruned != 0 {
-			t.Errorf("expected 0 pruned due to error, got %d", pruned)
+		if marked != 0 {
+			t.Errorf("expected 0 marked due to error, got %d", marked)
 		}
 	})
 
-	t.Run("uses Id.Name when hostname is empty during pruning", func(t *testing.T) {
+	t.Run("uses Id.Name when hostname is empty", func(t *testing.T) {
 		t.Parallel()
 		store := &mockPoolerTopoStore{
 			getMultiPoolersByCellFunc: func(ctx context.Context, cell string, opts *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
@@ -464,8 +565,8 @@ func TestPrunePoolers(t *testing.T) {
 				}
 				return []*topoclient.MultiPoolerInfo{p}, nil
 			},
-			unregisterMultiPoolerFunc: func(ctx context.Context, id *clustermetadata.ID) error {
-				return nil
+			updateMultiPoolerFieldsFunc: func(ctx context.Context, id *clustermetadata.ID, update func(*clustermetadata.MultiPooler) error) (*clustermetadata.MultiPooler, error) {
+				return nil, nil
 			},
 		}
 
@@ -478,12 +579,12 @@ func TestPrunePoolers(t *testing.T) {
 			},
 		}
 
-		pruned, err := topo.PrunePoolers(context.Background(), store, shard, map[string]bool{})
+		marked, err := topo.MarkDeadPoolers(context.Background(), store, shard, map[string]bool{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if pruned != 1 {
-			t.Errorf("expected 1 pruned, got %d", pruned)
+		if marked != 1 {
+			t.Errorf("expected 1 marked, got %d", marked)
 		}
 	})
 }
@@ -678,6 +779,43 @@ func TestGetPoolerStatus(t *testing.T) {
 		}
 		if result.Roles["drained"] != "DRAINED" {
 			t.Errorf("expected DRAINED, got %s", result.Roles["drained"])
+		}
+	})
+
+	t.Run("skips shut-down poolers even if a pod name matches", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		ctx := context.Background()
+		_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+			Id:       &clustermetadata.ID{Cell: "cell1", Name: "shutdown-pod"},
+			Hostname: "shutdown-pod", Type: clustermetadata.PoolerType_PRIMARY,
+			LifecycleStatus: &clustermetadata.PoolerLifecycle{
+				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
+			},
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false)
+
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName: "db", TableGroupName: "tg", ShardName: "0",
+				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+					"pool1": {Cells: []multigresv1alpha1.CellName{"cell1"}},
+				},
+			},
+		}
+
+		result := topo.GetPoolerStatus(ctx, store, shard, []string{"shutdown-pod"})
+		if !result.QuerySuccess {
+			t.Error("expected QuerySuccess=true")
+		}
+		if len(result.Roles) != 0 {
+			t.Errorf("expected no roles for shut-down pooler, got %v", result.Roles)
 		}
 	})
 
