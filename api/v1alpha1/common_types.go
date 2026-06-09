@@ -114,10 +114,12 @@ type PVCDeletionPolicy struct {
 	WhenScaled PVCRetentionPolicyType `json:"whenScaled,omitempty"`
 }
 
-// TopologyPruningConfig controls whether the operator prunes stale topology entries.
+// TopologyPruningConfig controls whether the operator reconciles stale topology entries.
 type TopologyPruningConfig struct {
-	// Enabled controls whether the operator prunes stale topology entries.
-	// When false, the operator still registers entries but never removes them.
+	// Enabled controls whether the operator marks dead poolers (topology
+	// entries with no backing pod) as LIFECYCLE_SHUTDOWN so the orchestrator
+	// clears them from the cohort. When false, the operator still registers
+	// entries but never removes them.
 	// Default: true (nil or empty means enabled).
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`

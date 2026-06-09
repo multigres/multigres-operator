@@ -5,13 +5,19 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
+
+// deadPoolerReason is recorded on the pooler's lifecycle entry when the
+// operator marks it shut down because no backing pod exists.
+const deadPoolerReason = "operator: no backing pod for pooler"
 
 // PoolerStatusResult holds the result of querying pooler roles from the topology.
 type PoolerStatusResult struct {
@@ -42,6 +48,9 @@ func GetPoolerStatus(
 		poolers, err := store.GetMultiPoolersByCell(ctx, cell, opt)
 		if err == nil {
 			for _, p := range poolers {
+				if isLifecycleShutdown(p.MultiPooler) {
+					continue
+				}
 				roleName := "REPLICA"
 				switch p.Type {
 				case clustermetadatapb.PoolerType_PRIMARY:
@@ -96,7 +105,8 @@ func FindPrimaryPooler(
 		}
 		anySuccess = true
 		for _, p := range poolers {
-			if p.Type == clustermetadatapb.PoolerType_PRIMARY {
+			if p.Type == clustermetadatapb.PoolerType_PRIMARY &&
+				!isLifecycleShutdown(p.MultiPooler) {
 				return p.MultiPooler, nil
 			}
 		}
@@ -172,17 +182,22 @@ func ForceUnregisterPod(
 	return nil
 }
 
-// PrunePoolers removes topology entries for poolers that have no corresponding
-// running pod. activePodNames should contain the names of all pods currently
-// managed by the shard. Returns the number of pruned entries.
-func PrunePoolers(
+// MarkDeadPoolers scans topology entries for poolers that have no corresponding
+// running pod and marks them LIFECYCLE_SHUTDOWN, the same lifecycle signal a
+// pooler writes for itself on graceful shutdown. The orchestrator's pooler
+// watcher keys solely on this lifecycle transition to tear down the per-pooler
+// health stream and clear the pooler from the cohort, so it stops treating the
+// pooler as a lingering, unreachable member.
+// activePodNames should contain the names of all pods currently managed by the
+// shard. Returns the number of entries newly marked shut down.
+func MarkDeadPoolers(
 	ctx context.Context,
 	store topoclient.Store,
 	shard *multigresv1alpha1.Shard,
 	activePodNames map[string]bool,
 ) (int, error) {
 	logger := log.FromContext(ctx)
-	pruned := 0
+	marked := 0
 
 	cells := CollectCells(shard)
 	for _, cell := range cells {
@@ -192,28 +207,59 @@ func PrunePoolers(
 			if IsTopoUnavailable(err) {
 				continue
 			}
-			return pruned, fmt.Errorf("listing poolers in cell %q for pruning: %w", cell, err)
+			return marked, fmt.Errorf(
+				"listing poolers in cell %q for dead-pooler detection: %w",
+				cell,
+				err,
+			)
 		}
 
 		for _, p := range poolers {
-			if !poolerMatchesAnyActivePod(p, activePodNames) {
-				hostname := p.GetHostname()
-				if hostname == "" && p.Id != nil {
-					hostname = p.Id.Name
-				}
-				if err := store.UnregisterMultiPooler(ctx, p.Id); err != nil {
-					logger.Error(err, "Failed to prune stale pooler",
-						"pooler", hostname, "cell", cell)
-					continue
-				}
-				logger.Info("Pruned stale pooler from topology",
-					"pooler", hostname, "cell", cell)
-				pruned++
+			if poolerMatchesAnyActivePod(p, activePodNames) {
+				continue
 			}
+			if isLifecycleShutdown(p.MultiPooler) {
+				continue // Already marked; nothing to do.
+			}
+
+			hostname := p.GetHostname()
+			if hostname == "" && p.Id != nil {
+				hostname = p.Id.Name
+			}
+
+			if _, err := store.UpdateMultiPoolerFields(ctx, p.Id,
+				func(mp *clustermetadatapb.MultiPooler) error {
+					// TODO: Consider a dedicated lifecycle status (e.g.
+					// DEPROVISIONED) to distinguish an operator-detected dead
+					// pooler from a graceful shutdown. Doesn't affect orch
+					// behavior, but aids logging and anyone inspecting topo
+					// state directly.
+					mp.LifecycleStatus = &clustermetadatapb.PoolerLifecycle{
+						Status:  clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
+						Reason:  deadPoolerReason,
+						Updated: timestamppb.New(time.Now()),
+					}
+					return nil
+				}); err != nil {
+				logger.Error(err, "Failed to mark dead pooler shut down",
+					"pooler", hostname, "cell", cell)
+				continue
+			}
+			logger.Info("Marked dead pooler LIFECYCLE_SHUTDOWN in topology",
+				"pooler", hostname, "cell", cell)
+			marked++
 		}
 	}
 
-	return pruned, nil
+	return marked, nil
+}
+
+// isLifecycleShutdown reports whether the pooler is already recorded as shut
+// down in topology.
+func isLifecycleShutdown(mp *clustermetadatapb.MultiPooler) bool {
+	return mp != nil &&
+		mp.LifecycleStatus != nil &&
+		mp.LifecycleStatus.Status == clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN
 }
 
 // poolerMatchesAnyActivePod returns true when the pooler record corresponds to

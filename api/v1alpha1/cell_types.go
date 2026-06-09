@@ -116,7 +116,9 @@ type TopologyReconciliation struct {
 	// RegisterCell indicates if the cell should register itself in the topology.
 	RegisterCell bool `json:"registerCell"`
 
-	// PrunePoolers indicates if unused poolers should be removed.
+	// PrunePoolers indicates if dead poolers (topology entries with no backing
+	// pod) should be marked LIFECYCLE_SHUTDOWN so the orchestrator clears them
+	// from the cohort.
 	PrunePoolers bool `json:"prunePoolers"`
 }
 
