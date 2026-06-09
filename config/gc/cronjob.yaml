@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gc
+  namespace: system
+  labels:
+    app.kubernetes.io/name: multigres-operator
+    app.kubernetes.io/component: gc
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Daily at 02:00 UTC (Off-peak for most regions).
+  schedule: "0 2 * * *"
+  timeZone: Etc/UTC
+  # Forbid prevents overlap if a previous run is still going (it shouldn't, but cheap insurance).
+  concurrencyPolicy: Forbid
+  # If a scheduled run is missed (controller-manager down, cluster paused, etc.), only honour it
+  # within this window. Avoids a thundering catch-up after a long outage.
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # No retry, next daily run will pick up whatever was missed.
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: multigres-operator
+            app.kubernetes.io/component: gc
+        spec:
+          serviceAccountName: gc
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 30
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: multigres-gc
+            # Same image as the operator; the Dockerfile bundles both binaries.
+            # Image tag is overridden via kustomize `images` in this kustomization.
+            image: controller:latest
+            command:
+            - /multigres-gc
+            args:
+            - --retention=720h
+            - --zap-log-level=info
+            securityContext:
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - "ALL"
+            resources:
+              limits:
+                cpu: 200m
+                memory: 128Mi
+              requests:
+                cpu: 10m
+                memory: 32Mi
