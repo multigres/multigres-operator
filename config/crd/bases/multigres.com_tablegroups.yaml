@@ -2940,8 +2940,10 @@ spec:
                 properties:
                   enabled:
                     description: |-
-                      Enabled controls whether the operator prunes stale topology entries.
-                      When false, the operator still registers entries but never removes them.
+                      Enabled controls whether the operator marks dead poolers (topology
+                      entries with no backing pod) as LIFECYCLE_SHUTDOWN so the orchestrator
+                      clears them from the cohort. When false, the operator still registers
+                      entries but never touches stale ones.
                       Default: true (nil or empty means enabled).
                     type: boolean
                 type: object

@@ -306,10 +306,11 @@ func (r *ShardReconciler) topoStore(shard *multigresv1alpha1.Shard) (topoclient.
 	return topo.NewStoreFromShard(shard)
 }
 
-// reconcilePoolerPrune lists active pods for the shard and prunes topology
-// entries for poolers that no longer have a running pod. Pruning is skipped
-// when the parent cluster has disabled topology pruning (propagated via
-// the Cell's TopologyReconciliation.PrunePoolers field).
+// reconcilePoolerPrune lists active pods for the shard and marks topology
+// entries for poolers that no longer have a running pod as LIFECYCLE_SHUTDOWN,
+// so the orchestrator clears them from the cohort. This is skipped when the
+// parent cluster has disabled topology pruning (propagated via the Cell's
+// TopologyReconciliation.PrunePoolers field).
 func (r *ShardReconciler) reconcilePoolerPrune(
 	ctx context.Context,
 	store topoclient.Store,
@@ -343,13 +344,13 @@ func (r *ShardReconciler) reconcilePoolerPrune(
 		activePodNames[pod.Name] = true
 	}
 
-	pruned, err := topo.PrunePoolers(ctx, store, shard, activePodNames)
+	marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePodNames)
 	if err != nil {
-		logger.Error(err, "Failed to prune stale poolers")
+		logger.Error(err, "Failed to mark dead poolers shut down")
 	}
-	if pruned > 0 {
-		r.Recorder.Eventf(shard, "Normal", "PoolersPruned",
-			"Pruned %d stale pooler(s) from topology", pruned)
+	if marked > 0 {
+		r.Recorder.Eventf(shard, "Normal", "DeadPoolersMarked",
+			"Marked %d dead pooler(s) LIFECYCLE_SHUTDOWN in topology", marked)
 	}
 }
 

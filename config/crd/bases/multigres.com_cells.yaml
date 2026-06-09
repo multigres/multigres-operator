@@ -1542,8 +1542,10 @@ spec:
                 description: TopologyReconciliation flags.
                 properties:
                   prunePoolers:
-                    description: PrunePoolers indicates if unused poolers should be
-                      removed.
+                    description: |-
+                      PrunePoolers indicates if dead poolers (topology entries with no backing
+                      pod) should be marked LIFECYCLE_SHUTDOWN so the orchestrator clears them
+                      from the cohort.
                     type: boolean
                   registerCell:
                     description: RegisterCell indicates if the cell should register
