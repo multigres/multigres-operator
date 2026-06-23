@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: multigres-operator
+
+resources:
+- serviceaccount.yaml
+- clusterrole.yaml
+- clusterrolebinding.yaml
+- cronjob.yaml
+
+images:
+- name: controller
+  newName: ghcr.io/multigres/multigres-operator
+  newTag: latest
