@@ -846,7 +846,8 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 	if got, want := shard.Spec.DatabaseName, multigresv1alpha1.DatabaseName(dbName); got != want {
 		t.Errorf("Shard DatabaseName mismatch: got %q, want %q", got, want)
 	}
-	if got, want := shard.Spec.TableGroupName, multigresv1alpha1.TableGroupName(tgLabelName); got != want {
+	if got, want := shard.Spec.TableGroupName,
+		multigresv1alpha1.TableGroupName(tgLabelName); got != want {
 		t.Errorf("Shard TableGroupName mismatch: got %q, want %q", got, want)
 	}
 	if got, want := shard.Spec.ShardName, multigresv1alpha1.ShardName(shardName); got != want {
