@@ -63,7 +63,6 @@ func TestSetupWithManager_Failure(t *testing.T) {
 		),
 	)
 
-	// Setup should fail because TableGroup is not in scheme
 	if err := (&tablegroup.TableGroupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -135,8 +134,10 @@ func TestTableGroupReconciliation(t *testing.T) {
 						{
 							Name: "s1",
 							MultiOrch: multigresv1alpha1.MultiOrchSpec{
-								StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
-								Cells:         []multigresv1alpha1.CellName{"zone-a"},
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(1)),
+								},
+								Cells: []multigresv1alpha1.CellName{"zone-a"},
 							},
 							Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 								"primary": {
@@ -149,8 +150,10 @@ func TestTableGroupReconciliation(t *testing.T) {
 						{
 							Name: "s2",
 							MultiOrch: multigresv1alpha1.MultiOrchSpec{
-								StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
-								Cells:         []multigresv1alpha1.CellName{"zone-b"},
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(1)),
+								},
+								Cells: []multigresv1alpha1.CellName{"zone-b"},
 							},
 							Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 								"primary": {
@@ -164,7 +167,6 @@ func TestTableGroupReconciliation(t *testing.T) {
 				},
 			},
 			wantResources: []client.Object{
-				// Shard 1
 				&multigresv1alpha1.Shard{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "tg-test-simple-s1",
@@ -187,8 +189,10 @@ func TestTableGroupReconciliation(t *testing.T) {
 							Implementation: "etcd",
 						},
 						MultiOrch: multigresv1alpha1.MultiOrchSpec{
-							StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
-							Cells:         []multigresv1alpha1.CellName{"zone-a"},
+							StatelessSpec: multigresv1alpha1.StatelessSpec{
+								Replicas: ptr.To(int32(1)),
+							},
+							Cells: []multigresv1alpha1.CellName{"zone-a"},
 						},
 						Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 							"primary": {
@@ -200,7 +204,6 @@ func TestTableGroupReconciliation(t *testing.T) {
 						Replicas: ptr.To(int32(1)),
 					},
 				},
-				// Shard 2
 				&multigresv1alpha1.Shard{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "tg-test-simple-s2",
@@ -223,8 +226,10 @@ func TestTableGroupReconciliation(t *testing.T) {
 							Implementation: "etcd",
 						},
 						MultiOrch: multigresv1alpha1.MultiOrchSpec{
-							StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
-							Cells:         []multigresv1alpha1.CellName{"zone-b"},
+							StatelessSpec: multigresv1alpha1.StatelessSpec{
+								Replicas: ptr.To(int32(1)),
+							},
+							Cells: []multigresv1alpha1.CellName{"zone-b"},
 						},
 						Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 							"primary": {
@@ -245,14 +250,12 @@ func TestTableGroupReconciliation(t *testing.T) {
 			t.Parallel()
 			ctx := t.Context()
 
-			// 1. Setup Envtest and Manager
 			mgr := testutil.SetUpEnvtestManager(t, scheme,
 				testutil.WithCRDPaths(
 					filepath.Join("../../../../", "config", "crd", "bases"),
 				),
 			)
 
-			// 2. Setup Watcher
 			watcher := testutil.NewResourceWatcher(t, ctx, mgr,
 				testutil.WithCmpOpts(
 					testutil.IgnoreMetaRuntimeFields(),
@@ -265,7 +268,6 @@ func TestTableGroupReconciliation(t *testing.T) {
 			)
 			k8sClient := mgr.GetClient()
 
-			// 3. Setup and Start Controller
 			reconciler := &tablegroup.TableGroupReconciler{
 				Client:   mgr.GetClient(),
 				Scheme:   mgr.GetScheme(),
@@ -278,13 +280,12 @@ func TestTableGroupReconciliation(t *testing.T) {
 				t.Fatalf("Failed to create controller, %v", err)
 			}
 
-			// 4. Create the Input
 			setTestPostgresPasswordSecretRef(tc.tableGroup)
 			if err := k8sClient.Create(ctx, tc.tableGroup); err != nil {
 				t.Fatalf("Failed to create the initial tablegroup, %v", err)
 			}
 
-			// Patch wantResources with hashed names
+			// Expected Shard names use the same name constraints as the controller.
 			for _, obj := range tc.wantResources {
 				if shard, ok := obj.(*multigresv1alpha1.Shard); ok {
 					clusterName := tc.tableGroup.Labels["multigres.com/cluster"]
@@ -300,15 +301,12 @@ func TestTableGroupReconciliation(t *testing.T) {
 				}
 			}
 
-			// 5. Assert Logic
 			if err := watcher.WaitForMatch(tc.wantResources...); err != nil {
 				t.Errorf("Resources mismatch:\n%v", err)
 			}
 		})
 	}
 }
-
-// Helpers
 
 func shardLabels(clusterName, db, tg, shard string) map[string]string {
 	labels := metadata.BuildStandardLabels(clusterName, "shard")
