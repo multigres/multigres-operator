@@ -355,7 +355,7 @@ func TestStepComputeStatus_PendingDeletionPreventsHealthy(t *testing.T) {
 	if got := tg.Status.Phase; got != multigresv1alpha1.PhaseProgressing {
 		t.Errorf("Phase mismatch: got %q, want %q", got, multigresv1alpha1.PhaseProgressing)
 	}
-	if got, want := tg.Status.Message, "Waiting for removed shards to drain"; got != want {
+	if got, want := tg.Status.Message, "Waiting for shard cleanup to finish"; got != want {
 		t.Errorf("Message mismatch: got %q, want %q", got, want)
 	}
 	if got := tg.Status.ReadyShards; got != 1 {

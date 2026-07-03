@@ -125,6 +125,11 @@ func (r *TableGroupReconciler) handlePendingDeletion(
 	for i := range shards.Items {
 		s := &shards.Items[i]
 
+		if s.DeletionTimestamp != nil {
+			allReady = false
+			continue
+		}
+
 		if s.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
 			if err := r.setShardPendingDeletion(ctx, s); err != nil {
 				return ctrl.Result{}, fmt.Errorf(

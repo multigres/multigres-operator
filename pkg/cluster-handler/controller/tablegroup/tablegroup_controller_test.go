@@ -92,6 +92,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 		preReconcileClient func(testing.TB, client.Client) // Hook to modify client state before Reconcile
 		skipCreate         bool                            // If true, the object won't be created in the fake client (simulates Not Found)
 		expectedEvents     []string                        // events expected to be recorded
+		expectedResult     *ctrl.Result
 		validate           func(testing.TB, client.Client)
 	}{
 		"Create: Shard Creation": {
@@ -526,7 +527,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				},
 			},
 			expectedEvents: []string{
-				"Normal Deleted Deleted orphaned Shard",
+				"Normal Deleted Deleted Shard",
 			},
 			validate: func(t testing.TB, c client.Client) {
 				shardName := name.JoinWithConstraints(
@@ -603,6 +604,75 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				}
 				if shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
 					t.Error("Expected PendingDeletion annotation to be set on Shard")
+				}
+			},
+		},
+		"Success: Handle Pending Deletion (Child Already Terminating)": {
+			tableGroup: baseTG.DeepCopy(),
+			preReconcileUpdate: func(t testing.TB, tg *multigresv1alpha1.TableGroup) {
+				if tg.Annotations == nil {
+					tg.Annotations = make(map[string]string)
+				}
+				tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion] = "2026-01-01T00:00:00Z"
+			},
+			existingObjects: []client.Object{
+				&multigresv1alpha1.Shard{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: name.JoinWithConstraints(
+							name.DefaultConstraints,
+							clusterName,
+							dbName,
+							tgLabelName,
+							"shard-0",
+						),
+						Namespace: namespace,
+						Labels: map[string]string{
+							"multigres.com/cluster":    clusterName,
+							"multigres.com/database":   dbName,
+							"multigres.com/tablegroup": tgLabelName,
+						},
+						DeletionTimestamp: ptr.To(metav1.Now()),
+						// Test fixture only: keep the fake object visible after
+						// DeletionTimestamp so the parent observes it mid-termination.
+						Finalizers: []string{"test.finalizer"},
+					},
+					Spec: multigresv1alpha1.ShardSpec{ShardName: "shard-0"},
+				},
+			},
+			expectedResult: ptr.To(ctrl.Result{RequeueAfter: 5 * time.Second}),
+			validate: func(t testing.TB, c client.Client) {
+				shardName := name.JoinWithConstraints(
+					name.DefaultConstraints,
+					clusterName,
+					dbName,
+					tgLabelName,
+					"shard-0",
+				)
+				shard := &multigresv1alpha1.Shard{}
+				if err := c.Get(
+					t.Context(),
+					types.NamespacedName{Name: shardName, Namespace: namespace},
+					shard,
+				); err != nil {
+					t.Fatalf("terminating Shard should still be visible: %v", err)
+				}
+				if got := shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; got != "" {
+					t.Errorf("terminating Shard should not be restamped, got %q", got)
+				}
+
+				updatedTG := &multigresv1alpha1.TableGroup{}
+				if err := c.Get(
+					t.Context(),
+					types.NamespacedName{Name: tgName, Namespace: namespace},
+					updatedTG,
+				); err != nil {
+					t.Fatalf("failed to get TableGroup: %v", err)
+				}
+				if meta.IsStatusConditionTrue(
+					updatedTG.Status.Conditions,
+					multigresv1alpha1.ConditionReadyForDeletion,
+				) {
+					t.Error("TableGroup should wait for terminating child Shard to disappear")
 				}
 			},
 		},
@@ -707,9 +777,16 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				},
 			}
 
-			_, err := reconciler.Reconcile(t.Context(), req)
+			result, err := reconciler.Reconcile(t.Context(), req)
 			if err != nil {
 				t.Errorf("Unexpected error from Reconcile: %v", err)
+			}
+			if tc.expectedResult != nil && result != *tc.expectedResult {
+				t.Errorf(
+					"Unexpected result from Reconcile: got %+v, want %+v",
+					result,
+					*tc.expectedResult,
+				)
 			}
 
 			if len(tc.expectedEvents) > 0 {
@@ -1060,7 +1137,7 @@ func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
 					errSimulated,
 				),
 			},
-			expectedEvents: []string{"Warning CleanUpError Failed to delete orphan shard"},
+			expectedEvents: []string{"Warning CleanUpError Failed to delete shard"},
 		},
 		"Error: Update Status Failed": {
 			tableGroup:      baseTG.DeepCopy(),
@@ -1726,7 +1803,7 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 	if got, want := updatedTG.Status.Phase, multigresv1alpha1.PhaseProgressing; got != want {
 		t.Errorf("Phase mismatch while cleanup is pending: got %q, want %q", got, want)
 	}
-	if got, want := updatedTG.Status.Message, "Waiting for removed shards to drain"; got != want {
+	if got, want := updatedTG.Status.Message, "Waiting for shard cleanup to finish"; got != want {
 		t.Errorf("Message mismatch while cleanup is pending: got %q, want %q", got, want)
 	}
 	if got, want := updatedTG.Status.ObservedGeneration, tg.Generation; got != want {
@@ -1749,7 +1826,7 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 	if cond.Reason != "CleanupPending" {
 		t.Errorf("Available reason mismatch: got %q, want CleanupPending", cond.Reason)
 	}
-	if cond.Message != "Waiting for removed shards to drain" {
+	if cond.Message != "Waiting for shard cleanup to finish" {
 		t.Errorf("Available message mismatch: got %q", cond.Message)
 	}
 	if cond.ObservedGeneration != tg.Generation {
