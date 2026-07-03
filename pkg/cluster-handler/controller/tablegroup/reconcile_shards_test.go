@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -74,6 +75,15 @@ func TestShardStepsPrune(t *testing.T) {
 		}
 		return s
 	}
+	terminatingChild := func() *multigresv1alpha1.Shard {
+		s := child(false, false)
+		now := metav1.Now()
+		s.DeletionTimestamp = &now
+		// Test fixture only: keep the fake object visible after DeletionTimestamp
+		// so the controller observes a Kubernetes object mid-termination.
+		s.Finalizers = []string{"test.finalizer"}
+		return s
+	}
 
 	tests := map[string]struct {
 		child                  *multigresv1alpha1.Shard
@@ -82,6 +92,7 @@ func TestShardStepsPrune(t *testing.T) {
 		wantDeletes            int64
 		wantPending            bool
 		wantDeleted            bool
+		wantActive             bool
 		wantEvent              string
 		wantAnnotation         string // exact PendingDeletion value expected when child survives
 		wantAnnotationNonEmpty bool   // when set, only require a (freshly stamped) non-empty value
@@ -124,7 +135,51 @@ func TestShardStepsPrune(t *testing.T) {
 			wantDeletes:    0,
 			wantPending:    false,
 			wantDeleted:    false,
+			wantActive:     true,
 			wantAnnotation: "",
+		},
+		// If the same name becomes desired again while the old child is still
+		// draining, the controller waits instead of applying over deletion state.
+		"desired child already pending deletion waits for replacement": {
+			child:          child(true, false),
+			stillDesired:   true,
+			wantPatches:    0,
+			wantDeletes:    0,
+			wantPending:    true,
+			wantDeleted:    false,
+			wantAnnotation: oldAnnotation,
+		},
+		// A desired child that Kubernetes is already deleting also cannot be
+		// updated or counted as active; the replacement waits for a clean object.
+		"desired child already terminating waits for replacement": {
+			child:          terminatingChild(),
+			stillDesired:   true,
+			wantPatches:    0,
+			wantDeletes:    0,
+			wantPending:    true,
+			wantDeleted:    false,
+			wantAnnotation: "",
+		},
+		// If an orphan is already terminating, pruning should wait for the
+		// apiserver deletion instead of trying to stamp the cleanup annotation.
+		"orphan already terminating waits without restamping": {
+			child:          terminatingChild(),
+			wantPatches:    0,
+			wantDeletes:    0,
+			wantPending:    true,
+			wantDeleted:    false,
+			wantAnnotation: "",
+		},
+		// Once the old child reports ready, it is deleted and the next reconcile
+		// can create the desired replacement from a clean object lifecycle.
+		"desired child ready for deletion is removed before replacement": {
+			child:        child(true, true),
+			stillDesired: true,
+			wantPatches:  0,
+			wantDeletes:  1,
+			wantPending:  true,
+			wantDeleted:  true,
+			wantEvent:    "Normal Deleted",
 		},
 	}
 
@@ -204,6 +259,20 @@ func TestShardStepsPrune(t *testing.T) {
 			}
 			if rc.pendingDeletion != tc.wantPending {
 				t.Errorf("pending mismatch: got %t, want %t", rc.pendingDeletion, tc.wantPending)
+			}
+			if got := rc.activeShardNames[shardName]; got != tc.wantActive {
+				t.Errorf("active child mismatch: got %t, want %t", got, tc.wantActive)
+			}
+			res, err := stepRequeueIfPending(t.Context(), rc)
+			if err != nil {
+				t.Fatalf("stepRequeueIfPending returned error: %v", err)
+			}
+			if tc.wantPending {
+				if !res.done || res.result.RequeueAfter != 5*time.Second {
+					t.Errorf("requeue mismatch: got %+v, want 5s requeue", res.result)
+				}
+			} else if res.done {
+				t.Errorf("unexpected requeue result: %+v", res.result)
 			}
 
 			if tc.wantEvent != "" {

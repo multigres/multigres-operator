@@ -32,10 +32,9 @@ func stepListChildShards(ctx context.Context, rc *reconcileContext) (stepResult,
 	return continueStep(), nil
 }
 
-// stepApplyDesiredShards applies each desired Shard and records the names and
-// generations produced by the apiserver. Later status aggregation uses those
-// generations to avoid treating a just-updated child as ready before the child
-// controller observes its new spec.
+// stepApplyDesiredShards applies each desired Shard that is not already being
+// cleaned up. If the same name still carries PendingDeletion or is terminating,
+// the old child must leave before a replacement is created.
 func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResult, error) {
 	rc.activeShardNames = make(map[string]bool, len(rc.tg.Spec.Shards))
 	rc.appliedGeneration = make(map[string]int64, len(rc.tg.Spec.Shards))
@@ -49,6 +48,11 @@ func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResu
 				"FailedApply",
 				fmt.Sprintf("Failed to build shard %s: %v", shardSpec.Name, err),
 			)
+		}
+
+		if observedCleanupInProgress(rc.observedShards, desired.Name) {
+			rc.pendingDeletion = true
+			continue
 		}
 
 		// Track the name BuildShard produced, not a manually computed one.
@@ -82,17 +86,35 @@ func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResu
 	return continueStep(), nil
 }
 
-// stepReconcileUndesired retires observed children that are no longer desired.
-// Orphans are not deleted on sight: the parent first marks PendingDeletion, waits
-// for the Shard controller to report ReadyForDeletion, and only then deletes.
-// The desired objects built above are never written back into rc.observedShards,
-// so status continues to use the children's observed status.
+func observedCleanupInProgress(shards *multigresv1alpha1.ShardList, name string) bool {
+	if shards == nil {
+		return false
+	}
+	for i := range shards.Items {
+		s := &shards.Items[i]
+		if s.Name == name {
+			return s.Annotations[multigresv1alpha1.AnnotationPendingDeletion] != "" ||
+				s.DeletionTimestamp != nil
+		}
+	}
+	return false
+}
+
+// stepReconcileUndesired advances cleanup for observed children that were not
+// applied this reconcile. Children drain through PendingDeletion and
+// ReadyForDeletion before deletion; same-name replacements wait here too.
 func stepReconcileUndesired(ctx context.Context, rc *reconcileContext) (stepResult, error) {
 	l := log.FromContext(ctx)
 
 	for i := range rc.observedShards.Items {
 		s := &rc.observedShards.Items[i]
 		if rc.activeShardNames[s.Name] {
+			continue
+		}
+
+		if s.DeletionTimestamp != nil {
+			l.V(1).Info("Shard already terminating, waiting for deletion", "shard", s.Name)
+			rc.pendingDeletion = true
 			continue
 		}
 
@@ -127,13 +149,14 @@ func stepReconcileUndesired(ctx context.Context, rc *reconcileContext) (stepResu
 		// The Shard has drained, so it is safe to delete.
 		if err := rc.r.Delete(ctx, s); err != nil && !apierrors.IsNotFound(err) {
 			return stepResult{}, newStepError(
-				fmt.Errorf("failed to delete orphan shard '%s': %w", s.Name, err),
+				fmt.Errorf("failed to delete shard '%s' after cleanup: %w", s.Name, err),
 				"Warning",
 				"CleanUpError",
-				fmt.Sprintf("Failed to delete orphan shard %s: %v", s.Name, err),
+				fmt.Sprintf("Failed to delete shard %s after cleanup: %v", s.Name, err),
 			)
 		} else if err == nil {
-			rc.r.Recorder.Eventf(rc.tg, "Normal", "Deleted", "Deleted orphaned Shard %s", s.Name)
+			rc.r.Recorder.Eventf(rc.tg, "Normal", "Deleted",
+				"Deleted Shard %s after cleanup", s.Name)
 		}
 	}
 

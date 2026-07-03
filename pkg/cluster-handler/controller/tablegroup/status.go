@@ -60,7 +60,7 @@ func stepComputeStatus(_ context.Context, rc *reconcileContext) (stepResult, err
 		rc.tg.Status.Message = "At least one shard is degraded"
 	case rc.pendingDeletion:
 		rc.tg.Status.Phase = multigresv1alpha1.PhaseProgressing
-		rc.tg.Status.Message = "Waiting for removed shards to drain"
+		rc.tg.Status.Message = "Waiting for shard cleanup to finish"
 	case total == 0:
 		rc.tg.Status.Phase = multigresv1alpha1.PhaseInitializing
 		rc.tg.Status.Message = "No Shards"

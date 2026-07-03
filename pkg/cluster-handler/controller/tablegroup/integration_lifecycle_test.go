@@ -63,7 +63,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		return mgr.GetClient(), watcher
 	}
 
-	t.Run("Pruning (Orphan Deletion)", func(t *testing.T) {
+	t.Run("Pruning and Same-Name Replacement", func(t *testing.T) {
 		t.Parallel()
 		k8sClient, watcher := setup(t)
 		ctx := t.Context()
@@ -234,6 +234,64 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			}
 		}
 
+		oldDeleteMeUID := string(deleteMe.UID)
+		if got := deleteMe.Spec.MultiOrch.StatelessSpec.Replicas; got == nil || *got != 1 {
+			t.Fatalf("Initial delete-me replicas = %v, want 1", got)
+		}
+
+		// Re-adding the same logical shard while the old object is draining must
+		// not resurrect or update that object. Cleanup remains the active
+		// lifecycle until the child reports ReadyForDeletion and is deleted.
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(tg), tg); err != nil {
+				return err
+			}
+			tg.Spec.Shards = []multigresv1alpha1.ShardResolvedSpec{
+				{
+					Name: "keep-me",
+					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+					},
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
+				},
+				{
+					Name: "delete-me",
+					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+					},
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
+				},
+			}
+			return k8sClient.Update(ctx, tg)
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		waitForTableGroup(t, ctx, k8sClient, client.ObjectKeyFromObject(tg),
+			15*time.Second, func(g *multigresv1alpha1.TableGroup) bool {
+				return g.Status.Phase == multigresv1alpha1.PhaseProgressing &&
+					g.Status.ObservedGeneration == g.Generation &&
+					g.Status.Message == "Waiting for shard cleanup to finish"
+			})
+
+		if err := k8sClient.Get(
+			ctx,
+			client.ObjectKey{Name: deleteMeName, Namespace: "default"},
+			&deleteMe,
+		); err != nil {
+			t.Fatalf("Failed to get draining shard after re-add: %v", err)
+		}
+		if got := string(deleteMe.UID); got != oldDeleteMeUID {
+			t.Fatalf("Draining shard was replaced before cleanup: got UID %s, want %s",
+				got, oldDeleteMeUID)
+		}
+		if deleteMe.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
+			t.Fatal("Draining shard lost PendingDeletion after same-name re-add")
+		}
+		if got := deleteMe.Spec.MultiOrch.StatelessSpec.Replicas; got == nil || *got != 1 {
+			t.Fatalf("Draining shard was updated during cleanup: replicas = %v, want 1", got)
+		}
+
 		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			latest := &multigresv1alpha1.Shard{}
 			if err := k8sClient.Get(
@@ -259,6 +317,39 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		if err := watcher.WaitForDeletion(shard2); err != nil {
 			t.Errorf("Shard 'delete-me' was not pruned: %v", err)
 		}
+
+		waitCtx, waitCancel = context.WithTimeout(ctx, 15*time.Second)
+		defer waitCancel()
+		for {
+			latest := &multigresv1alpha1.Shard{}
+			if err := k8sClient.Get(
+				waitCtx,
+				client.ObjectKey{Name: deleteMeName, Namespace: "default"},
+				latest,
+			); err == nil &&
+				string(latest.UID) != oldDeleteMeUID &&
+				latest.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
+				if got := latest.Spec.MultiOrch.StatelessSpec.Replicas; got == nil || *got != 2 {
+					t.Fatalf("Replacement shard replicas = %v, want 2", got)
+				}
+				break
+			}
+			select {
+			case <-waitCtx.Done():
+				t.Fatalf("Shard 'delete-me' replacement was not created: %v", waitCtx.Err())
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+
+		driveShardHealthy(t, ctx, k8sClient, shard1.Name, "default")
+		driveShardHealthy(t, ctx, k8sClient, deleteMeName, "default")
+		waitForTableGroup(t, ctx, k8sClient, client.ObjectKeyFromObject(tg),
+			15*time.Second, func(g *multigresv1alpha1.TableGroup) bool {
+				return g.Status.Phase == multigresv1alpha1.PhaseHealthy &&
+					g.Status.ReadyShards == 2 &&
+					g.Status.TotalShards == 2 &&
+					g.Status.ObservedGeneration == g.Generation
+			})
 	})
 
 	t.Run("Enforcement (Revert Manual Changes)", func(t *testing.T) {
