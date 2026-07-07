@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -22,12 +21,12 @@ const (
 	// CertIssuerName is the cert-manager ClusterIssuer used for TLS certificates.
 	CertIssuerName = "supabase-issuer"
 
-	// CertDuration is the certificate duration (5 years), matching non-HA projects.
-	CertDuration = "44640h0m0s"
+	// CertDuration is the certificate duration.
+	CertDuration = "336h0m0s"
 
 	// CertLiteralSubjectTemplate is the literal subject template for certificates.
 	// The CN placeholder is replaced with the certCommonName.
-	CertLiteralSubjectTemplate = "C=US, ST=Delware, L=New Castle,O=Supabase Inc, CN=%s"
+	CertLiteralSubjectTemplate = "C=US, ST=Delaware, L=New Castle, O=Supabase Inc, CN=%s"
 )
 
 var certGVK = schema.GroupVersionKind{
@@ -47,11 +46,7 @@ func buildCertificate(
 ) (*unstructured.Unstructured, error) {
 	cn := cluster.Spec.CertCommonName
 
-	// Build the secondary SAN by stripping the "db." prefix if present.
 	dnsNames := []any{cn}
-	if after, ok := strings.CutPrefix(cn, "db."); ok {
-		dnsNames = append(dnsNames, after)
-	}
 
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certGVK)
