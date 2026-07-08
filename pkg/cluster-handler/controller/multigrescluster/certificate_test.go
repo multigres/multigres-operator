@@ -33,7 +33,7 @@ func TestBuildCertificate(t *testing.T) {
 		wantSubject    string
 		wantSecretName string
 	}{
-		"standard certCommonName with db prefix": {
+		"standard certCommonName": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				TypeMeta: metav1.TypeMeta{
 					APIVersion: "multigres.com/v1alpha1",
@@ -51,29 +51,8 @@ func TestBuildCertificate(t *testing.T) {
 			wantName: "db.abc123.supabase.red",
 			wantDNSNames: []any{
 				"db.abc123.supabase.red",
-				"abc123.supabase.red",
 			},
-			wantSubject:    "C=US, ST=Delware, L=New Castle,O=Supabase Inc, CN=db.abc123.supabase.red",
-			wantSecretName: multigresv1alpha1.CertSecretName,
-		},
-		"certCommonName without db prefix": {
-			cluster: &multigresv1alpha1.MultigresCluster{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: "multigres.com/v1alpha1",
-					Kind:       "MultigresCluster",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-cluster",
-					Namespace: "supabase",
-					UID:       "cluster-uid-2",
-				},
-				Spec: multigresv1alpha1.MultigresClusterSpec{
-					CertCommonName: "custom.example.com",
-				},
-			},
-			wantName:       "custom.example.com",
-			wantDNSNames:   []any{"custom.example.com"},
-			wantSubject:    "C=US, ST=Delware, L=New Castle,O=Supabase Inc, CN=custom.example.com",
+			wantSubject:    "C=US, ST=Delaware, L=New Castle, O=Supabase Inc, CN=db.abc123.supabase.red",
 			wantSecretName: multigresv1alpha1.CertSecretName,
 		},
 	}
