@@ -2052,26 +2052,66 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 
 		// Verify TLS volume exists
 		var foundVol bool
+		var foundInternalVol bool
 		for _, v := range deploy.Spec.Template.Spec.Volumes {
 			if v.Name == tlsVolumeName {
 				foundVol = true
 				if v.Secret == nil {
 					t.Error("TLS volume should use a Secret source")
-				} else if v.Secret.SecretName != multigresv1alpha1.CertSecretName {
-					t.Errorf(
-						"TLS volume secretName = %q, want %q",
-						v.Secret.SecretName, multigresv1alpha1.CertSecretName,
-					)
+				} else {
+					if v.Secret.SecretName != multigresv1alpha1.CertSecretName {
+						t.Errorf(
+							"TLS volume secretName = %q, want %q",
+							v.Secret.SecretName, multigresv1alpha1.CertSecretName,
+						)
+					}
+					if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
+						t.Errorf(
+							"TLS volume defaultMode = %v, want 0444",
+							v.Secret.DefaultMode,
+						)
+					}
+				}
+			}
+			if v.Name == internalTLSVolumeName {
+				foundInternalVol = true
+				if v.Secret == nil {
+					t.Error("internal TLS volume should use a Secret source")
+				} else {
+					wantSecretName := "multigateway.test-cluster.default.multigres.internal"
+					if v.Secret.SecretName != wantSecretName {
+						t.Errorf(
+							"internal TLS volume secretName = %q, want %q",
+							v.Secret.SecretName, wantSecretName,
+						)
+					}
+					if strings.Contains(v.Secret.SecretName, cellObj.Spec.CertCommonName) {
+						t.Errorf(
+							"internal TLS volume secretName %q must not contain public CertCommonName %q",
+							v.Secret.SecretName,
+							cellObj.Spec.CertCommonName,
+						)
+					}
+					if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
+						t.Errorf(
+							"internal TLS volume defaultMode = %v, want 0444",
+							v.Secret.DefaultMode,
+						)
+					}
 				}
 			}
 		}
 		if !foundVol {
 			t.Errorf("expected TLS volume %q in pod spec", tlsVolumeName)
 		}
+		if !foundInternalVol {
+			t.Errorf("expected internal TLS volume %q in pod spec", internalTLSVolumeName)
+		}
 
 		// Verify TLS volumeMount exists
 		container := deploy.Spec.Template.Spec.Containers[0]
 		var foundMount bool
+		var foundInternalMount bool
 		for _, m := range container.VolumeMounts {
 			if m.Name == tlsVolumeName {
 				foundMount = true
@@ -2082,9 +2122,24 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 					t.Error("TLS mount should be readOnly")
 				}
 			}
+			if m.Name == internalTLSVolumeName {
+				foundInternalMount = true
+				if m.MountPath != internalTLSMountPath {
+					t.Errorf(
+						"internal TLS mount path = %q, want %q",
+						m.MountPath, internalTLSMountPath,
+					)
+				}
+				if !m.ReadOnly {
+					t.Error("internal TLS mount should be readOnly")
+				}
+			}
 		}
 		if !foundMount {
 			t.Errorf("expected TLS volumeMount %q in container", tlsVolumeName)
+		}
+		if !foundInternalMount {
+			t.Errorf("expected internal TLS volumeMount %q in container", internalTLSVolumeName)
 		}
 
 		// Verify TLS args are appended
@@ -2092,14 +2147,32 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 		wantArgs := []string{
 			"--pg-tls-cert-file", tlsCertFile,
 			"--pg-tls-key-file", tlsKeyFile,
+			"--grpc-cert", internalTLSCertFile,
+			"--grpc-key", internalTLSKeyFile,
+			"--grpc-ca", internalTLSCAFile,
+			"--grpc-server-ca", internalTLSCAFile,
+			"--multipooler-grpc-cert", internalTLSCertFile,
+			"--multipooler-grpc-key", internalTLSKeyFile,
+			"--multipooler-grpc-ca", internalTLSCAFile,
+			"--multipooler-grpc-server-name",
+			"multipooler.test-cluster.default.multigres.internal",
+			"--multipooler-grpc-require-tls",
 		}
-		// The TLS args should be the last 4 args
-		if len(args) < 4 {
-			t.Fatalf("expected at least 4 args, got %d", len(args))
+		// The TLS args should be appended as a group.
+		if len(args) < len(wantArgs) {
+			t.Fatalf("expected at least %d args, got %d", len(wantArgs), len(args))
 		}
-		tailArgs := args[len(args)-4:]
+		tailArgs := args[len(args)-len(wantArgs):]
 		if diff := cmp.Diff(wantArgs, tailArgs); diff != "" {
 			t.Errorf("TLS args mismatch (-want +got):\n%s", diff)
+		}
+		serverName := tailArgs[len(tailArgs)-2]
+		if strings.Contains(serverName, cellObj.Spec.CertCommonName) {
+			t.Errorf(
+				"multipooler gRPC server name %q must not contain public CertCommonName %q",
+				serverName,
+				cellObj.Spec.CertCommonName,
+			)
 		}
 	})
 
@@ -2136,7 +2209,13 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 		// No TLS args should be present
 		container := deploy.Spec.Template.Spec.Containers[0]
 		for _, arg := range container.Args {
-			if arg == "--pg-tls-cert-file" || arg == "--pg-tls-key-file" {
+			if arg == "--pg-tls-cert-file" ||
+				arg == "--pg-tls-key-file" ||
+				arg == "--grpc-cert" ||
+				arg == "--grpc-key" ||
+				arg == "--grpc-ca" ||
+				arg == "--grpc-server-ca" ||
+				strings.HasPrefix(arg, "--multipooler-grpc-") {
 				t.Errorf("TLS arg %q should not be present when CertCommonName is empty", arg)
 			}
 		}

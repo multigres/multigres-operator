@@ -1071,6 +1071,127 @@ func TestBuildMultiorchContainer_WithObservability(t *testing.T) {
 	assertOTELResourceAttribute(t, c.Env, "multigres.component=multiorch")
 }
 
+func TestShardTLSContainerArgsAndMounts(t *testing.T) {
+	baseShard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:  "topo:2379",
+				RootPath: "/multigres/global",
+			},
+			DatabaseName:   "db",
+			TableGroupName: "tg",
+			ShardName:      "s1",
+		},
+	}
+
+	t.Run("multipooler gets grpc server mTLS flags and mount", func(t *testing.T) {
+		shard := baseShard.DeepCopy()
+		shard.Spec.CertCommonName = "db.abc123.supabase.red"
+
+		c := buildMultipoolerContainer(
+			shard,
+			multigresv1alpha1.PoolSpec{},
+			"primary",
+			"zone1",
+			"p-tls1234",
+		)
+
+		assertContainsFlag(t, c.Args, "--grpc-cert")
+		assertContainsFlag(t, c.Args, ShardTLSCertFile)
+		assertContainsFlag(t, c.Args, "--grpc-key")
+		assertContainsFlag(t, c.Args, ShardTLSKeyFile)
+		assertContainsFlag(t, c.Args, "--grpc-ca")
+		assertContainsFlag(t, c.Args, ShardTLSCAFile)
+		assertContainsFlag(t, c.Args, "--grpc-server-ca")
+		assertContainsFlag(t, c.Args, ShardTLSCAFile)
+		assertReadOnlyVolumeMount(t, c.VolumeMounts, ShardTLSVolumeName, ShardTLSMountPath)
+	})
+
+	t.Run("multipooler omits shard mTLS when certCommonName is empty", func(t *testing.T) {
+		c := buildMultipoolerContainer(
+			baseShard.DeepCopy(),
+			multigresv1alpha1.PoolSpec{},
+			"primary",
+			"zone1",
+			"p-plain12",
+		)
+
+		assertNotContainsFlag(t, c.Args, "--grpc-cert")
+		assertNotContainsFlag(t, c.Args, "--grpc-key")
+		assertNotContainsFlag(t, c.Args, "--grpc-ca")
+		assertNotContainsFlag(t, c.Args, "--grpc-server-ca")
+		assertNotContainsVolumeMount(t, c.VolumeMounts, ShardTLSVolumeName)
+	})
+
+	t.Run("multiorch gets multipooler client mTLS flags and mount", func(t *testing.T) {
+		shard := baseShard.DeepCopy()
+		shard.Spec.CertCommonName = "db.abc123.supabase.red"
+
+		c := buildMultiorchContainer(shard, "zone1")
+
+		assertContainsFlag(t, c.Args, "--grpc-cert")
+		assertContainsFlag(t, c.Args, ShardTLSCertFile)
+		assertContainsFlag(t, c.Args, "--grpc-key")
+		assertContainsFlag(t, c.Args, ShardTLSKeyFile)
+		assertContainsFlag(t, c.Args, "--grpc-ca")
+		assertContainsFlag(t, c.Args, ShardTLSCAFile)
+		assertContainsFlag(t, c.Args, "--grpc-server-ca")
+		assertContainsFlag(t, c.Args, ShardTLSCAFile)
+		assertContainsFlag(t, c.Args, "--multipooler-grpc-cert")
+		assertContainsFlag(t, c.Args, ShardTLSCertFile)
+		assertContainsFlag(t, c.Args, "--multipooler-grpc-key")
+		assertContainsFlag(t, c.Args, ShardTLSKeyFile)
+		assertContainsFlag(t, c.Args, "--multipooler-grpc-ca")
+		assertContainsFlag(t, c.Args, ShardTLSCAFile)
+		const serverNameFlag = "--multipooler-grpc-server-name"
+		assertContainsFlag(t, c.Args, serverNameFlag)
+		for i, arg := range c.Args {
+			if arg != serverNameFlag {
+				continue
+			}
+			if i+1 >= len(c.Args) {
+				t.Fatalf("%s has no value", serverNameFlag)
+			}
+			serverName := c.Args[i+1]
+			wantServerName := "multipooler.test.default.multigres.internal"
+			if serverName != wantServerName {
+				t.Errorf("%s = %q, want %q", serverNameFlag, serverName, wantServerName)
+			}
+			if strings.Contains(serverName, shard.Spec.CertCommonName) {
+				t.Errorf(
+					"%s %q must not contain public CertCommonName %q",
+					serverNameFlag,
+					serverName,
+					shard.Spec.CertCommonName,
+				)
+			}
+			break
+		}
+		assertContainsFlag(t, c.Args, "--multipooler-grpc-require-tls")
+		assertReadOnlyVolumeMount(t, c.VolumeMounts, ShardTLSVolumeName, ShardTLSMountPath)
+	})
+
+	t.Run("multiorch omits shard mTLS when certCommonName is empty", func(t *testing.T) {
+		c := buildMultiorchContainer(baseShard.DeepCopy(), "zone1")
+
+		assertNotContainsFlag(t, c.Args, "--multipooler-grpc-cert")
+		assertNotContainsFlag(t, c.Args, "--multipooler-grpc-key")
+		assertNotContainsFlag(t, c.Args, "--multipooler-grpc-ca")
+		assertNotContainsFlag(t, c.Args, "--multipooler-grpc-server-name")
+		assertNotContainsFlag(t, c.Args, "--multipooler-grpc-require-tls")
+		assertNotContainsFlag(t, c.Args, "--grpc-cert")
+		assertNotContainsFlag(t, c.Args, "--grpc-key")
+		assertNotContainsFlag(t, c.Args, "--grpc-ca")
+		assertNotContainsFlag(t, c.Args, "--grpc-server-ca")
+		assertNotContainsVolumeMount(t, c.VolumeMounts, ShardTLSVolumeName)
+	})
+}
+
 func assertContainsOTELEnvVar(t *testing.T, envVars []corev1.EnvVar, fnName string) {
 	t.Helper()
 	for _, e := range envVars {
@@ -1715,6 +1836,69 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 		for _, v := range volumes {
 			if v.Name == PostgresConfigVolumeName {
 				t.Error("should not have postgres config volume when postgresConfigRef is nil")
+			}
+		}
+	})
+
+	t.Run("shard tls volume present when certCommonName set", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-shard",
+				Namespace: "default",
+				Labels:    map[string]string{"multigres.com/cluster": "test"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				CertCommonName: "db.abc123.supabase.red",
+			},
+		}
+
+		volumes := buildPoolVolumes(shard, "zone1")
+		for _, v := range volumes {
+			if v.Name != ShardTLSVolumeName {
+				continue
+			}
+			if v.Secret == nil {
+				t.Fatal("shard TLS volume should use Secret source")
+			}
+			wantSecretName := "multipooler.test.default.multigres.internal"
+			if v.Secret.SecretName != wantSecretName {
+				t.Errorf(
+					"shard TLS secret = %q, want %q",
+					v.Secret.SecretName,
+					wantSecretName,
+				)
+			}
+			if strings.Contains(v.Secret.SecretName, shard.Spec.CertCommonName) {
+				t.Errorf(
+					"shard TLS secret %q must not contain public CertCommonName %q",
+					v.Secret.SecretName,
+					shard.Spec.CertCommonName,
+				)
+			}
+			if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
+				t.Errorf(
+					"shard TLS secret defaultMode = %v, want 0444",
+					v.Secret.DefaultMode,
+				)
+			}
+			return
+		}
+		t.Error("expected shard TLS volume when certCommonName is set")
+	})
+
+	t.Run("shard tls volume omitted when certCommonName empty", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-shard",
+				Labels: map[string]string{"multigres.com/cluster": "test"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{},
+		}
+
+		volumes := buildPoolVolumes(shard, "zone1")
+		for _, v := range volumes {
+			if v.Name == ShardTLSVolumeName {
+				t.Error("shard TLS volume should not be present when certCommonName is empty")
 			}
 		}
 	})

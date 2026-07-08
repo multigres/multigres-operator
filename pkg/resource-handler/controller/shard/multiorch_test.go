@@ -1,6 +1,7 @@
 package shard
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -751,6 +752,67 @@ func TestBuildMultiorchDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T)
 	if got := deploy.Spec.Template.Annotations["custom-annotation"]; got != "keep-me" {
 		t.Fatalf("custom annotation = %q, want %q", got, "keep-me")
 	}
+}
+
+func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			UID:       "test-uid",
+			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      "0",
+			CertCommonName: "db.abc123.supabase.red",
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:  "global-topo:2379",
+				RootPath: "/multigres/global",
+			},
+		},
+	}
+
+	got, err := BuildMultiorchDeployment(shard, "zone-a", scheme)
+	if err != nil {
+		t.Fatalf("BuildMultiorchDeployment() error = %v", err)
+	}
+
+	for _, v := range got.Spec.Template.Spec.Volumes {
+		if v.Name != ShardTLSVolumeName {
+			continue
+		}
+		if v.Secret == nil {
+			t.Fatal("shard TLS volume should use Secret source")
+		}
+		wantSecretName := "multiorch.test-cluster.default.multigres.internal" //nolint:gosec // test constant
+		if v.Secret.SecretName != wantSecretName {
+			t.Errorf(
+				"shard TLS secret = %q, want %q",
+				v.Secret.SecretName,
+				wantSecretName,
+			)
+		}
+		if strings.Contains(v.Secret.SecretName, shard.Spec.CertCommonName) {
+			t.Errorf(
+				"shard TLS secret %q must not contain public CertCommonName %q",
+				v.Secret.SecretName,
+				shard.Spec.CertCommonName,
+			)
+		}
+		if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
+			t.Errorf(
+				"shard TLS secret defaultMode = %v, want 0444",
+				v.Secret.DefaultMode,
+			)
+		}
+		return
+	}
+	t.Error("expected shard TLS volume when certCommonName is set")
 }
 
 func TestBuildMultiorchService(t *testing.T) {

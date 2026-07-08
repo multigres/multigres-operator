@@ -18,6 +18,12 @@ import (
 const (
 	globalMultigatewayReplicaPort       int32 = 5433
 	globalMultigatewayReplicaTargetPort       = "pg-replica"
+
+	multiAdminTLSVolumeName = "tls-certs"
+	multiAdminTLSMountPath  = "/etc/multiadmin/tls"
+	multiAdminTLSCertFile   = multiAdminTLSMountPath + "/tls.crt"
+	multiAdminTLSKeyFile    = multiAdminTLSMountPath + "/tls.key"
+	multiAdminTLSCAFile     = multiAdminTLSMountPath + "/ca.crt"
 )
 
 // BuildGlobalTopoServer constructs the desired TopoServer for the global topology.
@@ -192,6 +198,48 @@ func BuildMultiadminDeployment(
 		podSpec := &deploy.Spec.Template.Spec
 		podSpec.Volumes = append(podSpec.Volumes, *otelVol)
 		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, *otelMount)
+	}
+
+	if cluster.Spec.CertCommonName != "" {
+		podSpec := &deploy.Spec.Template.Spec
+		defaultMode := int32(0o444)
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
+			Name: multiAdminTLSVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: multigresv1alpha1.ComponentCertSecretName(
+						multigresv1alpha1.ComponentMultiAdminTLS,
+						cluster.Name,
+						cluster.Namespace,
+					),
+					DefaultMode: &defaultMode,
+				},
+			},
+		})
+		podSpec.Containers[0].VolumeMounts = append(
+			podSpec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{
+				Name:      multiAdminTLSVolumeName,
+				MountPath: multiAdminTLSMountPath,
+				ReadOnly:  true,
+			},
+		)
+		podSpec.Containers[0].Args = append(podSpec.Containers[0].Args,
+			"--grpc-cert", multiAdminTLSCertFile,
+			"--grpc-key", multiAdminTLSKeyFile,
+			"--grpc-ca", multiAdminTLSCAFile,
+			"--grpc-server-ca", multiAdminTLSCAFile,
+			"--multipooler-grpc-cert", multiAdminTLSCertFile,
+			"--multipooler-grpc-key", multiAdminTLSKeyFile,
+			"--multipooler-grpc-ca", multiAdminTLSCAFile,
+			"--multipooler-grpc-server-name",
+			multigresv1alpha1.ComponentCertCommonName(
+				multigresv1alpha1.ComponentMultiPoolerTLS,
+				cluster.Name,
+				cluster.Namespace,
+			),
+			"--multipooler-grpc-require-tls",
+		)
 	}
 
 	if err := controllerutil.SetControllerReference(cluster, deploy, scheme); err != nil {

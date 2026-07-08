@@ -101,6 +101,11 @@ type TableGroupSpec struct {
 
 	// PostgresPasswordSecretRef is inherited from the MultigresCluster.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
+
+	// CertCommonName is the DNS name used by shard-side mTLS clients and servers.
+	// Inherited from MultigresCluster.Spec.CertCommonName.
+	// +optional
+	CertCommonName string `json:"certCommonName,omitempty"`
 }
 
 // ShardResolvedSpec represents the fully calculated spec for a shard,
