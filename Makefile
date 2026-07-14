@@ -106,7 +106,7 @@ KUSTOMIZE_VERSION ?= v5.6.0
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= v2.9.0
+GOLANGCI_LINT_VERSION ?= v2.12.2
 
 CERT_MANAGER_VERSION ?= v1.19.2
 
@@ -612,6 +612,10 @@ $(ENVTEST): $(LOCALBIN)
 
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
+# golangci-lint's own go.mod selects an older toolchain than this module
+# targets, and a linter built with a lower Go version refuses to run. Pin the
+# build toolchain to the one resolved by this module's go.mod.
+$(GOLANGCI_LINT): export GOTOOLCHAIN = $(shell go env GOVERSION)
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 

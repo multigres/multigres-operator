@@ -7,9 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"io"
 	"net"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -279,75 +277,26 @@ func (e errorReader) Read(p []byte) (n int, err error) {
 	return 0, fmt.Errorf("entropy error")
 }
 
-// functionTargetedReader fails if the call stack contains a specific function name
-type functionTargetedReader struct {
-	failOnCaller string
-	delegate     io.Reader
-}
-
-func (r *functionTargetedReader) Read(p []byte) (n int, err error) {
-	pc := make([]uintptr, 50)
-	nCallers := runtime.Callers(2, pc)
-	frames := runtime.CallersFrames(pc[:nCallers])
-
-	for {
-		frame, more := frames.Next()
-		if strings.Contains(frame.Function, r.failOnCaller) {
-			return 0, fmt.Errorf("simulated failure for %s", r.failOnCaller)
-		}
-		if !more {
-			break
-		}
-	}
-	return r.delegate.Read(p)
-}
-
 func TestGenerator_EntropyFailures(t *testing.T) {
-	// Not parallel - modifies global rand.Reader
-	oldReader := rand.Reader
-	defer func() { rand.Reader = oldReader }()
+	// Not parallel - modifies package-level randReader.
+	// With go >= 1.26 the crypto packages ignore custom entropy readers for
+	// key generation and signing (GODEBUG cryptocustomrand), so those failure
+	// paths can no longer be exercised. Serial-number generation is the only
+	// remaining read of randReader that can fail.
+	oldReader := randReader
+	defer func() { randReader = oldReader }()
 
-	t.Run("GenerateCA Key Failure", func(t *testing.T) {
-		rand.Reader = errorReader{}
-		_, err := GenerateCA("")
-		if err == nil || !strings.Contains(err.Error(), "failed to generate CA private key") {
-			t.Errorf("Expected key gen error, got %v", err)
+	t.Run("GenerateServerCert: serial number failure", func(t *testing.T) {
+		ca, err := GenerateCA("")
+		if err != nil {
+			t.Fatalf("GenerateCA failed: %v", err)
 		}
-	})
 
-	t.Run("GenerateServerCert Key Failure", func(t *testing.T) {
-		rand.Reader = oldReader // Need valid reader for CA gen
-		ca, _ := GenerateCA("")
-
-		rand.Reader = errorReader{}
-		_, err := GenerateServerCert(ca, "foo", nil)
-		if err == nil || !strings.Contains(err.Error(), "failed to generate server private key") {
-			t.Errorf("Expected key gen error, got %v", err)
-		}
-	})
-
-	t.Run("GenerateCA: failure (cert)", func(t *testing.T) {
-		rand.Reader = &functionTargetedReader{
-			failOnCaller: "x509.CreateCertificate",
-			delegate:     oldReader,
-		}
-		_, err := GenerateCA("")
-		if err == nil || !strings.Contains(err.Error(), "failed to create CA certificate") {
-			t.Errorf("Expected cert creation error, got %v", err)
-		}
-	})
-
-	t.Run("GenerateServerCert: failure (cert)", func(t *testing.T) {
-		rand.Reader = oldReader
-		ca, _ := GenerateCA("")
-
-		rand.Reader = &functionTargetedReader{
-			failOnCaller: "x509.CreateCertificate",
-			delegate:     oldReader,
-		}
-		_, err := GenerateServerCert(ca, "foo", nil)
-		if err == nil || !strings.Contains(err.Error(), "failed to sign server certificate") {
-			t.Errorf("Expected signing error, got %v", err)
+		randReader = errorReader{}
+		defer func() { randReader = oldReader }()
+		_, err = GenerateServerCert(ca, "foo", nil)
+		if err == nil || !strings.Contains(err.Error(), "failed to generate serial number") {
+			t.Errorf("Expected serial number error, got %v", err)
 		}
 	})
 }

@@ -1207,36 +1207,20 @@ func TestManager_Misc(t *testing.T) {
 }
 
 func TestManager_EntropyFailures(t *testing.T) {
-	// Not parallel - modifies global rand.Reader
-	oldReader := rand.Reader
-	defer func() { rand.Reader = oldReader }()
+	// Not parallel - modifies package-level randReader.
+	// With go >= 1.26 the crypto packages ignore custom entropy readers for
+	// key generation and signing (GODEBUG cryptocustomrand), so GenerateCA
+	// can no longer fail via entropy injection (its serial number is fixed).
+	// GenerateServerCert still fails via its serial-number generation.
+	oldReader := randReader
+	defer func() { randReader = oldReader }()
 
 	s := runtime.NewScheme()
 	_ = scheme.AddToScheme(s)
 	namespace := "test-ns"
 
-	t.Run("ensureCA: GenerateCA Failure", func(t *testing.T) {
-		rand.Reader = errorReader{}
-
-		mgr := NewManager(
-			fake.NewClientBuilder().WithScheme(s).Build(),
-			nil,
-			Options{
-				Namespace:        namespace,
-				CASecretName:     testCASecretName,
-				ServerSecretName: testServerSecretName,
-				ServiceName:      "svc",
-			},
-		)
-
-		err := mgr.reconcilePKI(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "failed to generate CA") {
-			t.Errorf("Expected generate CA error, got %v", err)
-		}
-	})
-
 	t.Run("ensureServerCert: GenerateServerCert Failure (Creation)", func(t *testing.T) {
-		rand.Reader = oldReader
+		randReader = oldReader
 		caArt, _ := GenerateCA("")
 		caSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: testCASecretName, Namespace: namespace},
@@ -1251,10 +1235,7 @@ func TestManager_EntropyFailures(t *testing.T) {
 			ServiceName:      "svc",
 		})
 
-		rand.Reader = &functionTargetedReader{
-			failOnCaller: "ecdsa.GenerateKey",
-			delegate:     oldReader,
-		}
+		randReader = errorReader{}
 
 		err := mgr.reconcilePKI(t.Context())
 		if err == nil || !strings.Contains(err.Error(), "failed to generate server cert") {
@@ -1263,7 +1244,7 @@ func TestManager_EntropyFailures(t *testing.T) {
 	})
 
 	t.Run("ensureServerCert: GenerateServerCert Failure (Rotation)", func(t *testing.T) {
-		rand.Reader = oldReader
+		randReader = oldReader
 		caArt, _ := GenerateCA("")
 
 		priv, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -1294,10 +1275,7 @@ func TestManager_EntropyFailures(t *testing.T) {
 			ServiceName:      "svc",
 		})
 
-		rand.Reader = &functionTargetedReader{
-			failOnCaller: "ecdsa.GenerateKey",
-			delegate:     oldReader,
-		}
+		randReader = errorReader{}
 
 		err := mgr.reconcilePKI(t.Context())
 		if err == nil || !strings.Contains(err.Error(), "failed to generate new server cert") {

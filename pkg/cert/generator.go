@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"time"
@@ -65,6 +66,14 @@ func WithOrganization(org string) ServerCertOption {
 var (
 	marshalECPrivateKey = x509.MarshalECPrivateKey
 	parseCertificate    = x509.ParseCertificate
+	// randReader is the entropy source passed to key generation and signing.
+	// Tests swap this to inject failures; swapping the global rand.Reader no
+	// longer works because the crypto packages route reads to an internal
+	// source when the passed reader is identical to rand.Reader. Note that
+	// with go >= 1.26 in go.mod (GODEBUG cryptocustomrand=0), key generation
+	// and signing ignore even a custom reader; only serial-number generation
+	// still reads it.
+	randReader io.Reader = rand.Reader
 )
 
 // GenerateCA creates a new self-signed Root CA using ECDSA P-256.
@@ -74,7 +83,7 @@ func GenerateCA(organization string) (*CAArtifacts, error) {
 		organization = Organization
 	}
 
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), randReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate CA private key: %w", err)
 	}
@@ -97,7 +106,7 @@ func GenerateCA(organization string) (*CAArtifacts, error) {
 	}
 
 	derBytes, err := x509.CreateCertificate(
-		rand.Reader,
+		randReader,
 		&template,
 		&template,
 		&privKey.PublicKey,
@@ -149,7 +158,7 @@ func GenerateServerCert(
 		opt(&cfg)
 	}
 
-	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), randReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate server private key: %w", err)
 	}
@@ -157,7 +166,10 @@ func GenerateServerCert(
 	// Serial number should be unique. In a real PKI we'd track this,
 	// but for ephemeral K8s secrets using a large random int is standard practice.
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, _ := rand.Int(rand.Reader, serialNumberLimit)
+	serialNumber, err := rand.Int(randReader, serialNumberLimit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
 
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
@@ -177,7 +189,7 @@ func GenerateServerCert(
 	}
 
 	derBytes, err := x509.CreateCertificate(
-		rand.Reader,
+		randReader,
 		&template,
 		ca.Cert,
 		&privKey.PublicKey,
