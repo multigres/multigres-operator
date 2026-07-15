@@ -286,28 +286,28 @@ func TestEvaluateBackups_MalformedBackupID(t *testing.T) {
 
 type mockTopoStore struct {
 	topoclient.Store
-	getMultiPoolersByCellFunc func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error)
+	getMultipoolersByCellFunc func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error)
 }
 
-func (m *mockTopoStore) GetMultiPoolersByCell(
+func (m *mockTopoStore) GetMultipoolersByCell(
 	ctx context.Context,
 	cellName string,
-	opt *topoclient.GetMultiPoolersByCellOptions,
-) ([]*topoclient.MultiPoolerInfo, error) {
-	if m.getMultiPoolersByCellFunc != nil {
-		return m.getMultiPoolersByCellFunc(ctx, cellName, opt)
+	opt *topoclient.GetMultipoolersByCellOptions,
+) ([]*topoclient.MultipoolerInfo, error) {
+	if m.getMultipoolersByCellFunc != nil {
+		return m.getMultipoolersByCellFunc(ctx, cellName, opt)
 	}
 	return nil, nil
 }
 
-type mockMultiPoolerClient struct {
-	rpcclient.MultiPoolerClient
-	getBackupsFunc func(ctx context.Context, pooler *clustermetadata.MultiPooler, in *multipoolermanagerdata.GetBackupsRequest) (*multipoolermanagerdata.GetBackupsResponse, error)
+type mockMultipoolerClient struct {
+	rpcclient.MultipoolerClient
+	getBackupsFunc func(ctx context.Context, pooler *clustermetadata.Multipooler, in *multipoolermanagerdata.GetBackupsRequest) (*multipoolermanagerdata.GetBackupsResponse, error)
 }
 
-func (m *mockMultiPoolerClient) GetBackups(
+func (m *mockMultipoolerClient) GetBackups(
 	ctx context.Context,
-	pooler *clustermetadata.MultiPooler,
+	pooler *clustermetadata.Multipooler,
 	in *multipoolermanagerdata.GetBackupsRequest,
 ) (*multipoolermanagerdata.GetBackupsResponse, error) {
 	if m.getBackupsFunc != nil {
@@ -336,11 +336,11 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("No primary found", func(t *testing.T) {
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, nil
 			},
 		}
-		rpc := &mockMultiPoolerClient{}
+		rpc := &mockMultipoolerClient{}
 
 		res, err := backuphealth.Evaluate(ctx, store, rpc, shard)
 		if err != nil {
@@ -352,19 +352,19 @@ func TestEvaluate(t *testing.T) {
 	})
 
 	t.Run("Primary found but GetBackups fails", func(t *testing.T) {
-		primaryInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		primaryInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "primary-1"},
 				Type: clustermetadata.PoolerType_PRIMARY,
 			},
 		}
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
-				return []*topoclient.MultiPoolerInfo{primaryInfo}, nil
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{primaryInfo}, nil
 			},
 		}
-		rpc := &mockMultiPoolerClient{
-			getBackupsFunc: func(ctx context.Context, pooler *clustermetadata.MultiPooler, in *multipoolermanagerdata.GetBackupsRequest) (*multipoolermanagerdata.GetBackupsResponse, error) {
+		rpc := &mockMultipoolerClient{
+			getBackupsFunc: func(ctx context.Context, pooler *clustermetadata.Multipooler, in *multipoolermanagerdata.GetBackupsRequest) (*multipoolermanagerdata.GetBackupsResponse, error) {
 				return nil, fmt.Errorf("fake rpc error")
 			},
 		}
@@ -376,21 +376,21 @@ func TestEvaluate(t *testing.T) {
 	})
 
 	t.Run("Primary found and EvaluateBackups runs", func(t *testing.T) {
-		primaryInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		primaryInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "primary-1"},
 				Type: clustermetadata.PoolerType_PRIMARY,
 			},
 		}
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
-				return []*topoclient.MultiPoolerInfo{primaryInfo}, nil
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{primaryInfo}, nil
 			},
 		}
 
 		recentID := time.Now().Add(-1 * time.Hour).Format("20060102-150405")
-		rpc := &mockMultiPoolerClient{
-			getBackupsFunc: func(ctx context.Context, pooler *clustermetadata.MultiPooler, in *multipoolermanagerdata.GetBackupsRequest) (*multipoolermanagerdata.GetBackupsResponse, error) {
+		rpc := &mockMultipoolerClient{
+			getBackupsFunc: func(ctx context.Context, pooler *clustermetadata.Multipooler, in *multipoolermanagerdata.GetBackupsRequest) (*multipoolermanagerdata.GetBackupsResponse, error) {
 				return &multipoolermanagerdata.GetBackupsResponse{
 					Backups: []*multipoolermanagerdata.BackupMetadata{
 						{
@@ -417,11 +417,11 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("FindPrimaryPooler error", func(t *testing.T) {
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, fmt.Errorf("fake topo list error")
 			},
 		}
-		rpc := &mockMultiPoolerClient{}
+		rpc := &mockMultipoolerClient{}
 
 		_, err := backuphealth.Evaluate(ctx, store, rpc, shard)
 		if err == nil {

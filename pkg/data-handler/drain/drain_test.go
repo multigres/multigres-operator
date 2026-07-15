@@ -26,36 +26,36 @@ import (
 
 type mockTopoStore struct {
 	topoclient.Store
-	getMultiPoolersByCellFunc func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error)
-	unregisterMultiPoolerFunc func(ctx context.Context, id *clustermetadata.ID) error
+	getMultipoolersByCellFunc func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error)
+	unregisterMultipoolerFunc func(ctx context.Context, id *clustermetadata.ID) error
 }
 
-func (m *mockTopoStore) GetMultiPoolersByCell(
+func (m *mockTopoStore) GetMultipoolersByCell(
 	ctx context.Context,
 	cellName string,
-	opt *topoclient.GetMultiPoolersByCellOptions,
-) ([]*topoclient.MultiPoolerInfo, error) {
-	if m.getMultiPoolersByCellFunc != nil {
-		return m.getMultiPoolersByCellFunc(ctx, cellName, opt)
+	opt *topoclient.GetMultipoolersByCellOptions,
+) ([]*topoclient.MultipoolerInfo, error) {
+	if m.getMultipoolersByCellFunc != nil {
+		return m.getMultipoolersByCellFunc(ctx, cellName, opt)
 	}
 	return nil, nil
 }
 
-func (m *mockTopoStore) UnregisterMultiPooler(ctx context.Context, id *clustermetadata.ID) error {
-	if m.unregisterMultiPoolerFunc != nil {
-		return m.unregisterMultiPoolerFunc(ctx, id)
+func (m *mockTopoStore) UnregisterMultipooler(ctx context.Context, id *clustermetadata.ID) error {
+	if m.unregisterMultipoolerFunc != nil {
+		return m.unregisterMultipoolerFunc(ctx, id)
 	}
 	return nil
 }
 
-type mockMultiPoolerClient struct {
-	rpcclient.MultiPoolerClient
-	UpdateConsensusRuleFunc func(ctx context.Context, pooler *clustermetadata.MultiPooler, req *multipoolermanagerdata.UpdateConsensusRuleRequest) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error)
+type mockMultipoolerClient struct {
+	rpcclient.MultipoolerClient
+	UpdateConsensusRuleFunc func(ctx context.Context, pooler *clustermetadata.Multipooler, req *multipoolermanagerdata.UpdateConsensusRuleRequest) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error)
 }
 
-func (m *mockMultiPoolerClient) UpdateConsensusRule(
+func (m *mockMultipoolerClient) UpdateConsensusRule(
 	ctx context.Context,
-	pooler *clustermetadata.MultiPooler,
+	pooler *clustermetadata.Multipooler,
 	req *multipoolermanagerdata.UpdateConsensusRuleRequest,
 ) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error) {
 	if m.UpdateConsensusRuleFunc != nil {
@@ -121,7 +121,7 @@ func TestIsPrimaryDraining(t *testing.T) {
 	t.Run("returns false for nil primary ID", func(t *testing.T) {
 		t.Parallel()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
-		primary := &clustermetadata.MultiPooler{}
+		primary := &clustermetadata.Multipooler{}
 		if drain.IsPrimaryDraining(context.Background(), c, shard, primary) {
 			t.Error("expected false for nil primary ID")
 		}
@@ -130,7 +130,7 @@ func TestIsPrimaryDraining(t *testing.T) {
 	t.Run("returns false when primary pod not found", func(t *testing.T) {
 		t.Parallel()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "missing-pod"},
 		}
 		if drain.IsPrimaryDraining(context.Background(), c, shard, primary) {
@@ -147,7 +147,7 @@ func TestIsPrimaryDraining(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if drain.IsPrimaryDraining(context.Background(), c, shard, primary) {
@@ -167,7 +167,7 @@ func TestIsPrimaryDraining(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if !drain.IsPrimaryDraining(context.Background(), c, shard, primary) {
@@ -187,7 +187,7 @@ func TestIsPrimaryDraining(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if drain.IsPrimaryDraining(context.Background(), c, shard, primary) {
@@ -202,7 +202,7 @@ func TestIsPrimaryDraining(t *testing.T) {
 				return fmt.Errorf("connection refused")
 			},
 		}).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if !drain.IsPrimaryDraining(context.Background(), c, shard, primary) {
@@ -236,7 +236,7 @@ func TestIsPrimaryNotReady(t *testing.T) {
 	t.Run("returns true for nil primary ID", func(t *testing.T) {
 		t.Parallel()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
-		primary := &clustermetadata.MultiPooler{}
+		primary := &clustermetadata.Multipooler{}
 		if !drain.IsPrimaryNotReady(context.Background(), c, shard, primary) {
 			t.Error("expected true for nil primary ID")
 		}
@@ -245,7 +245,7 @@ func TestIsPrimaryNotReady(t *testing.T) {
 	t.Run("returns true when primary pod not found", func(t *testing.T) {
 		t.Parallel()
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "missing-pod"},
 		}
 		if !drain.IsPrimaryNotReady(context.Background(), c, shard, primary) {
@@ -262,7 +262,7 @@ func TestIsPrimaryNotReady(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if drain.IsPrimaryNotReady(context.Background(), c, shard, primary) {
@@ -284,7 +284,7 @@ func TestIsPrimaryNotReady(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if drain.IsPrimaryNotReady(context.Background(), c, shard, primary) {
@@ -306,7 +306,7 @@ func TestIsPrimaryNotReady(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if !drain.IsPrimaryNotReady(context.Background(), c, shard, primary) {
@@ -321,7 +321,7 @@ func TestIsPrimaryNotReady(t *testing.T) {
 				return fmt.Errorf("connection refused")
 			},
 		}).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if !drain.IsPrimaryNotReady(context.Background(), c, shard, primary) {
@@ -368,9 +368,9 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 			},
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		rpc := &mockMultiPoolerClient{}
+		rpc := &mockMultipoolerClient{}
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, nil // No primary found
 			},
 		}
@@ -406,7 +406,7 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		pod.DeletionTimestamp = &metav1.Time{Time: time.Now().Add(-10 * time.Minute)}
 
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, fmt.Errorf("fake topo list error")
 			},
 		}
@@ -439,7 +439,7 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, fmt.Errorf("fake UNAVAILABLE error")
 			},
 		}
@@ -463,8 +463,8 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 
 	t.Run("FindPrimaryPooler error Requested state", func(t *testing.T) {
 		t.Parallel()
-		podInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		podInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "test-pod"},
 				Type: clustermetadata.PoolerType_REPLICA,
 			},
@@ -484,10 +484,10 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		callCount := 0
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				if callCount == 0 {
 					callCount++
-					return []*topoclient.MultiPoolerInfo{podInfo}, nil
+					return []*topoclient.MultipoolerInfo{podInfo}, nil
 				}
 				// Call inside FindPrimaryPooler fails
 				return nil, fmt.Errorf("fake get primary error")
@@ -513,14 +513,14 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 
 	t.Run("IsPrimaryNotReady in Requested state", func(t *testing.T) {
 		t.Parallel()
-		podInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		podInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "test-pod"},
 				Type: clustermetadata.PoolerType_REPLICA,
 			},
 		}
-		primaryInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		primaryInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "primary-pod"},
 				Type: clustermetadata.PoolerType_PRIMARY,
 			},
@@ -550,11 +550,11 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, primaryPod).Build()
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
-				return []*topoclient.MultiPoolerInfo{podInfo, primaryInfo}, nil
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{podInfo, primaryInfo}, nil
 			},
 		}
-		rpc := &mockMultiPoolerClient{}
+		rpc := &mockMultipoolerClient{}
 
 		requeue, _ := drain.ExecuteDrainStateMachine(
 			context.Background(),
@@ -572,8 +572,8 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 
 	t.Run("FindPrimaryPooler error Draining state", func(t *testing.T) {
 		t.Parallel()
-		podInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		podInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "test-pod"},
 				Type: clustermetadata.PoolerType_REPLICA,
 			},
@@ -593,10 +593,10 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		callCount := 0
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				if callCount == 0 {
 					callCount++
-					return []*topoclient.MultiPoolerInfo{podInfo}, nil
+					return []*topoclient.MultipoolerInfo{podInfo}, nil
 				}
 				// Call inside FindPrimaryPooler fails
 				return nil, fmt.Errorf("fake get primary error")
@@ -622,14 +622,14 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 
 	t.Run("IsPrimaryNotReady in Draining state", func(t *testing.T) {
 		t.Parallel()
-		podInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		podInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "test-pod"},
 				Type: clustermetadata.PoolerType_REPLICA,
 			},
 		}
-		primaryInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		primaryInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "primary-pod"},
 				Type: clustermetadata.PoolerType_PRIMARY,
 			},
@@ -659,11 +659,11 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, primaryPod).Build()
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
-				return []*topoclient.MultiPoolerInfo{podInfo, primaryInfo}, nil
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{podInfo, primaryInfo}, nil
 			},
 		}
-		rpc := &mockMultiPoolerClient{}
+		rpc := &mockMultipoolerClient{}
 
 		requeue, _ := drain.ExecuteDrainStateMachine(
 			context.Background(),
@@ -681,8 +681,8 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 
 	t.Run("Error ForceUnregister in Acknowledged state", func(t *testing.T) {
 		t.Parallel()
-		podInfo := &topoclient.MultiPoolerInfo{
-			MultiPooler: &clustermetadata.MultiPooler{
+		podInfo := &topoclient.MultipoolerInfo{
+			Multipooler: &clustermetadata.Multipooler{
 				Id:   &clustermetadata.ID{Name: "test-pod"},
 				Type: clustermetadata.PoolerType_REPLICA,
 			},
@@ -701,10 +701,10 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
-				return []*topoclient.MultiPoolerInfo{podInfo}, nil
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{podInfo}, nil
 			},
-			unregisterMultiPoolerFunc: func(ctx context.Context, id *clustermetadata.ID) error {
+			unregisterMultipoolerFunc: func(ctx context.Context, id *clustermetadata.ID) error {
 				return fmt.Errorf("fake unregister error")
 			},
 		}
@@ -736,7 +736,7 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		store := &mockTopoStore{
-			getMultiPoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultiPoolersByCellOptions) ([]*topoclient.MultiPoolerInfo, error) {
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, nil // No pooler
 			},
 		}

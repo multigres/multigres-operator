@@ -27,14 +27,14 @@ import (
 
 // mockRPCClient implements just the methods these drain tests exercise.
 type mockRPCClient struct {
-	rpcclient.MultiPoolerClient
+	rpcclient.MultipoolerClient
 
 	updateConsensusRuleCalled bool
 }
 
 func (m *mockRPCClient) UpdateConsensusRule(
 	ctx context.Context,
-	pooler *clustermetadata.MultiPooler,
+	pooler *clustermetadata.Multipooler,
 	request *multipoolermanagerdatapb.UpdateConsensusRuleRequest,
 ) (*multipoolermanagerdatapb.UpdateConsensusRuleResponse, error) {
 	m.updateConsensusRuleCalled = true
@@ -43,7 +43,7 @@ func (m *mockRPCClient) UpdateConsensusRule(
 
 func (m *mockRPCClient) ExpireBackups(
 	ctx context.Context,
-	pooler *clustermetadata.MultiPooler,
+	pooler *clustermetadata.Multipooler,
 	request *multipoolermanagerdatapb.ExpireBackupsRequest,
 ) (*multipoolermanagerdatapb.ExpireBackupsResponse, error) {
 	return nil, nil
@@ -107,7 +107,7 @@ func TestReplicaDrainFlow(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	// Add primary
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod",
 		Type:     clustermetadata.PoolerType_PRIMARY,
@@ -118,7 +118,7 @@ func TestReplicaDrainFlow(t *testing.T) {
 		},
 	}, false)
 	// Add our replica pod
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0",
 		Type:     clustermetadata.PoolerType_REPLICA,
@@ -173,7 +173,7 @@ func TestReplicaDrainFlow(t *testing.T) {
 		topoclient.NewDefaultTopoConfig(),
 	)
 	defer func() { _ = inspectorStore.Close() }()
-	poolers, _ := inspectorStore.GetMultiPoolersByCell(ctx, "cell1", nil)
+	poolers, _ := inspectorStore.GetMultipoolersByCell(ctx, "cell1", nil)
 	if len(poolers) != 1 || poolers[0].GetHostname() != "primary-pod" {
 		t.Fatalf("expected replica to be unregistered from topo")
 	}
@@ -221,7 +221,7 @@ func TestPrimaryDrainFlow(t *testing.T) {
 	store := topoclient.NewWithFactory(factory, "", []string{""}, topoclient.NewDefaultTopoConfig())
 	defer func() { _ = store.Close() }()
 
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{
@@ -230,7 +230,7 @@ func TestPrimaryDrainFlow(t *testing.T) {
 			Shard:      "0",
 		},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
 		Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{
@@ -300,7 +300,7 @@ func TestPrimaryDrainFlowNilRPCClient(t *testing.T) {
 	store := topoclient.NewWithFactory(factory, "", []string{""}, topoclient.NewDefaultTopoConfig())
 	defer func() { _ = store.Close() }()
 
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{
@@ -309,7 +309,7 @@ func TestPrimaryDrainFlowNilRPCClient(t *testing.T) {
 			Shard:      "0",
 		},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
 		Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{
@@ -381,7 +381,7 @@ func TestStuckTerminatingPod(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{
@@ -406,7 +406,7 @@ func TestStuckTerminatingPod(t *testing.T) {
 	)
 	defer func() { _ = inspectorStore.Close() }()
 
-	poolers, _ := inspectorStore.GetMultiPoolersByCell(ctx, "cell1", nil)
+	poolers, _ := inspectorStore.GetMultipoolersByCell(ctx, "cell1", nil)
 	if len(poolers) != 0 {
 		t.Fatalf("expected stuck pod to be immediately unregistered")
 	}
@@ -440,7 +440,7 @@ func TestIsPrimaryTerminatingOrMissing(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(primaryPod).Build()
 
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if drain.IsPrimaryTerminatingOrMissing(context.Background(), c, shard, primary) {
@@ -451,7 +451,7 @@ func TestIsPrimaryTerminatingOrMissing(t *testing.T) {
 	t.Run("returns false when primary pod not found", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "nonexistent-pod"},
 		}
 		if !drain.IsPrimaryTerminatingOrMissing(context.Background(), c, shard, primary) {
@@ -466,7 +466,7 @@ func TestIsPrimaryTerminatingOrMissing(t *testing.T) {
 				return fmt.Errorf("connection refused")
 			},
 		}).Build()
-		primary := &clustermetadata.MultiPooler{
+		primary := &clustermetadata.Multipooler{
 			Id: &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		}
 		if drain.IsPrimaryTerminatingOrMissing(context.Background(), c, shard, primary) {
@@ -537,7 +537,7 @@ func TestReplicaDrain_SkipsRPCWhenPrimaryDraining(t *testing.T) {
 	ctx := context.Background()
 
 	// Register primary and replica in topo
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod",
 		Type:     clustermetadata.PoolerType_PRIMARY,
@@ -547,7 +547,7 @@ func TestReplicaDrain_SkipsRPCWhenPrimaryDraining(t *testing.T) {
 			Shard:      "0",
 		},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0",
 		Type:     clustermetadata.PoolerType_REPLICA,
@@ -631,7 +631,7 @@ func TestReplicaDrain_DrainingState_FindPrimaryError(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -704,12 +704,12 @@ func TestReplicaDrain_DrainingState_PrimaryDraining(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -796,16 +796,16 @@ func TestDrain_TopoUnavailableDuringPodDeletion(t *testing.T) {
 	}
 }
 
-// unavailableTopoStore is a mock store that returns UNAVAILABLE for GetMultiPoolersByCell.
+// unavailableTopoStore is a mock store that returns UNAVAILABLE for GetMultipoolersByCell.
 type unavailableTopoStore struct {
 	topoclient.Store
 }
 
-func (s *unavailableTopoStore) GetMultiPoolersByCell(
+func (s *unavailableTopoStore) GetMultipoolersByCell(
 	ctx context.Context,
 	cell string,
-	opts *topoclient.GetMultiPoolersByCellOptions,
-) ([]*topoclient.MultiPoolerInfo, error) {
+	opts *topoclient.GetMultipoolersByCellOptions,
+) ([]*topoclient.MultipoolerInfo, error) {
 	return nil, fmt.Errorf("Code: UNAVAILABLE\nno connection available")
 }
 
@@ -863,12 +863,12 @@ func TestReplicaDrain_PrimaryTerminatingOrMissing(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -950,12 +950,12 @@ func TestReplicaDrain_DrainingState_PrimaryTerminating(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -1086,7 +1086,7 @@ func TestDrain_StuckDrainTimeout_DeletionTimestampFallback(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
 		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -1114,7 +1114,7 @@ func TestDrain_StuckDrainTimeout_DeletionTimestampFallback(t *testing.T) {
 		topoclient.NewDefaultTopoConfig(),
 	)
 	defer func() { _ = inspectorStore.Close() }()
-	poolers, _ := inspectorStore.GetMultiPoolersByCell(ctx, "cell1", nil)
+	poolers, _ := inspectorStore.GetMultipoolersByCell(ctx, "cell1", nil)
 	if len(poolers) != 0 {
 		t.Errorf("expected pooler to be unregistered, got %d", len(poolers))
 	}
@@ -1169,16 +1169,16 @@ func TestDrain_NonTopoError(t *testing.T) {
 	}
 }
 
-// nonTopoErrorStore returns a non-UNAVAILABLE error for GetMultiPoolersByCell.
+// nonTopoErrorStore returns a non-UNAVAILABLE error for GetMultipoolersByCell.
 type nonTopoErrorStore struct {
 	topoclient.Store
 }
 
-func (s *nonTopoErrorStore) GetMultiPoolersByCell(
+func (s *nonTopoErrorStore) GetMultipoolersByCell(
 	ctx context.Context,
 	cell string,
-	opts *topoclient.GetMultiPoolersByCellOptions,
-) ([]*topoclient.MultiPoolerInfo, error) {
+	opts *topoclient.GetMultipoolersByCellOptions,
+) ([]*topoclient.MultipoolerInfo, error) {
 	return nil, fmt.Errorf("permission denied")
 }
 
@@ -1232,12 +1232,12 @@ func TestReplicaDrain_RPCError(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -1316,12 +1316,12 @@ func TestReplicaDrain_DrainingState_RPCError(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
 		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
 	}, false)
-	_ = store.RegisterMultiPooler(ctx, &clustermetadata.MultiPooler{
+	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
 		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
 		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
@@ -1357,7 +1357,7 @@ type failingRPCClient struct {
 
 func (m *failingRPCClient) UpdateConsensusRule(
 	ctx context.Context,
-	pooler *clustermetadata.MultiPooler,
+	pooler *clustermetadata.Multipooler,
 	request *multipoolermanagerdatapb.UpdateConsensusRuleRequest,
 ) (*multipoolermanagerdatapb.UpdateConsensusRuleResponse, error) {
 	return nil, fmt.Errorf("rpc error: connection refused")
@@ -1479,7 +1479,7 @@ func TestDrainStateMachine_RandomizedInvariants(t *testing.T) {
 		)
 
 		for j := range numPods {
-			_ = store.RegisterMultiPooler(context.Background(), &clustermetadata.MultiPooler{
+			_ = store.RegisterMultipooler(context.Background(), &clustermetadata.Multipooler{
 				Id:       &clustermetadata.ID{Cell: "cell1", Name: podNames[j]},
 				Hostname: podNames[j],
 				Type:     podTypes[j],
@@ -1572,7 +1572,7 @@ func TestDrainStateMachine_RandomizedInvariants(t *testing.T) {
 			[]string{""},
 			topoclient.NewDefaultTopoConfig(),
 		)
-		poolers, _ := inspectorStore.GetMultiPoolersByCell(ctx, "cell1", nil)
+		poolers, _ := inspectorStore.GetMultipoolersByCell(ctx, "cell1", nil)
 		registeredNames := make(map[string]bool)
 		for _, p := range poolers {
 			registeredNames[p.Id.Name] = true
