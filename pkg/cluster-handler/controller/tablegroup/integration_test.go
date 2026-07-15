@@ -121,8 +121,8 @@ func TestTableGroupReconciliation(t *testing.T) {
 					DatabaseName:   "db1",
 					TableGroupName: "tg1",
 					Images: multigresv1alpha1.ShardImages{
-						MultiOrch:   "orch:latest",
-						MultiPooler: "pooler:latest",
+						Multiorch:   "orch:latest",
+						Multipooler: "pooler:latest",
 						Postgres:    "postgres:15",
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -133,7 +133,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 					Shards: []multigresv1alpha1.ShardResolvedSpec{
 						{
 							Name: "s1",
-							MultiOrch: multigresv1alpha1.MultiOrchSpec{
+							Multiorch: multigresv1alpha1.MultiorchSpec{
 								StatelessSpec: multigresv1alpha1.StatelessSpec{
 									Replicas: ptr.To(int32(1)),
 								},
@@ -149,7 +149,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 						},
 						{
 							Name: "s2",
-							MultiOrch: multigresv1alpha1.MultiOrchSpec{
+							Multiorch: multigresv1alpha1.MultiorchSpec{
 								StatelessSpec: multigresv1alpha1.StatelessSpec{
 									Replicas: ptr.To(int32(1)),
 								},
@@ -179,8 +179,8 @@ func TestTableGroupReconciliation(t *testing.T) {
 						DatabaseName:   "db1",
 						TableGroupName: "tg1",
 						Images: multigresv1alpha1.ShardImages{
-							MultiOrch:   "orch:latest",
-							MultiPooler: "pooler:latest",
+							Multiorch:   "orch:latest",
+							Multipooler: "pooler:latest",
 							Postgres:    "postgres:15",
 						},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -188,7 +188,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 							RootPath:       "/multigres/global",
 							Implementation: "etcd",
 						},
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
 								Replicas: ptr.To(int32(1)),
 							},
@@ -216,8 +216,8 @@ func TestTableGroupReconciliation(t *testing.T) {
 						DatabaseName:   "db1",
 						TableGroupName: "tg1",
 						Images: multigresv1alpha1.ShardImages{
-							MultiOrch:   "orch:latest",
-							MultiPooler: "pooler:latest",
+							Multiorch:   "orch:latest",
+							Multipooler: "pooler:latest",
 							Postgres:    "postgres:15",
 						},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -225,7 +225,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 							RootPath:       "/multigres/global",
 							Implementation: "etcd",
 						},
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
 								Replicas: ptr.To(int32(1)),
 							},

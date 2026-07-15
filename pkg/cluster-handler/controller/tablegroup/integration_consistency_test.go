@@ -77,7 +77,7 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 	shardSpec := func(name, cell string) multigresv1alpha1.ShardResolvedSpec {
 		return multigresv1alpha1.ShardResolvedSpec{
 			Name: name,
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 				Cells:         []multigresv1alpha1.CellName{multigresv1alpha1.CellName(cell)},
 			},
@@ -108,8 +108,8 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 			TableGroupName:   tgName,
 			GlobalTopoServer: globalTopo,
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch:   "orch:latest",
-				MultiPooler: "pooler:latest",
+				Multiorch:   "orch:latest",
+				Multipooler: "pooler:latest",
 				Postgres:    "postgres:15",
 			},
 			Shards: []multigresv1alpha1.ShardResolvedSpec{

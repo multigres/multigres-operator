@@ -104,7 +104,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "short-annot-bomb", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					Spec: &multigresv1alpha1.StatelessSpec{
 						PodAnnotations: map[string]string{"heavy-annotation": longAnnotation},
 					},
@@ -116,7 +116,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			t.Fatalf("Failed to create cluster: %v", err)
 		}
 
-		// Verify MultiAdmin Deployment created successfully WITH annotation
+		// Verify Multiadmin Deployment created successfully WITH annotation
 		deploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            "short-annot-bomb-multiadmin",
@@ -138,7 +138,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 						Containers: []corev1.Container{
 							{
 								Name:  "multiadmin",
-								Image: resolver.DefaultMultiAdminImage,
+								Image: resolver.DefaultMultiadminImage,
 								Command: []string{
 									"/multigres/bin/multiadmin",
 								},
@@ -210,7 +210,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			},
 		}
 		if err := watcher.WaitForMatch(deploy); err != nil {
-			t.Errorf("MultiAdmin deployment failed to create with massive annotation: %v", err)
+			t.Errorf("Multiadmin deployment failed to create with massive annotation: %v", err)
 		}
 	})
 
@@ -220,7 +220,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "mut-test", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				Images: multigresv1alpha1.ClusterImages{MultiAdmin: "admin:v1"},
+				Images: multigresv1alpha1.ClusterImages{Multiadmin: "admin:v1"},
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
@@ -327,7 +327,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster); err != nil {
 			t.Fatal(err)
 		}
-		cluster.Spec.Images.MultiAdmin = "admin:v2"
+		cluster.Spec.Images.Multiadmin = "admin:v2"
 		if err := k8sClient.Update(t.Context(), cluster); err != nil {
 			t.Fatalf("Failed to update cluster: %v", err)
 		}

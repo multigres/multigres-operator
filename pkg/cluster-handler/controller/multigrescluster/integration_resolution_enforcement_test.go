@@ -30,14 +30,14 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		smallTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "small", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 		}
 		// "Large" Template -> Replicas: 5
 		largeTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "large", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
+				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
 			},
 		}
 
@@ -74,7 +74,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						ZoneID:       "use1-az3",
 						CellTemplate: "large",
 						Overrides: &multigresv1alpha1.CellOverrides{
-							MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+							Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 						},
 					},
 
@@ -83,7 +83,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Name:   "zone-d",
 						ZoneID: "use1-az4",
 						Spec: &multigresv1alpha1.CellInlineSpec{
-							MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))},
+							Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))},
 						},
 					},
 				},
@@ -122,10 +122,10 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						return multigresv1alpha1.ZoneID("use1-az" + azSuffix[zone[len(zone)-1]])
 					}(), // construct zoneId from name (e.g. zone-a -> use1-az1)
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway:    resolver.DefaultMultiGatewayImage,
+						Multigateway:    resolver.DefaultMultigatewayImage,
 						ImagePullPolicy: resolver.DefaultImagePullPolicy,
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas:  ptr.To(replicas),
 						Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 					},
@@ -205,10 +205,10 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				Name:   "zone-a",
 				ZoneID: "use1-az1",
 				Images: multigresv1alpha1.CellImages{
-					MultiGateway:    resolver.DefaultMultiGatewayImage,
+					Multigateway:    resolver.DefaultMultigatewayImage,
 					ImagePullPolicy: resolver.DefaultImagePullPolicy,
 				},
-				MultiGateway: multigresv1alpha1.StatelessSpec{
+				Multigateway: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 				},
@@ -246,7 +246,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		tpl := &multigresv1alpha1.ShardTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: tplName, Namespace: testNamespace},
 			Spec: multigresv1alpha1.ShardTemplateSpec{
-				MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+				Multiorch: &multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
 				},
 			},
@@ -275,7 +275,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 										Name:          "0-inf",
 										ShardTemplate: multigresv1alpha1.TemplateRef(tplName),
 										Overrides: &multigresv1alpha1.ShardOverrides{
-											MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+											Multiorch: &multigresv1alpha1.MultiorchSpec{
 												// Should REPLACE, not append
 												Cells: []multigresv1alpha1.CellName{"zone-c"},
 											},
@@ -325,8 +325,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				TableGroupName: "default",
 				IsDefault:      true,
 				Images: multigresv1alpha1.ShardImages{
-					MultiOrch:       resolver.DefaultMultiOrchImage,
-					MultiPooler:     resolver.DefaultMultiPoolerImage,
+					Multiorch:       resolver.DefaultMultiorchImage,
+					Multipooler:     resolver.DefaultMultipoolerImage,
 					Postgres:        resolver.DefaultPostgresImage,
 					ImagePullPolicy: resolver.DefaultImagePullPolicy,
 				},
@@ -338,7 +338,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				Shards: []multigresv1alpha1.ShardResolvedSpec{
 					{
 						Name: "0-inf",
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							// VERIFICATION: Only zone-c should be present
 							Cells: []multigresv1alpha1.CellName{"zone-c"},
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
@@ -404,7 +404,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 				{
 					Name: "zone-a", ZoneID: "use1-az1",
 					Spec: &multigresv1alpha1.CellInlineSpec{
-						MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+						Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 					},
 				},
 			},
@@ -433,10 +433,10 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 			Name:   "zone-a",
 			ZoneID: "use1-az1",
 			Images: multigresv1alpha1.CellImages{
-				MultiGateway:    resolver.DefaultMultiGatewayImage,
+				Multigateway:    resolver.DefaultMultigatewayImage,
 				ImagePullPolicy: resolver.DefaultImagePullPolicy,
 			},
-			MultiGateway: multigresv1alpha1.StatelessSpec{
+			Multigateway: multigresv1alpha1.StatelessSpec{
 				Replicas:  ptr.To(int32(2)),
 				Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 			},
@@ -470,7 +470,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 	if err := k8sClient.Get(t.Context(), cellKey, cell); err != nil {
 		t.Fatal(err)
 	}
-	cell.Spec.MultiGateway.Replicas = ptr.To(int32(100))
+	cell.Spec.Multigateway.Replicas = ptr.To(int32(100))
 	if err := k8sClient.Update(t.Context(), cell); err != nil {
 		t.Fatal("Failed to tamper with cell")
 	}
@@ -627,8 +627,8 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 			TableGroupName: "default",
 			IsDefault:      true,
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch:       resolver.DefaultMultiOrchImage,
-				MultiPooler:     resolver.DefaultMultiPoolerImage,
+				Multiorch:       resolver.DefaultMultiorchImage,
+				Multipooler:     resolver.DefaultMultipoolerImage,
 				Postgres:        resolver.DefaultPostgresImage,
 				ImagePullPolicy: resolver.DefaultImagePullPolicy,
 			},
@@ -640,7 +640,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 			Shards: []multigresv1alpha1.ShardResolvedSpec{
 				{
 					Name: "0-inf",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a"},
 						StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),                // From implicit defaults in resolver

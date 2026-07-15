@@ -83,7 +83,7 @@ func TestExternalGateway_EnableDisableLifecycle(t *testing.T) {
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+				metadata.LabelAppComponent: metadata.ComponentMultigateway,
 				metadata.LabelAppInstance:  clusterName,
 			},
 			Type:        corev1.ServiceTypeClusterIP,
@@ -108,7 +108,7 @@ func TestExternalGateway_EnableDisableLifecycle(t *testing.T) {
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+				metadata.LabelAppComponent: metadata.ComponentMultigateway,
 				metadata.LabelAppInstance:  clusterName,
 			},
 			Type: corev1.ServiceTypeClusterIP,
@@ -197,7 +197,7 @@ func TestExternalGateway_EnableDisableLifecycle(t *testing.T) {
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+				metadata.LabelAppComponent: metadata.ComponentMultigateway,
 				metadata.LabelAppInstance:  clusterName,
 			},
 			Type: corev1.ServiceTypeClusterIP,
@@ -221,7 +221,7 @@ func TestExternalGateway_EnableDisableLifecycle(t *testing.T) {
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: map[string]string{
-				metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+				metadata.LabelAppComponent: metadata.ComponentMultigateway,
 				metadata.LabelAppInstance:  clusterName,
 			},
 			Type: corev1.ServiceTypeClusterIP,

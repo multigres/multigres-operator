@@ -66,22 +66,22 @@ func TestReconcile_Databases(t *testing.T) {
 				// NOTE: We expect 3 replicas here because 'shardTpl' (the default template in fixtures)
 				// defines replicas: 3. The resolver correctly prioritizes the Namespace Default (Level 3)
 				// over the Operator Default (Level 4, which is 1).
-				if got, want := *tg.Spec.Shards[0].MultiOrch.Replicas, int32(3); got != want {
+				if got, want := *tg.Spec.Shards[0].Multiorch.Replicas, int32(3); got != want {
 					t.Errorf("Injected shard replicas mismatch. Replicas: %d, Want: %d", got, want)
 				}
-				if len(tg.Spec.Shards[0].MultiOrch.Cells) != 1 ||
-					tg.Spec.Shards[0].MultiOrch.Cells[0] != "zone-a" {
+				if len(tg.Spec.Shards[0].Multiorch.Cells) != 1 ||
+					tg.Spec.Shards[0].Multiorch.Cells[0] != "zone-a" {
 					t.Errorf(
-						"Expected MultiOrch to inherit cell 'zone-a', got %v",
-						tg.Spec.Shards[0].MultiOrch.Cells,
+						"Expected Multiorch to inherit cell 'zone-a', got %v",
+						tg.Spec.Shards[0].Multiorch.Cells,
 					)
 				}
 			},
 		},
-		"Create: MultiOrch Skip Defaulting (Explicit Cells)": {
+		"Create: Multiorch Skip Defaulting (Explicit Cells)": {
 			preReconcileUpdate: func(t testing.TB, c *multigresv1alpha1.MultigresCluster) {
 				c.Spec.Databases[0].TableGroups[0].Shards[0].Spec = &multigresv1alpha1.ShardInlineSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-custom"},
 					},
 				}
@@ -102,7 +102,7 @@ func TestReconcile_Databases(t *testing.T) {
 				); err != nil {
 					t.Fatalf("failed to get tablegroup: %v", err)
 				}
-				if got := tg.Spec.Shards[0].MultiOrch.Cells[0]; got != "zone-custom" {
+				if got := tg.Spec.Shards[0].Multiorch.Cells[0]; got != "zone-custom" {
 					t.Errorf("Expected explicit cell 'zone-custom', got %s", got)
 				}
 			},
@@ -119,7 +119,7 @@ func TestReconcile_Databases(t *testing.T) {
 				&multigresv1alpha1.ShardTemplate{
 					ObjectMeta: metav1.ObjectMeta{Name: "default-shard", Namespace: namespace},
 					Spec: multigresv1alpha1.ShardTemplateSpec{
-						MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+						Multiorch: &multigresv1alpha1.MultiorchSpec{
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
 								Replicas: ptr.To(int32(3)),
 							},
@@ -148,7 +148,7 @@ func TestReconcile_Databases(t *testing.T) {
 				); err != nil {
 					t.Fatal(err)
 				}
-				cells := tg.Spec.Shards[0].MultiOrch.Cells
+				cells := tg.Spec.Shards[0].Multiorch.Cells
 				if len(cells) != 2 {
 					t.Fatalf("Expected 2 cells, got %d", len(cells))
 				}
@@ -182,7 +182,7 @@ func TestReconcile_Databases(t *testing.T) {
 				// so that it doesn't default to "default" and hit our failure config which captures "default".
 				// We want only the Shard resolution (which also defaults to "default") to hit the error.
 				c.Spec.Cells[0].CellTemplate = "default-cell"
-				c.Spec.MultiAdminWeb = &multigresv1alpha1.MultiAdminWebConfig{
+				c.Spec.MultiadminWeb = &multigresv1alpha1.MultiadminWebConfig{
 					TemplateRef: "default-core",
 				}
 			},
@@ -234,7 +234,7 @@ func TestReconcile_Databases(t *testing.T) {
 						Endpoints: []multigresv1alpha1.EndpointUrl{"http://ext:2379"},
 					},
 				}
-				c.Spec.MultiAdmin = nil
+				c.Spec.Multiadmin = nil
 				c.Spec.Databases = []multigresv1alpha1.DatabaseConfig{
 					{
 						Name: multigresv1alpha1.DatabaseName(strings.Repeat("a", 64)),
@@ -307,7 +307,7 @@ func TestReconcileDatabases_BuildError_SchemeMismatch(t *testing.T) {
 	shardTpl := &multigresv1alpha1.ShardTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default-shard", Namespace: "default"},
 		Spec: multigresv1alpha1.ShardTemplateSpec{
-			MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+			Multiorch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 				Cells:         []multigresv1alpha1.CellName{"a"},
 			},

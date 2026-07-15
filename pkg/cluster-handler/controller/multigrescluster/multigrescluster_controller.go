@@ -505,10 +505,10 @@ func collectResolvedTemplates(
 	if gts := cluster.Spec.GlobalTopoServer; gts != nil && gts.TemplateRef != "" {
 		coreSet[gts.TemplateRef] = struct{}{}
 	}
-	if ma := cluster.Spec.MultiAdmin; ma != nil && ma.TemplateRef != "" {
+	if ma := cluster.Spec.Multiadmin; ma != nil && ma.TemplateRef != "" {
 		coreSet[ma.TemplateRef] = struct{}{}
 	}
-	if maw := cluster.Spec.MultiAdminWeb; maw != nil && maw.TemplateRef != "" {
+	if maw := cluster.Spec.MultiadminWeb; maw != nil && maw.TemplateRef != "" {
 		coreSet[maw.TemplateRef] = struct{}{}
 	}
 	for ref := range coreSet {
@@ -561,8 +561,8 @@ func collectTrackingLabels(cluster *multigresv1alpha1.MultigresCluster) map[stri
 
 	usesCore := cluster.Spec.TemplateDefaults.CoreTemplate != "" ||
 		(cluster.Spec.GlobalTopoServer != nil && cluster.Spec.GlobalTopoServer.TemplateRef != "") ||
-		(cluster.Spec.MultiAdmin != nil && cluster.Spec.MultiAdmin.TemplateRef != "") ||
-		(cluster.Spec.MultiAdminWeb != nil && cluster.Spec.MultiAdminWeb.TemplateRef != "")
+		(cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.TemplateRef != "") ||
+		(cluster.Spec.MultiadminWeb != nil && cluster.Spec.MultiadminWeb.TemplateRef != "")
 	if usesCore {
 		labels[metadata.LabelUsesCoreTemplate] = "true"
 	}

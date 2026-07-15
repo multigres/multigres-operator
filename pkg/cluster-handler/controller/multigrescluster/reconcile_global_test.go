@@ -55,11 +55,11 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Resolve MultiAdmin Failed", func(t *testing.T) {
+	t.Run("Error: Resolve Multiadmin Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					TemplateRef: "non-existent-core",
 				},
 			},
@@ -72,7 +72,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdmin(
+		err := r.reconcileMultiadmin(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -82,11 +82,11 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Resolve MultiAdminWeb Failed", func(t *testing.T) {
+	t.Run("Error: Resolve MultiadminWeb Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{
+				MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{
 					TemplateRef: "non-existent-core",
 				},
 			},
@@ -99,7 +99,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -140,10 +140,10 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Patch MultiAdmin Failed", func(t *testing.T) {
+	t.Run("Error: Patch Multiadmin Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-			// MultiAdmin is created by default unless disabled, so it should try to patch.
+			// Multiadmin is created by default unless disabled, so it should try to patch.
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
@@ -157,7 +157,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(10),
 		}
-		err := r.reconcileMultiAdmin(
+		err := r.reconcileMultiadmin(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -167,10 +167,10 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Patch MultiAdminWeb Failed", func(t *testing.T) {
+	t.Run("Error: Patch MultiadminWeb Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-			// MultiAdminWeb also defaults to enabled if image is present (which defaults handles)
+			// MultiadminWeb also defaults to enabled if image is present (which defaults handles)
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
@@ -184,7 +184,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(10),
 		}
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -222,10 +222,10 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiAdmin Failed", func(t *testing.T) {
+	t.Run("Error: Build Multiadmin Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-			// MultiAdmin default enabled
+			// Multiadmin default enabled
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
@@ -236,7 +236,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdmin(
+		err := r.reconcileMultiadmin(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -246,10 +246,10 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiAdminWeb Failed", func(t *testing.T) {
+	t.Run("Error: Build MultiadminWeb Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-			// MultiAdminWeb default enabled
+			// MultiadminWeb default enabled
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
@@ -260,7 +260,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -270,7 +270,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiAdmin Service Failed", func(t *testing.T) {
+	t.Run("Error: Build Multiadmin Service Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
@@ -291,7 +291,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdmin(
+		err := r.reconcileMultiadmin(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -301,7 +301,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Patch MultiAdmin Service Failed", func(t *testing.T) {
+	t.Run("Error: Patch Multiadmin Service Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
@@ -321,7 +321,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdmin(
+		err := r.reconcileMultiadmin(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -331,7 +331,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiAdminWeb Service Failed", func(t *testing.T) {
+	t.Run("Error: Build MultiadminWeb Service Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
@@ -347,7 +347,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -357,7 +357,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Patch MultiAdminWeb Service Failed", func(t *testing.T) {
+	t.Run("Error: Patch MultiadminWeb Service Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
@@ -377,7 +377,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -388,7 +388,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Patch MultiGateway Global Service Failed", func(t *testing.T) {
+	t.Run("Error: Patch Multigateway Global Service Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
@@ -413,7 +413,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -424,7 +424,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Patch MultiGateway Global Replica Service Failed", func(t *testing.T) {
+	t.Run("Error: Patch Multigateway Global Replica Service Failed", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
@@ -445,7 +445,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		err := r.reconcileMultiAdminWeb(
+		err := r.reconcileMultiadminWeb(
 			context.Background(),
 			cluster,
 			resolver.NewResolver(c, "default"),
@@ -468,7 +468,7 @@ func TestReconcile_Global(t *testing.T) {
 				c.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
 					TemplateRef: "topo-core",
 				}
-				c.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{
+				c.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{
 					TemplateRef: "admin-core",
 				}
 			},
@@ -485,7 +485,7 @@ func TestReconcile_Global(t *testing.T) {
 				&multigresv1alpha1.CoreTemplate{
 					ObjectMeta: metav1.ObjectMeta{Name: "admin-core", Namespace: namespace},
 					Spec: multigresv1alpha1.CoreTemplateSpec{
-						MultiAdmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
+						Multiadmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
 					},
 				},
 			},
@@ -515,7 +515,7 @@ func TestReconcile_Global(t *testing.T) {
 					t.Fatal(err)
 				}
 				if got, want := *deploy.Spec.Replicas, int32(5); got != want {
-					t.Errorf("MultiAdmin replicas mismatch got %d, want %d", got, want)
+					t.Errorf("Multiadmin replicas mismatch got %d, want %d", got, want)
 				}
 
 				webDeploy := &appsv1.Deployment{}
@@ -531,7 +531,7 @@ func TestReconcile_Global(t *testing.T) {
 				}
 				// Default replicas is 1
 				if got, want := *webDeploy.Spec.Replicas, int32(1); got != want {
-					t.Errorf("MultiAdminWeb replicas mismatch got %d, want %d", got, want)
+					t.Errorf("MultiadminWeb replicas mismatch got %d, want %d", got, want)
 				}
 
 				// Verify global multigateway Service exists
@@ -660,7 +660,7 @@ func TestReconcile_Global(t *testing.T) {
 				c.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
 					TemplateRef: "topo-core",
 				}
-				c.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{
+				c.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{
 					TemplateRef: "admin-core-fail",
 				}
 			},
@@ -683,7 +683,7 @@ func TestReconcile_Global(t *testing.T) {
 			wantErrMsg: "failed to apply global topo server",
 		},
 
-		"Error: Apply MultiAdmin Failed": {
+		"Error: Apply Multiadmin Failed": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: testutil.FailOnObjectName(clusterName+"-multiadmin", errSimulated),
 			},
@@ -694,10 +694,10 @@ func TestReconcile_Global(t *testing.T) {
 				c.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
 					Etcd: &multigresv1alpha1.EtcdSpec{Image: "new-etcd"},
 				}
-				c.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{
+				c.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{
 					Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 				}
-				c.Spec.MultiAdminWeb = &multigresv1alpha1.MultiAdminWebConfig{
+				c.Spec.MultiadminWeb = &multigresv1alpha1.MultiadminWebConfig{
 					Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 				}
 			},
@@ -745,7 +745,7 @@ func TestReconcile_Global(t *testing.T) {
 					t.Fatal(err)
 				}
 				if *deploy.Spec.Replicas != 3 {
-					t.Errorf("MultiAdmin not updated")
+					t.Errorf("Multiadmin not updated")
 				}
 
 				webDeploy := &appsv1.Deployment{}
@@ -760,7 +760,7 @@ func TestReconcile_Global(t *testing.T) {
 					t.Fatal(err)
 				}
 				if *webDeploy.Spec.Replicas != 2 {
-					t.Errorf("MultiAdminWeb not updated")
+					t.Errorf("MultiadminWeb not updated")
 				}
 			},
 		},
@@ -791,7 +791,7 @@ func TestReconcile_Global(t *testing.T) {
 						Replicas: ptr.To(int32(5)), // Matches admin-core which has 5 replicas
 					},
 				},
-				// MultiAdminWeb will participate
+				// MultiadminWeb will participate
 			},
 			validate: func(t testing.TB, c client.Client) {
 				// Just ensure no error
@@ -803,19 +803,19 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			wantErrMsg: "simulated error",
 		},
-		"Error: Reconcile MultiAdmin Failed (Propagated)": {
+		"Error: Reconcile Multiadmin Failed (Propagated)": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: testutil.FailOnObjectName(clusterName+"-multiadmin", errSimulated),
 			},
 			wantErrMsg: "simulated error",
 		},
-		"Error: Reconcile MultiAdminWeb Failed (Propagated)": {
+		"Error: Reconcile MultiadminWeb Failed (Propagated)": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: testutil.FailOnObjectName(clusterName+"-multiadmin-web", errSimulated),
 			},
 			wantErrMsg: "simulated error",
 		},
-		"Error: Reconcile MultiAdmin Service Failed": {
+		"Error: Reconcile Multiadmin Service Failed": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: func(obj client.Object) error {
 					if obj.GetName() == clusterName+"-multiadmin" &&
@@ -827,7 +827,7 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			wantErrMsg: "failed to apply multiadmin service",
 		},
-		"Error: Reconcile MultiAdminWeb Service Failed": {
+		"Error: Reconcile MultiadminWeb Service Failed": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: func(obj client.Object) error {
 					if obj.GetName() == clusterName+"-multiadmin-web" &&
@@ -839,7 +839,7 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			wantErrMsg: "failed to apply multiadmin-web service",
 		},
-		"Error: Reconcile Global MultiGateway Service Failed": {
+		"Error: Reconcile Global Multigateway Service Failed": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: func(obj client.Object) error {
 					if obj.GetName() == clusterName+"-multigateway" &&
@@ -851,7 +851,7 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			wantErrMsg: "failed to apply global multigateway service",
 		},
-		"Error: Reconcile Global MultiGateway Replica Service Failed": {
+		"Error: Reconcile Global Multigateway Replica Service Failed": {
 			failureConfig: &testutil.FailureConfig{
 				OnPatch: func(obj client.Object) error {
 					if obj.GetName() == clusterName+"-multigateway-replica" &&
@@ -863,7 +863,7 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			wantErrMsg: "failed to apply global replica multigateway service",
 		},
-		"Error: Build MultiAdmin Deployment Failed (Scheme)": {
+		"Error: Build Multiadmin Deployment Failed (Scheme)": {
 			// Bypass Global Topo builder by using External spec
 			preReconcileUpdate: func(t testing.TB, c *multigresv1alpha1.MultigresCluster) {
 				c.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
@@ -905,12 +905,12 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 	scheme := setupScheme()
 	coreTpl, _, _, baseCluster, _, _ := setupFixtures(t)
 
-	t.Run("Error: Build MultiAdmin Service Failed (Mock)", func(t *testing.T) {
+	t.Run("Error: Build Multiadmin Service Failed (Mock)", func(t *testing.T) {
 		// Mock the builder
-		originalBuild := buildMultiAdminService
-		defer func() { buildMultiAdminService = originalBuild }()
+		originalBuild := buildMultiadminService
+		defer func() { buildMultiadminService = originalBuild }()
 
-		buildMultiAdminService = func(_ *multigresv1alpha1.MultigresCluster, _ *runtime.Scheme) (*corev1.Service, error) {
+		buildMultiadminService = func(_ *multigresv1alpha1.MultigresCluster, _ *runtime.Scheme) (*corev1.Service, error) {
 			return nil, errors.New("mocked builder error")
 		}
 
@@ -941,7 +941,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 
 		// Initialize resolver with correct namespace and defaults using constructor
 		res := resolver.NewResolver(c, baseCluster.Namespace)
-		err := reconciler.reconcileMultiAdmin(t.Context(), cluster, res)
+		err := reconciler.reconcileMultiadmin(t.Context(), cluster, res)
 		if err == nil {
 			t.Error("Expected error, got nil")
 		} else if !strings.Contains(err.Error(), "failed to build multiadmin service") {
@@ -949,12 +949,12 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiAdminWeb Deployment Failed (Mock)", func(t *testing.T) {
+	t.Run("Error: Build MultiadminWeb Deployment Failed (Mock)", func(t *testing.T) {
 		// Mock the builder
-		originalBuild := buildMultiAdminWebDeployment
-		defer func() { buildMultiAdminWebDeployment = originalBuild }()
+		originalBuild := buildMultiadminWebDeployment
+		defer func() { buildMultiadminWebDeployment = originalBuild }()
 
-		buildMultiAdminWebDeployment = func(_ *multigresv1alpha1.MultigresCluster, _ *multigresv1alpha1.StatelessSpec, _ *runtime.Scheme) (*appsv1.Deployment, error) {
+		buildMultiadminWebDeployment = func(_ *multigresv1alpha1.MultigresCluster, _ *multigresv1alpha1.StatelessSpec, _ *runtime.Scheme) (*appsv1.Deployment, error) {
 			return nil, errors.New("mocked builder error")
 		}
 
@@ -977,7 +977,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		res := resolver.NewResolver(c, baseCluster.Namespace)
-		err := reconciler.reconcileMultiAdminWeb(t.Context(), cluster, res)
+		err := reconciler.reconcileMultiadminWeb(t.Context(), cluster, res)
 		if err == nil {
 			t.Error("Expected error, got nil")
 		} else if !strings.Contains(err.Error(), "failed to build multiadmin-web deployment") {
@@ -985,12 +985,12 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiAdminWeb Service Failed (Mock)", func(t *testing.T) {
+	t.Run("Error: Build MultiadminWeb Service Failed (Mock)", func(t *testing.T) {
 		// Mock the builder
-		originalBuild := buildMultiAdminWebService
-		defer func() { buildMultiAdminWebService = originalBuild }()
+		originalBuild := buildMultiadminWebService
+		defer func() { buildMultiadminWebService = originalBuild }()
 
-		buildMultiAdminWebService = func(_ *multigresv1alpha1.MultigresCluster, _ *multigresv1alpha1.ExternalAdminWebConfig, _ *runtime.Scheme) (*corev1.Service, error) {
+		buildMultiadminWebService = func(_ *multigresv1alpha1.MultigresCluster, _ *multigresv1alpha1.ExternalAdminWebConfig, _ *runtime.Scheme) (*corev1.Service, error) {
 			return nil, errors.New("mocked builder error")
 		}
 
@@ -1013,7 +1013,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		res := resolver.NewResolver(c, baseCluster.Namespace)
-		err := reconciler.reconcileMultiAdminWeb(t.Context(), cluster, res)
+		err := reconciler.reconcileMultiadminWeb(t.Context(), cluster, res)
 		if err == nil {
 			t.Error("Expected error, got nil")
 		} else if !strings.Contains(err.Error(), "failed to build multiadmin-web service") {
@@ -1021,11 +1021,11 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiGateway Global Service Failed (Mock)", func(t *testing.T) {
-		originalBuild := buildMultiGatewayGlobalService
-		defer func() { buildMultiGatewayGlobalService = originalBuild }()
+	t.Run("Error: Build Multigateway Global Service Failed (Mock)", func(t *testing.T) {
+		originalBuild := buildMultigatewayGlobalService
+		defer func() { buildMultigatewayGlobalService = originalBuild }()
 
-		buildMultiGatewayGlobalService = func(_ *multigresv1alpha1.MultigresCluster, _ *multigresv1alpha1.ExternalGatewayConfig, _ *runtime.Scheme) (*corev1.Service, error) {
+		buildMultigatewayGlobalService = func(_ *multigresv1alpha1.MultigresCluster, _ *multigresv1alpha1.ExternalGatewayConfig, _ *runtime.Scheme) (*corev1.Service, error) {
 			return nil, errors.New("mocked builder error")
 		}
 
@@ -1046,7 +1046,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		res := resolver.NewResolver(c, baseCluster.Namespace)
-		err := reconciler.reconcileMultiAdminWeb(t.Context(), cluster, res)
+		err := reconciler.reconcileMultiadminWeb(t.Context(), cluster, res)
 		if err == nil {
 			t.Error("Expected error, got nil")
 		} else if !strings.Contains(err.Error(), "failed to build global multigateway service") {
@@ -1054,11 +1054,11 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("Error: Build MultiGateway Global Replica Service Failed (Mock)", func(t *testing.T) {
-		originalBuild := buildMultiGatewayGlobalReplicaService
-		defer func() { buildMultiGatewayGlobalReplicaService = originalBuild }()
+	t.Run("Error: Build Multigateway Global Replica Service Failed (Mock)", func(t *testing.T) {
+		originalBuild := buildMultigatewayGlobalReplicaService
+		defer func() { buildMultigatewayGlobalReplicaService = originalBuild }()
 
-		buildMultiGatewayGlobalReplicaService = func(_ *multigresv1alpha1.MultigresCluster, _ *runtime.Scheme) (*corev1.Service, error) {
+		buildMultigatewayGlobalReplicaService = func(_ *multigresv1alpha1.MultigresCluster, _ *runtime.Scheme) (*corev1.Service, error) {
 			return nil, errors.New("mocked builder error")
 		}
 
@@ -1079,7 +1079,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		res := resolver.NewResolver(c, baseCluster.Namespace)
-		err := reconciler.reconcileMultiAdminWeb(t.Context(), cluster, res)
+		err := reconciler.reconcileMultiadminWeb(t.Context(), cluster, res)
 		if err == nil {
 			t.Error("Expected error, got nil")
 		} else if !strings.Contains(err.Error(), "failed to build global replica multigateway service") {

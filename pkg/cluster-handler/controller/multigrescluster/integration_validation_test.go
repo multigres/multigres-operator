@@ -34,13 +34,13 @@ func TestMultigresCluster_Validation(t *testing.T) {
 		}
 	})
 
-	t.Run("MultiAdmin XOR Violation (Should Fail)", func(t *testing.T) {
+	t.Run("Multiadmin XOR Violation (Should Fail)", func(t *testing.T) {
 		t.Parallel()
 		k8sClient, _ := setupIntegration(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "fail-xor-admin", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					Spec:        &multigresv1alpha1.StatelessSpec{},
 					TemplateRef: "some-template",
 				},
@@ -49,7 +49,7 @@ func TestMultigresCluster_Validation(t *testing.T) {
 		setTestPostgresPasswordSecretRef(cluster)
 		err := k8sClient.Create(t.Context(), cluster)
 		if err == nil {
-			t.Fatal("Expected error creating cluster with MultiAdmin XOR violation, got nil")
+			t.Fatal("Expected error creating cluster with Multiadmin XOR violation, got nil")
 		}
 		if !strings.Contains(err.Error(), "cannot specify both") {
 			t.Errorf("Expected CEL validation error, got: %v", err)

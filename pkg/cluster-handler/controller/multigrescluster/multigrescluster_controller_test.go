@@ -247,7 +247,7 @@ func setupFixtures(tb testing.TB) (
 					Replicas: ptr.To(int32(3)),
 				},
 			},
-			MultiAdmin: &multigresv1alpha1.StatelessSpec{
+			Multiadmin: &multigresv1alpha1.StatelessSpec{
 				Replicas: ptr.To(int32(1)),
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("100m")},
@@ -260,7 +260,7 @@ func setupFixtures(tb testing.TB) (
 	cellTpl := &multigresv1alpha1.CellTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default-cell", Namespace: namespace},
 		Spec: multigresv1alpha1.CellTemplateSpec{
-			MultiGateway: &multigresv1alpha1.StatelessSpec{
+			Multigateway: &multigresv1alpha1.StatelessSpec{
 				Replicas: ptr.To(int32(2)),
 			},
 		},
@@ -270,7 +270,7 @@ func setupFixtures(tb testing.TB) (
 	shardTpl := &multigresv1alpha1.ShardTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default-shard", Namespace: namespace},
 		Spec: multigresv1alpha1.ShardTemplateSpec{
-			MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+			Multiorch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas: ptr.To(int32(3)),
 				},
@@ -300,10 +300,10 @@ func setupFixtures(tb testing.TB) (
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
 			Images: multigresv1alpha1.ClusterImages{
-				MultiGateway:     "gateway:latest",
-				MultiOrch:        "orch:latest",
-				MultiPooler:      "pooler:latest",
-				MultiAdmin:       "admin:latest",
+				Multigateway:     "gateway:latest",
+				Multiorch:        "orch:latest",
+				Multipooler:      "pooler:latest",
+				Multiadmin:       "admin:latest",
 				Postgres:         "postgres:15",
 				ImagePullPolicy:  corev1.PullAlways,
 				ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
@@ -316,7 +316,7 @@ func setupFixtures(tb testing.TB) (
 			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 				TemplateRef: "default-core",
 			},
-			MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+			Multiadmin: &multigresv1alpha1.MultiadminConfig{
 				TemplateRef: "default-core",
 			},
 			Cells: []multigresv1alpha1.CellConfig{
@@ -370,7 +370,7 @@ func TestMultigresClusterReconciler_Lifecycle(t *testing.T) {
 				); err != nil {
 					t.Fatalf("Expected Cell %s to exist: %v", cellName, err)
 				}
-				if got, want := cell.Spec.Images.MultiGateway, multigresv1alpha1.ImageRef(
+				if got, want := cell.Spec.Images.Multigateway, multigresv1alpha1.ImageRef(
 					"gateway:latest",
 				); got != want {
 					t.Errorf("Cell image mismatch got %q, want %q", got, want)
@@ -1020,7 +1020,7 @@ func TestCollectResolvedTemplates(t *testing.T) {
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 					TemplateRef: "gts-core",
 				},
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					TemplateRef: "admin-core",
 				},
 				Cells: []multigresv1alpha1.CellConfig{
@@ -1068,7 +1068,7 @@ func TestCollectResolvedTemplates(t *testing.T) {
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 					TemplateRef: "same-core",
 				},
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					TemplateRef: "same-core",
 				},
 				Cells: []multigresv1alpha1.CellConfig{
@@ -1124,10 +1124,10 @@ func TestCollectResolvedTemplates(t *testing.T) {
 		}
 	})
 
-	t.Run("MultiAdminWeb templateRef included", func(t *testing.T) {
+	t.Run("MultiadminWeb templateRef included", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{
+				MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{
 					TemplateRef: "web-core",
 				},
 			},
@@ -1250,10 +1250,10 @@ func TestCollectTrackingLabels(t *testing.T) {
 		}
 	})
 
-	t.Run("Core from MultiAdminWeb templateRef", func(t *testing.T) {
+	t.Run("Core from MultiadminWeb templateRef", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{
+				MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{
 					TemplateRef: "web-core",
 				},
 			},
@@ -1262,7 +1262,7 @@ func TestCollectTrackingLabels(t *testing.T) {
 		labels := collectTrackingLabels(cluster)
 
 		if labels[metadata.LabelUsesCoreTemplate] != "true" {
-			t.Error("Expected uses-core-template=true from MultiAdminWeb ref")
+			t.Error("Expected uses-core-template=true from MultiadminWeb ref")
 		}
 	})
 }

@@ -52,8 +52,8 @@ func setupFixtures(
 			DatabaseName:   multigresv1alpha1.DatabaseName(dbName),
 			TableGroupName: multigresv1alpha1.TableGroupName(tgLabelName),
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch:   "orch:v1",
-				MultiPooler: "pooler:v1",
+				Multiorch:   "orch:v1",
+				Multipooler: "pooler:v1",
 				Postgres:    "pg:15",
 			},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -62,7 +62,7 @@ func setupFixtures(
 			Shards: []multigresv1alpha1.ShardResolvedSpec{
 				{
 					Name: "shard-0",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas: ptr.To(int32(1)),
 						},
@@ -322,7 +322,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 		"Update: Shard Update Success": {
 			tableGroup: baseTG.DeepCopy(),
 			preReconcileUpdate: func(t testing.TB, tg *multigresv1alpha1.TableGroup) {
-				tg.Spec.Shards[0].MultiOrch.Replicas = ptr.To(int32(5))
+				tg.Spec.Shards[0].Multiorch.Replicas = ptr.To(int32(5))
 			},
 			existingObjects: []client.Object{
 				&multigresv1alpha1.Shard{
@@ -360,7 +360,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				); err != nil {
 					t.Fatal(err)
 				}
-				if *shard.Spec.MultiOrch.Replicas != 5 {
+				if *shard.Spec.Multiorch.Replicas != 5 {
 					t.Errorf("Shard replicas not updated")
 				}
 			},
@@ -851,8 +851,8 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 			TableGroupName: multigresv1alpha1.TableGroupName(tgLabelName),
 			IsDefault:      true,
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch:   "orch:v1",
-				MultiPooler: "pooler:v1",
+				Multiorch:   "orch:v1",
+				Multipooler: "pooler:v1",
 				Postgres:    "pg:15",
 			},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -861,7 +861,7 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 			Shards: []multigresv1alpha1.ShardResolvedSpec{
 				{
 					Name: shardName,
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas: ptr.To(int32(1)),
 						},

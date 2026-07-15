@@ -109,7 +109,7 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 		&multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 		},
 		&multigresv1alpha1.ShardTemplate{
@@ -153,7 +153,7 @@ func clusterLabels(t testing.TB, clusterName, oldApp, cell string) map[string]st
 	if cell != "" {
 		component = metadata.ComponentCell
 	} else if oldApp == "multiadmin" {
-		component = metadata.ComponentMultiAdmin
+		component = metadata.ComponentMultiadmin
 	} else if oldApp != "" {
 		component = oldApp
 	} else {
@@ -209,10 +209,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					Images: multigresv1alpha1.ClusterImages{
-						MultiGateway:     "gateway:latest",
-						MultiOrch:        "orch:latest",
-						MultiPooler:      "pooler:latest",
-						MultiAdmin:       "admin:latest",
+						Multigateway:     "gateway:latest",
+						Multiorch:        "orch:latest",
+						Multipooler:      "pooler:latest",
+						Multiadmin:       "admin:latest",
 						Postgres:         "postgres:15",
 						ImagePullPolicy:  corev1.PullAlways,
 						ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
@@ -220,12 +220,12 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:latest"},
 					},
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Cells: []multigresv1alpha1.CellConfig{
 						{Name: "zone-a", ZoneID: "use1-az1", Spec: &multigresv1alpha1.CellInlineSpec{
-							MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+							Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 						}},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{
@@ -239,7 +239,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 									Shards: []multigresv1alpha1.ShardConfig{{
 										Name: "0-inf",
 										Spec: &multigresv1alpha1.ShardInlineSpec{
-											MultiOrch: multigresv1alpha1.MultiOrchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+											Multiorch: multigresv1alpha1.MultiorchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 											Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 												"primary": {
 													ReplicasPerCell: ptr.To(int32(3)),
@@ -278,7 +278,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						},
 					},
 				},
-				// 2. MultiAdmin Deployment
+				// 2. Multiadmin Deployment
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            clusterName + "-multiadmin",
@@ -371,7 +371,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						},
 					},
 				},
-				// 3. MultiAdminWeb Deployment
+				// 3. MultiadminWeb Deployment
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            clusterName + "-multiadmin-web",
@@ -380,7 +380,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						OwnerReferences: clusterOwnerRefs(t, clusterName),
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: ptr.To(resolver.DefaultMultiAdminWebReplicas), // Defaults
+						Replicas: ptr.To(resolver.DefaultMultiadminWebReplicas), // Defaults
 						Selector: &metav1.LabelSelector{
 							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, clusterName, "multiadmin-web", "")),
 						},
@@ -393,7 +393,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin-web",
-										Image: resolver.DefaultMultiAdminWebImage, // Default
+										Image: resolver.DefaultMultiadminWebImage, // Default
 										Ports: []corev1.ContainerPort{
 											{
 												Name:          "http",
@@ -465,7 +465,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: corev1.ServiceSpec{
 						Selector: map[string]string{
-							metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+							metadata.LabelAppComponent: metadata.ComponentMultigateway,
 							metadata.LabelAppInstance:  clusterName,
 						},
 						Type: corev1.ServiceTypeClusterIP,
@@ -491,11 +491,11 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Name:   "zone-a",
 						ZoneID: "use1-az1",
 						Images: multigresv1alpha1.CellImages{
-							MultiGateway:     "gateway:latest",
+							Multigateway:     "gateway:latest",
 							ImagePullPolicy:  corev1.PullAlways,
 							ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
 						},
-						MultiGateway: multigresv1alpha1.StatelessSpec{
+						Multigateway: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),
 							Resources: resolver.DefaultResourcesGateway(), // Expected default
 						},
@@ -541,8 +541,8 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						TableGroupName: "default",
 						IsDefault:      true,
 						Images: multigresv1alpha1.ShardImages{
-							MultiOrch:        "orch:latest",
-							MultiPooler:      "pooler:latest",
+							Multiorch:        "orch:latest",
+							Multipooler:      "pooler:latest",
 							Postgres:         "postgres:15",
 							ImagePullPolicy:  corev1.PullAlways,
 							ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
@@ -555,7 +555,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Shards: []multigresv1alpha1.ShardResolvedSpec{
 							{
 								Name: "0-inf",
-								MultiOrch: multigresv1alpha1.MultiOrchSpec{
+								Multiorch: multigresv1alpha1.MultiorchSpec{
 									Cells: []multigresv1alpha1.CellName{"zone-a"},
 									StatelessSpec: multigresv1alpha1.StatelessSpec{
 										Replicas:  ptr.To(int32(1)),
@@ -610,7 +610,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						TemplateRef: "default",
 					},
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						TemplateRef: "default",
 					},
 					Cells: []multigresv1alpha1.CellConfig{
@@ -641,7 +641,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						},
 					},
 				},
-				// 2. MultiAdmin
+				// 2. Multiadmin
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "minimal-cluster-multiadmin",
@@ -662,7 +662,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin",
-										Image: resolver.DefaultMultiAdminImage,
+										Image: resolver.DefaultMultiadminImage,
 										Command: []string{
 											"/multigres/bin/multiadmin",
 										},
@@ -733,7 +733,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						},
 					},
 				},
-				// 2b. MultiAdminWeb Deployment
+				// 2b. MultiadminWeb Deployment
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "minimal-cluster-multiadmin-web",
@@ -742,7 +742,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						OwnerReferences: clusterOwnerRefs(t, "minimal-cluster"),
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: ptr.To(resolver.DefaultMultiAdminWebReplicas),
+						Replicas: ptr.To(resolver.DefaultMultiadminWebReplicas),
 						Selector: &metav1.LabelSelector{
 							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "minimal-cluster", "multiadmin-web", "")),
 						},
@@ -754,7 +754,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin-web",
-										Image: resolver.DefaultMultiAdminWebImage,
+										Image: resolver.DefaultMultiadminWebImage,
 										Ports: []corev1.ContainerPort{
 											{
 												Name:          "http",
@@ -826,7 +826,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: corev1.ServiceSpec{
 						Selector: map[string]string{
-							metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+							metadata.LabelAppComponent: metadata.ComponentMultigateway,
 							metadata.LabelAppInstance:  "minimal-cluster",
 						},
 						Type: corev1.ServiceTypeClusterIP,
@@ -852,10 +852,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Name:   "zone-a",
 						ZoneID: "use1-az1",
 						Images: multigresv1alpha1.CellImages{
-							MultiGateway:    resolver.DefaultMultiGatewayImage,
+							Multigateway:    resolver.DefaultMultigatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
-						MultiGateway: multigresv1alpha1.StatelessSpec{
+						Multigateway: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)), // From default template
 							Resources: resolver.DefaultResourcesGateway(),
 						},
@@ -901,8 +901,8 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						TableGroupName: "default",
 						IsDefault:      true,
 						Images: multigresv1alpha1.ShardImages{
-							MultiOrch:       resolver.DefaultMultiOrchImage,
-							MultiPooler:     resolver.DefaultMultiPoolerImage,
+							Multiorch:       resolver.DefaultMultiorchImage,
+							Multipooler:     resolver.DefaultMultipoolerImage,
 							Postgres:        resolver.DefaultPostgresImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
@@ -914,7 +914,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Shards: []multigresv1alpha1.ShardResolvedSpec{
 							{
 								Name: "0-inf",
-								MultiOrch: multigresv1alpha1.MultiOrchSpec{
+								Multiorch: multigresv1alpha1.MultiorchSpec{
 									Cells: []multigresv1alpha1.CellName{"zone-a"},
 									StatelessSpec: multigresv1alpha1.StatelessSpec{
 										Replicas:  ptr.To(int32(1)),
@@ -1000,7 +1000,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						},
 					},
 				},
-				// 2. MultiAdmin (Resolved from default template)
+				// 2. Multiadmin (Resolved from default template)
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "lazy-cluster-multiadmin",
@@ -1021,7 +1021,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin",
-										Image: resolver.DefaultMultiAdminImage,
+										Image: resolver.DefaultMultiadminImage,
 										Command: []string{
 											"/multigres/bin/multiadmin",
 										},
@@ -1092,7 +1092,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						},
 					},
 				},
-				// 2b. MultiAdminWeb Deployment
+				// 2b. MultiadminWeb Deployment
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "lazy-cluster-multiadmin-web",
@@ -1101,7 +1101,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						OwnerReferences: clusterOwnerRefs(t, "lazy-cluster"),
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: ptr.To(resolver.DefaultMultiAdminWebReplicas),
+						Replicas: ptr.To(resolver.DefaultMultiadminWebReplicas),
 						Selector: &metav1.LabelSelector{
 							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "lazy-cluster", "multiadmin-web", "")),
 						},
@@ -1113,7 +1113,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin-web",
-										Image: resolver.DefaultMultiAdminWebImage,
+										Image: resolver.DefaultMultiadminWebImage,
 										Ports: []corev1.ContainerPort{
 											{
 												Name:          "http",
@@ -1185,7 +1185,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: corev1.ServiceSpec{
 						Selector: map[string]string{
-							metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+							metadata.LabelAppComponent: metadata.ComponentMultigateway,
 							metadata.LabelAppInstance:  "lazy-cluster",
 						},
 						Type: corev1.ServiceTypeClusterIP,
@@ -1211,10 +1211,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Name:   "zone-a",
 						ZoneID: "use1-az1",
 						Images: multigresv1alpha1.CellImages{
-							MultiGateway:    resolver.DefaultMultiGatewayImage,
+							Multigateway:    resolver.DefaultMultigatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
-						MultiGateway: multigresv1alpha1.StatelessSpec{
+						Multigateway: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),
 							Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 						},
@@ -1260,8 +1260,8 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						TableGroupName: "default",
 						IsDefault:      true,
 						Images: multigresv1alpha1.ShardImages{
-							MultiOrch:       resolver.DefaultMultiOrchImage,
-							MultiPooler:     resolver.DefaultMultiPoolerImage,
+							Multiorch:       resolver.DefaultMultiorchImage,
+							Multipooler:     resolver.DefaultMultipoolerImage,
 							Postgres:        resolver.DefaultPostgresImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
@@ -1273,7 +1273,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Shards: []multigresv1alpha1.ShardResolvedSpec{
 							{
 								Name: "0-inf",
-								MultiOrch: multigresv1alpha1.MultiOrchSpec{
+								Multiorch: multigresv1alpha1.MultiorchSpec{
 									Cells: []multigresv1alpha1.CellName{"zone-a"},
 									StatelessSpec: multigresv1alpha1.StatelessSpec{
 										Replicas:  ptr.To(int32(1)),

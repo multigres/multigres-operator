@@ -93,7 +93,7 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 				// We no longer need to manually infer or sort here, just trust the resolver.
 				resolvedShards = append(resolvedShards, multigresv1alpha1.ShardResolvedSpec{
 					Name:              string(shard.Name),
-					MultiOrch:         *orch,
+					Multiorch:         *orch,
 					InitdbArgs:        initdbArgs,
 					PostgresConfigRef: postgresConfigRef,
 					Pools:             pools,

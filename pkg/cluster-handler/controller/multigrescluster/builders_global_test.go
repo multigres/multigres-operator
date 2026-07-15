@@ -84,7 +84,7 @@ func TestBuildGlobalTopoServer(t *testing.T) {
 	})
 }
 
-func TestBuildMultiAdminDeployment(t *testing.T) {
+func TestBuildMultiadminDeployment(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -96,7 +96,7 @@ func TestBuildMultiAdminDeployment(t *testing.T) {
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
 			Images: multigresv1alpha1.ClusterImages{
-				MultiAdmin: "multiadmin:latest",
+				Multiadmin: "multiadmin:latest",
 			},
 		},
 	}
@@ -108,9 +108,9 @@ func TestBuildMultiAdminDeployment(t *testing.T) {
 	}
 
 	t.Run("Success", func(t *testing.T) {
-		got, err := BuildMultiAdminDeployment(cluster, spec, scheme)
+		got, err := BuildMultiadminDeployment(cluster, spec, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiAdminDeployment() error = %v", err)
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
 
 		if got.Name != "my-cluster-multiadmin" {
@@ -163,9 +163,9 @@ func TestBuildMultiAdminDeployment(t *testing.T) {
 				Key:  "sampling-config.yaml",
 			},
 		}
-		got, err := BuildMultiAdminDeployment(obsCluster, spec, scheme)
+		got, err := BuildMultiadminDeployment(obsCluster, spec, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiAdminDeployment() error = %v", err)
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
 		if len(got.Spec.Template.Spec.Volumes) == 0 {
 			t.Errorf("Expected OTEL volume to be added")
@@ -177,14 +177,14 @@ func TestBuildMultiAdminDeployment(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiAdminDeployment(cluster, spec, emptyScheme)
+		_, err := BuildMultiadminDeployment(cluster, spec, emptyScheme)
 		if err == nil {
 			t.Error("Expected error due to missing scheme types, got nil")
 		}
 	})
 }
 
-func TestBuildMultiAdminWebDeployment(t *testing.T) {
+func TestBuildMultiadminWebDeployment(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -196,7 +196,7 @@ func TestBuildMultiAdminWebDeployment(t *testing.T) {
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
 			Images: multigresv1alpha1.ClusterImages{
-				MultiAdminWeb: "multiadmin-web:latest",
+				MultiadminWeb: "multiadmin-web:latest",
 			},
 		},
 	}
@@ -208,9 +208,9 @@ func TestBuildMultiAdminWebDeployment(t *testing.T) {
 	}
 
 	t.Run("Success", func(t *testing.T) {
-		got, err := BuildMultiAdminWebDeployment(cluster, spec, scheme)
+		got, err := BuildMultiadminWebDeployment(cluster, spec, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiAdminWebDeployment() error = %v", err)
+			t.Fatalf("BuildMultiadminWebDeployment() error = %v", err)
 		}
 
 		if got.Name != "my-cluster-multiadmin-web" {
@@ -282,9 +282,9 @@ func TestBuildMultiAdminWebDeployment(t *testing.T) {
 	t.Run("CustomPostgresSuperuser", func(t *testing.T) {
 		c := *cluster
 		c.Spec.PostgresSuperuser = "admin"
-		got, err := BuildMultiAdminWebDeployment(&c, spec, scheme)
+		got, err := BuildMultiadminWebDeployment(&c, spec, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiAdminWebDeployment() error = %v", err)
+			t.Fatalf("BuildMultiadminWebDeployment() error = %v", err)
 		}
 		found := false
 		for _, ev := range got.Spec.Template.Spec.Containers[0].Env {
@@ -303,14 +303,14 @@ func TestBuildMultiAdminWebDeployment(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiAdminWebDeployment(cluster, spec, emptyScheme)
+		_, err := BuildMultiadminWebDeployment(cluster, spec, emptyScheme)
 		if err == nil {
 			t.Error("Expected error due to missing scheme types, got nil")
 		}
 	})
 }
 
-func TestBuildMultiAdminWebService(t *testing.T) {
+func TestBuildMultiadminWebService(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -403,7 +403,7 @@ func TestBuildMultiAdminWebService(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := BuildMultiAdminWebService(cluster, tc.extAW, scheme)
+			got, err := BuildMultiadminWebService(cluster, tc.extAW, scheme)
 			require.NoError(t, err)
 
 			assert.Equal(t, "my-cluster-multiadmin-web", got.Name)
@@ -436,7 +436,7 @@ func TestBuildMultiAdminWebService(t *testing.T) {
 				"team.example.com/owner": "platform-engineering",
 			},
 		}
-		enabled, err := BuildMultiAdminWebService(cluster, enabledCfg, scheme)
+		enabled, err := BuildMultiadminWebService(cluster, enabledCfg, scheme)
 		require.NoError(t, err)
 		assert.Equal(t, corev1.ServiceTypeClusterIP, enabled.Spec.Type)
 		assert.Equal(
@@ -446,7 +446,7 @@ func TestBuildMultiAdminWebService(t *testing.T) {
 		)
 
 		disabledCfg := &multigresv1alpha1.ExternalAdminWebConfig{Enabled: false}
-		disabled, err := BuildMultiAdminWebService(cluster, disabledCfg, scheme)
+		disabled, err := BuildMultiadminWebService(cluster, disabledCfg, scheme)
 		require.NoError(t, err)
 		assert.Equal(t, corev1.ServiceTypeClusterIP, disabled.Spec.Type)
 		assert.Empty(t, disabled.Annotations)
@@ -454,12 +454,12 @@ func TestBuildMultiAdminWebService(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiAdminWebService(cluster, nil, emptyScheme)
+		_, err := BuildMultiadminWebService(cluster, nil, emptyScheme)
 		assert.Error(t, err)
 	})
 }
 
-func TestBuildMultiAdminService(t *testing.T) {
+func TestBuildMultiadminService(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -473,9 +473,9 @@ func TestBuildMultiAdminService(t *testing.T) {
 	}
 
 	t.Run("Success", func(t *testing.T) {
-		got, err := BuildMultiAdminService(cluster, scheme)
+		got, err := BuildMultiadminService(cluster, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiAdminService() error = %v", err)
+			t.Fatalf("BuildMultiadminService() error = %v", err)
 		}
 
 		if got.Name != "my-cluster-multiadmin" {
@@ -490,14 +490,14 @@ func TestBuildMultiAdminService(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiAdminService(cluster, emptyScheme)
+		_, err := BuildMultiadminService(cluster, emptyScheme)
 		if err == nil {
 			t.Error("Expected error due to missing scheme types, got nil")
 		}
 	})
 }
 
-func TestBuildMultiGatewayGlobalService(t *testing.T) {
+func TestBuildMultigatewayGlobalService(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -597,7 +597,7 @@ func TestBuildMultiGatewayGlobalService(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := BuildMultiGatewayGlobalService(cluster, tc.extGw, scheme)
+			got, err := BuildMultigatewayGlobalService(cluster, tc.extGw, scheme)
 			require.NoError(t, err)
 
 			// Name and namespace
@@ -644,7 +644,7 @@ func TestBuildMultiGatewayGlobalService(t *testing.T) {
 				"team.example.com/owner": "platform-engineering",
 			},
 		}
-		enabled, err := BuildMultiGatewayGlobalService(cluster, enabledCfg, scheme)
+		enabled, err := BuildMultigatewayGlobalService(cluster, enabledCfg, scheme)
 		require.NoError(t, err)
 		assert.Equal(t, corev1.ServiceTypeClusterIP, enabled.Spec.Type)
 		assert.Equal(
@@ -655,7 +655,7 @@ func TestBuildMultiGatewayGlobalService(t *testing.T) {
 
 		// Build with disabled config; previously-set gateway annotations absent
 		disabledCfg := &multigresv1alpha1.ExternalGatewayConfig{Enabled: false}
-		disabled, err := BuildMultiGatewayGlobalService(cluster, disabledCfg, scheme)
+		disabled, err := BuildMultigatewayGlobalService(cluster, disabledCfg, scheme)
 		require.NoError(t, err)
 		assert.Equal(t, corev1.ServiceTypeClusterIP, disabled.Spec.Type)
 		assert.Empty(t, disabled.Annotations)
@@ -663,12 +663,12 @@ func TestBuildMultiGatewayGlobalService(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiGatewayGlobalService(cluster, nil, emptyScheme)
+		_, err := BuildMultigatewayGlobalService(cluster, nil, emptyScheme)
 		assert.Error(t, err)
 	})
 }
 
-func TestBuildMultiGatewayGlobalReplicaService(t *testing.T) {
+func TestBuildMultigatewayGlobalReplicaService(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -681,7 +681,7 @@ func TestBuildMultiGatewayGlobalReplicaService(t *testing.T) {
 		},
 	}
 
-	got, err := BuildMultiGatewayGlobalReplicaService(cluster, scheme)
+	got, err := BuildMultigatewayGlobalReplicaService(cluster, scheme)
 	require.NoError(t, err)
 
 	assert.Equal(t, "my-cluster-multigateway-replica", got.Name)
@@ -706,7 +706,7 @@ func TestBuildMultiGatewayGlobalReplicaService(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiGatewayGlobalReplicaService(cluster, emptyScheme)
+		_, err := BuildMultigatewayGlobalReplicaService(cluster, emptyScheme)
 		assert.Error(t, err)
 	})
 }

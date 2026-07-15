@@ -49,8 +49,8 @@ func BuildTableGroup(
 			TableGroupName: tgCfg.Name,
 			IsDefault:      tgCfg.Default,
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch:        cluster.Spec.Images.MultiOrch,
-				MultiPooler:      cluster.Spec.Images.MultiPooler,
+				Multiorch:        cluster.Spec.Images.Multiorch,
+				Multipooler:      cluster.Spec.Images.Multipooler,
 				Postgres:         cluster.Spec.Images.Postgres,
 				ImagePullPolicy:  cluster.Spec.Images.ImagePullPolicy,
 				ImagePullSecrets: cluster.Spec.Images.ImagePullSecrets,

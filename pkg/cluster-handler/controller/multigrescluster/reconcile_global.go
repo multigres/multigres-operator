@@ -16,11 +16,11 @@ import (
 
 // Builder function variables to allow mocking in tests
 var (
-	buildMultiAdminService                = BuildMultiAdminService
-	buildMultiAdminWebDeployment          = BuildMultiAdminWebDeployment
-	buildMultiAdminWebService             = BuildMultiAdminWebService
-	buildMultiGatewayGlobalService        = BuildMultiGatewayGlobalService
-	buildMultiGatewayGlobalReplicaService = BuildMultiGatewayGlobalReplicaService
+	buildMultiadminService                = BuildMultiadminService
+	buildMultiadminWebDeployment          = BuildMultiadminWebDeployment
+	buildMultiadminWebService             = BuildMultiadminWebService
+	buildMultigatewayGlobalService        = BuildMultigatewayGlobalService
+	buildMultigatewayGlobalReplicaService = BuildMultigatewayGlobalReplicaService
 )
 
 func (r *MultigresClusterReconciler) reconcileGlobalComponents(
@@ -31,10 +31,10 @@ func (r *MultigresClusterReconciler) reconcileGlobalComponents(
 	if err := r.reconcileGlobalTopoServer(ctx, cluster, res); err != nil {
 		return err
 	}
-	if err := r.reconcileMultiAdmin(ctx, cluster, res); err != nil {
+	if err := r.reconcileMultiadmin(ctx, cluster, res); err != nil {
 		return err
 	}
-	if err := r.reconcileMultiAdminWeb(ctx, cluster, res); err != nil {
+	if err := r.reconcileMultiadminWeb(ctx, cluster, res); err != nil {
 		return err
 	}
 	return nil
@@ -101,19 +101,19 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 	return nil
 }
 
-// reconcileMultiAdmin reconciles the MultiAdmin Deployment.
-func (r *MultigresClusterReconciler) reconcileMultiAdmin(
+// reconcileMultiadmin reconciles the Multiadmin Deployment.
+func (r *MultigresClusterReconciler) reconcileMultiadmin(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 	res *resolver.Resolver,
 ) error {
-	spec, err := res.ResolveMultiAdmin(ctx, cluster)
+	spec, err := res.ResolveMultiadmin(ctx, cluster)
 	if err != nil {
 		r.Recorder.Event(cluster, "Warning", "TemplateMissing", err.Error())
 		return fmt.Errorf("failed to resolve multiadmin: %w", err)
 	}
 
-	desired, err := BuildMultiAdminDeployment(cluster, spec, r.Scheme)
+	desired, err := BuildMultiadminDeployment(cluster, spec, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build multiadmin deployment: %w", err)
 	}
@@ -134,12 +134,12 @@ func (r *MultigresClusterReconciler) reconcileMultiAdmin(
 		cluster,
 		"Normal",
 		"Applied",
-		"Applied MultiAdmin Deployment %s",
+		"Applied Multiadmin Deployment %s",
 		desired.Name,
 	)
 
 	// Reconcile Service
-	desiredSvc, err := buildMultiAdminService(cluster, r.Scheme)
+	desiredSvc, err := buildMultiadminService(cluster, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build multiadmin service: %w", err)
 	}
@@ -195,20 +195,20 @@ func (r *MultigresClusterReconciler) globalTopoRef(
 	}, nil
 }
 
-// reconcileMultiAdminWeb reconciles the MultiAdminWeb Deployment and Service.
-func (r *MultigresClusterReconciler) reconcileMultiAdminWeb(
+// reconcileMultiadminWeb reconciles the MultiadminWeb Deployment and Service.
+func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 	res *resolver.Resolver,
 ) error {
-	spec, err := res.ResolveMultiAdminWeb(ctx, cluster)
+	spec, err := res.ResolveMultiadminWeb(ctx, cluster)
 	if err != nil {
 		r.Recorder.Event(cluster, "Warning", "TemplateMissing", err.Error())
 		return fmt.Errorf("failed to resolve multiadmin-web: %w", err)
 	}
 
 	// 1. Reconcile Deployment
-	desiredDeploy, err := buildMultiAdminWebDeployment(cluster, spec, r.Scheme)
+	desiredDeploy, err := buildMultiadminWebDeployment(cluster, spec, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build multiadmin-web deployment: %w", err)
 	}
@@ -228,12 +228,12 @@ func (r *MultigresClusterReconciler) reconcileMultiAdminWeb(
 		cluster,
 		"Normal",
 		"Applied",
-		"Applied MultiAdminWeb Deployment %s",
+		"Applied MultiadminWeb Deployment %s",
 		desiredDeploy.Name,
 	)
 
 	// 2. Reconcile Service
-	desiredSvc, err := buildMultiAdminWebService(cluster, cluster.Spec.ExternalAdminWeb, r.Scheme)
+	desiredSvc, err := buildMultiadminWebService(cluster, cluster.Spec.ExternalAdminWeb, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build multiadmin-web service: %w", err)
 	}
@@ -250,7 +250,7 @@ func (r *MultigresClusterReconciler) reconcileMultiAdminWeb(
 	}
 
 	// 3. Reconcile global multigateway Service
-	desiredGwSvc, err := buildMultiGatewayGlobalService(
+	desiredGwSvc, err := buildMultigatewayGlobalService(
 		cluster,
 		cluster.Spec.ExternalGateway,
 		r.Scheme,
@@ -271,7 +271,7 @@ func (r *MultigresClusterReconciler) reconcileMultiAdminWeb(
 	}
 
 	// 4. Reconcile global replica-read multigateway Service
-	desiredReplicaGwSvc, err := buildMultiGatewayGlobalReplicaService(cluster, r.Scheme)
+	desiredReplicaGwSvc, err := buildMultigatewayGlobalReplicaService(cluster, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build global replica multigateway service: %w", err)
 	}

@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	globalMultiGatewayReplicaPort       int32 = 5433
-	globalMultiGatewayReplicaTargetPort       = "pg-replica"
+	globalMultigatewayReplicaPort       int32 = 5433
+	globalMultigatewayReplicaTargetPort       = "pg-replica"
 )
 
 // BuildGlobalTopoServer constructs the desired TopoServer for the global topology.
@@ -82,15 +82,15 @@ func BuildGlobalTopoServer(
 	return ts, nil
 }
 
-// BuildMultiAdminDeployment constructs the desired MultiAdmin Deployment.
-// Note: We do NOT use safe hashing here because MultiAdmin is a singleton resource
+// BuildMultiadminDeployment constructs the desired Multiadmin Deployment.
+// Note: We do NOT use safe hashing here because Multiadmin is a singleton resource
 // per cluster with a predictable name pattern that is unlikely to exceed length limits.
-func BuildMultiAdminDeployment(
+func BuildMultiadminDeployment(
 	cluster *multigresv1alpha1.MultigresCluster,
 	spec *multigresv1alpha1.StatelessSpec,
 	scheme *runtime.Scheme,
 ) (*appsv1.Deployment, error) {
-	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiAdmin)
+	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiadmin)
 	metadata.AddClusterLabel(standardLabels, cluster.Name)
 
 	// Merge with user provided pod labels, but standard labels take precedence
@@ -117,7 +117,7 @@ func BuildMultiAdminDeployment(
 					Containers: []corev1.Container{
 						{
 							Name:  "multiadmin",
-							Image: string(cluster.Spec.Images.MultiAdmin),
+							Image: string(cluster.Spec.Images.Multiadmin),
 							Command: []string{
 								"/multigres/bin/multiadmin",
 							},
@@ -201,12 +201,12 @@ func BuildMultiAdminDeployment(
 	return deploy, nil
 }
 
-// BuildMultiAdminService constructs the desired Service for MultiAdmin.
-func BuildMultiAdminService(
+// BuildMultiadminService constructs the desired Service for Multiadmin.
+func BuildMultiadminService(
 	cluster *multigresv1alpha1.MultigresCluster,
 	scheme *runtime.Scheme,
 ) (*corev1.Service, error) {
-	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiAdmin)
+	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiadmin)
 	metadata.AddClusterLabel(standardLabels, cluster.Name)
 
 	svc := &corev1.Service{
@@ -242,13 +242,13 @@ func BuildMultiAdminService(
 	return svc, nil
 }
 
-// BuildMultiAdminWebDeployment constructs the desired MultiAdminWeb Deployment.
-func BuildMultiAdminWebDeployment(
+// BuildMultiadminWebDeployment constructs the desired MultiadminWeb Deployment.
+func BuildMultiadminWebDeployment(
 	cluster *multigresv1alpha1.MultigresCluster,
 	spec *multigresv1alpha1.StatelessSpec,
 	scheme *runtime.Scheme,
 ) (*appsv1.Deployment, error) {
-	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiAdminWeb)
+	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiadminWeb)
 	metadata.AddClusterLabel(standardLabels, cluster.Name)
 
 	// Merge with user provided pod labels, but standard labels take precedence
@@ -275,7 +275,7 @@ func BuildMultiAdminWebDeployment(
 					Containers: []corev1.Container{
 						{
 							Name:  "multiadmin-web",
-							Image: string(cluster.Spec.Images.MultiAdminWeb),
+							Image: string(cluster.Spec.Images.MultiadminWeb),
 							Env: []corev1.EnvVar{
 								{
 									Name:  "HOSTNAME",
@@ -355,13 +355,13 @@ func BuildMultiAdminWebDeployment(
 	return deploy, nil
 }
 
-// BuildMultiAdminWebService constructs the desired Service for MultiAdminWeb.
-func BuildMultiAdminWebService(
+// BuildMultiadminWebService constructs the desired Service for MultiadminWeb.
+func BuildMultiadminWebService(
 	cluster *multigresv1alpha1.MultigresCluster,
 	extAW *multigresv1alpha1.ExternalAdminWebConfig,
 	scheme *runtime.Scheme,
 ) (*corev1.Service, error) {
-	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiAdminWeb)
+	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiadminWeb)
 	metadata.AddClusterLabel(standardLabels, cluster.Name)
 
 	var annotations map[string]string
@@ -410,22 +410,22 @@ func BuildMultiAdminWebService(
 	return svc, nil
 }
 
-// BuildMultiGatewayGlobalService constructs a cluster-level Service that selects
+// BuildMultigatewayGlobalService constructs a cluster-level Service that selects
 // all multigateway pods across all cells. This provides a stable DNS name for
 // multiadmin-web to connect to PostgreSQL via any available multigateway,
 // regardless of which cells exist.
-func BuildMultiGatewayGlobalService(
+func BuildMultigatewayGlobalService(
 	cluster *multigresv1alpha1.MultigresCluster,
 	extGw *multigresv1alpha1.ExternalGatewayConfig,
 	scheme *runtime.Scheme,
 ) (*corev1.Service, error) {
-	labels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiGateway)
+	labels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultigateway)
 	metadata.AddClusterLabel(labels, cluster.Name)
 
 	// The selector intentionally omits the cell label so it matches
 	// multigateway pods from all cells in this cluster.
 	selector := map[string]string{
-		metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+		metadata.LabelAppComponent: metadata.ComponentMultigateway,
 		metadata.LabelAppInstance:  cluster.Name,
 	}
 
@@ -476,17 +476,17 @@ func BuildMultiGatewayGlobalService(
 	return svc, nil
 }
 
-// BuildMultiGatewayGlobalReplicaService constructs a cluster-level Service that
+// BuildMultigatewayGlobalReplicaService constructs a cluster-level Service that
 // selects all multigateway pods across all cells and exposes the replica-read endpoint.
-func BuildMultiGatewayGlobalReplicaService(
+func BuildMultigatewayGlobalReplicaService(
 	cluster *multigresv1alpha1.MultigresCluster,
 	scheme *runtime.Scheme,
 ) (*corev1.Service, error) {
-	labels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiGateway)
+	labels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultigateway)
 	metadata.AddClusterLabel(labels, cluster.Name)
 
 	selector := map[string]string{
-		metadata.LabelAppComponent: metadata.ComponentMultiGateway,
+		metadata.LabelAppComponent: metadata.ComponentMultigateway,
 		metadata.LabelAppInstance:  cluster.Name,
 	}
 
@@ -502,8 +502,8 @@ func BuildMultiGatewayGlobalReplicaService(
 			Ports: []corev1.ServicePort{
 				{
 					Name:       "pg-replica",
-					Port:       globalMultiGatewayReplicaPort,
-					TargetPort: intstr.FromString(globalMultiGatewayReplicaTargetPort),
+					Port:       globalMultigatewayReplicaPort,
+					TargetPort: intstr.FromString(globalMultigatewayReplicaTargetPort),
 					Protocol:   corev1.ProtocolTCP,
 				},
 			},

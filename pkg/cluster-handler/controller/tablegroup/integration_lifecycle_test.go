@@ -80,14 +80,14 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				DatabaseName: "db1", TableGroupName: "tg1",
 				GlobalTopoServer: globalTopo,
 				Images: multigresv1alpha1.ShardImages{
-					MultiOrch:   "orch:latest",
-					MultiPooler: "pooler:latest",
+					Multiorch:   "orch:latest",
+					Multipooler: "pooler:latest",
 					Postgres:    "postgres:15",
 				},
 				Shards: []multigresv1alpha1.ShardResolvedSpec{
 					{
 						Name: "keep-me",
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
 								Replicas: ptr.To(int32(1)),
 							},
@@ -96,7 +96,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 					},
 					{
 						Name: "delete-me",
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
 								Replicas: ptr.To(int32(1)),
 							},
@@ -134,11 +134,11 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				ShardName:        "keep-me",
 				GlobalTopoServer: globalTopo,
 				Images: multigresv1alpha1.ShardImages{
-					MultiOrch:   "orch:latest",
-					MultiPooler: "pooler:latest",
+					Multiorch:   "orch:latest",
+					Multipooler: "pooler:latest",
 					Postgres:    "postgres:15",
 				},
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 				},
 				Pools:    map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -162,11 +162,11 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				ShardName:        "delete-me",
 				GlobalTopoServer: globalTopo,
 				Images: multigresv1alpha1.ShardImages{
-					MultiOrch:   "orch:latest",
-					MultiPooler: "pooler:latest",
+					Multiorch:   "orch:latest",
+					Multipooler: "pooler:latest",
 					Postgres:    "postgres:15",
 				},
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 				},
 				Pools:    map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -193,7 +193,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			tg.Spec.Shards = []multigresv1alpha1.ShardResolvedSpec{
 				{
 					Name: "keep-me",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -235,7 +235,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		}
 
 		oldDeleteMeUID := string(deleteMe.UID)
-		if got := deleteMe.Spec.MultiOrch.StatelessSpec.Replicas; got == nil || *got != 1 {
+		if got := deleteMe.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 1 {
 			t.Fatalf("Initial delete-me replicas = %v, want 1", got)
 		}
 
@@ -249,14 +249,14 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			tg.Spec.Shards = []multigresv1alpha1.ShardResolvedSpec{
 				{
 					Name: "keep-me",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
 				},
 				{
 					Name: "delete-me",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -288,7 +288,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		if deleteMe.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
 			t.Fatal("Draining shard lost PendingDeletion after same-name re-add")
 		}
-		if got := deleteMe.Spec.MultiOrch.StatelessSpec.Replicas; got == nil || *got != 1 {
+		if got := deleteMe.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 1 {
 			t.Fatalf("Draining shard was updated during cleanup: replicas = %v, want 1", got)
 		}
 
@@ -329,7 +329,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			); err == nil &&
 				string(latest.UID) != oldDeleteMeUID &&
 				latest.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-				if got := latest.Spec.MultiOrch.StatelessSpec.Replicas; got == nil || *got != 2 {
+				if got := latest.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 2 {
 					t.Fatalf("Replacement shard replicas = %v, want 2", got)
 				}
 				break
@@ -370,14 +370,14 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				TableGroupName:   "tg1",
 				GlobalTopoServer: globalTopo,
 				Images: multigresv1alpha1.ShardImages{
-					MultiOrch:   "orch:latest",
-					MultiPooler: "pooler:latest",
+					Multiorch:   "orch:latest",
+					Multipooler: "pooler:latest",
 					Postgres:    "postgres:15",
 				},
 				Shards: []multigresv1alpha1.ShardResolvedSpec{
 					{
 						Name: "s1",
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
 								Replicas: ptr.To(int32(1)),
 							},
@@ -417,11 +417,11 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				ShardName:        "s1",
 				GlobalTopoServer: globalTopo,
 				Images: multigresv1alpha1.ShardImages{
-					MultiOrch:   "orch:latest",
-					MultiPooler: "pooler:latest",
+					Multiorch:   "orch:latest",
+					Multipooler: "pooler:latest",
 					Postgres:    "postgres:15",
 				},
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 				},
 				Pools:    map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -444,7 +444,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			); err != nil {
 				return err
 			}
-			latestShard.Spec.MultiOrch.Replicas = ptr.To(int32(99))
+			latestShard.Spec.Multiorch.Replicas = ptr.To(int32(99))
 			return k8sClient.Update(ctx, latestShard)
 		}); err != nil {
 			t.Fatal(err)

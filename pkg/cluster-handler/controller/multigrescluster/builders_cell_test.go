@@ -24,7 +24,7 @@ func TestBuildCell(t *testing.T) {
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
 			Images: multigresv1alpha1.ClusterImages{
-				MultiGateway: "gateway:latest",
+				Multigateway: "gateway:latest",
 			},
 		},
 	}
@@ -68,8 +68,8 @@ func TestBuildCell(t *testing.T) {
 		if got.Spec.ZoneID != "use1-az1" {
 			t.Errorf("ZoneID = %v, want %v", got.Spec.ZoneID, "use1-az1")
 		}
-		if got.Spec.Images.MultiGateway != "gateway:latest" {
-			t.Errorf("Gateway Image = %v, want %v", got.Spec.Images.MultiGateway, "gateway:latest")
+		if got.Spec.Images.Multigateway != "gateway:latest" {
+			t.Errorf("Gateway Image = %v, want %v", got.Spec.Images.Multigateway, "gateway:latest")
 		}
 		if diff := cmp.Diff(allCells, got.Spec.AllCells); diff != "" {
 			t.Errorf("AllCells mismatch (-want +got):\n%s", diff)

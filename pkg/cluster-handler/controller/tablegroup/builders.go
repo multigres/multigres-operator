@@ -53,7 +53,7 @@ func BuildShard(
 			ShardName:         multigresv1alpha1.ShardName(shardSpec.Name),
 			Images:            tg.Spec.Images,
 			GlobalTopoServer:  tg.Spec.GlobalTopoServer,
-			MultiOrch:         shardSpec.MultiOrch,
+			Multiorch:         shardSpec.Multiorch,
 			InitdbArgs:        shardSpec.InitdbArgs,
 			PostgresConfigRef: shardSpec.PostgresConfigRef,
 			Pools:             shardSpec.Pools,

@@ -6,7 +6,7 @@
 //
 //  1. Global Component Management:
 //     It directly manages singleton resources defined at the cluster level, such as the
-//     MultiAdmin deployment. It also manages the Global TopoServer (via a child TopoServer CR)
+//     Multiadmin deployment. It also manages the Global TopoServer (via a child TopoServer CR)
 //     when the cluster is configured for managed topology (Etcd).
 //
 //  2. Resource Fan-Out (Child CR Management):
