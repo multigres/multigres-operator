@@ -97,8 +97,8 @@ func MustLoadCoreTemplate(repoRelPath, namespace string) *multigresv1alpha1.Core
 		if tmpl.Spec.GlobalTopoServer != nil && tmpl.Spec.GlobalTopoServer.Etcd != nil {
 			tmpl.Spec.GlobalTopoServer.Etcd.Resources = CIResources()
 		}
-		if tmpl.Spec.MultiAdmin != nil {
-			tmpl.Spec.MultiAdmin.Resources = CIResources()
+		if tmpl.Spec.Multiadmin != nil {
+			tmpl.Spec.Multiadmin.Resources = CIResources()
 		}
 		return tmpl
 	}
@@ -118,8 +118,8 @@ func MustLoadCellTemplate(repoRelPath, namespace string) *multigresv1alpha1.Cell
 			continue
 		}
 		tmpl.Namespace = namespace
-		if tmpl.Spec.MultiGateway != nil {
-			tmpl.Spec.MultiGateway.Resources = CIResources()
+		if tmpl.Spec.Multigateway != nil {
+			tmpl.Spec.Multigateway.Resources = CIResources()
 		}
 		return tmpl
 	}
@@ -139,8 +139,8 @@ func MustLoadShardTemplate(repoRelPath, namespace string) *multigresv1alpha1.Sha
 			continue
 		}
 		tmpl.Namespace = namespace
-		if tmpl.Spec.MultiOrch != nil {
-			tmpl.Spec.MultiOrch.Resources = CIResources()
+		if tmpl.Spec.Multiorch != nil {
+			tmpl.Spec.Multiorch.Resources = CIResources()
 		}
 		// CI resources on each pool. No fsGroup override: the operator defaults
 		// pool containers to a numeric uid, so e2e exercises that default.

@@ -17,7 +17,7 @@ import (
 // Kubernetes resources (PDBs, deployments, services) with correct configuration.
 func TestResourceVerification(t *testing.T) {
 	t.Run("PDB", testPDB)
-	t.Run("MultiAdminWeb", testMultiAdminWeb)
+	t.Run("MultiadminWeb", testMultiadminWeb)
 	t.Run("LogLevels", testLogLevels)
 }
 
@@ -52,7 +52,7 @@ func testPDB(t *testing.T) {
 	}
 }
 
-func testMultiAdminWeb(t *testing.T) {
+func testMultiadminWeb(t *testing.T) {
 	t.Parallel()
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()

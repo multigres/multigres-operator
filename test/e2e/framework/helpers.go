@@ -95,23 +95,23 @@ func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 	}
 	spec.GlobalTopoServer.Etcd.Resources = CIResources()
 
-	// MultiAdmin
-	if spec.MultiAdmin == nil {
-		spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{}
+	// Multiadmin
+	if spec.Multiadmin == nil {
+		spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{}
 	}
-	if spec.MultiAdmin.Spec == nil {
-		spec.MultiAdmin.Spec = &multigresv1alpha1.StatelessSpec{}
+	if spec.Multiadmin.Spec == nil {
+		spec.Multiadmin.Spec = &multigresv1alpha1.StatelessSpec{}
 	}
-	spec.MultiAdmin.Spec.Resources = CIResources()
+	spec.Multiadmin.Spec.Resources = CIResources()
 
-	// MultiAdmin Web
-	if spec.MultiAdminWeb == nil {
-		spec.MultiAdminWeb = &multigresv1alpha1.MultiAdminWebConfig{}
+	// Multiadmin Web
+	if spec.MultiadminWeb == nil {
+		spec.MultiadminWeb = &multigresv1alpha1.MultiadminWebConfig{}
 	}
-	if spec.MultiAdminWeb.Spec == nil {
-		spec.MultiAdminWeb.Spec = &multigresv1alpha1.StatelessSpec{}
+	if spec.MultiadminWeb.Spec == nil {
+		spec.MultiadminWeb.Spec = &multigresv1alpha1.StatelessSpec{}
 	}
-	spec.MultiAdminWeb.Spec.Resources = CIResources()
+	spec.MultiadminWeb.Spec.Resources = CIResources()
 
 	// Cells → gateway
 	for i := range spec.Cells {
@@ -124,7 +124,7 @@ func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 		if spec.Cells[i].Spec == nil {
 			spec.Cells[i].Spec = &multigresv1alpha1.CellInlineSpec{}
 		}
-		spec.Cells[i].Spec.MultiGateway.Resources = CIResources()
+		spec.Cells[i].Spec.Multigateway.Resources = CIResources()
 	}
 
 	// Databases → shards → multiorch, pools
@@ -160,7 +160,7 @@ func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 				if shard.Spec == nil {
 					shard.Spec = &multigresv1alpha1.ShardInlineSpec{}
 				}
-				shard.Spec.MultiOrch.Resources = CIResources()
+				shard.Spec.Multiorch.Resources = CIResources()
 				if shard.Spec.Pools == nil {
 					shard.Spec.Pools = map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{}
 				}

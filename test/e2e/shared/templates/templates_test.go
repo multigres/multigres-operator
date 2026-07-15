@@ -98,7 +98,7 @@ func testPartialOverride(t *testing.T) {
 
 	// Create cluster with an inline override on multiadmin replicas.
 	cr := framework.MustLoadCluster("test/e2e/fixtures/templated.yaml", ns)
-	cr.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{
+	cr.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{
 		Spec: &multigresv1alpha1.StatelessSpec{
 			Replicas: int32Ptr(2),
 		},

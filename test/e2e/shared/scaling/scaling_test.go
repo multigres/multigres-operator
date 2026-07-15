@@ -14,13 +14,13 @@ import (
 // TestStatelessScaling verifies that scaling stateless components (multiadmin,
 // multigateway, etcd) works correctly.
 func TestStatelessScaling(t *testing.T) {
-	t.Run("ScaleMultiAdmin", testScaleMultiAdmin)
-	t.Run("ScaleMultiGateway", testScaleMultiGateway)
-	t.Run("LargeScaleMultiAdmin", testLargeScaleMultiAdmin)
-	t.Run("LargeScaleMultiGateway", testLargeScaleMultiGateway)
+	t.Run("ScaleMultiadmin", testScaleMultiadmin)
+	t.Run("ScaleMultigateway", testScaleMultigateway)
+	t.Run("LargeScaleMultiadmin", testLargeScaleMultiadmin)
+	t.Run("LargeScaleMultigateway", testLargeScaleMultigateway)
 }
 
-func testScaleMultiAdmin(t *testing.T) {
+func testScaleMultiadmin(t *testing.T) {
 	t.Parallel()
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
@@ -51,7 +51,7 @@ func testScaleMultiAdmin(t *testing.T) {
 	cluster.WaitForAllPodsReady(t, ns)
 }
 
-func testScaleMultiGateway(t *testing.T) {
+func testScaleMultigateway(t *testing.T) {
 	t.Parallel()
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
@@ -88,7 +88,7 @@ func testScaleMultiGateway(t *testing.T) {
 	_ = client.MatchingLabels{}
 }
 
-func testLargeScaleMultiAdmin(t *testing.T) {
+func testLargeScaleMultiadmin(t *testing.T) {
 	t.Parallel()
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
@@ -117,7 +117,7 @@ func testLargeScaleMultiAdmin(t *testing.T) {
 	cluster.WaitForAllPodsReady(t, ns)
 }
 
-func testLargeScaleMultiGateway(t *testing.T) {
+func testLargeScaleMultigateway(t *testing.T) {
 	t.Parallel()
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
