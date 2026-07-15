@@ -499,7 +499,7 @@ func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
 func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
 	t.Parallel()
 
-	t.Run("multipooler UID can be supplied by override when postgres UID comes from template", func(t *testing.T) {
+	t.Run("override multipooler UID can match template postgres UID", func(t *testing.T) {
 		t.Parallel()
 
 		_, pools, _, _, _, _ := mergeShardConfig(

@@ -386,7 +386,12 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 			ptr.To(DefaultPostgresUID),
 			ptr.To(DefaultPostgresGID),
 		)
-		assertContainerIdentity(t, pod.Spec.Containers[0], ptr.To(DefaultMultipoolerUID), ptr.To(DefaultMultipoolerGID))
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[0],
+			ptr.To(DefaultMultipoolerUID),
+			ptr.To(DefaultMultipoolerGID),
+		)
 		assertContainerIdentity(
 			t,
 			pod.Spec.Containers[1],
@@ -478,7 +483,6 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		_, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
 		require.ErrorContains(t, err, "must match because both access PGDATA")
 	})
-
 }
 
 func TestBuildContainerSecurityContext(t *testing.T) {

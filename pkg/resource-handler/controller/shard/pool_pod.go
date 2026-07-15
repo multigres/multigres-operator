@@ -256,13 +256,6 @@ func validatePoolRuntimeIdentity(pool multigresv1alpha1.PoolSpec) error {
 	return nil
 }
 
-func resolvedPostgresImage(shard *multigresv1alpha1.Shard) string {
-	if shard.Spec.Images.Postgres != "" {
-		return string(shard.Spec.Images.Postgres)
-	}
-	return multigresv1alpha1.DefaultPostgresImage
-}
-
 func resolvedMultipoolerImage(shard *multigresv1alpha1.Shard) string {
 	if shard.Spec.Images.Multipooler != "" {
 		return string(shard.Spec.Images.Multipooler)
