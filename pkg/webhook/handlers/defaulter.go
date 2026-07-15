@@ -125,41 +125,41 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 		}
 	}
 
-	// B. Resolve MultiAdmin
+	// B. Resolve Multiadmin
 	{
-		hasInline := cluster.Spec.MultiAdmin != nil && cluster.Spec.MultiAdmin.TemplateRef != ""
+		hasInline := cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.TemplateRef != ""
 		isUsingTemplate := hasInline || hasGlobalCore || hasImplicitCore
 
 		if !isUsingTemplate {
-			multiAdmin, err := scopedResolver.ResolveMultiAdmin(ctx, cluster)
+			multiadmin, err := scopedResolver.ResolveMultiadmin(ctx, cluster)
 			if err != nil {
 				return fmt.Errorf("failed to resolve multiadmin: %w", err)
 			}
-			if cluster.Spec.MultiAdmin == nil {
-				cluster.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{}
+			if cluster.Spec.Multiadmin == nil {
+				cluster.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{}
 			}
-			if multiAdmin != nil {
-				cluster.Spec.MultiAdmin.Spec = multiAdmin
+			if multiadmin != nil {
+				cluster.Spec.Multiadmin.Spec = multiadmin
 			}
 		}
 	}
 
-	// B2. Resolve MultiAdminWeb
+	// B2. Resolve MultiadminWeb
 	{
-		hasInline := cluster.Spec.MultiAdminWeb != nil &&
-			cluster.Spec.MultiAdminWeb.TemplateRef != ""
+		hasInline := cluster.Spec.MultiadminWeb != nil &&
+			cluster.Spec.MultiadminWeb.TemplateRef != ""
 		isUsingTemplate := hasInline || hasGlobalCore || hasImplicitCore
 
 		if !isUsingTemplate {
-			multiAdminWeb, err := scopedResolver.ResolveMultiAdminWeb(ctx, cluster)
+			multiadminWeb, err := scopedResolver.ResolveMultiadminWeb(ctx, cluster)
 			if err != nil {
 				return fmt.Errorf("failed to resolve multiadmin-web: %w", err)
 			}
-			if cluster.Spec.MultiAdminWeb == nil {
-				cluster.Spec.MultiAdminWeb = &multigresv1alpha1.MultiAdminWebConfig{}
+			if cluster.Spec.MultiadminWeb == nil {
+				cluster.Spec.MultiadminWeb = &multigresv1alpha1.MultiadminWebConfig{}
 			}
-			if multiAdminWeb != nil {
-				cluster.Spec.MultiAdminWeb.Spec = multiAdminWeb
+			if multiadminWeb != nil {
+				cluster.Spec.MultiadminWeb.Spec = multiadminWeb
 			}
 		}
 	}
@@ -183,8 +183,8 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 				return fmt.Errorf("failed to resolve cell '%s': %w", cell.Name, err)
 			}
 			cell.Spec = &multigresv1alpha1.CellInlineSpec{
-				MultiGateway:          *gatewaySpec,
-				MultiGatewayPlacement: gatewayPlacement,
+				Multigateway:          *gatewaySpec,
+				MultigatewayPlacement: gatewayPlacement,
 				LocalTopoServer:       localTopoSpec,
 			}
 		}
@@ -217,7 +217,7 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 				if !isUsingTemplate {
 					// We pass cell names for contextual cell defaulting, but leave
 					// MaterializeCellDefaults false so the stored spec remains dynamic.
-					multiOrchSpec, poolsSpec, resolvedPvcPolicy, resolvedBackupConfig, resolvedInitdbArgs, resolvedPostgresConfigRef, err := scopedResolver.ResolveShard(
+					multiorchSpec, poolsSpec, resolvedPvcPolicy, resolvedBackupConfig, resolvedInitdbArgs, resolvedPostgresConfigRef, err := scopedResolver.ResolveShard(
 						ctx,
 						shard,
 						resolver.ResolveShardOptions{
@@ -239,7 +239,7 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 					}
 
 					shard.Spec = &multigresv1alpha1.ShardInlineSpec{
-						MultiOrch:         *multiOrchSpec,
+						Multiorch:         *multiorchSpec,
 						InitdbArgs:        resolvedInitdbArgs,
 						PostgresConfigRef: resolvedPostgresConfigRef,
 						Pools:             poolsSpec,

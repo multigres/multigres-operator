@@ -46,7 +46,7 @@ func TestResolver_ValidateClusterIntegrity(t *testing.T) {
 						CellTemplate:  "prod-cell",
 						ShardTemplate: "prod-shard",
 					},
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{TemplateRef: "prod-core"},
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{TemplateRef: "prod-core"},
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						TemplateRef: "prod-core",
 					},
@@ -71,20 +71,20 @@ func TestResolver_ValidateClusterIntegrity(t *testing.T) {
 			},
 			wantErr: "referenced CellTemplate 'missing' not found",
 		},
-		"Missing MultiAdminWeb": {
+		"Missing MultiadminWeb": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "invalid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{TemplateRef: "missing"},
+					MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{TemplateRef: "missing"},
 				},
 			},
 			wantErr: "referenced CoreTemplate 'missing' not found",
 		},
-		"Missing MultiAdmin": {
+		"Missing Multiadmin": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "invalid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{TemplateRef: "missing"},
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{TemplateRef: "missing"},
 				},
 			},
 			wantErr: "referenced CoreTemplate 'missing' not found",
@@ -284,7 +284,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 								Name:          "s0",
 								ShardTemplate: "prod-shard",
 								Overrides: &multigresv1alpha1.ShardOverrides{
-									MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+									Multiorch: &multigresv1alpha1.MultiorchSpec{
 										Cells: []multigresv1alpha1.CellName{"zone-missing"},
 									},
 								},
@@ -349,7 +349,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 								Name:          "s0",
 								ShardTemplate: "prod-shard",
 								Spec: &multigresv1alpha1.ShardInlineSpec{
-									MultiOrch: multigresv1alpha1.MultiOrchSpec{
+									Multiorch: multigresv1alpha1.MultiorchSpec{
 										Cells: []multigresv1alpha1.CellName{
 											"ghost",
 										}, // Bypass Check 1
@@ -912,7 +912,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("2")},
@@ -936,7 +936,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{
+					MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("2")},
@@ -964,7 +964,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 						{
 							Name: "zone-1",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								MultiGateway: multigresv1alpha1.StatelessSpec{
+								Multigateway: multigresv1alpha1.StatelessSpec{
 									Resources: corev1.ResourceRequirements{
 										Requests: corev1.ResourceList{
 											corev1.ResourceCPU: parseQty("2"),
@@ -998,7 +998,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 							Shards: []multigresv1alpha1.ShardConfig{{
 								Name: "s0", ShardTemplate: "prod-shard",
 								Spec: &multigresv1alpha1.ShardInlineSpec{
-									MultiOrch: multigresv1alpha1.MultiOrchSpec{
+									Multiorch: multigresv1alpha1.MultiorchSpec{
 										StatelessSpec: multigresv1alpha1.StatelessSpec{
 											Resources: corev1.ResourceRequirements{
 												Requests: corev1.ResourceList{

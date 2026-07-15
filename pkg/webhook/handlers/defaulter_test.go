@@ -69,11 +69,11 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 				want := &multigresv1alpha1.MultigresClusterSpec{
 					Images: multigresv1alpha1.ClusterImages{
 						Postgres:        resolver.DefaultPostgresImage,
-						MultiAdmin:      resolver.DefaultMultiAdminImage,
-						MultiOrch:       resolver.DefaultMultiOrchImage,
-						MultiPooler:     resolver.DefaultMultiPoolerImage,
-						MultiGateway:    resolver.DefaultMultiGatewayImage,
-						MultiAdminWeb:   resolver.DefaultMultiAdminWebImage,
+						Multiadmin:      resolver.DefaultMultiadminImage,
+						Multiorch:       resolver.DefaultMultiorchImage,
+						Multipooler:     resolver.DefaultMultipoolerImage,
+						Multigateway:    resolver.DefaultMultigatewayImage,
+						MultiadminWeb:   resolver.DefaultMultiadminWebImage,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 					},
 					LogLevels: multigresv1alpha1.ComponentLogLevels{
@@ -87,20 +87,20 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						{
 							Name: "c1",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								MultiGateway: multigresv1alpha1.StatelessSpec{
+								Multigateway: multigresv1alpha1.StatelessSpec{
 									Replicas:  ptr.To(int32(1)),
 									Resources: resolver.DefaultResourcesGateway(),
 								},
 							},
 						},
 					},
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),
 							Resources: resolver.DefaultResourcesAdmin(),
 						},
 					},
-					MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{
+					MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),
 							Resources: resolver.DefaultResourcesAdminWeb(),
@@ -127,7 +127,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 										{
 											Name: "0-inf",
 											Spec: &multigresv1alpha1.ShardInlineSpec{
-												MultiOrch: multigresv1alpha1.MultiOrchSpec{
+												Multiorch: multigresv1alpha1.MultiorchSpec{
 													StatelessSpec: multigresv1alpha1.StatelessSpec{
 														Replicas:  ptr.To(int32(1)),
 														Resources: resolver.DefaultResourcesOrch(),
@@ -230,7 +230,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 			},
 			expectError: "failed to populate cluster defaults",
 		},
-		"Error: ResolveMultiAdmin failure": {
+		"Error: ResolveMultiadmin failure": {
 			input: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -245,7 +245,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 			},
 			expectError: "failed to resolve multiadmin",
 		},
-		"Error: ResolveMultiAdminWeb failure": {
+		"Error: ResolveMultiadminWeb failure": {
 			input: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -256,17 +256,17 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						TemplateRef: "exists-core",
 					},
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						TemplateRef: "exists-core",
 					},
-					// MultiAdminWeb empty -> triggers ResolveMultiAdminWeb using "default"
+					// MultiadminWeb empty -> triggers ResolveMultiadminWeb using "default"
 				},
 			},
 			existingObjects: []client.Object{},
 			// Calls:
 			// 1. ResolveCoreTemplate("exists-core") (GlobalTopo)
-			// 2. ResolveCoreTemplate("exists-core") (MultiAdmin) -> CACHE HIT
-			// 3. ResolveCoreTemplate("default") (MultiAdminWeb) -> FAIL
+			// 2. ResolveCoreTemplate("exists-core") (Multiadmin) -> CACHE HIT
+			// 3. ResolveCoreTemplate("default") (MultiadminWeb) -> FAIL
 			failureConfig: &testutil.FailureConfig{
 				OnGet: func(key client.ObjectKey) error {
 					if key.Name == "default" {
@@ -397,13 +397,13 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 								Resources: resolver.DefaultResourcesEtcd(),
 							},
 						},
-						MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+						Multiadmin: &multigresv1alpha1.MultiadminConfig{
 							Spec: &multigresv1alpha1.StatelessSpec{
 								Replicas:  ptr.To(int32(1)),
 								Resources: resolver.DefaultResourcesAdmin(),
 							},
 						},
-						MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{
+						MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{
 							Spec: &multigresv1alpha1.StatelessSpec{
 								Replicas:  ptr.To(int32(1)),
 								Resources: resolver.DefaultResourcesAdminWeb(),
@@ -411,11 +411,11 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						},
 						Images: multigresv1alpha1.ClusterImages{
 							Postgres:        resolver.DefaultPostgresImage,
-							MultiAdmin:      resolver.DefaultMultiAdminImage,
-							MultiAdminWeb:   resolver.DefaultMultiAdminWebImage,
-							MultiOrch:       resolver.DefaultMultiOrchImage,
-							MultiPooler:     resolver.DefaultMultiPoolerImage,
-							MultiGateway:    resolver.DefaultMultiGatewayImage,
+							Multiadmin:      resolver.DefaultMultiadminImage,
+							MultiadminWeb:   resolver.DefaultMultiadminWebImage,
+							Multiorch:       resolver.DefaultMultiorchImage,
+							Multipooler:     resolver.DefaultMultipoolerImage,
+							Multigateway:    resolver.DefaultMultigatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
 						LogLevels: multigresv1alpha1.ComponentLogLevels{
@@ -436,7 +436,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 											PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
 												WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 											},
-											MultiOrch: multigresv1alpha1.MultiOrchSpec{
+											Multiorch: multigresv1alpha1.MultiorchSpec{
 												StatelessSpec: multigresv1alpha1.StatelessSpec{
 													Replicas:  ptr.To(int32(1)),
 													Resources: resolver.DefaultResourcesOrch(),

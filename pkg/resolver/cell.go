@@ -96,28 +96,28 @@ func mergeCellConfig(
 
 	// 1. Apply Template (Base)
 	if template != nil {
-		if template.Spec.MultiGateway != nil {
-			gateway = template.Spec.MultiGateway.DeepCopy()
+		if template.Spec.Multigateway != nil {
+			gateway = template.Spec.Multigateway.DeepCopy()
 		}
 		if template.Spec.LocalTopoServer != nil {
 			localTopo = template.Spec.LocalTopoServer.DeepCopy()
 		}
-		mergePodPlacementSpec(&placement, template.Spec.MultiGatewayPlacement)
+		mergePodPlacementSpec(&placement, template.Spec.MultigatewayPlacement)
 	}
 
 	// 2. Apply Overrides (Explicit Template Modification)
 	if overrides != nil {
-		if overrides.MultiGateway != nil {
-			mergeStatelessSpec(gateway, overrides.MultiGateway)
+		if overrides.Multigateway != nil {
+			mergeStatelessSpec(gateway, overrides.Multigateway)
 		}
-		mergePodPlacementSpec(&placement, overrides.MultiGatewayPlacement)
+		mergePodPlacementSpec(&placement, overrides.MultigatewayPlacement)
 	}
 
 	// 3. Apply Inline Spec (Primary Overlay)
 	// This merges the inline definition on top of the template+overrides.
 	if inline != nil {
-		mergeStatelessSpec(gateway, &inline.MultiGateway)
-		mergePodPlacementSpec(&placement, inline.MultiGatewayPlacement)
+		mergeStatelessSpec(gateway, &inline.Multigateway)
+		mergePodPlacementSpec(&placement, inline.MultigatewayPlacement)
 
 		if inline.LocalTopoServer != nil {
 			// LocalTopo is complex (polymorphic), so we treat it as a replacement if provided

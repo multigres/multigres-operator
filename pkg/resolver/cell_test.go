@@ -61,7 +61,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 		"Inline Overrides": {
 			config: &multigresv1alpha1.CellConfig{
 				Spec: &multigresv1alpha1.CellInlineSpec{
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(3)),
 					},
 				},
@@ -260,7 +260,7 @@ func TestMergeCellConfig(t *testing.T) {
 		"Full Merge With Resources and Affinity Overrides": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGateway: &multigresv1alpha1.StatelessSpec{
+					Multigateway: &multigresv1alpha1.StatelessSpec{
 						Replicas:       ptr.To(int32(3)),
 						PodAnnotations: map[string]string{"foo": "bar"},
 						Resources: corev1.ResourceRequirements{
@@ -273,7 +273,7 @@ func TestMergeCellConfig(t *testing.T) {
 				},
 			},
 			overrides: &multigresv1alpha1.CellOverrides{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{
+				Multigateway: &multigresv1alpha1.StatelessSpec{
 					Replicas:       ptr.To(int32(2)),
 					PodAnnotations: map[string]string{"baz": "qux"},
 					Resources: corev1.ResourceRequirements{
@@ -301,7 +301,7 @@ func TestMergeCellConfig(t *testing.T) {
 		"Template Only (Nil Overrides)": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 				},
 			},
 			overrides: nil,
@@ -310,14 +310,14 @@ func TestMergeCellConfig(t *testing.T) {
 		"Preserve Base (Empty Override)": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGateway: &multigresv1alpha1.StatelessSpec{
+					Multigateway: &multigresv1alpha1.StatelessSpec{
 						Replicas:       ptr.To(int32(3)),
 						PodAnnotations: map[string]string{"foo": "bar"},
 					},
 				},
 			},
 			overrides: &multigresv1alpha1.CellOverrides{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{},
+				Multigateway: &multigresv1alpha1.StatelessSpec{},
 			},
 			wantGw: &multigresv1alpha1.StatelessSpec{
 				Replicas:       ptr.To(int32(3)),
@@ -327,11 +327,11 @@ func TestMergeCellConfig(t *testing.T) {
 		"Map Init (Nil Base)": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 				},
 			},
 			overrides: &multigresv1alpha1.CellOverrides{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{
+				Multigateway: &multigresv1alpha1.StatelessSpec{
 					PodAnnotations: map[string]string{"a": "b"},
 					PodLabels:      map[string]string{"c": "d"},
 				},
@@ -345,11 +345,11 @@ func TestMergeCellConfig(t *testing.T) {
 		"Inline Priority": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 				},
 			},
 			inline: &multigresv1alpha1.CellInlineSpec{
-				MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(99))},
+				Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(99))},
 				LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
 					Etcd: &multigresv1alpha1.EtcdSpec{Image: "inline-etcd"},
 				},
@@ -362,7 +362,7 @@ func TestMergeCellConfig(t *testing.T) {
 		"Nil Template (Override Only)": {
 			tpl: nil,
 			overrides: &multigresv1alpha1.CellOverrides{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 			},
 			wantGw: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 		},
@@ -374,7 +374,7 @@ func TestMergeCellConfig(t *testing.T) {
 		"Placement Merge": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
+					MultigatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
 						Tolerations: []corev1.Toleration{
 							{
 								Key:      "workload",
@@ -387,7 +387,7 @@ func TestMergeCellConfig(t *testing.T) {
 				},
 			},
 			inline: &multigresv1alpha1.CellInlineSpec{
-				MultiGatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
+				MultigatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
 					Tolerations: []corev1.Toleration{
 						{
 							Key:      "dedicated",
@@ -413,7 +413,7 @@ func TestMergeCellConfig(t *testing.T) {
 		"Placement Clear": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					MultiGatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
+					MultigatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
 						Tolerations: []corev1.Toleration{
 							{
 								Key:      "workload",
@@ -426,7 +426,7 @@ func TestMergeCellConfig(t *testing.T) {
 				},
 			},
 			inline: &multigresv1alpha1.CellInlineSpec{
-				MultiGatewayPlacement: &multigresv1alpha1.PodPlacementSpec{},
+				MultigatewayPlacement: &multigresv1alpha1.PodPlacementSpec{},
 			},
 			wantGw:        &multigresv1alpha1.StatelessSpec{},
 			wantPlacement: &multigresv1alpha1.PodPlacementSpec{},

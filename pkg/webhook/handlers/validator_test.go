@@ -109,10 +109,10 @@ func TestMultigresClusterValidator(t *testing.T) {
 			wantAllowed: false,
 			wantMessage: "referenced CoreTemplate 'missing-topo' not found",
 		},
-		"Denied: Missing MultiAdminWeb Template": {
+		"Denied: Missing MultiadminWeb Template": {
 			object: func() *multigresv1alpha1.MultigresCluster {
 				c := baseCluster.DeepCopy()
-				c.Spec.MultiAdminWeb = &multigresv1alpha1.MultiAdminWebConfig{
+				c.Spec.MultiadminWeb = &multigresv1alpha1.MultiadminWebConfig{
 					TemplateRef: "missing-web",
 				}
 				return c
@@ -163,10 +163,10 @@ func TestMultigresClusterValidator(t *testing.T) {
 			wantAllowed: false,
 			wantMessage: "injected test error",
 		},
-		"Error: Client Error (MultiAdmin)": {
+		"Error: Client Error (Multiadmin)": {
 			object: func() *multigresv1alpha1.MultigresCluster {
 				c := baseCluster.DeepCopy()
-				c.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{TemplateRef: "admin-core"}
+				c.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{TemplateRef: "admin-core"}
 				return c
 			}(),
 			operation: "Create",
@@ -262,7 +262,7 @@ func TestMultigresClusterValidator(t *testing.T) {
 		"Allowed: Complex Cluster (All Valid)": {
 			object: func() *multigresv1alpha1.MultigresCluster {
 				c := baseCluster.DeepCopy()
-				c.Spec.MultiAdmin = &multigresv1alpha1.MultiAdminConfig{TemplateRef: "prod-core"}
+				c.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{TemplateRef: "prod-core"}
 				c.Spec.Cells = []multigresv1alpha1.CellConfig{
 					{Name: "c1", CellTemplate: "prod-cell"},
 				}
@@ -329,7 +329,7 @@ func TestMultigresClusterValidator(t *testing.T) {
 						Shards: []multigresv1alpha1.ShardConfig{{
 							Name: "s0",
 							Spec: &multigresv1alpha1.ShardInlineSpec{
-								MultiOrch: multigresv1alpha1.MultiOrchSpec{
+								Multiorch: multigresv1alpha1.MultiorchSpec{
 									Cells: []multigresv1alpha1.CellName{"zone-invalid"}, // Invalid!
 								},
 								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -357,7 +357,7 @@ func TestMultigresClusterValidator(t *testing.T) {
 						Shards: []multigresv1alpha1.ShardConfig{{
 							Name: "s0",
 							Spec: &multigresv1alpha1.ShardInlineSpec{
-								MultiOrch: multigresv1alpha1.MultiOrchSpec{
+								Multiorch: multigresv1alpha1.MultiorchSpec{
 									Cells: []multigresv1alpha1.CellName{}, // Empty!
 								},
 								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -451,7 +451,7 @@ func TestMultigresClusterValidator(t *testing.T) {
 							Name:          "s0",
 							ShardTemplate: "prod-shard",
 							Spec: &multigresv1alpha1.ShardInlineSpec{
-								MultiOrch: multigresv1alpha1.MultiOrchSpec{
+								Multiorch: multigresv1alpha1.MultiorchSpec{
 									// Pass Check 1
 									Cells: []multigresv1alpha1.CellName{"ghost-cell"},
 								},
@@ -644,7 +644,7 @@ func TestTemplateValidator(t *testing.T) {
 			Labels: map[string]string{metadata.LabelUsesCoreTemplate: "true"},
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
-			MultiAdmin: &multigresv1alpha1.MultiAdminConfig{TemplateRef: "prod-core"},
+			Multiadmin: &multigresv1alpha1.MultiadminConfig{TemplateRef: "prod-core"},
 		},
 	}
 	configUsingCoreAdminWeb := &multigresv1alpha1.MultigresCluster{
@@ -653,7 +653,7 @@ func TestTemplateValidator(t *testing.T) {
 			Labels: map[string]string{metadata.LabelUsesCoreTemplate: "true"},
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
-			MultiAdminWeb: &multigresv1alpha1.MultiAdminWebConfig{TemplateRef: "prod-core"},
+			MultiadminWeb: &multigresv1alpha1.MultiadminWebConfig{TemplateRef: "prod-core"},
 		},
 	}
 	configUsingCell := &multigresv1alpha1.MultigresCluster{
@@ -710,13 +710,13 @@ func TestTemplateValidator(t *testing.T) {
 			existing:    []client.Object{configUsingCore},
 			wantAllowed: false,
 		},
-		"Denied: Delete In-Use CoreTemplate (MultiAdmin)": {
+		"Denied: Delete In-Use CoreTemplate (Multiadmin)": {
 			kind:        "CoreTemplate",
 			targetName:  "prod-core",
 			existing:    []client.Object{configUsingCoreAdmin},
 			wantAllowed: false,
 		},
-		"Denied: Delete In-Use CoreTemplate (MultiAdminWeb)": {
+		"Denied: Delete In-Use CoreTemplate (MultiadminWeb)": {
 			kind:        "CoreTemplate",
 			targetName:  "prod-core",
 			existing:    []client.Object{configUsingCoreAdminWeb},
@@ -1310,7 +1310,7 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 					Shards: []multigresv1alpha1.ShardConfig{{
 						Name: "0-inf",
 						Spec: &multigresv1alpha1.ShardInlineSpec{
-							MultiOrch: multigresv1alpha1.MultiOrchSpec{
+							Multiorch: multigresv1alpha1.MultiorchSpec{
 								Cells: []multigresv1alpha1.CellName{"c1"},
 							},
 							Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{

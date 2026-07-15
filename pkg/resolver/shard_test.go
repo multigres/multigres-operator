@@ -27,7 +27,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 	tests := map[string]struct {
 		config        *multigresv1alpha1.ShardConfig
 		objects       []client.Object
-		wantOrch      *multigresv1alpha1.MultiOrchSpec
+		wantOrch      *multigresv1alpha1.MultiorchSpec
 		wantPools     map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec
 		wantPVCPolicy *multigresv1alpha1.PVCDeletionPolicy
 		wantErr       bool
@@ -36,7 +36,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 		"Template Found": {
 			config:  &multigresv1alpha1.ShardConfig{ShardTemplate: "default"},
 			objects: []client.Object{shardTpl},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(3)),
 					Resources: DefaultResourcesOrch(),
@@ -65,13 +65,13 @@ func TestResolver_ResolveShard(t *testing.T) {
 		"Inline Overrides": {
 			config: &multigresv1alpha1.ShardConfig{
 				Spec: &multigresv1alpha1.ShardInlineSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"p": {}},
 				},
 			},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(5)),
 					Resources: DefaultResourcesOrch(),
@@ -95,7 +95,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 		"Inline Pool FSGroup": {
 			config: &multigresv1alpha1.ShardConfig{
 				Spec: &multigresv1alpha1.ShardInlineSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -103,7 +103,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					},
 				},
 			},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: DefaultResourcesOrch(),
@@ -128,7 +128,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 		"Dynamic Cell Injection": {
 			config: &multigresv1alpha1.ShardConfig{
 				Spec: &multigresv1alpha1.ShardInlineSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						// Empty Cells, should inherit allCellNames
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
@@ -138,7 +138,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 				},
 			},
 			allCellNames: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: DefaultResourcesOrch(),
@@ -167,7 +167,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 		"Dynamic Cell Injection Three Cells Defaults To One Replica Per Cell": {
 			config: &multigresv1alpha1.ShardConfig{
 				Spec: &multigresv1alpha1.ShardInlineSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -176,7 +176,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 				},
 			},
 			allCellNames: []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: DefaultResourcesOrch(),
@@ -212,7 +212,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 				},
 			},
 			allCellNames: []multigresv1alpha1.CellName{"zone-a", "zone-b", "zone-c"},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: DefaultResourcesOrch(),
@@ -242,13 +242,13 @@ func TestResolver_ResolveShard(t *testing.T) {
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
 						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
 					},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"p": {}},
 				},
 			},
-			wantOrch: &multigresv1alpha1.MultiOrchSpec{
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: DefaultResourcesOrch(),
@@ -418,13 +418,13 @@ func TestMergeShardConfig(t *testing.T) {
 		tpl       *multigresv1alpha1.ShardTemplate
 		overrides *multigresv1alpha1.ShardOverrides
 		inline    *multigresv1alpha1.ShardInlineSpec
-		wantOrch  multigresv1alpha1.MultiOrchSpec
+		wantOrch  multigresv1alpha1.MultiorchSpec
 		wantPools map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec
 	}{
-		"Full Merge with MultiOrch Overrides": {
+		"Full Merge with Multiorch Overrides": {
 			tpl: &multigresv1alpha1.ShardTemplate{
 				Spec: multigresv1alpha1.ShardTemplateSpec{
-					MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+					Multiorch: &multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas: ptr.To(int32(1)),
 							Resources: corev1.ResourceRequirements{
@@ -441,7 +441,7 @@ func TestMergeShardConfig(t *testing.T) {
 				},
 			},
 			overrides: &multigresv1alpha1.ShardOverrides{
-				MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+				Multiorch: &multigresv1alpha1.MultiorchSpec{
 					StatelessSpec: multigresv1alpha1.StatelessSpec{
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{corev1.ResourceMemory: parseQty("2Gi")},
@@ -457,7 +457,7 @@ func TestMergeShardConfig(t *testing.T) {
 					"p2": {Type: "internal"},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{
+			wantOrch: multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas: ptr.To(int32(1)),
 					Resources: corev1.ResourceRequirements{
@@ -477,13 +477,13 @@ func TestMergeShardConfig(t *testing.T) {
 		"Template Only (Nil Overrides)": {
 			tpl: &multigresv1alpha1.ShardTemplate{
 				Spec: multigresv1alpha1.ShardTemplateSpec{
-					MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+					Multiorch: &multigresv1alpha1.MultiorchSpec{
 						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 				},
 			},
 			overrides: nil,
-			wantOrch: multigresv1alpha1.MultiOrchSpec{
+			wantOrch: multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -517,7 +517,7 @@ func TestMergeShardConfig(t *testing.T) {
 					},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type:            "write",
@@ -551,7 +551,7 @@ func TestMergeShardConfig(t *testing.T) {
 					"p1": {},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {Type: "read", ReplicasPerCell: ptr.To(int32(3))},
 			},
@@ -559,20 +559,20 @@ func TestMergeShardConfig(t *testing.T) {
 		"Inline Priority": {
 			tpl: &multigresv1alpha1.ShardTemplate{
 				Spec: multigresv1alpha1.ShardTemplateSpec{
-					MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+					Multiorch: &multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"a"},
 					},
 				},
 			},
 			inline: &multigresv1alpha1.ShardInlineSpec{
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"inline"},
 				},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"inline-pool": {Type: "read"},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{
+			wantOrch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"inline"},
 			},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -592,7 +592,7 @@ func TestMergeShardConfig(t *testing.T) {
 					"existing": {Type: "write"},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"existing": {Type: "write"},
 			},
@@ -600,11 +600,11 @@ func TestMergeShardConfig(t *testing.T) {
 		"Nil Template": {
 			tpl: nil,
 			overrides: &multigresv1alpha1.ShardOverrides{
-				MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+				Multiorch: &multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"b"},
 				},
 			},
-			wantOrch:  multigresv1alpha1.MultiOrchSpec{Cells: []multigresv1alpha1.CellName{"b"}},
+			wantOrch:  multigresv1alpha1.MultiorchSpec{Cells: []multigresv1alpha1.CellName{"b"}},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
 		},
 
@@ -630,7 +630,7 @@ func TestMergeShardConfig(t *testing.T) {
 					},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type: "read",
@@ -672,7 +672,7 @@ func TestMergeShardConfig(t *testing.T) {
 					},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type: "read",
@@ -709,7 +709,7 @@ func TestMergeShardConfig(t *testing.T) {
 					"p1": {Storage: multigresv1alpha1.StorageSpec{Size: "100Gi"}},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type: "read",
@@ -737,7 +737,7 @@ func TestMergeShardConfig(t *testing.T) {
 					"p1": {Storage: multigresv1alpha1.StorageSpec{Class: "gp3"}},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type:    "read",
@@ -765,7 +765,7 @@ func TestMergeShardConfig(t *testing.T) {
 					},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type: "read",
@@ -805,7 +805,7 @@ func TestMergeShardConfig(t *testing.T) {
 					},
 				},
 			},
-			wantOrch: multigresv1alpha1.MultiOrchSpec{},
+			wantOrch: multigresv1alpha1.MultiorchSpec{},
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type: "read",

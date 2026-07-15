@@ -92,10 +92,10 @@ func TestCEL_MultigresCluster(t *testing.T) {
 							Name:   "invalid-cell",
 							ZoneID: "use1-az1",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+								Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 							},
 							Overrides: &multigresv1alpha1.CellOverrides{
-								MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+								Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
 							},
 						},
 					},
@@ -117,7 +117,7 @@ func TestCEL_MultigresCluster(t *testing.T) {
 							ZoneID:       "use1-az1",
 							CellTemplate: "some-template",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								MultiGateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+								Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 							},
 						},
 					},
@@ -180,7 +180,7 @@ func TestCEL_MultigresCluster(t *testing.T) {
 											Name: "0",
 											Spec: &multigresv1alpha1.ShardInlineSpec{},
 											Overrides: &multigresv1alpha1.ShardOverrides{
-												MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+												Multiorch: &multigresv1alpha1.MultiorchSpec{
 													StatelessSpec: multigresv1alpha1.StatelessSpec{
 														Replicas: ptr.To(int32(2)),
 													},
@@ -309,7 +309,7 @@ func TestCEL_Limits(t *testing.T) {
 					Namespace: testNamespace,
 				},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{
 							PodAnnotations: map[string]string{
 								longString: "value",
@@ -328,7 +328,7 @@ func TestCEL_Limits(t *testing.T) {
 					Namespace: testNamespace,
 				},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						Spec: &multigresv1alpha1.StatelessSpec{
 							PodAnnotations: map[string]string{
 								"key": veryLongString,
@@ -425,7 +425,7 @@ func TestCEL_Database(t *testing.T) {
 	}
 }
 
-func TestCEL_MultiAdmin(t *testing.T) {
+func TestCEL_Multiadmin(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -434,14 +434,14 @@ func TestCEL_MultiAdmin(t *testing.T) {
 		expectError string
 	}{
 		{
-			name: "Invalid MultiAdmin: Both Spec and Template",
+			name: "Invalid Multiadmin: Both Spec and Template",
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "cel-multiadmin-conflict",
 					Namespace: testNamespace,
 				},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{
 						Spec:        &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 						TemplateRef: "some-template",
 					},
@@ -450,14 +450,14 @@ func TestCEL_MultiAdmin(t *testing.T) {
 			expectError: "cannot specify both 'spec' and 'templateRef'",
 		},
 		{
-			name: "Invalid MultiAdmin: None",
+			name: "Invalid Multiadmin: None",
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "cel-multiadmin-empty",
 					Namespace: testNamespace,
 				},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
-					MultiAdmin: &multigresv1alpha1.MultiAdminConfig{}, // Both empty
+					Multiadmin: &multigresv1alpha1.MultiadminConfig{}, // Both empty
 				},
 			},
 			expectError: "must specify either 'spec' or 'templateRef'",
@@ -495,15 +495,15 @@ func TestCEL_ShardImmutability(t *testing.T) {
 			ShardName:      "0",
 			Images: multigresv1alpha1.ShardImages{
 				Postgres:    "postgres:15",
-				MultiOrch:   "multiorch:latest",
-				MultiPooler: "multipooler:latest",
+				Multiorch:   "multiorch:latest",
+				Multipooler: "multipooler:latest",
 			},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 				Address:        "etcd:2379",
 				RootPath:       "/multigres",
 				Implementation: "etcd",
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -562,14 +562,14 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 		expectError string
 	}{
 		{
-			name: "Invalid Duplicate Cells in MultiOrch",
+			name: "Invalid Duplicate Cells in Multiorch",
 			shard: &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-duplicate-multiorch-cells", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"cell-1", "cell-1"}, // Duplicate
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -585,9 +585,9 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-duplicate-pool-cells", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch:        multigresv1alpha1.MultiOrchSpec{},
+					Multiorch:        multigresv1alpha1.MultiorchSpec{},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"rw": {
 							Cells: []multigresv1alpha1.CellName{"cell-1", "cell-1"}, // Duplicate
@@ -621,7 +621,7 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 							"rootPath":       "/",
 							"implementation": "etcd",
 						},
-						"multiOrch": map[string]interface{}{
+						"multiorch": map[string]interface{}{
 							"replicas": 1, // Inlined StatelessSpec
 						},
 						"pools": map[string]interface{}{
@@ -642,9 +642,9 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-replicas-per-cell-limit", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch:        multigresv1alpha1.MultiOrchSpec{},
+					Multiorch:        multigresv1alpha1.MultiorchSpec{},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"rw": {
 							Cells:           []multigresv1alpha1.CellName{"cell-1"},
@@ -661,9 +661,9 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-replicas-per-cell-zero", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch:        multigresv1alpha1.MultiOrchSpec{},
+					Multiorch:        multigresv1alpha1.MultiorchSpec{},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"rw": {
 							Cells:           []multigresv1alpha1.CellName{"cell-1"},
@@ -709,9 +709,9 @@ func TestCEL_S3ServiceAccountName(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-s3-sa-creds-conflict", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch:        multigresv1alpha1.MultiOrchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+					Multiorch:        multigresv1alpha1.MultiorchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"rw": {Type: "readWrite", Cells: []multigresv1alpha1.CellName{"cell-1"}, ReplicasPerCell: ptr.To(int32(1))},
 					},
@@ -734,9 +734,9 @@ func TestCEL_S3ServiceAccountName(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-s3-sa-envcreds-conflict", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch:        multigresv1alpha1.MultiOrchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+					Multiorch:        multigresv1alpha1.MultiorchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"rw": {Type: "readWrite", Cells: []multigresv1alpha1.CellName{"cell-1"}, ReplicasPerCell: ptr.To(int32(1))},
 					},
@@ -759,9 +759,9 @@ func TestCEL_S3ServiceAccountName(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "cel-s3-sa-only", Namespace: testNamespace},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
-					Images:           multigresv1alpha1.ShardImages{Postgres: "p", MultiOrch: "o", MultiPooler: "po"},
+					Images:           multigresv1alpha1.ShardImages{Postgres: "p", Multiorch: "o", Multipooler: "po"},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{Address: "etcd", RootPath: "/", Implementation: "etcd"},
-					MultiOrch:        multigresv1alpha1.MultiOrchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+					Multiorch:        multigresv1alpha1.MultiorchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"rw": {Type: "readWrite", Cells: []multigresv1alpha1.CellName{"cell-1"}, ReplicasPerCell: ptr.To(int32(1))},
 					},
@@ -807,7 +807,7 @@ func TestCEL_StatelessReplicasLimit(t *testing.T) {
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "cel-stateless-replicas-limit", Namespace: testNamespace},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
-			MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+			Multiadmin: &multigresv1alpha1.MultiadminConfig{
 				Spec: &multigresv1alpha1.StatelessSpec{
 					Replicas: ptr.To(int32(129)), // > 128
 				},

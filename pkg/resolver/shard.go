@@ -24,7 +24,7 @@ func (r *Resolver) ResolveShard(
 	ctx context.Context,
 	shardSpec *multigresv1alpha1.ShardConfig,
 	opts ResolveShardOptions,
-) (*multigresv1alpha1.MultiOrchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef, error) {
+) (*multigresv1alpha1.MultiorchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef, error) {
 	// 1. Fetch Template
 	templateName := shardSpec.ShardTemplate
 	tpl, err := r.ResolveShardTemplate(ctx, templateName)
@@ -33,7 +33,7 @@ func (r *Resolver) ResolveShard(
 	}
 
 	// 2. Merge Logic
-	multiOrch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef := mergeShardConfig(
+	multiorch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef := mergeShardConfig(
 		tpl,
 		shardSpec.Overrides,
 		shardSpec.Spec,
@@ -42,7 +42,7 @@ func (r *Resolver) ResolveShard(
 	)
 
 	// 3. Apply Deep Defaults (Level 4)
-	defaultStatelessSpec(&multiOrch.StatelessSpec, DefaultResourcesOrch(), 1)
+	defaultStatelessSpec(&multiorch.StatelessSpec, DefaultResourcesOrch(), 1)
 
 	if backupCfg == nil {
 		backupCfg = &multigresv1alpha1.BackupConfig{
@@ -54,18 +54,18 @@ func (r *Resolver) ResolveShard(
 	// Contextual Defaulting: Lazy Cell Injection
 	// If the resolved configuration has no cells defined, it means "run everywhere".
 	// We inject the full list of cluster cells here.
-	if opts.MaterializeCellDefaults && len(multiOrch.Cells) == 0 && len(opts.AllCellNames) > 0 {
+	if opts.MaterializeCellDefaults && len(multiorch.Cells) == 0 && len(opts.AllCellNames) > 0 {
 		for _, c := range opts.AllCellNames {
-			multiOrch.Cells = append(multiOrch.Cells, multigresv1alpha1.CellName(c))
+			multiorch.Cells = append(multiorch.Cells, multigresv1alpha1.CellName(c))
 		}
 		// Sort for deterministic output
-		slices.Sort(multiOrch.Cells)
+		slices.Sort(multiorch.Cells)
 	}
 
 	if len(pools) == 0 {
 		pools[DefaultPoolName] = multigresv1alpha1.PoolSpec{
 			Type:  "readWrite",
-			Cells: multiOrch.Cells,
+			Cells: multiorch.Cells,
 		}
 	}
 
@@ -103,7 +103,7 @@ func (r *Resolver) ResolveShard(
 		pools[name] = p
 	}
 
-	return &multiOrch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef, nil
+	return &multiorch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef, nil
 }
 
 // ResolveShardTemplate fetches and resolves a ShardTemplate by name.
@@ -148,9 +148,9 @@ func mergeShardConfig(
 	inline *multigresv1alpha1.ShardInlineSpec,
 	backupOverride *multigresv1alpha1.BackupConfig,
 	inheritedBackup *multigresv1alpha1.BackupConfig,
-) (multigresv1alpha1.MultiOrchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef) {
+) (multigresv1alpha1.MultiorchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef) {
 	// 1. Start with Template (Base)
-	var multiOrch multigresv1alpha1.MultiOrchSpec
+	var multiorch multigresv1alpha1.MultiorchSpec
 	pools := make(map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec)
 	var pvcPolicy *multigresv1alpha1.PVCDeletionPolicy
 	var initdbArgs multigresv1alpha1.InitdbArgs
@@ -162,8 +162,8 @@ func mergeShardConfig(
 	}
 
 	if template != nil {
-		if template.Spec.MultiOrch != nil {
-			multiOrch = *template.Spec.MultiOrch.DeepCopy()
+		if template.Spec.Multiorch != nil {
+			multiorch = *template.Spec.Multiorch.DeepCopy()
 		}
 		for k, v := range template.Spec.Pools {
 			pools[k] = *v.DeepCopy()
@@ -179,8 +179,8 @@ func mergeShardConfig(
 
 	// 2. Apply Overrides (Explicit Template Modification)
 	if overrides != nil {
-		if overrides.MultiOrch != nil {
-			mergeMultiOrchSpec(&multiOrch, overrides.MultiOrch)
+		if overrides.Multiorch != nil {
+			mergeMultiorchSpec(&multiorch, overrides.Multiorch)
 		}
 		for k, v := range overrides.Pools {
 			if existingPool, exists := pools[k]; exists {
@@ -200,7 +200,7 @@ func mergeShardConfig(
 	// 3. Apply Inline Spec (Primary Overlay)
 	// This merges the inline definition on top of the template+overrides.
 	if inline != nil {
-		mergeMultiOrchSpec(&multiOrch, &inline.MultiOrch)
+		mergeMultiorchSpec(&multiorch, &inline.Multiorch)
 
 		for k, v := range inline.Pools {
 			if existingPool, exists := pools[k]; exists {
@@ -230,12 +230,12 @@ func mergeShardConfig(
 		backupCfg = multigresv1alpha1.MergeBackupConfig(backupOverride, backupCfg)
 	}
 
-	return multiOrch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef
+	return multiorch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef
 }
 
-func mergeMultiOrchSpec(
-	base *multigresv1alpha1.MultiOrchSpec,
-	override *multigresv1alpha1.MultiOrchSpec,
+func mergeMultiorchSpec(
+	base *multigresv1alpha1.MultiorchSpec,
+	override *multigresv1alpha1.MultiorchSpec,
 ) {
 	mergeStatelessSpec(&base.StatelessSpec, &override.StatelessSpec)
 	mergePodPlacementSpec(&base.Placement, override.Placement)
