@@ -178,6 +178,20 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 		},
 	}
 
+	postgresUIDTpl := &multigresv1alpha1.ShardTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "postgres-uid-tpl", Namespace: "default"},
+		Spec: multigresv1alpha1.ShardTemplateSpec{
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"default": {
+					Type: "readWrite",
+					Postgres: multigresv1alpha1.ContainerConfig{
+						RunAsUser: ptr.To(int64(1000)),
+					},
+				},
+			},
+		},
+	}
+
 	defaultSC := &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "standard",
@@ -188,12 +202,12 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, defaultSC).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, defaultSC).
 		Build()
 
 	noSCClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl).
 		Build()
 
 	nodeRegionEast := &corev1.Node{
@@ -210,15 +224,15 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 	}
 	withRegionClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, defaultSC, nodeRegionEast).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, defaultSC, nodeRegionEast).
 		Build()
 	withZoneIDClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, defaultSC, nodeZoneID).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, defaultSC, nodeZoneID).
 		Build()
 	noMatchingNodeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, defaultSC).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, defaultSC).
 		Build()
 
 	tests := map[string]struct {
@@ -1081,6 +1095,83 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				},
 			},
 			wantErr: "shard 's0' pool 'default' multipooler: resource cpu limit (1) must be >= request (2)",
+		},
+		"Runtime identity: partial override resolves to matching PGDATA UID": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{Name: "zone-1"}},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "postgres-uid-tpl",
+								Overrides: &multigresv1alpha1.ShardOverrides{
+									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+										"default": {
+											Multipooler: multigresv1alpha1.ContainerConfig{
+												RunAsUser: ptr.To(int64(1000)),
+											},
+										},
+									},
+								},
+							}},
+						}},
+					}},
+				},
+			},
+		},
+		"Runtime identity error: multipooler UID without resolved postgres UID": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{Name: "zone-1"}},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "prod-shard",
+								Overrides: &multigresv1alpha1.ShardOverrides{
+									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+										"default": {
+											Multipooler: multigresv1alpha1.ContainerConfig{
+												RunAsUser: ptr.To(int64(1000)),
+											},
+										},
+									},
+								},
+							}},
+						}},
+					}},
+				},
+			},
+			wantErr: "shard 's0' pool 'default': multipooler runAsUser 1000 requires matching postgres runAsUser",
+		},
+		"Runtime identity error: postgres and multipooler UIDs differ after resolution": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{Name: "zone-1"}},
+					Databases: []multigresv1alpha1.DatabaseConfig{{
+						TableGroups: []multigresv1alpha1.TableGroupConfig{{
+							Shards: []multigresv1alpha1.ShardConfig{{
+								Name:          "s0",
+								ShardTemplate: "postgres-uid-tpl",
+								Overrides: &multigresv1alpha1.ShardOverrides{
+									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+										"default": {
+											Multipooler: multigresv1alpha1.ContainerConfig{
+												RunAsUser: ptr.To(int64(2000)),
+											},
+										},
+									},
+								},
+							}},
+						}},
+					}},
+				},
+			},
+			wantErr: "shard 's0' pool 'default': postgres runAsUser 1000 and multipooler runAsUser 2000 must match",
 		},
 		"External Topo Server Sets Effective Replicas To 0": {
 			cluster: &multigresv1alpha1.MultigresCluster{

@@ -517,6 +517,13 @@ func (r *Resolver) ValidateClusterLogic(
 					return nil, err
 				}
 				for poolName, pool := range pools {
+					if err := validatePoolRuntimeIdentity(
+						string(shard.Name),
+						poolName,
+						pool,
+					); err != nil {
+						return nil, err
+					}
 					if err := validateResourceRequirements(
 						pool.Postgres.Resources,
 						fmt.Sprintf("shard '%s' pool '%s' postgres", shard.Name, poolName),
@@ -708,6 +715,34 @@ func ValidatePoolName(name multigresv1alpha1.PoolName) error {
 				"must consist of lowercase alphanumeric characters or '-', "+
 				"and must start and end with an alphanumeric character",
 			name,
+		)
+	}
+	return nil
+}
+
+func validatePoolRuntimeIdentity(
+	shardName string,
+	poolName multigresv1alpha1.PoolName,
+	pool multigresv1alpha1.PoolSpec,
+) error {
+	if pool.Multipooler.RunAsUser == nil {
+		return nil
+	}
+	if pool.Postgres.RunAsUser == nil {
+		return fmt.Errorf(
+			"shard '%s' pool '%s': multipooler runAsUser %d requires matching postgres runAsUser because both access PGDATA",
+			shardName,
+			poolName,
+			*pool.Multipooler.RunAsUser,
+		)
+	}
+	if *pool.Postgres.RunAsUser != *pool.Multipooler.RunAsUser {
+		return fmt.Errorf(
+			"shard '%s' pool '%s': postgres runAsUser %d and multipooler runAsUser %d must match because both access PGDATA",
+			shardName,
+			poolName,
+			*pool.Postgres.RunAsUser,
+			*pool.Multipooler.RunAsUser,
 		)
 	}
 	return nil

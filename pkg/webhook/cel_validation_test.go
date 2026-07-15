@@ -694,6 +694,63 @@ func TestCEL_ExtendedValidation(t *testing.T) {
 	}
 }
 
+func TestCEL_PoolRuntimeIdentity(t *testing.T) {
+	t.Parallel()
+
+	newShard := func(name string, postgresUID, multipoolerUID *int64) *multigresv1alpha1.Shard {
+		return &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName: "postgres", TableGroupName: "default", ShardName: "0",
+				Images: multigresv1alpha1.ShardImages{
+					Postgres: "p", Multiorch: "o", Multipooler: "po",
+				},
+				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+					Address: "etcd", RootPath: "/", Implementation: "etcd",
+				},
+				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+					"rw": {
+						Cells:   []multigresv1alpha1.CellName{"cell-1"},
+						FSGroup: ptr.To(int64(2000)),
+						Postgres: multigresv1alpha1.ContainerConfig{
+							RunAsUser:  postgresUID,
+							RunAsGroup: ptr.To(int64(0)),
+						},
+						Multipooler: multigresv1alpha1.ContainerConfig{
+							RunAsUser:  multipoolerUID,
+							RunAsGroup: ptr.To(int64(0)),
+						},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("allows different PGDATA UIDs at API layer because PoolSpec may be partial", func(t *testing.T) {
+		shard := newShard("cel-runtime-uid-mismatch", ptr.To(int64(1000)), ptr.To(int64(3000)))
+		setTestShardPostgresPasswordSecretRef(shard)
+		if err := getPrivilegedClient(t).Create(ctx, shard); err != nil {
+			t.Fatalf("expected API validation to allow partial PoolSpec identity, got %v", err)
+		}
+	})
+
+	t.Run("allows multipooler-only UID at API layer because PoolSpec may be partial", func(t *testing.T) {
+		shard := newShard("cel-runtime-multipooler-only", nil, ptr.To(int64(1000)))
+		setTestShardPostgresPasswordSecretRef(shard)
+		if err := getPrivilegedClient(t).Create(ctx, shard); err != nil {
+			t.Fatalf("expected API validation to allow partial PoolSpec identity, got %v", err)
+		}
+	})
+
+	t.Run("accepts root primary and filesystem groups", func(t *testing.T) {
+		shard := newShard("cel-runtime-root-group", ptr.To(int64(1000)), ptr.To(int64(1000)))
+		setTestShardPostgresPasswordSecretRef(shard)
+		if err := getPrivilegedClient(t).Create(ctx, shard); err != nil {
+			t.Fatalf("expected group ID 0 to be accepted, got %v", err)
+		}
+	})
+}
+
 func TestCEL_S3ServiceAccountName(t *testing.T) {
 	t.Parallel()
 
