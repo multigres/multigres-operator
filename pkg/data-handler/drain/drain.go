@@ -37,7 +37,7 @@ const (
 func ExecuteDrainStateMachine(
 	ctx context.Context,
 	k8sClient client.Client,
-	rpcClient rpcclient.MultiPoolerClient,
+	rpcClient rpcclient.MultipoolerClient,
 	recorder record.EventRecorder,
 	store topoclient.Store,
 	shard *multigresv1alpha1.Shard,
@@ -89,8 +89,8 @@ func ExecuteDrainStateMachine(
 	opt := topo.ShardFilter(shard)
 
 	// Find the pooler entry for this pod
-	var myPooler *topoclient.MultiPoolerInfo
-	poolers, err := store.GetMultiPoolersByCell(ctx, cellName, opt)
+	var myPooler *topoclient.MultipoolerInfo
+	poolers, err := store.GetMultipoolersByCell(ctx, cellName, opt)
 	if err != nil {
 		if topo.IsTopoUnavailable(err) && !pod.DeletionTimestamp.IsZero() {
 			logger.Info(
@@ -275,7 +275,7 @@ func IsPrimaryTerminatingOrMissing(
 	ctx context.Context,
 	k8sClient client.Client,
 	shard *multigresv1alpha1.Shard,
-	primary *clustermetadatapb.MultiPooler,
+	primary *clustermetadatapb.Multipooler,
 ) bool {
 	if primary == nil || primary.Id == nil {
 		return true
@@ -299,7 +299,7 @@ func IsPrimaryDraining(
 	ctx context.Context,
 	k8sClient client.Client,
 	shard *multigresv1alpha1.Shard,
-	primary *clustermetadatapb.MultiPooler,
+	primary *clustermetadatapb.Multipooler,
 ) bool {
 	if primary == nil || primary.Id == nil {
 		return false
@@ -326,7 +326,7 @@ func IsPrimaryNotReady(
 	ctx context.Context,
 	k8sClient client.Client,
 	shard *multigresv1alpha1.Shard,
-	primary *clustermetadatapb.MultiPooler,
+	primary *clustermetadatapb.Multipooler,
 ) bool {
 	if primary == nil || primary.Id == nil {
 		return true

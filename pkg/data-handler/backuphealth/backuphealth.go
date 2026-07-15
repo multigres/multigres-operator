@@ -48,7 +48,7 @@ type Result struct {
 func Evaluate(
 	ctx context.Context,
 	store topoclient.Store,
-	rpcClient rpcclient.MultiPoolerClient,
+	rpcClient rpcclient.MultipoolerClient,
 	shard *multigresv1alpha1.Shard,
 ) (*Result, error) {
 	logger := log.FromContext(ctx)
@@ -67,11 +67,11 @@ func Evaluate(
 		&multipoolermanagerdatapb.GetBackupsRequest{Limit: backupQueryLimit})
 	if err != nil {
 		return nil, fmt.Errorf("querying backups from primary %s: %w",
-			topoclient.ClusterIDString(primary.Id), err)
+			topoclient.ComponentIDString(primary.Id), err)
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("nil response from primary %s",
-			topoclient.ClusterIDString(primary.Id))
+			topoclient.ComponentIDString(primary.Id))
 	}
 
 	return EvaluateBackups(shard, resp.Backups), nil

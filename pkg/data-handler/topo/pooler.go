@@ -45,10 +45,10 @@ func GetPoolerStatus(
 	cells := CollectCells(shard)
 	for _, cell := range cells {
 		opt := ShardFilter(shard)
-		poolers, err := store.GetMultiPoolersByCell(ctx, cell, opt)
+		poolers, err := store.GetMultipoolersByCell(ctx, cell, opt)
 		if err == nil {
 			for _, p := range poolers {
-				if isLifecycleShutdown(p.MultiPooler) {
+				if isLifecycleShutdown(p.Multipooler) {
 					continue
 				}
 				roleName := "REPLICA"
@@ -74,7 +74,7 @@ func GetPoolerStatus(
 
 // matchPoolerToPod finds the managed pod name that matches a topology pooler
 // entry, using the FQDN-aware PodMatchesPooler comparison.
-func matchPoolerToPod(p *topoclient.MultiPoolerInfo, podNames []string) string {
+func matchPoolerToPod(p *topoclient.MultipoolerInfo, podNames []string) string {
 	for _, name := range podNames {
 		if PodMatchesPooler(name, p) {
 			return name
@@ -92,11 +92,11 @@ func FindPrimaryPooler(
 	store topoclient.Store,
 	shard *multigresv1alpha1.Shard,
 	cells []string,
-) (*clustermetadatapb.MultiPooler, error) {
+) (*clustermetadatapb.Multipooler, error) {
 	var anySuccess bool
 	for _, cell := range cells {
 		opt := ShardFilter(shard)
-		poolers, err := store.GetMultiPoolersByCell(ctx, cell, opt)
+		poolers, err := store.GetMultipoolersByCell(ctx, cell, opt)
 		if err != nil {
 			if IsTopoUnavailable(err) {
 				continue
@@ -106,8 +106,8 @@ func FindPrimaryPooler(
 		anySuccess = true
 		for _, p := range poolers {
 			if p.Type == clustermetadatapb.PoolerType_PRIMARY &&
-				!isLifecycleShutdown(p.MultiPooler) {
-				return p.MultiPooler, nil
+				!isLifecycleShutdown(p.Multipooler) {
+				return p.Multipooler, nil
 			}
 		}
 	}
@@ -133,9 +133,9 @@ func CollectCells(shard *multigresv1alpha1.Shard) []string {
 	return cells
 }
 
-// ShardFilter builds a GetMultiPoolersByCellOptions filter for a shard.
-func ShardFilter(shard *multigresv1alpha1.Shard) *topoclient.GetMultiPoolersByCellOptions {
-	return &topoclient.GetMultiPoolersByCellOptions{
+// ShardFilter builds a GetMultipoolersByCellOptions filter for a shard.
+func ShardFilter(shard *multigresv1alpha1.Shard) *topoclient.GetMultipoolersByCellOptions {
+	return &topoclient.GetMultipoolersByCellOptions{
 		DatabaseShard: &topoclient.DatabaseShard{
 			Database:   string(shard.Spec.DatabaseName),
 			TableGroup: string(shard.Spec.TableGroupName),
@@ -145,7 +145,7 @@ func ShardFilter(shard *multigresv1alpha1.Shard) *topoclient.GetMultiPoolersByCe
 }
 
 // PodMatchesPooler checks if the topology pooler record corresponds to the given Kubernetes pod name.
-func PodMatchesPooler(podName string, p *topoclient.MultiPoolerInfo) bool {
+func PodMatchesPooler(podName string, p *topoclient.MultipoolerInfo) bool {
 	if p.Id != nil && p.Id.Name == podName {
 		return true
 	}
@@ -166,14 +166,14 @@ func ForceUnregisterPod(
 	}
 
 	opt := ShardFilter(shard)
-	poolers, err := store.GetMultiPoolersByCell(ctx, cellName, opt)
+	poolers, err := store.GetMultipoolersByCell(ctx, cellName, opt)
 	if err != nil {
 		return err
 	}
 
 	for _, p := range poolers {
 		if PodMatchesPooler(podName, p) {
-			return store.UnregisterMultiPooler(ctx, p.Id)
+			return store.UnregisterMultipooler(ctx, p.Id)
 		}
 	}
 	log.FromContext(ctx).
@@ -202,7 +202,7 @@ func MarkDeadPoolers(
 	cells := CollectCells(shard)
 	for _, cell := range cells {
 		opt := ShardFilter(shard)
-		poolers, err := store.GetMultiPoolersByCell(ctx, cell, opt)
+		poolers, err := store.GetMultipoolersByCell(ctx, cell, opt)
 		if err != nil {
 			if IsTopoUnavailable(err) {
 				continue
@@ -218,7 +218,7 @@ func MarkDeadPoolers(
 			if poolerMatchesAnyActivePod(p, activePodNames) {
 				continue
 			}
-			if isLifecycleShutdown(p.MultiPooler) {
+			if isLifecycleShutdown(p.Multipooler) {
 				continue // Already marked; nothing to do.
 			}
 
@@ -227,8 +227,8 @@ func MarkDeadPoolers(
 				hostname = p.Id.Name
 			}
 
-			if _, err := store.UpdateMultiPoolerFields(ctx, p.Id,
-				func(mp *clustermetadatapb.MultiPooler) error {
+			if _, err := store.UpdateMultipoolerFields(ctx, p.Id,
+				func(mp *clustermetadatapb.Multipooler) error {
 					// TODO: Consider a dedicated lifecycle status (e.g.
 					// DEPROVISIONED) to distinguish an operator-detected dead
 					// pooler from a graceful shutdown. Doesn't affect orch
@@ -256,7 +256,7 @@ func MarkDeadPoolers(
 
 // isLifecycleShutdown reports whether the pooler is already recorded as shut
 // down in topology.
-func isLifecycleShutdown(mp *clustermetadatapb.MultiPooler) bool {
+func isLifecycleShutdown(mp *clustermetadatapb.Multipooler) bool {
 	return mp != nil &&
 		mp.LifecycleStatus != nil &&
 		mp.LifecycleStatus.Status == clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN
@@ -264,7 +264,7 @@ func isLifecycleShutdown(mp *clustermetadatapb.MultiPooler) bool {
 
 // poolerMatchesAnyActivePod returns true when the pooler record corresponds to
 // any pod in activePodNames. Uses PodMatchesPooler for FQDN-aware comparison.
-func poolerMatchesAnyActivePod(p *topoclient.MultiPoolerInfo, activePodNames map[string]bool) bool {
+func poolerMatchesAnyActivePod(p *topoclient.MultipoolerInfo, activePodNames map[string]bool) bool {
 	for podName := range activePodNames {
 		if PodMatchesPooler(podName, p) {
 			return true
