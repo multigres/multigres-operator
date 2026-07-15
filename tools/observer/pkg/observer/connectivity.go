@@ -27,26 +27,26 @@ import (
 )
 
 func (o *Observer) checkConnectivity(ctx context.Context) {
-	o.probeMultiGatewayServices(ctx)
-	o.probeMultiOrchServices(ctx)
+	o.probeMultigatewayServices(ctx)
+	o.probeMultiorchServices(ctx)
 	o.probeTopoServerServices(ctx)
 	o.probePoolPodHealth(ctx)
 	o.probeOperatorHealth(ctx)
 	o.probeOperatorMetrics(ctx)
 
 	if o.enableSQLProbe {
-		o.probeMultiGatewaySQLServices(ctx)
+		o.probeMultigatewaySQLServices(ctx)
 	}
 
 	o.crossCheckReadiness(ctx)
 }
 
-func (o *Observer) probeMultiGatewayServices(ctx context.Context) {
+func (o *Observer) probeMultigatewayServices(ctx context.Context) {
 	var svcs corev1.ServiceList
 	if err := o.client.List(ctx, &svcs,
 		o.listOpts(client.MatchingLabels{
 			common.LabelAppManagedBy: common.ManagedByMultigres,
-			common.LabelAppComponent: common.ComponentMultiGateway,
+			common.LabelAppComponent: common.ComponentMultigateway,
 		})...,
 	); err != nil {
 		return
@@ -57,15 +57,15 @@ func (o *Observer) probeMultiGatewayServices(ctx context.Context) {
 		addr := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
 
 		// TCP probe on PG port.
-		o.probeTCP(addr, common.PortMultiGatewayPG, "multigateway-pg", svc.Name)
+		o.probeTCP(addr, common.PortMultigatewayPG, "multigateway-pg", svc.Name)
 
 		// HTTP health probes — only on services that expose the HTTP port.
 		// The global gateway service only exposes 5432, not 15100.
-		if serviceHasPort(svc, common.PortMultiGatewayHTTP) {
+		if serviceHasPort(svc, common.PortMultigatewayHTTP) {
 			o.probeHTTP(
 				ctx,
 				addr,
-				common.PortMultiGatewayHTTP,
+				common.PortMultigatewayHTTP,
 				"/live",
 				"multigateway-liveness",
 				svc.Name,
@@ -73,7 +73,7 @@ func (o *Observer) probeMultiGatewayServices(ctx context.Context) {
 			o.probeHTTP(
 				ctx,
 				addr,
-				common.PortMultiGatewayHTTP,
+				common.PortMultigatewayHTTP,
 				"/ready",
 				"multigateway-readiness",
 				svc.Name,
@@ -82,12 +82,12 @@ func (o *Observer) probeMultiGatewayServices(ctx context.Context) {
 	}
 }
 
-func (o *Observer) probeMultiOrchServices(ctx context.Context) {
+func (o *Observer) probeMultiorchServices(ctx context.Context) {
 	var svcs corev1.ServiceList
 	if err := o.client.List(ctx, &svcs,
 		o.listOpts(client.MatchingLabels{
 			common.LabelAppManagedBy: common.ManagedByMultigres,
-			common.LabelAppComponent: common.ComponentMultiOrch,
+			common.LabelAppComponent: common.ComponentMultiorch,
 		})...,
 	); err != nil {
 		return
@@ -96,9 +96,9 @@ func (o *Observer) probeMultiOrchServices(ctx context.Context) {
 	for i := range svcs.Items {
 		svc := &svcs.Items[i]
 		addr := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
-		o.probeHTTP(ctx, addr, common.PortMultiOrchHTTP, "/live", "multiorch-liveness", svc.Name)
-		o.probeHTTP(ctx, addr, common.PortMultiOrchHTTP, "/ready", "multiorch-readiness", svc.Name)
-		o.probeMultiOrchStatus(ctx, addr, svc.Name)
+		o.probeHTTP(ctx, addr, common.PortMultiorchHTTP, "/live", "multiorch-liveness", svc.Name)
+		o.probeHTTP(ctx, addr, common.PortMultiorchHTTP, "/ready", "multiorch-readiness", svc.Name)
+		o.probeMultiorchStatus(ctx, addr, svc.Name)
 	}
 }
 
@@ -174,7 +174,7 @@ func (o *Observer) probePoolPodHealth(ctx context.Context) {
 		o.probeHTTP(
 			ctx,
 			pod.Status.PodIP,
-			common.PortMultiPoolerHTTP,
+			common.PortMultipoolerHTTP,
 			"/live",
 			"multipooler-health",
 			pod.Name,
@@ -182,7 +182,7 @@ func (o *Observer) probePoolPodHealth(ctx context.Context) {
 		o.probeHTTP(
 			ctx,
 			pod.Status.PodIP,
-			common.PortMultiPoolerHTTP,
+			common.PortMultipoolerHTTP,
 			"/ready",
 			"multipooler-readiness",
 			pod.Name,
@@ -191,12 +191,12 @@ func (o *Observer) probePoolPodHealth(ctx context.Context) {
 	}
 }
 
-func (o *Observer) probeMultiOrchStatus(ctx context.Context, host, component string) {
+func (o *Observer) probeMultiorchStatus(ctx context.Context, host, component string) {
 	if o.hasAnyPodInGracePeriod() {
 		return
 	}
 
-	url := fmt.Sprintf("http://%s:%d/debug/status", host, common.PortMultiOrchHTTP)
+	url := fmt.Sprintf("http://%s:%d/debug/status", host, common.PortMultiorchHTTP)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -259,7 +259,7 @@ func (o *Observer) probeMultiOrchStatus(ctx context.Context, host, component str
 	for _, line := range lines {
 		lower := strings.ToLower(line)
 		// Pooler entries typically reference the pooler port or "pooler" in the status page.
-		if strings.Contains(lower, fmt.Sprintf(":%d", common.PortMultiPoolerGRPC)) ||
+		if strings.Contains(lower, fmt.Sprintf(":%d", common.PortMultipoolerGRPC)) ||
 			strings.Contains(lower, "multipooler") ||
 			strings.Contains(lower, "pooler") {
 			totalPoolers++
@@ -341,7 +341,7 @@ func (o *Observer) probeMultiOrchStatus(ctx context.Context, host, component str
 }
 
 func (o *Observer) probePoolPodGRPC(ctx context.Context, pod *corev1.Pod) {
-	addr := net.JoinHostPort(pod.Status.PodIP, fmt.Sprintf("%d", common.PortMultiPoolerGRPC))
+	addr := net.JoinHostPort(pod.Status.PodIP, fmt.Sprintf("%d", common.PortMultipoolerGRPC))
 
 	dialCtx, cancel := context.WithTimeout(ctx, common.GRPCHealthTimeout)
 	defer cancel()
@@ -668,7 +668,7 @@ func (o *Observer) crossCheckReadiness(ctx context.Context) {
 				}
 			}
 
-		case common.ComponentMultiOrch:
+		case common.ComponentMultiorch:
 			// Multiorch probes are service-level. Check if any service-level probe failed.
 			if failed := failedByCheck["multiorch-readiness"]; len(failed) > 0 {
 				o.reporter.Report(report.Finding{
@@ -704,7 +704,7 @@ func (o *Observer) crossCheckReadiness(ctx context.Context) {
 				})
 			}
 
-		case common.ComponentMultiGateway:
+		case common.ComponentMultigateway:
 			if failed := failedByCheck["multigateway-readiness"]; len(failed) > 0 {
 				o.reporter.Report(report.Finding{
 					Severity:  report.SeverityError,
@@ -733,7 +733,7 @@ func probeComponents(probes []ProbeResult) []string {
 	return out
 }
 
-func (o *Observer) probeMultiGatewaySQLServices(ctx context.Context) {
+func (o *Observer) probeMultigatewaySQLServices(ctx context.Context) {
 	if o.hasAnyPodInGracePeriod() {
 		return
 	}
@@ -742,7 +742,7 @@ func (o *Observer) probeMultiGatewaySQLServices(ctx context.Context) {
 	if err := o.client.List(ctx, &svcs,
 		o.listOpts(client.MatchingLabels{
 			common.LabelAppManagedBy: common.ManagedByMultigres,
-			common.LabelAppComponent: common.ComponentMultiGateway,
+			common.LabelAppComponent: common.ComponentMultigateway,
 		})...,
 	); err != nil {
 		return
@@ -752,7 +752,7 @@ func (o *Observer) probeMultiGatewaySQLServices(ctx context.Context) {
 		svc := &svcs.Items[i]
 		addr := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
 		password := o.fetchGatewayPassword(ctx, svc)
-		o.probeSQL(ctx, addr, common.PortMultiGatewayPG, svc.Name, password)
+		o.probeSQL(ctx, addr, common.PortMultigatewayPG, svc.Name, password)
 	}
 }
 

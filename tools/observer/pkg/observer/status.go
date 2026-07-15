@@ -762,7 +762,7 @@ func (o *Observer) checkCellStatusFields(ctx context.Context, cell *multigresv1a
 		if err := o.client.List(ctx, &deploys,
 			o.listOpts(client.MatchingLabels{
 				common.LabelAppManagedBy: common.ManagedByMultigres,
-				common.LabelAppComponent: common.ComponentMultiGateway,
+				common.LabelAppComponent: common.ComponentMultigateway,
 				common.LabelMultigresCell: cellLabel,
 			})...,
 		); err == nil {

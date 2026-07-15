@@ -35,20 +35,20 @@ const (
 // Component names for app.kubernetes.io/component labels.
 const (
 	ComponentPool         = "shard-pool"
-	ComponentMultiOrch    = "multiorch"
-	ComponentMultiGateway = "multigateway"
+	ComponentMultiorch    = "multiorch"
+	ComponentMultigateway = "multigateway"
 	ComponentGlobalTopo   = "toposerver"
 )
 
 // Well-known ports for multigres components.
 const (
-	PortMultiGatewayHTTP = 15100
-	PortMultiGatewayGRPC = 15170
-	PortMultiGatewayPG   = 5432
-	PortMultiPoolerHTTP  = 15200
-	PortMultiPoolerGRPC  = 15270
-	PortMultiOrchHTTP    = 15300
-	PortMultiOrchGRPC    = 15370
+	PortMultigatewayHTTP = 15100
+	PortMultigatewayGRPC = 15170
+	PortMultigatewayPG   = 5432
+	PortMultipoolerHTTP  = 15200
+	PortMultipoolerGRPC  = 15270
+	PortMultiorchHTTP    = 15300
+	PortMultiorchGRPC    = 15370
 	PortEtcdClient       = 2379
 	PortEtcdPeer         = 2380
 	PortOperatorHealth   = 8081

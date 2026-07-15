@@ -75,13 +75,13 @@ The observer probes these ports on their respective services:
 
 | Port | Component | Protocol | Constant |
 |------|-----------|----------|----------|
-| 15100 | MultiGateway HTTP | HTTP | `PortMultiGatewayHTTP` |
-| 15170 | MultiGateway gRPC | gRPC | `PortMultiGatewayGRPC` |
-| 5432 | MultiGateway PostgreSQL | PG wire | `PortMultiGatewayPG` |
-| 15200 | MultiPooler HTTP | HTTP | `PortMultiPoolerHTTP` |
-| 15270 | MultiPooler gRPC | gRPC | `PortMultiPoolerGRPC` |
-| 15300 | MultiOrch HTTP | HTTP | `PortMultiOrchHTTP` |
-| 15370 | MultiOrch gRPC | gRPC | `PortMultiOrchGRPC` |
+| 15100 | Multigateway HTTP | HTTP | `PortMultigatewayHTTP` |
+| 15170 | Multigateway gRPC | gRPC | `PortMultigatewayGRPC` |
+| 5432 | Multigateway PostgreSQL | PG wire | `PortMultigatewayPG` |
+| 15200 | Multipooler HTTP | HTTP | `PortMultipoolerHTTP` |
+| 15270 | Multipooler gRPC | gRPC | `PortMultipoolerGRPC` |
+| 15300 | Multiorch HTTP | HTTP | `PortMultiorchHTTP` |
+| 15370 | Multiorch gRPC | gRPC | `PortMultiorchGRPC` |
 | 2379 | etcd (TopoServer) client | HTTP | `PortEtcdClient` |
 | 2380 | etcd (TopoServer) peer | HTTP | `PortEtcdPeer` |
 | 5432 | PostgreSQL (pool pods) | PG wire | `PortPostgres` |
@@ -111,8 +111,8 @@ The observer uses these labels to discover and classify Multigres resources:
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `ComponentPool` | `shard-pool` | Pool pods (PostgreSQL + multipooler) |
-| `ComponentMultiOrch` | `multiorch` | Orchestrator |
-| `ComponentMultiGateway` | `multigateway` | Gateway |
+| `ComponentMultiorch` | `multiorch` | Orchestrator |
+| `ComponentMultigateway` | `multigateway` | Gateway |
 | `ComponentGlobalTopo` | `toposerver` | TopoServer (etcd) |
 
 ---

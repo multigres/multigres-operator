@@ -71,19 +71,19 @@ func (o *Observer) checkCellOwnership(
 			})
 		}
 
-		// Check MultiGateway resources owned by Cell.
-		o.checkMultiGatewayResources(ctx, cell)
+		// Check Multigateway resources owned by Cell.
+		o.checkMultigatewayResources(ctx, cell)
 	}
 }
 
-func (o *Observer) checkMultiGatewayResources(ctx context.Context, cell *multigresv1alpha1.Cell) {
+func (o *Observer) checkMultigatewayResources(ctx context.Context, cell *multigresv1alpha1.Cell) {
 	// Use the short cell name from the Cell's label, not the CRD name.
 	cellLabelValue := cell.Labels[common.LabelMultigresCell]
 
 	var deploys appsv1.DeploymentList
 	if err := o.client.List(ctx, &deploys,
 		o.listOpts(client.MatchingLabels{
-			common.LabelAppComponent:  common.ComponentMultiGateway,
+			common.LabelAppComponent:  common.ComponentMultigateway,
 			common.LabelMultigresCell: cellLabelValue,
 		})...,
 	); err != nil {
@@ -96,7 +96,7 @@ func (o *Observer) checkMultiGatewayResources(ctx context.Context, cell *multigr
 				Severity:  report.SeverityError,
 				Check:     "resource-validation",
 				Component: fmt.Sprintf("cell/%s/%s", cell.Namespace, cell.Name),
-				Message:   fmt.Sprintf("No MultiGateway deployment found for cell %s", cell.Name),
+				Message:   fmt.Sprintf("No Multigateway deployment found for cell %s", cell.Name),
 			})
 		}
 		return
@@ -105,7 +105,7 @@ func (o *Observer) checkMultiGatewayResources(ctx context.Context, cell *multigr
 	var svcs corev1.ServiceList
 	if err := o.client.List(ctx, &svcs,
 		o.listOpts(client.MatchingLabels{
-			common.LabelAppComponent:  common.ComponentMultiGateway,
+			common.LabelAppComponent:  common.ComponentMultigateway,
 			common.LabelMultigresCell: cellLabelValue,
 		})...,
 	); err != nil {
@@ -117,7 +117,7 @@ func (o *Observer) checkMultiGatewayResources(ctx context.Context, cell *multigr
 			Severity:  report.SeverityError,
 			Check:     "resource-validation",
 			Component: fmt.Sprintf("cell/%s/%s", cell.Namespace, cell.Name),
-			Message:   fmt.Sprintf("No MultiGateway service found for cell %s", cell.Name),
+			Message:   fmt.Sprintf("No Multigateway service found for cell %s", cell.Name),
 		})
 	}
 }

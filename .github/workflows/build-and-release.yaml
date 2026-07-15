@@ -52,6 +52,9 @@ jobs:
       - name: Run tests
         run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
 
+      - name: Run observer tests against current operator API
+        working-directory: tools/observer
+        run: go test -mod=readonly ./...
 
   build-scan-push-container:
     needs: [ test-go ]

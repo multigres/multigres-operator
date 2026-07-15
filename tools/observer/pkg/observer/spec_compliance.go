@@ -184,7 +184,7 @@ func (o *Observer) checkPoolPodImages(shard *multigresv1alpha1.Shard, pods []cor
 				case "postgres":
 					expectedImage = string(shard.Spec.Images.Postgres)
 				case "multipooler":
-					expectedImage = string(shard.Spec.Images.MultiPooler)
+					expectedImage = string(shard.Spec.Images.Multipooler)
 				default:
 					continue
 				}

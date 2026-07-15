@@ -98,12 +98,12 @@ func (o *Observer) checkDataPlaneLogs(ctx context.Context, sinceSeconds int64) {
 			}
 			o.scanPodLogs(ctx, pod, "multipooler", sinceSeconds, dataPlaneErrorPatterns, false)
 			o.scanPodLogs(ctx, pod, "postgres", sinceSeconds, dataPlaneErrorPatterns, false)
-		case common.ComponentMultiGateway:
+		case common.ComponentMultigateway:
 			if o.hasAnyPodInGracePeriod() {
 				continue
 			}
 			o.scanPodLogs(ctx, pod, "", sinceSeconds, dataPlaneErrorPatterns, true)
-		case common.ComponentMultiOrch:
+		case common.ComponentMultiorch:
 			if o.hasAnyPodInGracePeriod() {
 				continue
 			}

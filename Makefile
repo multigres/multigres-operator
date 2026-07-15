@@ -566,7 +566,7 @@ kind-down: ## Delete the kind cluster
 
 .PHONY: observer-build
 observer-build: ## Build the observer container image
-	$(CONTAINER_TOOL) build -t $(OBSERVER_IMG) -f tools/observer/Dockerfile tools/observer/
+	$(CONTAINER_TOOL) build -t $(OBSERVER_IMG) -f tools/observer/Dockerfile .
 
 .PHONY: kind-load-observer
 kind-load-observer: observer-build ## Build and load observer image into kind
