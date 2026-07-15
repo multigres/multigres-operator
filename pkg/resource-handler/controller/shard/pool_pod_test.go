@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -345,46 +346,190 @@ func TestBuildPoolPod_SecurityContext(t *testing.T) {
 	}
 }
 
-func TestBuildPoolPod_SecurityContextWithFSGroup(t *testing.T) {
-	pool := newTestPoolSpec()
-	pool.FSGroup = ptr.To(int64(1234))
+func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.T) {
+	t.Run("custom images retain their identity", func(t *testing.T) {
+		shard := newTestShard()
+		shard.Spec.Images.Postgres = "example/pgctld:user-1000-group-1001"
+		shard.Spec.Images.Multipooler = "example/multipooler:user-1000-group-1001"
+		pool := newTestPoolSpec()
+		pool.FSGroup = ptr.To(int64(2000))
 
-	pod, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+		pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 
-	if pod.Spec.SecurityContext == nil {
-		t.Fatal("pod security context is nil")
-	}
-	if pod.Spec.SecurityContext.FSGroup == nil || *pod.Spec.SecurityContext.FSGroup != 1234 {
-		t.Errorf("FSGroup = %v, want 1234", pod.Spec.SecurityContext.FSGroup)
-	}
+		assertPoolPodFSGroup(t, pod, 2000)
+		assertContainerIdentity(t, pod.Spec.InitContainers[0], nil, nil)
+		assertContainerIdentity(t, pod.Spec.Containers[0], nil, nil)
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[1],
+			ptr.To(DefaultPostgresExporterUID),
+			ptr.To(DefaultPostgresExporterGID),
+		)
+	})
+
+	t.Run("default pgctld identity is independent", func(t *testing.T) {
+		pool := newTestPoolSpec()
+		pool.FSGroup = ptr.To(int64(2000))
+
+		pod, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assertPoolPodFSGroup(t, pod, 2000)
+		assertContainerIdentity(
+			t,
+			pod.Spec.InitContainers[0],
+			ptr.To(DefaultPostgresUID),
+			ptr.To(DefaultPostgresGID),
+		)
+		assertContainerIdentity(t, pod.Spec.Containers[0], ptr.To(DefaultMultipoolerUID), ptr.To(DefaultMultipoolerGID))
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[1],
+			ptr.To(DefaultPostgresExporterUID),
+			ptr.To(DefaultPostgresExporterGID),
+		)
+	})
+
+	t.Run("explicit identity is independent", func(t *testing.T) {
+		shard := newTestShard()
+		shard.Spec.Images.Postgres = "example/pgctld:named-user"
+		shard.Spec.Images.Multipooler = "example/multipooler:named-user"
+		pool := newTestPoolSpec()
+		pool.FSGroup = ptr.To(int64(2000))
+		pool.Postgres.RunAsUser = ptr.To(int64(1000))
+		pool.Postgres.RunAsGroup = ptr.To(int64(1001))
+		pool.Multipooler.RunAsUser = ptr.To(int64(1000))
+		pool.Multipooler.RunAsGroup = ptr.To(int64(3001))
+
+		pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assertPoolPodFSGroup(t, pod, 2000)
+		assertContainerIdentity(
+			t,
+			pod.Spec.InitContainers[0],
+			ptr.To(int64(1000)),
+			ptr.To(int64(1001)),
+		)
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[0],
+			ptr.To(int64(1000)),
+			ptr.To(int64(3001)),
+		)
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[1],
+			ptr.To(DefaultPostgresExporterUID),
+			ptr.To(DefaultPostgresExporterGID),
+		)
+	})
+
+	t.Run("multipooler inherits explicit postgres UID when unset", func(t *testing.T) {
+		shard := newTestShard()
+		shard.Spec.Images.Postgres = "example/pgctld:named-user"
+		pool := newTestPoolSpec()
+		pool.FSGroup = ptr.To(int64(2000))
+		pool.Postgres.RunAsUser = ptr.To(int64(1000))
+		pool.Postgres.RunAsGroup = ptr.To(int64(1001))
+
+		pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		assertPoolPodFSGroup(t, pod, 2000)
+		assertContainerIdentity(
+			t,
+			pod.Spec.InitContainers[0],
+			ptr.To(int64(1000)),
+			ptr.To(int64(1001)),
+		)
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[0],
+			ptr.To(int64(1000)),
+			ptr.To(DefaultMultipoolerGID),
+		)
+	})
+
+	t.Run("rejects explicit multipooler UID without postgres UID", func(t *testing.T) {
+		pool := newTestPoolSpec()
+		pool.FSGroup = ptr.To(int64(2000))
+		pool.Multipooler.RunAsUser = ptr.To(int64(1000))
+
+		_, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
+		require.ErrorContains(t, err, "requires matching postgres runAsUser")
+	})
+
+	t.Run("rejects mismatched explicit shared data UIDs", func(t *testing.T) {
+		pool := newTestPoolSpec()
+		pool.FSGroup = ptr.To(int64(2000))
+		pool.Postgres.RunAsUser = ptr.To(int64(999))
+		pool.Multipooler.RunAsUser = ptr.To(int64(1000))
+
+		_, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
+		require.ErrorContains(t, err, "must match because both access PGDATA")
+	})
+
 }
 
 func TestBuildContainerSecurityContext(t *testing.T) {
-	t.Run("nil fsGroup defaults to postgres UID", func(t *testing.T) {
-		sc := buildContainerSecurityContext(nil)
+	t.Run("image identity", func(t *testing.T) {
+		sc := buildContainerSecurityContext(nil, nil)
 		assert.True(t, *sc.RunAsNonRoot)
-		// A numeric uid is required so kubelet can verify runAsNonRoot against
-		// the pgctld/multigres images whose USER is the name "postgres".
-		assert.Equal(t, DefaultPostgresUID, *sc.RunAsUser)
-		assert.Equal(t, DefaultPostgresUID, *sc.RunAsGroup)
+		assert.Nil(t, sc.RunAsUser)
+		assert.Nil(t, sc.RunAsGroup)
 	})
 
-	t.Run("with fsGroup", func(t *testing.T) {
-		sc := buildContainerSecurityContext(ptr.To(int64(999)))
+	t.Run("explicit identity", func(t *testing.T) {
+		sc := buildContainerSecurityContext(ptr.To(int64(1000)), ptr.To(int64(1001)))
 		assert.True(t, *sc.RunAsNonRoot)
-		assert.Equal(t, int64(999), *sc.RunAsUser)
-		assert.Equal(t, int64(999), *sc.RunAsGroup)
+		assert.Equal(t, int64(1000), *sc.RunAsUser)
+		assert.Equal(t, int64(1001), *sc.RunAsGroup)
 	})
 
-	t.Run("alpine fsGroup", func(t *testing.T) {
-		sc := buildContainerSecurityContext(ptr.To(int64(70)))
+	t.Run("non-root user with root group", func(t *testing.T) {
+		sc := buildContainerSecurityContext(ptr.To(int64(1000)), ptr.To(int64(0)))
 		assert.True(t, *sc.RunAsNonRoot)
-		assert.Equal(t, int64(70), *sc.RunAsUser)
-		assert.Equal(t, int64(70), *sc.RunAsGroup)
+		assert.Equal(t, int64(1000), *sc.RunAsUser)
+		assert.Equal(t, int64(0), *sc.RunAsGroup)
 	})
+}
+
+func assertPoolPodFSGroup(t *testing.T, pod *corev1.Pod, want int64) {
+	t.Helper()
+	if pod.Spec.SecurityContext == nil {
+		t.Fatal("pod security context is nil")
+	}
+	if pod.Spec.SecurityContext.FSGroup == nil {
+		t.Fatal("pod fsGroup is nil")
+	}
+	assert.Equal(t, want, *pod.Spec.SecurityContext.FSGroup)
+	assert.Nil(t, pod.Spec.SecurityContext.RunAsUser)
+	assert.Nil(t, pod.Spec.SecurityContext.RunAsGroup)
+}
+
+func assertContainerIdentity(
+	t *testing.T,
+	container corev1.Container,
+	wantUser *int64,
+	wantGroup *int64,
+) {
+	t.Helper()
+	if container.SecurityContext == nil {
+		t.Fatalf("container %q security context is nil", container.Name)
+	}
+	assert.True(t, *container.SecurityContext.RunAsNonRoot)
+	assert.Equal(t, wantUser, container.SecurityContext.RunAsUser, container.Name)
+	assert.Equal(t, wantGroup, container.SecurityContext.RunAsGroup, container.Name)
 }
 
 func TestBuildPoolPod_SpecHash(t *testing.T) {
@@ -563,6 +708,26 @@ func TestComputeSpecHash_ChangesOnFSGroup(t *testing.T) {
 	if hash1 == hash2 {
 		t.Error("spec hash should differ when fsGroup changes")
 	}
+}
+
+func TestComputeSpecHash_ChangesOnRuntimeIdentity(t *testing.T) {
+	pool1 := newTestPoolSpec()
+	pool1.Postgres.RunAsUser = ptr.To(int64(1000))
+	pool1.Multipooler.RunAsUser = ptr.To(int64(1000))
+	pod1, err := BuildPoolPod(newTestShard(), "main", "z1", pool1, 0, testScheme())
+	require.NoError(t, err)
+
+	pool2 := newTestPoolSpec()
+	pool2.Postgres.RunAsUser = ptr.To(int64(2000))
+	pool2.Multipooler.RunAsUser = ptr.To(int64(2000))
+	pod2, err := BuildPoolPod(newTestShard(), "main", "z1", pool2, 0, testScheme())
+	require.NoError(t, err)
+
+	assert.NotEqual(
+		t,
+		pod1.Annotations[metadata.AnnotationSpecHash],
+		pod2.Annotations[metadata.AnnotationSpecHash],
+	)
 }
 
 func TestBuildPoolPod_NodeSelector(t *testing.T) {

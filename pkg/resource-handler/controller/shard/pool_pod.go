@@ -57,6 +57,10 @@ func BuildPoolPod(
 	index int,
 	scheme *runtime.Scheme,
 ) (*corev1.Pod, error) {
+	if err := validatePoolRuntimeIdentity(poolSpec); err != nil {
+		return nil, err
+	}
+
 	podName := BuildPoolPodName(shard, poolName, cellName, index)
 	clusterName := shard.Labels["multigres.com/cluster"]
 	labels := buildPoolLabelsWithCell(shard, poolName, cellName)
@@ -106,7 +110,7 @@ func BuildPoolPod(
 			},
 			Containers: []corev1.Container{
 				buildMultipoolerContainer(shard, poolSpec, poolName, cellName, serviceID),
-				buildPostgresExporterContainer(shard, poolSpec),
+				buildPostgresExporterContainer(shard),
 			},
 			Volumes:      volumes,
 			Affinity:     poolSpec.Affinity,
@@ -144,28 +148,126 @@ func buildPoolPodSecurityContext(poolSpec multigresv1alpha1.PoolSpec) *corev1.Po
 	}
 }
 
-// DefaultPostgresUID is the postgres user's UID/GID in the pgctld/multigres
-// container images. Pool containers share the postgres data directory, so they
-// run as this identity unless a pool overrides it via fsGroup.
-const DefaultPostgresUID int64 = 999
+const (
+	// DefaultPostgresUID and DefaultPostgresGID identify the postgres user in
+	// the default pgctld image. That image declares USER postgres by name, so
+	// Kubernetes needs the numeric identity to enforce RunAsNonRoot.
+	DefaultPostgresUID int64 = 999
+	DefaultPostgresGID int64 = 999
 
-// buildContainerSecurityContext returns a non-root SecurityContext with a
-// numeric RunAsUser/RunAsGroup. A numeric uid is required: without it, kubelet
-// cannot verify runAsNonRoot against images whose USER is a name (the
-// pgctld/multigres images declare `USER postgres`) and refuses to start the
-// container with CreateContainerConfigError. fsGroup, when set, overrides the
-// default so all containers share the caller's chosen filesystem identity on
-// shared volumes.
-func buildContainerSecurityContext(fsGroup *int64) *corev1.SecurityContext {
-	uid := DefaultPostgresUID
-	if fsGroup != nil {
-		uid = *fsGroup
-	}
-	return &corev1.SecurityContext{
+	// DefaultMultipoolerUID and DefaultMultipoolerGID preserve the operator's
+	// existing default pool container identity. fsGroup must not override them.
+	DefaultMultipoolerUID int64 = DefaultPostgresUID
+	DefaultMultipoolerGID int64 = DefaultPostgresGID
+
+	// DefaultPostgresExporterUID and DefaultPostgresExporterGID preserve the
+	// operator's existing exporter identity. fsGroup must not override them.
+	DefaultPostgresExporterUID int64 = DefaultPostgresUID
+	DefaultPostgresExporterGID int64 = DefaultPostgresGID
+)
+
+// buildContainerSecurityContext returns a non-root SecurityContext with
+// optional, independently configured process identity. Pod-level fsGroup is
+// deliberately not accepted here because it only controls supplementary volume
+// access.
+func buildContainerSecurityContext(runAsUser, runAsGroup *int64) *corev1.SecurityContext {
+	sc := &corev1.SecurityContext{
 		RunAsNonRoot: ptr.To(true),
-		RunAsUser:    ptr.To(uid),
-		RunAsGroup:   ptr.To(uid),
 	}
+	if runAsUser != nil {
+		sc.RunAsUser = ptr.To(*runAsUser)
+	}
+	if runAsGroup != nil {
+		sc.RunAsGroup = ptr.To(*runAsGroup)
+	}
+	return sc
+}
+
+func buildPgctldSecurityContext(
+	image string,
+	config multigresv1alpha1.ContainerConfig,
+) *corev1.SecurityContext {
+	runAsUser, runAsGroup := effectivePgctldIdentity(image, config)
+	return buildContainerSecurityContext(runAsUser, runAsGroup)
+}
+
+func effectivePgctldIdentity(
+	image string,
+	config multigresv1alpha1.ContainerConfig,
+) (runAsUser, runAsGroup *int64) {
+	runAsUser = config.RunAsUser
+	runAsGroup = config.RunAsGroup
+	if image == multigresv1alpha1.DefaultPostgresImage {
+		if runAsUser == nil {
+			runAsUser = ptr.To(DefaultPostgresUID)
+		}
+		if runAsGroup == nil {
+			runAsGroup = ptr.To(DefaultPostgresGID)
+		}
+	}
+	return runAsUser, runAsGroup
+}
+
+func effectiveMultipoolerIdentity(
+	shard *multigresv1alpha1.Shard,
+	pool multigresv1alpha1.PoolSpec,
+) (runAsUser, runAsGroup *int64) {
+	runAsUser = pool.Multipooler.RunAsUser
+	runAsGroup = pool.Multipooler.RunAsGroup
+	if runAsUser == nil && pool.Postgres.RunAsUser != nil {
+		runAsUser = ptr.To(*pool.Postgres.RunAsUser)
+	}
+	if resolvedMultipoolerImage(shard) == multigresv1alpha1.DefaultMultipoolerImage {
+		if runAsUser == nil {
+			runAsUser = ptr.To(DefaultMultipoolerUID)
+		}
+		if runAsGroup == nil {
+			runAsGroup = ptr.To(DefaultMultipoolerGID)
+		}
+	}
+	return runAsUser, runAsGroup
+}
+
+func buildMultipoolerSecurityContext(
+	shard *multigresv1alpha1.Shard,
+	pool multigresv1alpha1.PoolSpec,
+) *corev1.SecurityContext {
+	runAsUser, runAsGroup := effectiveMultipoolerIdentity(shard, pool)
+	return buildContainerSecurityContext(runAsUser, runAsGroup)
+}
+
+func validatePoolRuntimeIdentity(pool multigresv1alpha1.PoolSpec) error {
+	if pool.Multipooler.RunAsUser == nil {
+		return nil
+	}
+	if pool.Postgres.RunAsUser == nil {
+		return fmt.Errorf(
+			"multipooler runAsUser %d requires matching postgres runAsUser because both access PGDATA",
+			*pool.Multipooler.RunAsUser,
+		)
+	}
+	if *pool.Postgres.RunAsUser != *pool.Multipooler.RunAsUser {
+		return fmt.Errorf(
+			"postgres runAsUser %d and multipooler runAsUser %d must match because both access PGDATA",
+			*pool.Postgres.RunAsUser,
+			*pool.Multipooler.RunAsUser,
+		)
+	}
+	return nil
+}
+
+func resolvedPostgresImage(shard *multigresv1alpha1.Shard) string {
+	if shard.Spec.Images.Postgres != "" {
+		return string(shard.Spec.Images.Postgres)
+	}
+	return multigresv1alpha1.DefaultPostgresImage
+}
+
+func resolvedMultipoolerImage(shard *multigresv1alpha1.Shard) string {
+	if shard.Spec.Images.Multipooler != "" {
+		return string(shard.Spec.Images.Multipooler)
+	}
+	return multigresv1alpha1.DefaultMultipoolerImage
 }
 
 // buildHeadlessServiceName constructs the headless service name for DNS
