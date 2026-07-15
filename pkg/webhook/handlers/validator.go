@@ -375,15 +375,15 @@ func (v *TemplateValidator) isTemplateInUse(
 		if cluster.Spec.TemplateDefaults.CoreTemplate == refName {
 			return true
 		}
-		if cluster.Spec.MultiAdmin != nil && cluster.Spec.MultiAdmin.TemplateRef == refName {
+		if cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.TemplateRef == refName {
 			return true
 		}
 		if cluster.Spec.GlobalTopoServer != nil &&
 			cluster.Spec.GlobalTopoServer.TemplateRef == refName {
 			return true
 		}
-		if cluster.Spec.MultiAdminWeb != nil &&
-			cluster.Spec.MultiAdminWeb.TemplateRef == refName {
+		if cluster.Spec.MultiadminWeb != nil &&
+			cluster.Spec.MultiadminWeb.TemplateRef == refName {
 			return true
 		}
 	case "CellTemplate":

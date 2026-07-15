@@ -11,7 +11,7 @@ const (
 	// DefaultEtcdReplicas is the default number of replicas for the managed Etcd cluster if not specified.
 	DefaultEtcdReplicas int32 = 3
 
-	// DefaultAdminReplicas is the default number of replicas for the MultiAdmin deployment if not specified.
+	// DefaultAdminReplicas is the default number of replicas for the Multiadmin deployment if not specified.
 	DefaultAdminReplicas int32 = 1
 
 	// FallbackCoreTemplate is the name of the template to look for if no specific CoreTemplate is referenced.
@@ -41,8 +41,8 @@ const (
 	// DefaultSystemTableGroupName is the name of the mandatory default table group.
 	DefaultSystemTableGroupName = "default"
 
-	// DefaultMultiAdminWebReplicas is the default number of replicas for the MultiAdminWeb deployment if not specified.
-	DefaultMultiAdminWebReplicas int32 = 1
+	// DefaultMultiadminWebReplicas is the default number of replicas for the MultiadminWeb deployment if not specified.
+	DefaultMultiadminWebReplicas int32 = 1
 
 	// DefaultImagePullPolicy is the default image pull policy used for all components if not specified.
 	DefaultImagePullPolicy = corev1.PullIfNotPresent
@@ -64,17 +64,17 @@ const (
 	// Image defaults re-exported from the canonical source in api/v1alpha1.
 	DefaultPostgresImage      = multigresv1alpha1.DefaultPostgresImage
 	DefaultEtcdImage          = multigresv1alpha1.DefaultEtcdImage
-	DefaultMultiAdminImage    = multigresv1alpha1.DefaultMultiAdminImage
-	DefaultMultiAdminWebImage = multigresv1alpha1.DefaultMultiAdminWebImage
-	DefaultMultiOrchImage     = multigresv1alpha1.DefaultMultiOrchImage
-	DefaultMultiPoolerImage   = multigresv1alpha1.DefaultMultiPoolerImage
-	DefaultMultiGatewayImage  = multigresv1alpha1.DefaultMultiGatewayImage
+	DefaultMultiadminImage    = multigresv1alpha1.DefaultMultiadminImage
+	DefaultMultiadminWebImage = multigresv1alpha1.DefaultMultiadminWebImage
+	DefaultMultiorchImage     = multigresv1alpha1.DefaultMultiorchImage
+	DefaultMultipoolerImage   = multigresv1alpha1.DefaultMultipoolerImage
+	DefaultMultigatewayImage  = multigresv1alpha1.DefaultMultigatewayImage
 
 	// DefaultLogLevel is the default log level for all multigres data-plane components.
 	DefaultLogLevel = multigresv1alpha1.LogLevel("info")
 )
 
-// DefaultResourcesAdmin returns the default resource requests and limits for the MultiAdmin deployment.
+// DefaultResourcesAdmin returns the default resource requests and limits for the Multiadmin deployment.
 func DefaultResourcesAdmin() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
@@ -100,7 +100,7 @@ func DefaultResourcesEtcd() corev1.ResourceRequirements {
 	}
 }
 
-// DefaultResourcesGateway returns the default resource requests and limits for the MultiGateway deployment.
+// DefaultResourcesGateway returns the default resource requests and limits for the Multigateway deployment.
 func DefaultResourcesGateway() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
@@ -113,7 +113,7 @@ func DefaultResourcesGateway() corev1.ResourceRequirements {
 	}
 }
 
-// DefaultResourcesOrch returns the default resource requests and limits for the MultiOrch deployment.
+// DefaultResourcesOrch returns the default resource requests and limits for the Multiorch deployment.
 func DefaultResourcesOrch() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
@@ -152,7 +152,7 @@ func DefaultResourcesPooler() corev1.ResourceRequirements {
 	}
 }
 
-// DefaultResourcesAdminWeb returns the default resource requests and limits for the MultiAdminWeb deployment.
+// DefaultResourcesAdminWeb returns the default resource requests and limits for the MultiadminWeb deployment.
 func DefaultResourcesAdminWeb() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{

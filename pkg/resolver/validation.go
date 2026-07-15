@@ -173,10 +173,10 @@ func (r *Resolver) ValidateClusterIntegrity(
 	); err != nil {
 		return err
 	}
-	if cluster.Spec.MultiAdmin != nil && cluster.Spec.MultiAdmin.TemplateRef != "" {
+	if cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.TemplateRef != "" {
 		if err := r.ValidateCoreTemplateReference(
 			ctx,
-			cluster.Spec.MultiAdmin.TemplateRef,
+			cluster.Spec.Multiadmin.TemplateRef,
 		); err != nil {
 			return err
 		}
@@ -189,10 +189,10 @@ func (r *Resolver) ValidateClusterIntegrity(
 			return err
 		}
 	}
-	if cluster.Spec.MultiAdminWeb != nil && cluster.Spec.MultiAdminWeb.TemplateRef != "" {
+	if cluster.Spec.MultiadminWeb != nil && cluster.Spec.MultiadminWeb.TemplateRef != "" {
 		if err := r.ValidateCoreTemplateReference(
 			ctx,
-			cluster.Spec.MultiAdminWeb.TemplateRef,
+			cluster.Spec.MultiadminWeb.TemplateRef,
 		); err != nil {
 			return err
 		}
@@ -315,16 +315,16 @@ func (r *Resolver) ValidateClusterLogic(
 			return nil, err
 		}
 	}
-	if cluster.Spec.MultiAdmin != nil && cluster.Spec.MultiAdmin.Spec != nil {
+	if cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.Spec != nil {
 		if err := validateResourceRequirements(
-			cluster.Spec.MultiAdmin.Spec.Resources, "multiadmin",
+			cluster.Spec.Multiadmin.Spec.Resources, "multiadmin",
 		); err != nil {
 			return nil, err
 		}
 	}
-	if cluster.Spec.MultiAdminWeb != nil && cluster.Spec.MultiAdminWeb.Spec != nil {
+	if cluster.Spec.MultiadminWeb != nil && cluster.Spec.MultiadminWeb.Spec != nil {
 		if err := validateResourceRequirements(
-			cluster.Spec.MultiAdminWeb.Spec.Resources, "multiadmin-web",
+			cluster.Spec.MultiadminWeb.Spec.Resources, "multiadmin-web",
 		); err != nil {
 			return nil, err
 		}
@@ -332,7 +332,7 @@ func (r *Resolver) ValidateClusterLogic(
 	for _, cell := range cluster.Spec.Cells {
 		if cell.Spec != nil {
 			if err := validateResourceRequirements(
-				cell.Spec.MultiGateway.Resources,
+				cell.Spec.Multigateway.Resources,
 				fmt.Sprintf("cell '%s' multigateway", cell.Name),
 			); err != nil {
 				return nil, err

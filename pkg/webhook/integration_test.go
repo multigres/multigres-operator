@@ -165,13 +165,13 @@ func createDefaults(c client.Client) error {
 		&multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CoreTemplateSpec{
-				MultiAdmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multiadmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 		},
 		&multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				MultiGateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 		},
 		&multigresv1alpha1.ShardTemplate{
@@ -281,7 +281,7 @@ func TestWebhook_Mutation(t *testing.T) {
 			t.Errorf("Expected CoreTemplate to be promoted to 'default', got %q", fetched.Spec.TemplateDefaults.CoreTemplate)
 		}
 
-		if fetched.Spec.MultiAdmin != nil {
+		if fetched.Spec.Multiadmin != nil {
 			t.Error("Expected spec.multiadmin to be nil (preserved dynamic link to template, no overrides provided)")
 		}
 	})
@@ -487,7 +487,7 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 		tpl := &multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: tplName, Namespace: testNamespace},
 			Spec: multigresv1alpha1.CoreTemplateSpec{
-				MultiAdmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multiadmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 		}
 		if err := k8sClient.Create(ctx, tpl); err != nil {
@@ -500,7 +500,7 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 				TemplateDefaults: multigresv1alpha1.TemplateDefaults{
 					CoreTemplate: multigresv1alpha1.TemplateRef(tplName),
 				},
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
 				},
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
@@ -516,8 +516,8 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if fetched.Spec.MultiAdmin.Spec.Replicas == nil || *fetched.Spec.MultiAdmin.Spec.Replicas != 3 {
-			t.Errorf("Expected inline overrides (3) to win over template (1), got: %v", fetched.Spec.MultiAdmin.Spec.Replicas)
+		if fetched.Spec.Multiadmin.Spec.Replicas == nil || *fetched.Spec.Multiadmin.Spec.Replicas != 3 {
+			t.Errorf("Expected inline overrides (3) to win over template (1), got: %v", fetched.Spec.Multiadmin.Spec.Replicas)
 		}
 	})
 }
@@ -527,7 +527,7 @@ func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 		specTpl := &multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "specific-large", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CoreTemplateSpec{
-				MultiAdmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
+				Multiadmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
 			},
 		}
 		if err := k8sClient.Create(ctx, specTpl); err != nil {
@@ -537,7 +537,7 @@ func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "ref-precedence-test", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
-				MultiAdmin: &multigresv1alpha1.MultiAdminConfig{
+				Multiadmin: &multigresv1alpha1.MultiadminConfig{
 					TemplateRef: "specific-large",
 				},
 				Cells: []multigresv1alpha1.CellConfig{{Name: "default-cell", ZoneID: "use1-az1"}},
@@ -553,10 +553,10 @@ func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if fetched.Spec.MultiAdmin.Spec != nil {
-			t.Errorf("Expected MultiAdmin.Spec to be nil when TemplateRef is set, but got: %v", fetched.Spec.MultiAdmin.Spec)
+		if fetched.Spec.Multiadmin.Spec != nil {
+			t.Errorf("Expected Multiadmin.Spec to be nil when TemplateRef is set, but got: %v", fetched.Spec.Multiadmin.Spec)
 		}
-		if fetched.Spec.MultiAdmin.TemplateRef != "specific-large" {
+		if fetched.Spec.Multiadmin.TemplateRef != "specific-large" {
 			t.Errorf("Expected TemplateRef to be preserved")
 		}
 	})

@@ -33,10 +33,10 @@ func setupFixtures(t testing.TB) (
 			GlobalTopoServer: &multigresv1alpha1.TopoServerSpec{
 				Etcd: &multigresv1alpha1.EtcdSpec{Image: "core-default"},
 			},
-			MultiAdmin: &multigresv1alpha1.StatelessSpec{
+			Multiadmin: &multigresv1alpha1.StatelessSpec{
 				// Image is not in StatelessSpec, it is global
 			},
-			MultiAdminWeb: &multigresv1alpha1.StatelessSpec{
+			MultiadminWeb: &multigresv1alpha1.StatelessSpec{
 				Replicas: ptr.To(int32(3)),
 			},
 		},
@@ -45,7 +45,7 @@ func setupFixtures(t testing.TB) (
 	cellTpl := &multigresv1alpha1.CellTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: namespace},
 		Spec: multigresv1alpha1.CellTemplateSpec{
-			MultiGateway: &multigresv1alpha1.StatelessSpec{
+			Multigateway: &multigresv1alpha1.StatelessSpec{
 				Replicas: ptr.To(int32(3)),
 			},
 			LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
@@ -57,7 +57,7 @@ func setupFixtures(t testing.TB) (
 	shardTpl := &multigresv1alpha1.ShardTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: namespace},
 		Spec: multigresv1alpha1.ShardTemplateSpec{
-			MultiOrch: &multigresv1alpha1.MultiOrchSpec{
+			Multiorch: &multigresv1alpha1.MultiorchSpec{
 				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas: ptr.To(int32(3)),
 				},
@@ -397,22 +397,22 @@ func TestResolver_Caching(t *testing.T) {
 		}
 
 		// Verify DeepCopy (forward)
-		if tpl1.Spec.MultiGateway != nil {
-			tpl1.Spec.MultiGateway.Replicas = ptr.To(int32(999))
-			if tpl2.Spec.MultiGateway.Replicas != nil && *tpl2.Spec.MultiGateway.Replicas == 999 {
+		if tpl1.Spec.Multigateway != nil {
+			tpl1.Spec.Multigateway.Replicas = ptr.To(int32(999))
+			if tpl2.Spec.Multigateway.Replicas != nil && *tpl2.Spec.Multigateway.Replicas == 999 {
 				t.Error("DeepCopy failed - modifications leaked from tpl1 to tpl2")
 			}
 		}
 
 		// Verify DeepCopy (reverse): mutating a cached result must not
 		// corrupt subsequent resolves.
-		if tpl2.Spec.MultiGateway != nil {
-			tpl2.Spec.MultiGateway.Replicas = ptr.To(int32(777))
+		if tpl2.Spec.Multigateway != nil {
+			tpl2.Spec.Multigateway.Replicas = ptr.To(int32(777))
 			tpl3, err := r.ResolveCellTemplate(t.Context(), "default")
 			if err != nil {
 				t.Fatalf("Third ResolveCellTemplate failed: %v", err)
 			}
-			if tpl3.Spec.MultiGateway.Replicas != nil && *tpl3.Spec.MultiGateway.Replicas == 777 {
+			if tpl3.Spec.Multigateway.Replicas != nil && *tpl3.Spec.Multigateway.Replicas == 777 {
 				t.Error("Cache corruption - mutating a cached result polluted subsequent resolves")
 			}
 		}
@@ -454,22 +454,22 @@ func TestResolver_Caching(t *testing.T) {
 		}
 
 		// Verify DeepCopy (forward)
-		if tpl1.Spec.MultiOrch != nil {
-			tpl1.Spec.MultiOrch.Replicas = ptr.To(int32(999))
-			if tpl2.Spec.MultiOrch.Replicas != nil && *tpl2.Spec.MultiOrch.Replicas == 999 {
+		if tpl1.Spec.Multiorch != nil {
+			tpl1.Spec.Multiorch.Replicas = ptr.To(int32(999))
+			if tpl2.Spec.Multiorch.Replicas != nil && *tpl2.Spec.Multiorch.Replicas == 999 {
 				t.Error("DeepCopy failed - modifications leaked from tpl1 to tpl2")
 			}
 		}
 
 		// Verify DeepCopy (reverse): mutating a cached result must not
 		// corrupt subsequent resolves.
-		if tpl2.Spec.MultiOrch != nil {
-			tpl2.Spec.MultiOrch.Replicas = ptr.To(int32(777))
+		if tpl2.Spec.Multiorch != nil {
+			tpl2.Spec.Multiorch.Replicas = ptr.To(int32(777))
 			tpl3, err := r.ResolveShardTemplate(t.Context(), "default")
 			if err != nil {
 				t.Fatalf("Third ResolveShardTemplate failed: %v", err)
 			}
-			if tpl3.Spec.MultiOrch.Replicas != nil && *tpl3.Spec.MultiOrch.Replicas == 777 {
+			if tpl3.Spec.Multiorch.Replicas != nil && *tpl3.Spec.Multiorch.Replicas == 777 {
 				t.Error("Cache corruption - mutating a cached result polluted subsequent resolves")
 			}
 		}

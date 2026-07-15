@@ -21,20 +21,20 @@ func (r *Resolver) PopulateClusterDefaults(
 	if cluster.Spec.Images.Postgres == "" {
 		cluster.Spec.Images.Postgres = multigresv1alpha1.DefaultPostgresImage
 	}
-	if cluster.Spec.Images.MultiAdmin == "" {
-		cluster.Spec.Images.MultiAdmin = multigresv1alpha1.DefaultMultiAdminImage
+	if cluster.Spec.Images.Multiadmin == "" {
+		cluster.Spec.Images.Multiadmin = multigresv1alpha1.DefaultMultiadminImage
 	}
-	if cluster.Spec.Images.MultiAdminWeb == "" {
-		cluster.Spec.Images.MultiAdminWeb = multigresv1alpha1.DefaultMultiAdminWebImage
+	if cluster.Spec.Images.MultiadminWeb == "" {
+		cluster.Spec.Images.MultiadminWeb = multigresv1alpha1.DefaultMultiadminWebImage
 	}
-	if cluster.Spec.Images.MultiOrch == "" {
-		cluster.Spec.Images.MultiOrch = multigresv1alpha1.DefaultMultiOrchImage
+	if cluster.Spec.Images.Multiorch == "" {
+		cluster.Spec.Images.Multiorch = multigresv1alpha1.DefaultMultiorchImage
 	}
-	if cluster.Spec.Images.MultiPooler == "" {
-		cluster.Spec.Images.MultiPooler = multigresv1alpha1.DefaultMultiPoolerImage
+	if cluster.Spec.Images.Multipooler == "" {
+		cluster.Spec.Images.Multipooler = multigresv1alpha1.DefaultMultipoolerImage
 	}
-	if cluster.Spec.Images.MultiGateway == "" {
-		cluster.Spec.Images.MultiGateway = multigresv1alpha1.DefaultMultiGatewayImage
+	if cluster.Spec.Images.Multigateway == "" {
+		cluster.Spec.Images.Multigateway = multigresv1alpha1.DefaultMultigatewayImage
 	}
 	if cluster.Spec.Images.ImagePullPolicy == "" {
 		cluster.Spec.Images.ImagePullPolicy = DefaultImagePullPolicy
@@ -146,7 +146,7 @@ func (r *Resolver) PopulateClusterDefaults(
 
 				if len(defaultCells) > 0 {
 					shardCfg.Spec = &multigresv1alpha1.ShardInlineSpec{
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							// Clean Spec: Do not inject default cells statically.
 							// This allows dynamic contextual resolution later.
 							// Cells: defaultCells,
@@ -238,17 +238,17 @@ func (r *Resolver) ResolveGlobalTopo(
 	return finalSpec, nil
 }
 
-// ResolveMultiAdmin determines the final MultiAdmin configuration.
-func (r *Resolver) ResolveMultiAdmin(
+// ResolveMultiadmin determines the final Multiadmin configuration.
+func (r *Resolver) ResolveMultiadmin(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (*multigresv1alpha1.StatelessSpec, error) {
 	var templateName multigresv1alpha1.TemplateRef
-	var spec *multigresv1alpha1.MultiAdminConfig
+	var spec *multigresv1alpha1.MultiadminConfig
 
-	if cluster.Spec.MultiAdmin != nil {
-		templateName = cluster.Spec.MultiAdmin.TemplateRef
-		spec = cluster.Spec.MultiAdmin
+	if cluster.Spec.Multiadmin != nil {
+		templateName = cluster.Spec.Multiadmin.TemplateRef
+		spec = cluster.Spec.Multiadmin
 	}
 
 	// Apply global CoreTemplate default (Level 2 in the 4-level override chain)
@@ -263,8 +263,8 @@ func (r *Resolver) ResolveMultiAdmin(
 
 	finalSpec := &multigresv1alpha1.StatelessSpec{}
 
-	if coreTemplate != nil && coreTemplate.Spec.MultiAdmin != nil {
-		finalSpec = coreTemplate.Spec.MultiAdmin.DeepCopy()
+	if coreTemplate != nil && coreTemplate.Spec.Multiadmin != nil {
+		finalSpec = coreTemplate.Spec.Multiadmin.DeepCopy()
 	}
 
 	if spec != nil && spec.Spec != nil {
@@ -276,17 +276,17 @@ func (r *Resolver) ResolveMultiAdmin(
 	return finalSpec, nil
 }
 
-// ResolveMultiAdminWeb determines the final MultiAdminWeb configuration.
-func (r *Resolver) ResolveMultiAdminWeb(
+// ResolveMultiadminWeb determines the final MultiadminWeb configuration.
+func (r *Resolver) ResolveMultiadminWeb(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (*multigresv1alpha1.StatelessSpec, error) {
 	var templateName multigresv1alpha1.TemplateRef
-	var spec *multigresv1alpha1.MultiAdminWebConfig
+	var spec *multigresv1alpha1.MultiadminWebConfig
 
-	if cluster.Spec.MultiAdminWeb != nil {
-		templateName = cluster.Spec.MultiAdminWeb.TemplateRef
-		spec = cluster.Spec.MultiAdminWeb
+	if cluster.Spec.MultiadminWeb != nil {
+		templateName = cluster.Spec.MultiadminWeb.TemplateRef
+		spec = cluster.Spec.MultiadminWeb
 	}
 
 	// Apply global CoreTemplate default (Level 2 in the 4-level override chain)
@@ -301,15 +301,15 @@ func (r *Resolver) ResolveMultiAdminWeb(
 
 	finalSpec := &multigresv1alpha1.StatelessSpec{}
 
-	if coreTemplate != nil && coreTemplate.Spec.MultiAdminWeb != nil {
-		finalSpec = coreTemplate.Spec.MultiAdminWeb.DeepCopy()
+	if coreTemplate != nil && coreTemplate.Spec.MultiadminWeb != nil {
+		finalSpec = coreTemplate.Spec.MultiadminWeb.DeepCopy()
 	}
 
 	if spec != nil && spec.Spec != nil {
 		mergeStatelessSpec(finalSpec, spec.Spec)
 	}
 
-	defaultStatelessSpec(finalSpec, DefaultResourcesAdminWeb(), DefaultMultiAdminWebReplicas)
+	defaultStatelessSpec(finalSpec, DefaultResourcesAdminWeb(), DefaultMultiadminWebReplicas)
 
 	return finalSpec, nil
 }
