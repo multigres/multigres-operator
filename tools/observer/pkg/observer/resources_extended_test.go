@@ -160,7 +160,7 @@ func TestCheckServiceEndpoints(t *testing.T) {
 			Namespace: "test-ns",
 			Labels: map[string]string{
 				common.LabelAppManagedBy: common.ManagedByMultigres,
-				common.LabelAppComponent: common.ComponentMultiGateway,
+				common.LabelAppComponent: common.ComponentMultigateway,
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -184,7 +184,7 @@ func TestCheckServiceEndpoints(t *testing.T) {
 			Namespace: "test-ns",
 			Labels: map[string]string{
 				common.LabelAppManagedBy: common.ManagedByMultigres,
-				common.LabelAppComponent: common.ComponentMultiOrch,
+				common.LabelAppComponent: common.ComponentMultiorch,
 			},
 		},
 		Spec: corev1.ServiceSpec{
@@ -206,7 +206,7 @@ func TestCheckServiceEndpoints(t *testing.T) {
 			Namespace: "test-ns",
 			Labels: map[string]string{
 				common.LabelAppManagedBy: common.ManagedByMultigres,
-				common.LabelAppComponent: common.ComponentMultiGateway,
+				common.LabelAppComponent: common.ComponentMultigateway,
 			},
 		},
 		Spec: corev1.ServiceSpec{

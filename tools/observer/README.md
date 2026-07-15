@@ -162,7 +162,7 @@ This skill investigates when something is already broken. It fetches the observe
    - **Warn** (monitor): replication lag, stale backups, topology unreachable
 
 3. **Traces root causes** through the full component chain:
-   - Gateway → MultiOrch → MultiPooler → PostgreSQL logs
+   - Gateway → Multiorch → Multipooler → PostgreSQL logs
    - CRD status → operator reconciliation → etcd topology
    - Kubernetes events → pod scheduling → resource constraints
 

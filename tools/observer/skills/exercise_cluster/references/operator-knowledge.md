@@ -8,9 +8,9 @@ Use this when investigating observer findings. It maps observer checks to operat
 MultigresCluster (user-created)
 ├── TopoServer (etcd StatefulSet — topology registry)
 ├── Cell (one per region)
-│   └── MultiGateway (Deployment — SQL routing proxy)
+│   └── Multigateway (Deployment — SQL routing proxy)
 └── Database → TableGroup → Shard (logical hierarchy)
-    ├── MultiOrch (Deployment — orchestration, failover, primary election)
+    ├── Multiorch (Deployment — orchestration, failover, primary election)
     └── Pool pods (managed directly, not via StatefulSet)
         ├── postgres (pgctld — PG lifecycle manager)
         └── multipooler (connection pooling, gRPC health)
@@ -153,12 +153,12 @@ If a bug exists on an older upstream SHA but is already fixed on `main`, report 
 
 | Component | Port | Protocol | Purpose |
 |-----------|------|----------|---------|
-| MultiGateway | 5432 | TCP | SQL proxy (client connections) |
-| MultiGateway | 15100 | HTTP | Health/readiness |
-| MultiOrch | 15300 | HTTP | Health/readiness |
-| MultiOrch | 15370 | gRPC | Orchestration RPCs |
-| MultiPooler | 15200 | HTTP | Health/readiness |
-| MultiPooler | 15270 | gRPC | Pool management, Status RPCs |
+| Multigateway | 5432 | TCP | SQL proxy (client connections) |
+| Multigateway | 15100 | HTTP | Health/readiness |
+| Multiorch | 15300 | HTTP | Health/readiness |
+| Multiorch | 15370 | gRPC | Orchestration RPCs |
+| Multipooler | 15200 | HTTP | Health/readiness |
+| Multipooler | 15270 | gRPC | Pool management, Status RPCs |
 | PostgreSQL | 5432 | TCP | Direct PG connections |
 | etcd | 2379 | HTTP | Client API |
 | etcd | 2380 | HTTP | Peer communication |
