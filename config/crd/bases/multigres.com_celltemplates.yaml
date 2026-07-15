@@ -228,7 +228,7 @@ spec:
                 - message: only one of 'etcd' or 'external' can be set
                   rule: '!(has(self.etcd) && has(self.external))'
               multigateway:
-                description: MultiGateway configuration.
+                description: Multigateway configuration.
                 properties:
                   affinity:
                     description: Affinity defines the pod's scheduling constraints.
@@ -1234,7 +1234,7 @@ spec:
                     type: object
                 type: object
               multigatewayPlacement:
-                description: MultiGatewayPlacement defines optional scheduling settings
+                description: MultigatewayPlacement defines optional scheduling settings
                   for multigateway pods.
                 properties:
                   tolerations:

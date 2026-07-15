@@ -24,11 +24,11 @@ import (
 // ShardTemplateSpec Spec
 // ============================================================================
 
-// ShardTemplateSpec defines reusable config for Shard components (MultiOrch, Pools).
+// ShardTemplateSpec defines reusable config for Shard components (Multiorch, Pools).
 type ShardTemplateSpec struct {
-	// MultiOrch configuration.
+	// Multiorch configuration.
 	// +optional
-	MultiOrch *MultiOrchSpec `json:"multiorch,omitempty"`
+	Multiorch *MultiorchSpec `json:"multiorch,omitempty"`
 
 	// InitdbArgs specifies extra arguments passed to initdb during PostgreSQL
 	// data directory initialization (e.g., "--locale-provider=icu --icu-locale=en_US.UTF-8").

@@ -42,16 +42,16 @@ import (
 // These specs define the specific components of a shard (Orchestration and Data Pools).
 // They are used by ShardTemplate, TableGroup, and the Shard Child CR.
 
-// MultiOrchSpec defines the configuration specifically for MultiOrch,
+// MultiorchSpec defines the configuration specifically for Multiorch,
 // which requires placement logic (cell targeting).
-type MultiOrchSpec struct {
+type MultiorchSpec struct {
 	StatelessSpec `json:",inline"`
 
 	// Placement defines optional scheduling settings for multiorch pods.
 	// +optional
 	Placement *PodPlacementSpec `json:"placement,omitempty"`
 
-	// Cells defines the list of cells where this MultiOrch should be deployed.
+	// Cells defines the list of cells where this Multiorch should be deployed.
 	// If empty, it defaults to all cells where pools are defined.
 	// +optional
 	// +listType=set
@@ -137,8 +137,8 @@ type ShardSpec struct {
 	// GlobalTopoServer is a reference to the global topology server.
 	GlobalTopoServer GlobalTopoServerRef `json:"globalTopoServer"`
 
-	// MultiOrch is the fully resolved configuration for the shard orchestrator.
-	MultiOrch MultiOrchSpec `json:"multiorch"`
+	// Multiorch is the fully resolved configuration for the shard orchestrator.
+	Multiorch MultiorchSpec `json:"multiorch"`
 
 	// InitdbArgs specifies extra arguments for initdb, propagated from the cluster spec.
 	// +optional
@@ -221,11 +221,11 @@ type ShardImages struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
-	// MultiOrch is the image for the shard orchestrator.
-	MultiOrch ImageRef `json:"multiorch"`
+	// Multiorch is the image for the shard orchestrator.
+	Multiorch ImageRef `json:"multiorch"`
 
-	// MultiPooler is the image for the connection pooler sidecar.
-	MultiPooler ImageRef `json:"multipooler"`
+	// Multipooler is the image for the connection pooler sidecar.
+	Multipooler ImageRef `json:"multipooler"`
 
 	// Postgres is the image for the postgres database.
 	Postgres ImageRef `json:"postgres"`
@@ -261,7 +261,7 @@ type ShardStatus struct {
 	// +kubebuilder:validation:MaxItems=50
 	Cells []CellName `json:"cells,omitempty"`
 
-	// OrchReady indicates if the MultiOrch component is ready.
+	// OrchReady indicates if the Multiorch component is ready.
 	OrchReady bool `json:"orchReady"`
 
 	// PoolsReady indicates if all data pools are ready.

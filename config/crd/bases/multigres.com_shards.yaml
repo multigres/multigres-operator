@@ -241,12 +241,12 @@ spec:
                       x-kubernetes-map-type: atomic
                     type: array
                   multiorch:
-                    description: MultiOrch is the image for the shard orchestrator.
+                    description: Multiorch is the image for the shard orchestrator.
                     maxLength: 512
                     minLength: 1
                     type: string
                   multipooler:
-                    description: MultiPooler is the image for the connection pooler
+                    description: Multipooler is the image for the connection pooler
                       sidecar.
                     maxLength: 512
                     minLength: 1
@@ -318,7 +318,7 @@ spec:
                     type: string
                 type: object
               multiorch:
-                description: MultiOrch is the fully resolved configuration for the
+                description: Multiorch is the fully resolved configuration for the
                   shard orchestrator.
                 properties:
                   affinity:
@@ -1242,7 +1242,7 @@ spec:
                     type: object
                   cells:
                     description: |-
-                      Cells defines the list of cells where this MultiOrch should be deployed.
+                      Cells defines the list of cells where this Multiorch should be deployed.
                       If empty, it defaults to all cells where pools are defined.
                     items:
                       description: CellName is a validated name for a cell (availability
@@ -2896,7 +2896,7 @@ spec:
                 format: int64
                 type: integer
               orchReady:
-                description: OrchReady indicates if the MultiOrch component is ready.
+                description: OrchReady indicates if the Multiorch component is ready.
                 type: boolean
               phase:
                 description: Phase represents the aggregated lifecycle state of the

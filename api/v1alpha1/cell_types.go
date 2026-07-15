@@ -54,12 +54,12 @@ type CellSpec struct {
 	// Images defines the container images used in this cell.
 	Images CellImages `json:"images"`
 
-	// MultiGateway fully resolved config.
-	MultiGateway StatelessSpec `json:"multigateway"`
+	// Multigateway fully resolved config.
+	Multigateway StatelessSpec `json:"multigateway"`
 
-	// MultiGatewayPlacement defines optional scheduling settings for multigateway pods.
+	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional
-	MultiGatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
+	MultigatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
 
 	// GlobalTopoServer reference (always populated).
 	GlobalTopoServer GlobalTopoServerRef `json:"globalTopoServer"`
@@ -107,8 +107,8 @@ type CellImages struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
-	// MultiGateway is the image used for the gateway.
-	MultiGateway ImageRef `json:"multigateway"`
+	// Multigateway is the image used for the gateway.
+	Multigateway ImageRef `json:"multigateway"`
 }
 
 // TopologyReconciliation defines flags for the cell controller.

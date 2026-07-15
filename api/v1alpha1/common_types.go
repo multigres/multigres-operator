@@ -28,7 +28,7 @@ import (
 // to ensure consistency in configuration shapes.
 
 // StatelessSpec defines the desired state for a scalable, stateless component
-// like MultiAdmin, MultiOrch, or MultiGateway.
+// like Multiadmin, Multiorch, or Multigateway.
 type StatelessSpec struct {
 	// Replicas is the desired number of pods.
 	// +kubebuilder:validation:Minimum=0

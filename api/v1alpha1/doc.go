@@ -29,12 +29,12 @@ limitations under the License.
 // User-Facing Resources:
 //   - MultigresCluster: The root resource representing a complete distributed database cluster.
 //     Users define cells, databases, and configuration here.
-//   - CoreTemplate: Reusable configuration template for core components (MultiAdmin).
-//   - CellTemplate: Reusable configuration template for cell components (MultiGateway).
+//   - CoreTemplate: Reusable configuration template for core components (Multiadmin).
+//   - CellTemplate: Reusable configuration template for cell components (Multigateway).
 //   - ShardTemplate: Reusable configuration template for shards (pools, orchestrator).
 //
 // Operator-Managed Resources (child resources created by the operator):
-//   - Cell: Represents a failure domain with its own MultiGateway deployment.
+//   - Cell: Represents a failure domain with its own Multigateway deployment.
 //   - TableGroup: Groups shards belonging to the same database table group.
 //   - Shard: A database shard with PostgreSQL pools and orchestrator.
 //   - TopoServer: Etcd-based topology storage server.
@@ -44,11 +44,11 @@ limitations under the License.
 //	MultigresCluster
 //	├── TopoServer (global topology)
 //	├── Cell (per failure domain)
-//	│   └── MultiGateway Deployment
+//	│   └── Multigateway Deployment
 //	└── TableGroup (per database.tablegroup)
 //	    └── Shard (per shard)
 //	        ├── Pool StatefulSets (PostgreSQL replicas)
-//	        └── MultiOrch Deployment
+//	        └── Multiorch Deployment
 //
 // # Versioning
 //

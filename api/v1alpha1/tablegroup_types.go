@@ -110,8 +110,8 @@ type ShardResolvedSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// MultiOrch is the fully resolved configuration for the orchestrator.
-	MultiOrch MultiOrchSpec `json:"multiorch"`
+	// Multiorch is the fully resolved configuration for the orchestrator.
+	Multiorch MultiorchSpec `json:"multiorch"`
 
 	// InitdbArgs is the resolved initdb arguments for this shard.
 	// +optional

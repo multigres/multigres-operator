@@ -67,13 +67,13 @@ type MultigresClusterSpec struct {
 	// +optional
 	GlobalTopoServer *GlobalTopoServerSpec `json:"globalTopoServer,omitempty"`
 
-	// MultiAdmin defines the configuration for the MultiAdmin component.
+	// Multiadmin defines the configuration for the Multiadmin component.
 	// +optional
-	MultiAdmin *MultiAdminConfig `json:"multiadmin,omitempty"`
+	Multiadmin *MultiadminConfig `json:"multiadmin,omitempty"`
 
-	// MultiAdminWeb defines the configuration for the MultiAdminWeb component.
+	// MultiadminWeb defines the configuration for the MultiadminWeb component.
 	// +optional
-	MultiAdminWeb *MultiAdminWebConfig `json:"multiadminWeb,omitempty"`
+	MultiadminWeb *MultiadminWebConfig `json:"multiadminWeb,omitempty"`
 
 	// Cells defines the list of cells (failure domains) in the cluster.
 	// +optional
@@ -173,15 +173,15 @@ type ClusterImages struct {
 
 	// Component Images
 	// +optional
-	MultiGateway ImageRef `json:"multigateway,omitempty"`
+	Multigateway ImageRef `json:"multigateway,omitempty"`
 	// +optional
-	MultiOrch ImageRef `json:"multiorch,omitempty"`
+	Multiorch ImageRef `json:"multiorch,omitempty"`
 	// +optional
-	MultiPooler ImageRef `json:"multipooler,omitempty"`
+	Multipooler ImageRef `json:"multipooler,omitempty"`
 	// +optional
-	MultiAdmin ImageRef `json:"multiadmin,omitempty"`
+	Multiadmin ImageRef `json:"multiadmin,omitempty"`
 	// +optional
-	MultiAdminWeb ImageRef `json:"multiadminWeb,omitempty"`
+	MultiadminWeb ImageRef `json:"multiadminWeb,omitempty"`
 	// +optional
 	Postgres ImageRef `json:"postgres,omitempty"`
 }
@@ -204,14 +204,14 @@ type TemplateDefaults struct {
 }
 
 // ============================================================================
-// MultiAdmin Config Section Specs
+// Multiadmin Config Section Specs
 // ============================================================================
 
-// MultiAdminConfig defines the configuration for MultiAdmin in the Cluster.
+// MultiadminConfig defines the configuration for Multiadmin in the Cluster.
 // It allows either an inline spec OR a reference to a CoreTemplate.
 // +kubebuilder:validation:XValidation:rule="has(self.spec) || has(self.templateRef)",message="must specify either 'spec' or 'templateRef'"
 // +kubebuilder:validation:XValidation:rule="!(has(self.spec) && has(self.templateRef))",message="cannot specify both 'spec' and 'templateRef'"
-type MultiAdminConfig struct {
+type MultiadminConfig struct {
 	// Spec defines the inline configuration.
 	// +optional
 	Spec *StatelessSpec `json:"spec,omitempty"`
@@ -221,11 +221,11 @@ type MultiAdminConfig struct {
 	TemplateRef TemplateRef `json:"templateRef,omitempty"`
 }
 
-// MultiAdminWebConfig defines the configuration for MultiAdminWeb in the Cluster.
+// MultiadminWebConfig defines the configuration for MultiadminWeb in the Cluster.
 // It allows either an inline spec OR a reference to a CoreTemplate.
 // +kubebuilder:validation:XValidation:rule="has(self.spec) || has(self.templateRef)",message="must specify either 'spec' or 'templateRef'"
 // +kubebuilder:validation:XValidation:rule="!(has(self.spec) && has(self.templateRef))",message="cannot specify both 'spec' and 'templateRef'"
-type MultiAdminWebConfig struct {
+type MultiadminWebConfig struct {
 	// Spec defines the inline configuration.
 	// +optional
 	Spec *StatelessSpec `json:"spec,omitempty"`
@@ -271,24 +271,24 @@ type CellConfig struct {
 
 // CellOverrides defines overrides for a CellTemplate.
 type CellOverrides struct {
-	// MultiGateway overrides.
+	// Multigateway overrides.
 	// +optional
-	MultiGateway *StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway *StatelessSpec `json:"multigateway,omitempty"`
 
-	// MultiGatewayPlacement overrides.
+	// MultigatewayPlacement overrides.
 	// +optional
-	MultiGatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
+	MultigatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
 }
 
 // CellInlineSpec defines the inline configuration for a Cell.
 type CellInlineSpec struct {
-	// MultiGateway configuration.
+	// Multigateway configuration.
 	// +optional
-	MultiGateway StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway StatelessSpec `json:"multigateway,omitempty"`
 
-	// MultiGatewayPlacement defines optional scheduling settings for multigateway pods.
+	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional
-	MultiGatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
+	MultigatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
 
 	// LocalTopoServer configuration (optional).
 	// +optional
@@ -380,9 +380,9 @@ type ShardConfig struct {
 
 // ShardOverrides defines overrides for a ShardTemplate.
 type ShardOverrides struct {
-	// MultiOrch overrides.
+	// Multiorch overrides.
 	// +optional
-	MultiOrch *MultiOrchSpec `json:"multiorch,omitempty"`
+	Multiorch *MultiorchSpec `json:"multiorch,omitempty"`
 
 	// InitdbArgs overrides the template's initdb arguments.
 	// +optional
@@ -405,9 +405,9 @@ type ShardOverrides struct {
 
 // ShardInlineSpec defines the inline configuration for a Shard.
 type ShardInlineSpec struct {
-	// MultiOrch configuration.
+	// Multiorch configuration.
 	// +optional
-	MultiOrch MultiOrchSpec `json:"multiorch,omitempty"`
+	Multiorch MultiorchSpec `json:"multiorch,omitempty"`
 
 	// InitdbArgs specifies extra arguments passed to initdb during PostgreSQL
 	// data directory initialization (e.g., "--locale-provider=icu --icu-locale=en_US.UTF-8").

@@ -438,7 +438,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	rpcClient := rpcclient.NewMultiPoolerClient(
+	rpcClient := rpcclient.NewMultipoolerClient(
 		100,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)

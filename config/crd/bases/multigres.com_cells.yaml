@@ -127,7 +127,7 @@ spec:
                       x-kubernetes-map-type: atomic
                     type: array
                   multigateway:
-                    description: MultiGateway is the image used for the gateway.
+                    description: Multigateway is the image used for the gateway.
                     maxLength: 512
                     minLength: 1
                     type: string
@@ -186,7 +186,7 @@ spec:
                     type: string
                 type: object
               multigateway:
-                description: MultiGateway fully resolved config.
+                description: Multigateway fully resolved config.
                 properties:
                   affinity:
                     description: Affinity defines the pod's scheduling constraints.
@@ -1192,7 +1192,7 @@ spec:
                     type: object
                 type: object
               multigatewayPlacement:
-                description: MultiGatewayPlacement defines optional scheduling settings
+                description: MultigatewayPlacement defines optional scheduling settings
                   for multigateway pods.
                 properties:
                   tolerations:

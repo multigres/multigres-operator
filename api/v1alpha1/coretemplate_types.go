@@ -24,20 +24,20 @@ import (
 // CoreTemplateSpec Spec
 // ============================================================================
 
-// CoreTemplateSpec defines reusable config for core components (GlobalTopo, MultiAdmin).
+// CoreTemplateSpec defines reusable config for core components (GlobalTopo, Multiadmin).
 type CoreTemplateSpec struct {
 	// GlobalTopoServer configuration.
 	// Uses TopoServerSpec directly (Managed Etcd only).
 	// +optional
 	GlobalTopoServer *TopoServerSpec `json:"globalTopoServer,omitempty"`
 
-	// MultiAdmin configuration.
+	// Multiadmin configuration.
 	// +optional
-	MultiAdmin *StatelessSpec `json:"multiadmin,omitempty"`
+	Multiadmin *StatelessSpec `json:"multiadmin,omitempty"`
 
-	// MultiAdminWeb configuration.
+	// MultiadminWeb configuration.
 	// +optional
-	MultiAdminWeb *StatelessSpec `json:"multiadminWeb,omitempty"`
+	MultiadminWeb *StatelessSpec `json:"multiadminWeb,omitempty"`
 }
 
 // ============================================================================

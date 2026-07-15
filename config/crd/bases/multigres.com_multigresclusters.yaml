@@ -183,7 +183,7 @@ spec:
                       description: Overrides are applied on top of the template.
                       properties:
                         multigateway:
-                          description: MultiGateway overrides.
+                          description: Multigateway overrides.
                           properties:
                             affinity:
                               description: Affinity defines the pod's scheduling constraints.
@@ -1211,7 +1211,7 @@ spec:
                               type: object
                           type: object
                         multigatewayPlacement:
-                          description: MultiGatewayPlacement overrides.
+                          description: MultigatewayPlacement overrides.
                           properties:
                             tolerations:
                               description: Tolerations defines the pod tolerations
@@ -1455,7 +1455,7 @@ spec:
                           - message: only one of 'etcd' or 'external' can be set
                             rule: '!(has(self.etcd) && has(self.external))'
                         multigateway:
-                          description: MultiGateway configuration.
+                          description: Multigateway configuration.
                           properties:
                             affinity:
                               description: Affinity defines the pod's scheduling constraints.
@@ -2483,7 +2483,7 @@ spec:
                               type: object
                           type: object
                         multigatewayPlacement:
-                          description: MultiGatewayPlacement defines optional scheduling
+                          description: MultigatewayPlacement defines optional scheduling
                             settings for multigateway pods.
                           properties:
                             tolerations:
@@ -2991,7 +2991,7 @@ spec:
                                       maxLength: 512
                                       type: string
                                     multiorch:
-                                      description: MultiOrch overrides.
+                                      description: Multiorch overrides.
                                       properties:
                                         affinity:
                                           description: Affinity defines the pod's
@@ -3969,7 +3969,7 @@ spec:
                                           type: object
                                         cells:
                                           description: |-
-                                            Cells defines the list of cells where this MultiOrch should be deployed.
+                                            Cells defines the list of cells where this Multiorch should be deployed.
                                             If empty, it defaults to all cells where pools are defined.
                                           items:
                                             description: CellName is a validated name
@@ -5436,7 +5436,7 @@ spec:
                                       maxLength: 512
                                       type: string
                                     multiorch:
-                                      description: MultiOrch configuration.
+                                      description: Multiorch configuration.
                                       properties:
                                         affinity:
                                           description: Affinity defines the pod's
@@ -6414,7 +6414,7 @@ spec:
                                           type: object
                                         cells:
                                           description: |-
-                                            Cells defines the list of cells where this MultiOrch should be deployed.
+                                            Cells defines the list of cells where this Multiorch should be deployed.
                                             If empty, it defaults to all cells where pools are defined.
                                           items:
                                             description: CellName is a validated name
@@ -8350,7 +8350,7 @@ spec:
                     type: string
                 type: object
               multiadmin:
-                description: MultiAdmin defines the configuration for the MultiAdmin
+                description: Multiadmin defines the configuration for the Multiadmin
                   component.
                 properties:
                   spec:
@@ -9380,7 +9380,7 @@ spec:
                 - message: cannot specify both 'spec' and 'templateRef'
                   rule: '!(has(self.spec) && has(self.templateRef))'
               multiadminWeb:
-                description: MultiAdminWeb defines the configuration for the MultiAdminWeb
+                description: MultiadminWeb defines the configuration for the MultiadminWeb
                   component.
                 properties:
                   spec:

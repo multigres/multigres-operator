@@ -41,7 +41,7 @@ spec:
             type: object
           spec:
             description: CoreTemplateSpec defines reusable config for core components
-              (GlobalTopo, MultiAdmin).
+              (GlobalTopo, Multiadmin).
             properties:
               globalTopoServer:
                 description: |-
@@ -212,7 +212,7 @@ spec:
                 - message: must specify 'etcd' configuration
                   rule: has(self.etcd)
               multiadmin:
-                description: MultiAdmin configuration.
+                description: Multiadmin configuration.
                 properties:
                   affinity:
                     description: Affinity defines the pod's scheduling constraints.
@@ -1218,7 +1218,7 @@ spec:
                     type: object
                 type: object
               multiadminWeb:
-                description: MultiAdminWeb configuration.
+                description: MultiadminWeb configuration.
                 properties:
                   affinity:
                     description: Affinity defines the pod's scheduling constraints.

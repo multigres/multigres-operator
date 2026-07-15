@@ -41,7 +41,7 @@ spec:
             type: object
           spec:
             description: ShardTemplateSpec defines reusable config for Shard components
-              (MultiOrch, Pools).
+              (Multiorch, Pools).
             properties:
               initdbArgs:
                 description: |-
@@ -52,7 +52,7 @@ spec:
                 maxLength: 512
                 type: string
               multiorch:
-                description: MultiOrch configuration.
+                description: Multiorch configuration.
                 properties:
                   affinity:
                     description: Affinity defines the pod's scheduling constraints.
@@ -975,7 +975,7 @@ spec:
                     type: object
                   cells:
                     description: |-
-                      Cells defines the list of cells where this MultiOrch should be deployed.
+                      Cells defines the list of cells where this Multiorch should be deployed.
                       If empty, it defaults to all cells where pools are defined.
                     items:
                       description: CellName is a validated name for a cell (availability

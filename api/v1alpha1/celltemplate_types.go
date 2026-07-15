@@ -26,13 +26,13 @@ import (
 
 // CellTemplateSpec defines reusable config for Cell components (Gateway, LocalTopo).
 type CellTemplateSpec struct {
-	// MultiGateway configuration.
+	// Multigateway configuration.
 	// +optional
-	MultiGateway *StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway *StatelessSpec `json:"multigateway,omitempty"`
 
-	// MultiGatewayPlacement defines optional scheduling settings for multigateway pods.
+	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional
-	MultiGatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
+	MultigatewayPlacement *PodPlacementSpec `json:"multigatewayPlacement,omitempty"`
 
 	// LocalTopoServer configuration (optional).
 	// +optional
