@@ -31,14 +31,14 @@ limitations under the License.
 // the controller creates separate Pods per cell while maintaining a unified
 // view in the Shard status.
 //
-// # MultiOrch Orchestrator
+// # Multiorch Orchestrator
 //
-// The controller manages the MultiOrch component which handles:
+// The controller manages the Multiorch component which handles:
 //   - Leader election and failover for PostgreSQL
 //   - Replication topology management
 //   - Health monitoring and automatic recovery
 //
-// For each cell where the shard operates, a MultiOrch Deployment and Service are created.
+// For each cell where the shard operates, a Multiorch Deployment and Service are created.
 //
 // # Configuration Management
 //

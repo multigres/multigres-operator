@@ -328,7 +328,7 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 			Spec: multigresv1alpha1.ShardSpec{
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"zone1"},
 				},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -357,7 +357,7 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 			},
 		}
 
-		moName := buildHashedMultiOrchName(shard, "zone1")
+		moName := buildHashedMultiorchName(shard, "zone1")
 		mo := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: moName, Namespace: "default"},
 			Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(int32(1))},

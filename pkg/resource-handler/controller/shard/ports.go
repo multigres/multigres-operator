@@ -6,11 +6,11 @@ import (
 )
 
 const (
-	// DefaultMultiPoolerHTTPPort is the default port for MultiPooler HTTP traffic.
-	DefaultMultiPoolerHTTPPort int32 = 15200
+	// DefaultMultipoolerHTTPPort is the default port for Multipooler HTTP traffic.
+	DefaultMultipoolerHTTPPort int32 = 15200
 
-	// DefaultMultiPoolerGRPCPort is the default port for MultiPooler gRPC traffic.
-	DefaultMultiPoolerGRPCPort int32 = 15270
+	// DefaultMultipoolerGRPCPort is the default port for Multipooler gRPC traffic.
+	DefaultMultipoolerGRPCPort int32 = 15270
 
 	// DefaultPostgresPort is the default port for PostgreSQL protocol traffic.
 	DefaultPostgresPort int32 = 5432
@@ -21,25 +21,25 @@ const (
 	// DefaultPostgresExporterPort is the default port for postgres_exporter metrics.
 	DefaultPostgresExporterPort int32 = 9187
 
-	// DefaultMultiOrchHTTPPort is the default port for MultiOrch HTTP traffic.
-	DefaultMultiOrchHTTPPort int32 = 15300
+	// DefaultMultiorchHTTPPort is the default port for Multiorch HTTP traffic.
+	DefaultMultiorchHTTPPort int32 = 15300
 
-	// DefaultMultiOrchGRPCPort is the default port for MultiOrch gRPC traffic.
-	DefaultMultiOrchGRPCPort int32 = 15370
+	// DefaultMultiorchGRPCPort is the default port for Multiorch gRPC traffic.
+	DefaultMultiorchGRPCPort int32 = 15370
 )
 
-// buildMultiPoolerContainerPorts creates the port definitions for the multipooler sidecar container.
+// buildMultipoolerContainerPorts creates the port definitions for the multipooler sidecar container.
 // Returns ports for HTTP, gRPC, and PostgreSQL traffic.
-func buildMultiPoolerContainerPorts() []corev1.ContainerPort {
+func buildMultipoolerContainerPorts() []corev1.ContainerPort {
 	return []corev1.ContainerPort{
 		{
 			Name:          "http",
-			ContainerPort: DefaultMultiPoolerHTTPPort,
+			ContainerPort: DefaultMultipoolerHTTPPort,
 			Protocol:      corev1.ProtocolTCP,
 		},
 		{
 			Name:          "grpc",
-			ContainerPort: DefaultMultiPoolerGRPCPort,
+			ContainerPort: DefaultMultipoolerGRPCPort,
 			Protocol:      corev1.ProtocolTCP,
 		},
 		{
@@ -56,13 +56,13 @@ func buildPoolHeadlessServicePorts() []corev1.ServicePort {
 	return []corev1.ServicePort{
 		{
 			Name:       "http",
-			Port:       DefaultMultiPoolerHTTPPort,
+			Port:       DefaultMultipoolerHTTPPort,
 			TargetPort: intstr.FromString("http"),
 			Protocol:   corev1.ProtocolTCP,
 		},
 		{
 			Name:       "grpc",
-			Port:       DefaultMultiPoolerGRPCPort,
+			Port:       DefaultMultipoolerGRPCPort,
 			TargetPort: intstr.FromString("grpc"),
 			Protocol:   corev1.ProtocolTCP,
 		},
@@ -81,18 +81,18 @@ func buildPoolHeadlessServicePorts() []corev1.ServicePort {
 	}
 }
 
-// buildMultiOrchContainerPorts creates the port definitions for the MultiOrch container.
+// buildMultiorchContainerPorts creates the port definitions for the Multiorch container.
 // Returns ports for HTTP and gRPC traffic.
-func buildMultiOrchContainerPorts() []corev1.ContainerPort {
+func buildMultiorchContainerPorts() []corev1.ContainerPort {
 	return []corev1.ContainerPort{
 		{
 			Name:          "http",
-			ContainerPort: DefaultMultiOrchHTTPPort,
+			ContainerPort: DefaultMultiorchHTTPPort,
 			Protocol:      corev1.ProtocolTCP,
 		},
 		{
 			Name:          "grpc",
-			ContainerPort: DefaultMultiOrchGRPCPort,
+			ContainerPort: DefaultMultiorchGRPCPort,
 			Protocol:      corev1.ProtocolTCP,
 		},
 	}
@@ -109,19 +109,19 @@ func buildPostgresExporterContainerPorts() []corev1.ContainerPort {
 	}
 }
 
-// buildMultiOrchServicePorts creates service ports for the MultiOrch service.
+// buildMultiorchServicePorts creates service ports for the Multiorch service.
 // Includes HTTP and gRPC ports.
-func buildMultiOrchServicePorts() []corev1.ServicePort {
+func buildMultiorchServicePorts() []corev1.ServicePort {
 	return []corev1.ServicePort{
 		{
 			Name:       "http",
-			Port:       DefaultMultiOrchHTTPPort,
+			Port:       DefaultMultiorchHTTPPort,
 			TargetPort: intstr.FromString("http"),
 			Protocol:   corev1.ProtocolTCP,
 		},
 		{
 			Name:       "grpc",
-			Port:       DefaultMultiOrchGRPCPort,
+			Port:       DefaultMultiorchGRPCPort,
 			TargetPort: intstr.FromString("grpc"),
 			Protocol:   corev1.ProtocolTCP,
 		},

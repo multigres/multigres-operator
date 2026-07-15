@@ -105,7 +105,7 @@ func BuildPoolPod(
 				buildPgctldSidecar(shard, poolSpec),
 			},
 			Containers: []corev1.Container{
-				buildMultiPoolerContainer(shard, poolSpec, poolName, cellName, serviceID),
+				buildMultipoolerContainer(shard, poolSpec, poolName, cellName, serviceID),
 				buildPostgresExporterContainer(shard, poolSpec),
 			},
 			Volumes:      volumes,

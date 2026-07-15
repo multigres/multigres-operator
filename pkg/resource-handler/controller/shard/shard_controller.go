@@ -73,7 +73,7 @@ type ShardReconciler struct {
 	// label, so we need APIReader to validate user-provided pgBackRest TLS Secrets
 	// and external postgres password Secrets.
 	APIReader       client.Reader
-	RPCClient       rpcclient.MultiPoolerClient
+	RPCClient       rpcclient.MultipoolerClient
 	CreateTopoStore func(*multigresv1alpha1.Shard) (topoclient.Store, error)
 }
 
@@ -181,16 +181,16 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	// Compute MultiOrch cells
-	multiOrchCells, err := getMultiOrchCells(shard)
+	// Compute Multiorch cells
+	multiorchCells, err := getMultiorchCells(shard)
 	if err != nil {
 		monitoring.RecordSpanError(span, err)
-		logger.Error(err, "Failed to determine MultiOrch cells")
+		logger.Error(err, "Failed to determine Multiorch cells")
 		r.Recorder.Eventf(
 			shard,
 			"Warning",
 			"ConfigError",
-			"Failed to determine MultiOrch cells: %v",
+			"Failed to determine Multiorch cells: %v",
 			err,
 		)
 		return ctrl.Result{}, err
@@ -220,38 +220,38 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile MultiOrch - one Deployment and Service per cell
+	// Reconcile Multiorch - one Deployment and Service per cell
 	{
-		ctx, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileMultiOrch")
-		for _, cell := range multiOrchCells {
+		ctx, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileMultiorch")
+		for _, cell := range multiorchCells {
 			cellName := string(cell)
 
-			// Reconcile MultiOrch Deployment for this cell
-			if err := r.reconcileMultiOrchDeployment(ctx, shard, cellName); err != nil {
+			// Reconcile Multiorch Deployment for this cell
+			if err := r.reconcileMultiorchDeployment(ctx, shard, cellName); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
-				logger.Error(err, "Failed to reconcile MultiOrch Deployment", "cell", cellName)
+				logger.Error(err, "Failed to reconcile Multiorch Deployment", "cell", cellName)
 				r.Recorder.Eventf(
 					shard,
 					"Warning",
 					"FailedApply",
-					"Failed to supply MultiOrch Deployment for cell %s: %v",
+					"Failed to supply Multiorch Deployment for cell %s: %v",
 					cellName,
 					err,
 				)
 				return ctrl.Result{}, err
 			}
 
-			// Reconcile MultiOrch Service for this cell
-			if err := r.reconcileMultiOrchService(ctx, shard, cellName); err != nil {
+			// Reconcile Multiorch Service for this cell
+			if err := r.reconcileMultiorchService(ctx, shard, cellName); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
-				logger.Error(err, "Failed to reconcile MultiOrch Service", "cell", cellName)
+				logger.Error(err, "Failed to reconcile Multiorch Service", "cell", cellName)
 				r.Recorder.Eventf(
 					shard,
 					"Warning",
 					"FailedApply",
-					"Failed to supply MultiOrch Service for cell %s: %v",
+					"Failed to supply Multiorch Service for cell %s: %v",
 					cellName,
 					err,
 				)
@@ -434,13 +434,13 @@ func (r *ShardReconciler) reconcilePool(
 	return nil
 }
 
-// getMultiOrchCells returns the list of cells where MultiOrch should be deployed.
-// If MultiOrch.Cells is specified, it uses that.
+// getMultiorchCells returns the list of cells where Multiorch should be deployed.
+// If Multiorch.Cells is specified, it uses that.
 // Otherwise, it infers cells from all pools (union of pool cells).
-func getMultiOrchCells(shard *multigresv1alpha1.Shard) ([]multigresv1alpha1.CellName, error) {
-	cells := shard.Spec.MultiOrch.Cells
+func getMultiorchCells(shard *multigresv1alpha1.Shard) ([]multigresv1alpha1.CellName, error) {
+	cells := shard.Spec.Multiorch.Cells
 
-	// If MultiOrch specifies cells explicitly, use them
+	// If Multiorch specifies cells explicitly, use them
 	if len(cells) > 0 {
 		return cells, nil
 	}
@@ -462,7 +462,7 @@ func getMultiOrchCells(shard *multigresv1alpha1.Shard) ([]multigresv1alpha1.Cell
 	// If still no cells found, error
 	if len(cells) == 0 {
 		return nil, fmt.Errorf(
-			"MultiOrch has no cells specified and no cells found in pools - cannot deploy without cell information",
+			"multiorch has no cells specified and no cells found in pools - cannot deploy without cell information",
 		)
 	}
 

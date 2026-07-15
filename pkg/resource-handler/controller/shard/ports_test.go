@@ -7,7 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func TestBuildMultiPoolerContainerPorts(t *testing.T) {
+func TestBuildMultipoolerContainerPorts(t *testing.T) {
 	tests := []struct {
 		name string
 		want []corev1.ContainerPort
@@ -17,12 +17,12 @@ func TestBuildMultiPoolerContainerPorts(t *testing.T) {
 			want: []corev1.ContainerPort{
 				{
 					Name:          "http",
-					ContainerPort: DefaultMultiPoolerHTTPPort,
+					ContainerPort: DefaultMultipoolerHTTPPort,
 					Protocol:      corev1.ProtocolTCP,
 				},
 				{
 					Name:          "grpc",
-					ContainerPort: DefaultMultiPoolerGRPCPort,
+					ContainerPort: DefaultMultipoolerGRPCPort,
 					Protocol:      corev1.ProtocolTCP,
 				},
 				{
@@ -36,11 +36,11 @@ func TestBuildMultiPoolerContainerPorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildMultiPoolerContainerPorts()
+			got := buildMultipoolerContainerPorts()
 
 			if len(got) != len(tt.want) {
 				t.Errorf(
-					"buildMultiPoolerContainerPorts() length = %d, want %d",
+					"buildMultipoolerContainerPorts() length = %d, want %d",
 					len(got),
 					len(tt.want),
 				)
@@ -82,13 +82,13 @@ func TestBuildPoolHeadlessServicePorts(t *testing.T) {
 			want: []corev1.ServicePort{
 				{
 					Name:       "http",
-					Port:       DefaultMultiPoolerHTTPPort,
+					Port:       DefaultMultipoolerHTTPPort,
 					TargetPort: intstr.FromString("http"),
 					Protocol:   corev1.ProtocolTCP,
 				},
 				{
 					Name:       "grpc",
-					Port:       DefaultMultiPoolerGRPCPort,
+					Port:       DefaultMultipoolerGRPCPort,
 					TargetPort: intstr.FromString("grpc"),
 					Protocol:   corev1.ProtocolTCP,
 				},
@@ -149,7 +149,7 @@ func TestBuildPoolHeadlessServicePorts(t *testing.T) {
 	}
 }
 
-func TestBuildMultiOrchContainerPorts(t *testing.T) {
+func TestBuildMultiorchContainerPorts(t *testing.T) {
 	tests := []struct {
 		name string
 		want []corev1.ContainerPort
@@ -159,12 +159,12 @@ func TestBuildMultiOrchContainerPorts(t *testing.T) {
 			want: []corev1.ContainerPort{
 				{
 					Name:          "http",
-					ContainerPort: DefaultMultiOrchHTTPPort,
+					ContainerPort: DefaultMultiorchHTTPPort,
 					Protocol:      corev1.ProtocolTCP,
 				},
 				{
 					Name:          "grpc",
-					ContainerPort: DefaultMultiOrchGRPCPort,
+					ContainerPort: DefaultMultiorchGRPCPort,
 					Protocol:      corev1.ProtocolTCP,
 				},
 			},
@@ -173,11 +173,11 @@ func TestBuildMultiOrchContainerPorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildMultiOrchContainerPorts()
+			got := buildMultiorchContainerPorts()
 
 			if len(got) != len(tt.want) {
 				t.Errorf(
-					"buildMultiOrchContainerPorts() length = %d, want %d",
+					"buildMultiorchContainerPorts() length = %d, want %d",
 					len(got),
 					len(tt.want),
 				)
@@ -209,7 +209,7 @@ func TestBuildMultiOrchContainerPorts(t *testing.T) {
 	}
 }
 
-func TestBuildMultiOrchServicePorts(t *testing.T) {
+func TestBuildMultiorchServicePorts(t *testing.T) {
 	tests := []struct {
 		name string
 		want []corev1.ServicePort
@@ -219,13 +219,13 @@ func TestBuildMultiOrchServicePorts(t *testing.T) {
 			want: []corev1.ServicePort{
 				{
 					Name:       "http",
-					Port:       DefaultMultiOrchHTTPPort,
+					Port:       DefaultMultiorchHTTPPort,
 					TargetPort: intstr.FromString("http"),
 					Protocol:   corev1.ProtocolTCP,
 				},
 				{
 					Name:       "grpc",
-					Port:       DefaultMultiOrchGRPCPort,
+					Port:       DefaultMultiorchGRPCPort,
 					TargetPort: intstr.FromString("grpc"),
 					Protocol:   corev1.ProtocolTCP,
 				},
@@ -235,11 +235,11 @@ func TestBuildMultiOrchServicePorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildMultiOrchServicePorts()
+			got := buildMultiorchServicePorts()
 
 			if len(got) != len(tt.want) {
 				t.Errorf(
-					"buildMultiOrchServicePorts() length = %d, want %d",
+					"buildMultiorchServicePorts() length = %d, want %d",
 					len(got),
 					len(tt.want),
 				)

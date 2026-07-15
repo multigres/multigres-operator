@@ -54,7 +54,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -71,21 +71,21 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
-				// Verify MultiOrch Deployment was created (with cell suffix)
+				// Verify Multiorch Deployment was created (with cell suffix)
 				moDeploy := &appsv1.Deployment{}
-				hashedMoName := buildHashedMultiOrchName(shard, "zone1")
+				hashedMoName := buildHashedMultiorchName(shard, "zone1")
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMoName, Namespace: "default"},
 					moDeploy); err != nil {
-					t.Errorf("MultiOrch Deployment should exist: %v", err)
+					t.Errorf("Multiorch Deployment should exist: %v", err)
 				}
 
-				// Verify MultiOrch Service was created (with cell suffix)
+				// Verify Multiorch Service was created (with cell suffix)
 				moSvc := &corev1.Service{}
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMoName, Namespace: "default"},
 					moSvc); err != nil {
-					t.Errorf("MultiOrch Service should exist: %v", err)
+					t.Errorf("Multiorch Service should exist: %v", err)
 				}
 
 				// Verify Pool Pod and PVC were created
@@ -124,7 +124,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -195,7 +195,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				}
 			},
 		},
-		"MultiOrch infers cells from pools when not specified": {
+		"Multiorch infers cells from pools when not specified": {
 			shard: &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "inferred-cells-shard",
@@ -204,7 +204,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{}, // Empty - will infer from pools
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -221,21 +221,21 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
-				// MultiOrch should be deployed to both zone1 and zone2
-				hashedMo1 := buildHashedMultiOrchName(shard, "zone1")
+				// Multiorch should be deployed to both zone1 and zone2
+				hashedMo1 := buildHashedMultiorchName(shard, "zone1")
 				mo1 := &appsv1.Deployment{}
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo1, Namespace: "default"},
 					mo1); err != nil {
-					t.Errorf("MultiOrch Deployment for zone1 should exist: %v", err)
+					t.Errorf("Multiorch Deployment for zone1 should exist: %v", err)
 				}
 
-				hashedMo2 := buildHashedMultiOrchName(shard, "zone2")
+				hashedMo2 := buildHashedMultiorchName(shard, "zone2")
 				mo2 := &appsv1.Deployment{}
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo2, Namespace: "default"},
 					mo2); err != nil {
-					t.Errorf("MultiOrch Deployment for zone2 should exist: %v", err)
+					t.Errorf("Multiorch Deployment for zone2 should exist: %v", err)
 				}
 			},
 		},
@@ -253,7 +253,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 						Type:       multigresv1alpha1.BackupTypeFilesystem,
 						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{},
 					},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -278,18 +278,18 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
-				// Verify MultiOrch Deployment was ONLY created for zone1
-				hashedMo1 := buildHashedMultiOrchName(shard, "zone1")
+				// Verify Multiorch Deployment was ONLY created for zone1
+				hashedMo1 := buildHashedMultiorchName(shard, "zone1")
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo1, Namespace: "default"},
 					&appsv1.Deployment{}); err != nil {
-					t.Errorf("MultiOrch Deployment for zone1 should exist: %v", err)
+					t.Errorf("Multiorch Deployment for zone1 should exist: %v", err)
 				}
-				hashedMo2 := buildHashedMultiOrchName(shard, "zone2")
+				hashedMo2 := buildHashedMultiorchName(shard, "zone2")
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo2, Namespace: "default"},
 					&appsv1.Deployment{}); err == nil {
-					t.Errorf("MultiOrch Deployment for zone2 should NOT exist")
+					t.Errorf("Multiorch Deployment for zone2 should NOT exist")
 				}
 
 				// Verify Backup PVCs were created for BOTH zone1 AND zone2
@@ -307,7 +307,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				}
 			},
 		},
-		"error when MultiOrch and pools have no cells specified": {
+		"error when Multiorch and pools have no cells specified": {
 			shard: &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "no-cells-anywhere",
@@ -316,7 +316,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{}, // Empty
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -343,7 +343,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -370,7 +370,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1", "zone2"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -438,11 +438,11 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Images: multigresv1alpha1.ShardImages{
-						MultiPooler: "custom/multipooler:v1.0.0",
+						Multipooler: "custom/multipooler:v1.0.0",
 						Postgres:    "postgres:16",
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -504,7 +504,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -530,7 +530,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Spec: multigresv1alpha1.ShardSpec{
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							Cells: []multigresv1alpha1.CellName{"zone1"},
 						},
 						Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -547,13 +547,13 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				},
 			},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
-				// Verify MultiOrch Deployment was NOT created
+				// Verify Multiorch Deployment was NOT created
 				moDeploy := &appsv1.Deployment{}
-				hashedMoName := buildHashedMultiOrchName(shard, "zone1")
+				hashedMoName := buildHashedMultiorchName(shard, "zone1")
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMoName, Namespace: "default"},
 					moDeploy); err == nil {
-					t.Errorf("MultiOrch Deployment should NOT exist")
+					t.Errorf("Multiorch Deployment should NOT exist")
 				}
 			},
 		},
@@ -570,7 +570,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -590,7 +590,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			wantErr: true,
 		},
-		"error on MultiOrch Deployment patch": {
+		"error on Multiorch Deployment patch": {
 			shard: &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-shard",
@@ -599,7 +599,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -629,7 +629,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			wantErr: true,
 		},
 
-		"error on MultiOrch Service patch": {
+		"error on Multiorch Service patch": {
 			shard: &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-shard",
@@ -638,7 +638,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -678,7 +678,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -717,7 +717,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -760,7 +760,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -789,7 +789,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -829,7 +829,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 						Type:       multigresv1alpha1.BackupTypeFilesystem,
 						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{},
 					},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -868,7 +868,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -949,7 +949,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			wantErr: true,
 		},
-		"error on build MultiOrch Deployment (scheme missing Shard)": {
+		"error on build Multiorch Deployment (scheme missing Shard)": {
 			shard: &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "build-mo-err-shard",
@@ -958,7 +958,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1"},
 					},
 				},
@@ -983,10 +983,10 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				name := obj.GetName()
 				replaced := false
 
-				// Check MultiOrch
-				for _, cell := range tc.shard.Spec.MultiOrch.Cells {
+				// Check Multiorch
+				for _, cell := range tc.shard.Spec.Multiorch.Cells {
 					if strings.Contains(name, "multiorch") && strings.Contains(name, string(cell)) {
-						hashed := buildHashedMultiOrchName(tc.shard, string(cell))
+						hashed := buildHashedMultiorchName(tc.shard, string(cell))
 						obj.SetName(hashed)
 						// Update labels/selectors if applicable
 						if deploy, ok := obj.(*appsv1.Deployment); ok {
@@ -1246,7 +1246,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Spec: multigresv1alpha1.ShardSpec{
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"zone1"},
 				},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -1277,7 +1277,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			},
 		}
 
-		moName := buildHashedMultiOrchName(shard, "zone1")
+		moName := buildHashedMultiorchName(shard, "zone1")
 		mo := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      moName,
@@ -1353,7 +1353,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Spec: multigresv1alpha1.ShardSpec{
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"zone1"},
 				},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -1447,7 +1447,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Spec: multigresv1alpha1.ShardSpec{
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
-				MultiOrch: multigresv1alpha1.MultiOrchSpec{
+				Multiorch: multigresv1alpha1.MultiorchSpec{
 					Cells: []multigresv1alpha1.CellName{"zone1", "zone2"},
 				},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -1499,7 +1499,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			objects = append(objects, p)
 		}
 
-		mo1Name := buildHashedMultiOrchName(shard, "zone1")
+		mo1Name := buildHashedMultiorchName(shard, "zone1")
 		mo1 := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: mo1Name, Namespace: "default"},
 			Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(int32(1))},
@@ -1507,7 +1507,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 		}
 		objects = append(objects, mo1)
 
-		mo2Name := buildHashedMultiOrchName(shard, "zone2")
+		mo2Name := buildHashedMultiorchName(shard, "zone2")
 		mo2 := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: mo2Name, Namespace: "default"},
 			Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(int32(1))},

@@ -38,7 +38,7 @@ var (
 	cellGatewayReplicas = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "multigres_operator_cell_gateway_replicas",
-			Help: "MultiGateway replica counts for a Cell.",
+			Help: "Multigateway replica counts for a Cell.",
 		},
 		[]string{"cell", "namespace", "state"},
 	)

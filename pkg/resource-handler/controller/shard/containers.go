@@ -84,12 +84,12 @@ const (
 	// PgBackRestPort is the port for the pgBackRest TLS server
 	PgBackRestPort = 8432
 
-	// DefaultMultiPoolerConnPoolGlobalCapacity keeps multipooler below pgctld's
+	// DefaultMultipoolerConnPoolGlobalCapacity keeps multipooler below pgctld's
 	// small default max_connections so admin and internal connections have headroom.
-	DefaultMultiPoolerConnPoolGlobalCapacity = 40
+	DefaultMultipoolerConnPoolGlobalCapacity = 40
 
-	// DefaultMultiPoolerConnPoolAdminCapacity matches the upstream multipooler default.
-	DefaultMultiPoolerConnPoolAdminCapacity = 5
+	// DefaultMultipoolerConnPoolAdminCapacity matches the upstream multipooler default.
+	DefaultMultipoolerConnPoolAdminCapacity = 5
 )
 
 // PgHbaConfigMapName returns the per-shard ConfigMap name for the pg_hba template.
@@ -347,20 +347,20 @@ func BuildPoolServiceID(podName string) string {
 	return "p-" + nameutil.Hash([]string{podName})
 }
 
-// buildMultiPoolerContainer creates the multipooler container spec.
+// buildMultipoolerContainer creates the multipooler container spec.
 // Runs as a regular (non-sidecar) container so it receives SIGTERM before
 // pgctld and can call pgctld.Stop() during its graceful shutdown; see
 // docs/development/pod-management-design.md §6 for the full rationale.
-func buildMultiPoolerContainer(
+func buildMultipoolerContainer(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
 	poolName string,
 	cellName string,
 	serviceID string,
 ) corev1.Container {
-	image := multigresv1alpha1.DefaultMultiPoolerImage
-	if shard.Spec.Images.MultiPooler != "" {
-		image = string(shard.Spec.Images.MultiPooler)
+	image := multigresv1alpha1.DefaultMultipoolerImage
+	if shard.Spec.Images.Multipooler != "" {
+		image = string(shard.Spec.Images.Multipooler)
 	}
 
 	args := []string{
@@ -381,11 +381,11 @@ func buildMultiPoolerContainer(
 		"--pg-port=5432",
 		fmt.Sprintf(
 			"--connpool-global-capacity=%d",
-			DefaultMultiPoolerConnPoolGlobalCapacity,
+			DefaultMultipoolerConnPoolGlobalCapacity,
 		),
 		fmt.Sprintf(
 			"--connpool-admin-capacity=%d",
-			DefaultMultiPoolerConnPoolAdminCapacity,
+			DefaultMultipoolerConnPoolAdminCapacity,
 		),
 		"--log-level=" + string(shard.Spec.LogLevels.Multipooler),
 	}
@@ -402,14 +402,14 @@ func buildMultiPoolerContainer(
 		Name:            "multipooler",
 		Image:           image,
 		Args:            args,
-		Ports:           buildMultiPoolerContainerPorts(),
+		Ports:           buildMultipoolerContainerPorts(),
 		Resources:       pool.Multipooler.Resources,
 		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/live",
-					Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+					Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 				},
 			},
 			PeriodSeconds:    5,
@@ -419,7 +419,7 @@ func buildMultiPoolerContainer(
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/live",
-					Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+					Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 				},
 			},
 			PeriodSeconds: 10,
@@ -428,7 +428,7 @@ func buildMultiPoolerContainer(
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/live",
-					Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+					Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 				},
 			},
 			PeriodSeconds: 5,
@@ -479,11 +479,11 @@ func buildMultiPoolerContainer(
 	return c
 }
 
-// buildMultiOrchContainer creates the MultiOrch container spec for a specific cell.
-func buildMultiOrchContainer(shard *multigresv1alpha1.Shard, cellName string) corev1.Container {
-	image := multigresv1alpha1.DefaultMultiOrchImage
-	if shard.Spec.Images.MultiOrch != "" {
-		image = string(shard.Spec.Images.MultiOrch)
+// buildMultiorchContainer creates the Multiorch container spec for a specific cell.
+func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) corev1.Container {
+	image := multigresv1alpha1.DefaultMultiorchImage
+	if shard.Spec.Images.Multiorch != "" {
+		image = string(shard.Spec.Images.Multiorch)
 	}
 
 	watchTarget := fmt.Sprintf("%s/%s/%s",
@@ -504,13 +504,13 @@ func buildMultiOrchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 		Name:      "multiorch",
 		Image:     image,
 		Args:      args,
-		Ports:     buildMultiOrchContainerPorts(),
-		Resources: shard.Spec.MultiOrch.Resources,
+		Ports:     buildMultiorchContainerPorts(),
+		Resources: shard.Spec.Multiorch.Resources,
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/ready",
-					Port: intstr.FromInt32(DefaultMultiOrchHTTPPort),
+					Port: intstr.FromInt32(DefaultMultiorchHTTPPort),
 				},
 			},
 			PeriodSeconds:    5,
@@ -520,7 +520,7 @@ func buildMultiOrchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/live",
-					Port: intstr.FromInt32(DefaultMultiOrchHTTPPort),
+					Port: intstr.FromInt32(DefaultMultiorchHTTPPort),
 				},
 			},
 			PeriodSeconds: 10,
@@ -529,13 +529,13 @@ func buildMultiOrchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
 					Path: "/ready",
-					Port: intstr.FromInt32(DefaultMultiOrchHTTPPort),
+					Port: intstr.FromInt32(DefaultMultiorchHTTPPort),
 				},
 			},
 			PeriodSeconds: 5,
 		},
 	}
-	if envVars := buildRuntimeOTELEnvVars(shard, MultiOrchComponentName); len(envVars) > 0 {
+	if envVars := buildRuntimeOTELEnvVars(shard, MultiorchComponentName); len(envVars) > 0 {
 		c.Env = append(c.Env, envVars...)
 	}
 	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(

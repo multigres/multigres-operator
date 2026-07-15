@@ -33,8 +33,8 @@ func (r *ShardReconciler) updateStatus(
 		return err
 	}
 
-	// Update MultiOrch status
-	orchDegraded, err := r.updateMultiOrchStatus(ctx, shard, cellsSet)
+	// Update Multiorch status
+	orchDegraded, err := r.updateMultiorchStatus(ctx, shard, cellsSet)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (r *ShardReconciler) updateStatus(
 		if poolDegraded {
 			shard.Status.Message = "One or more pool pods are crash-looping"
 		} else {
-			shard.Status.Message = "One or more MultiOrch pods are crash-looping"
+			shard.Status.Message = "One or more Multiorch pods are crash-looping"
 		}
 	case shard.Status.PoolsReady && shard.Status.OrchReady:
 		shard.Status.Phase = multigresv1alpha1.PhaseHealthy
@@ -229,27 +229,27 @@ func (r *ShardReconciler) updatePoolsStatus(
 	return totalPods, readyPods, poolDegraded, nil
 }
 
-// updateMultiOrchStatus checks MultiOrch Deployments and sets OrchReady status.
-// Returns whether any MultiOrch pod is crash-looping (degraded).
+// updateMultiorchStatus checks Multiorch Deployments and sets OrchReady status.
+// Returns whether any Multiorch pod is crash-looping (degraded).
 // Also tracks cells in the cellsSet.
-func (r *ShardReconciler) updateMultiOrchStatus(
+func (r *ShardReconciler) updateMultiorchStatus(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	cellsSet map[multigresv1alpha1.CellName]bool,
 ) (orchDegraded bool, err error) {
-	multiOrchCells, cellsErr := getMultiOrchCells(shard)
+	multiorchCells, cellsErr := getMultiorchCells(shard)
 	if cellsErr != nil {
 		shard.Status.OrchReady = false
 		return false, nil
 	}
 
 	orchReady := true
-	for _, cell := range multiOrchCells {
+	for _, cell := range multiorchCells {
 		cellName := string(cell)
 		cellsSet[cell] = true
 
-		// Check MultiOrch Deployment status (deployments use long names)
-		deployName := buildMultiOrchNameWithCell(shard, cellName, name.DefaultConstraints)
+		// Check Multiorch Deployment status (deployments use long names)
+		deployName := buildMultiorchNameWithCell(shard, cellName, name.DefaultConstraints)
 		deploy := &appsv1.Deployment{}
 		if getErr := r.Get(
 			ctx,
@@ -260,7 +260,7 @@ func (r *ShardReconciler) updateMultiOrchStatus(
 				orchReady = false
 				break
 			}
-			return false, fmt.Errorf("failed to get MultiOrch Deployment for status: %w", getErr)
+			return false, fmt.Errorf("failed to get Multiorch Deployment for status: %w", getErr)
 		}
 
 		// Check if deployment is ready
@@ -270,16 +270,16 @@ func (r *ShardReconciler) updateMultiOrchStatus(
 			orchReady = false
 		}
 
-		// Check if any MultiOrch pods are crash-looping
+		// Check if any Multiorch pods are crash-looping
 		orchSelector := metadata.GetSelectorLabels(
-			buildMultiOrchLabelsWithCell(shard, cellName),
+			buildMultiorchLabelsWithCell(shard, cellName),
 		)
 		podList := &corev1.PodList{}
 		if listErr := r.List(ctx, podList,
 			client.InNamespace(shard.Namespace),
 			client.MatchingLabels(orchSelector),
 		); listErr != nil {
-			return false, fmt.Errorf("failed to list MultiOrch pods for status: %w", listErr)
+			return false, fmt.Errorf("failed to list Multiorch pods for status: %w", listErr)
 		}
 		if status.AnyCrashLooping(podList.Items) {
 			orchDegraded = true

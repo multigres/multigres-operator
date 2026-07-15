@@ -81,7 +81,7 @@ func buildHashedBackupPVCName(shard *multigresv1alpha1.Shard, cellName string) s
 	)
 }
 
-func buildHashedMultiOrchName(shard *multigresv1alpha1.Shard, cellName string) string {
+func buildHashedMultiorchName(shard *multigresv1alpha1.Shard, cellName string) string {
 	clusterName := shard.Labels["multigres.com/cluster"]
 	return name.JoinWithConstraints(
 		name.ServiceConstraints,
@@ -102,7 +102,7 @@ func TestGetPoolCells(t *testing.T) {
 		"explicit multiorch and pools in different cells": {
 			shard: &multigresv1alpha1.Shard{
 				Spec: multigresv1alpha1.ShardSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -115,7 +115,7 @@ func TestGetPoolCells(t *testing.T) {
 		"only multiorch": {
 			shard: &multigresv1alpha1.Shard{
 				Spec: multigresv1alpha1.ShardSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a"},
 					},
 				},
@@ -136,7 +136,7 @@ func TestGetPoolCells(t *testing.T) {
 		"overlapping cells": {
 			shard: &multigresv1alpha1.Shard{
 				Spec: multigresv1alpha1.ShardSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -229,9 +229,9 @@ func TestSetConditions(t *testing.T) {
 	}
 }
 
-// TestBuildMultiOrchContainer_WithImage tests buildMultiOrchContainer with custom image.
+// TestBuildMultiorchContainer_WithImage tests buildMultiorchContainer with custom image.
 // This tests the image override path that was missing coverage.
-func TestBuildMultiOrchContainer_WithImage(t *testing.T) {
+func TestBuildMultiorchContainer_WithImage(t *testing.T) {
 	customImage := "custom/multiorch:v1.2.3"
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -245,18 +245,18 @@ func TestBuildMultiOrchContainer_WithImage(t *testing.T) {
 				Implementation: "etcd",
 			},
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch: multigresv1alpha1.ImageRef(customImage),
+				Multiorch: multigresv1alpha1.ImageRef(customImage),
 			},
 		},
 	}
 
-	container := buildMultiOrchContainer(shard, "zone1")
+	container := buildMultiorchContainer(shard, "zone1")
 
 	if container.Image != customImage {
-		t.Errorf("buildMultiOrchContainer() image = %s, want %s", container.Image, customImage)
+		t.Errorf("buildMultiorchContainer() image = %s, want %s", container.Image, customImage)
 	}
 	if container.Name != "multiorch" {
-		t.Errorf("buildMultiOrchContainer() name = %s, want multiorch", container.Name)
+		t.Errorf("buildMultiorchContainer() name = %s, want multiorch", container.Name)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestReconcile_InvalidScheme(t *testing.T) {
 		setupShard    func() *multigresv1alpha1.Shard
 		reconcileFunc func(*ShardReconciler, context.Context, *multigresv1alpha1.Shard) error
 	}{
-		"MultiOrchDeployment": {
+		"MultiorchDeployment": {
 			setupShard: func() *multigresv1alpha1.Shard {
 				return &multigresv1alpha1.Shard{
 					ObjectMeta: metav1.ObjectMeta{
@@ -276,17 +276,17 @@ func TestReconcile_InvalidScheme(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							Cells: []multigresv1alpha1.CellName{"cell1"},
 						},
 					},
 				}
 			},
 			reconcileFunc: func(r *ShardReconciler, ctx context.Context, shard *multigresv1alpha1.Shard) error {
-				return r.reconcileMultiOrchDeployment(ctx, shard, "cell1")
+				return r.reconcileMultiorchDeployment(ctx, shard, "cell1")
 			},
 		},
-		"MultiOrchService": {
+		"MultiorchService": {
 			setupShard: func() *multigresv1alpha1.Shard {
 				return &multigresv1alpha1.Shard{
 					ObjectMeta: metav1.ObjectMeta{
@@ -296,7 +296,7 @@ func TestReconcile_InvalidScheme(t *testing.T) {
 				}
 			},
 			reconcileFunc: func(r *ShardReconciler, ctx context.Context, shard *multigresv1alpha1.Shard) error {
-				return r.reconcileMultiOrchService(ctx, shard, "cell1")
+				return r.reconcileMultiorchService(ctx, shard, "cell1")
 			},
 		},
 		"PoolPDB": {
@@ -437,7 +437,7 @@ func TestReconcile_PatchError(t *testing.T) {
 		getFailObj    func(*multigresv1alpha1.Shard) string
 		reconcileFunc func(*ShardReconciler, context.Context, *multigresv1alpha1.Shard) error
 	}{
-		"MultiOrchDeployment": {
+		"MultiorchDeployment": {
 			setupShard: func() *multigresv1alpha1.Shard {
 				return &multigresv1alpha1.Shard{
 					ObjectMeta: metav1.ObjectMeta{
@@ -447,20 +447,20 @@ func TestReconcile_PatchError(t *testing.T) {
 					Spec: multigresv1alpha1.ShardSpec{
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							Cells: []multigresv1alpha1.CellName{"cell1"},
 						},
 					},
 				}
 			},
 			getFailObj: func(s *multigresv1alpha1.Shard) string {
-				return buildHashedMultiOrchName(s, "cell1")
+				return buildHashedMultiorchName(s, "cell1")
 			},
 			reconcileFunc: func(r *ShardReconciler, ctx context.Context, shard *multigresv1alpha1.Shard) error {
-				return r.reconcileMultiOrchDeployment(ctx, shard, "cell1")
+				return r.reconcileMultiorchDeployment(ctx, shard, "cell1")
 			},
 		},
-		"MultiOrchService": {
+		"MultiorchService": {
 			setupShard: func() *multigresv1alpha1.Shard {
 				return &multigresv1alpha1.Shard{
 					ObjectMeta: metav1.ObjectMeta{
@@ -474,10 +474,10 @@ func TestReconcile_PatchError(t *testing.T) {
 				}
 			},
 			getFailObj: func(s *multigresv1alpha1.Shard) string {
-				return buildHashedMultiOrchName(s, "cell1")
+				return buildHashedMultiorchName(s, "cell1")
 			},
 			reconcileFunc: func(r *ShardReconciler, ctx context.Context, shard *multigresv1alpha1.Shard) error {
-				return r.reconcileMultiOrchService(ctx, shard, "cell1")
+				return r.reconcileMultiorchService(ctx, shard, "cell1")
 			},
 		},
 		"PoolPDB": {
@@ -657,8 +657,8 @@ func TestReconcile_PostgresSecretError(t *testing.T) {
 	}
 }
 
-// TestUpdateStatus_MultiOrch tests updateStatus with different MultiOrch deployment scenarios.
-func TestUpdateStatus_MultiOrch(t *testing.T) {
+// TestUpdateStatus_Multiorch tests updateStatus with different Multiorch deployment scenarios.
+func TestUpdateStatus_Multiorch(t *testing.T) {
 	tests := map[string]struct {
 		setupObjects    []client.Object
 		expectError     bool
@@ -676,7 +676,7 @@ func TestUpdateStatus_MultiOrch(t *testing.T) {
 					Build()
 				return testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 					OnGet: testutil.FailOnKeyName(
-						buildHashedMultiOrchName(shard, "zone1"),
+						buildHashedMultiorchName(shard, "zone1"),
 						testutil.ErrNetworkTimeout,
 					),
 				})
@@ -718,9 +718,9 @@ func TestUpdateStatus_MultiOrch(t *testing.T) {
 		"NotFound": {
 			expectError:     false,
 			expectOrchReady: false,
-			setupObjects:    []client.Object{}, // No MultiOrch Deployment - will get NotFound
+			setupObjects:    []client.Object{}, // No Multiorch Deployment - will get NotFound
 		},
-		"NoCellsInMultiOrchOrPools": {
+		"NoCellsInMultiorchOrPools": {
 			expectError:     false,
 			expectOrchReady: false,
 			setupObjects:    []client.Object{},
@@ -730,7 +730,7 @@ func TestUpdateStatus_MultiOrch(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{}, // Empty
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{}, // Empty
@@ -754,7 +754,7 @@ func TestUpdateStatus_MultiOrch(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
-						MultiOrch: multigresv1alpha1.MultiOrchSpec{
+						Multiorch: multigresv1alpha1.MultiorchSpec{
 							Cells: []multigresv1alpha1.CellName{"zone1"},
 						},
 						Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
@@ -1776,7 +1776,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			Spec: multigresv1alpha1.ShardSpec{
 				Backup: &multigresv1alpha1.BackupConfig{
 					PgBackRestTLS: &multigresv1alpha1.PgBackRestTLSConfig{
-						SecretName: "my-tls-secret",
+						SecretName: "my-tls-secret", // #nosec G101 -- Secret object name, not a credential
 					},
 				},
 			},
@@ -3623,7 +3623,7 @@ func TestReconcile_BackupCertsError(t *testing.T) {
 					SecretName: "nonexistent-tls-secret",
 				},
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -4291,7 +4291,7 @@ func TestUpdateStatus_ProgressingPhase(t *testing.T) {
 					ReplicasPerCell: ptr.To(int32(1)),
 				},
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 		},
@@ -4451,7 +4451,7 @@ func TestUpdateStatus_HealthyPhase(t *testing.T) {
 					ReplicasPerCell: ptr.To(int32(1)),
 				},
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 		},
@@ -4475,8 +4475,8 @@ func TestUpdateStatus_HealthyPhase(t *testing.T) {
 		},
 	}
 
-	// Create MultiOrch Deployment with ready replicas so OrchReady=true
-	moDeployName := buildMultiOrchNameWithCell(shard, "zone1", name.DefaultConstraints)
+	// Create Multiorch Deployment with ready replicas so OrchReady=true
+	moDeployName := buildMultiorchNameWithCell(shard, "zone1", name.DefaultConstraints)
 	moSelector := map[string]string{
 		metadata.LabelMultigresCluster:    "test-cluster",
 		metadata.LabelMultigresDatabase:   "db",
@@ -4737,7 +4737,7 @@ func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
 					ReplicasPerCell: ptr.To(int32(1)),
 				},
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 		},
@@ -4801,7 +4801,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 					ReplicasPerCell: ptr.To(int32(1)),
 				},
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 		},
@@ -4831,7 +4831,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			},
 		}
 
-		moDeployName := buildMultiOrchNameWithCell(shard, "zone1", name.DefaultConstraints)
+		moDeployName := buildMultiorchNameWithCell(shard, "zone1", name.DefaultConstraints)
 		moDeploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       moDeployName,
@@ -4879,7 +4879,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			},
 		}
 
-		moDeployName := buildMultiOrchNameWithCell(shard, "zone1", name.DefaultConstraints)
+		moDeployName := buildMultiorchNameWithCell(shard, "zone1", name.DefaultConstraints)
 		moDeploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       moDeployName,
@@ -4930,7 +4930,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			},
 		}
 
-		moDeployName := buildMultiOrchNameWithCell(shard, "zone1", name.DefaultConstraints)
+		moDeployName := buildMultiorchNameWithCell(shard, "zone1", name.DefaultConstraints)
 		moDeploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:       moDeployName,
@@ -4960,7 +4960,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 	})
 }
 
-func TestUpdateStatus_DegradedOnMultiOrchCrashLoop(t *testing.T) {
+func TestUpdateStatus_DegradedOnMultiorchCrashLoop(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4982,7 +4982,7 @@ func TestUpdateStatus_DegradedOnMultiOrchCrashLoop(t *testing.T) {
 					ReplicasPerCell: ptr.To(int32(1)),
 				},
 			},
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 		},
@@ -5007,8 +5007,8 @@ func TestUpdateStatus_DegradedOnMultiOrchCrashLoop(t *testing.T) {
 		},
 	}
 
-	// MultiOrch deployment exists but pod is crash-looping
-	moDeployName := buildMultiOrchNameWithCell(shard, "zone1", name.DefaultConstraints)
+	// Multiorch deployment exists but pod is crash-looping
+	moDeployName := buildMultiorchNameWithCell(shard, "zone1", name.DefaultConstraints)
 	moDeploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       moDeployName,
@@ -5019,7 +5019,7 @@ func TestUpdateStatus_DegradedOnMultiOrchCrashLoop(t *testing.T) {
 		Status: appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 0, ObservedGeneration: 1},
 	}
 
-	moLabels := buildMultiOrchLabelsWithCell(shard, "zone1")
+	moLabels := buildMultiorchLabelsWithCell(shard, "zone1")
 	moPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      moDeployName + "-abc",
@@ -5049,10 +5049,10 @@ func TestUpdateStatus_DegradedOnMultiOrchCrashLoop(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if shard.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("expected PhaseDegraded for crash-looping MultiOrch, got %q", shard.Status.Phase)
+		t.Errorf("expected PhaseDegraded for crash-looping Multiorch, got %q", shard.Status.Phase)
 	}
-	if shard.Status.Message != "One or more MultiOrch pods are crash-looping" {
-		t.Errorf("expected MultiOrch-specific degraded message, got %q", shard.Status.Message)
+	if shard.Status.Message != "One or more Multiorch pods are crash-looping" {
+		t.Errorf("expected Multiorch-specific degraded message, got %q", shard.Status.Message)
 	}
 }
 

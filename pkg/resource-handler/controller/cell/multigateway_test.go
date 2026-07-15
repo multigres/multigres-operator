@@ -18,7 +18,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
 
-func TestBuildMultiGatewayDeployment(t *testing.T) {
+func TestBuildMultigatewayDeployment(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -76,7 +76,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -97,7 +97,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -113,22 +113,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -136,7 +136,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -146,7 +146,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -155,7 +155,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -189,7 +189,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(5)),
 					},
 				},
@@ -239,7 +239,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -255,22 +255,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -278,7 +278,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -288,7 +288,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -297,7 +297,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -320,7 +320,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone3",
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway: "custom/multigateway:v1.2.3",
+						Multigateway: "custom/multigateway:v1.2.3",
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
@@ -360,7 +360,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -397,22 +397,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -420,7 +420,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -430,7 +430,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -439,7 +439,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -473,7 +473,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Affinity: &corev1.Affinity{
 							NodeAffinity: &corev1.NodeAffinity{
 								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
@@ -492,7 +492,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							},
 						},
 					},
-					MultiGatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
+					MultigatewayPlacement: &multigresv1alpha1.PodPlacementSpec{
 						Tolerations: []corev1.Toleration{
 							{
 								Key:      "workload",
@@ -528,7 +528,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -549,7 +549,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -565,22 +565,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -588,7 +588,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -598,7 +598,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -607,7 +607,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -666,7 +666,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("100m"),
@@ -704,7 +704,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -725,7 +725,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -750,22 +750,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -773,7 +773,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -783,7 +783,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -792,7 +792,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -826,7 +826,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						PodLabels: map[string]string{
 							"custom-label":   "custom-value",
 							"team":           "platform",
@@ -862,7 +862,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -889,7 +889,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -905,22 +905,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -928,7 +928,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -938,7 +938,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -947,7 +947,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -981,7 +981,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						PodLabels: map[string]string{
 							"app.kubernetes.io/component": "hacked",
 							"multigres.com/cell":          "wrong-cell",
@@ -1014,7 +1014,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -1036,7 +1036,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -1052,22 +1052,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -1075,7 +1075,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -1085,7 +1085,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -1094,7 +1094,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -1156,7 +1156,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -1178,7 +1178,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -1194,22 +1194,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -1217,7 +1217,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -1227,7 +1227,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -1236,7 +1236,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -1301,7 +1301,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
-					Replicas: ptr.To(DefaultMultiGatewayReplicas),
+					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"app.kubernetes.io/instance":  "test-cluster",
@@ -1323,7 +1323,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 							Containers: []corev1.Container{
 								{
 									Name:  "multigateway",
-									Image: multigresv1alpha1.DefaultMultiGatewayImage,
+									Image: multigresv1alpha1.DefaultMultigatewayImage,
 									Args: []string{
 										"multigateway",
 										"--http-port", "15100",
@@ -1339,22 +1339,22 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 									Ports: []corev1.ContainerPort{
 										{
 											Name:          "http",
-											ContainerPort: MultiGatewayHTTPPort,
+											ContainerPort: MultigatewayHTTPPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "grpc",
-											ContainerPort: MultiGatewayGRPCPort,
+											ContainerPort: MultigatewayGRPCPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "postgres",
-											ContainerPort: MultiGatewayPostgresPort,
+											ContainerPort: MultigatewayPostgresPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 										{
 											Name:          "pg-replica",
-											ContainerPort: MultiGatewayPostgresReplicaPort,
+											ContainerPort: MultigatewayPostgresReplicaPort,
 											Protocol:      corev1.ProtocolTCP,
 										},
 									},
@@ -1362,7 +1362,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds:    5,
@@ -1372,7 +1372,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/live",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 10,
@@ -1381,7 +1381,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 										ProbeHandler: corev1.ProbeHandler{
 											HTTPGet: &corev1.HTTPGetAction{
 												Path: "/ready",
-												Port: intstr.FromInt32(MultiGatewayHTTPPort),
+												Port: intstr.FromInt32(MultigatewayHTTPPort),
 											},
 										},
 										PeriodSeconds: 5,
@@ -1452,10 +1452,10 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 				)
 			}
 
-			got, err := BuildMultiGatewayDeployment(tc.cell, tc.scheme)
+			got, err := BuildMultigatewayDeployment(tc.cell, tc.scheme)
 
 			if (err != nil) != tc.wantErr {
-				t.Errorf("BuildMultiGatewayDeployment() error = %v, wantErr %v", err, tc.wantErr)
+				t.Errorf("BuildMultigatewayDeployment() error = %v, wantErr %v", err, tc.wantErr)
 				return
 			}
 
@@ -1464,7 +1464,7 @@ func TestBuildMultiGatewayDeployment(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildMultiGatewayDeployment() mismatch (-want +got):\n%s", diff)
+				t.Errorf("BuildMultigatewayDeployment() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1498,7 +1498,7 @@ func TestBuildCellNodeSelector(t *testing.T) {
 	}
 }
 
-func TestBuildMultiGatewayDeployment_ProjectRefAnnotation(t *testing.T) {
+func TestBuildMultigatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -1544,7 +1544,7 @@ func TestBuildMultiGatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 				},
 			}
 
-			deploy, err := BuildMultiGatewayDeployment(cell, scheme)
+			deploy, err := BuildMultigatewayDeployment(cell, scheme)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1555,7 +1555,7 @@ func TestBuildMultiGatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 
 			assertedLabels := map[string]string{
 				metadata.LabelAppInstance:  "test-cluster",
-				metadata.LabelAppComponent: MultiGatewayComponentName,
+				metadata.LabelAppComponent: MultigatewayComponentName,
 				metadata.LabelAppManagedBy: metadata.ManagedByMultigres,
 			}
 			for key, want := range assertedLabels {
@@ -1567,7 +1567,7 @@ func TestBuildMultiGatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 	}
 }
 
-func TestBuildMultiGatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T) {
+func TestBuildMultigatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -1592,7 +1592,7 @@ func TestBuildMultiGatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing
 				Multiadmin:   "info",
 				Multigateway: "info",
 			},
-			MultiGateway: multigresv1alpha1.StatelessSpec{
+			Multigateway: multigresv1alpha1.StatelessSpec{
 				PodAnnotations: map[string]string{
 					metadata.AnnotationPrometheusScrape: "true",
 					metadata.AnnotationPrometheusPort:   "15100",
@@ -1603,7 +1603,7 @@ func TestBuildMultiGatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing
 		},
 	}
 
-	deploy, err := BuildMultiGatewayDeployment(cell, scheme)
+	deploy, err := BuildMultigatewayDeployment(cell, scheme)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1622,7 +1622,7 @@ func TestBuildMultiGatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing
 	}
 }
 
-func TestBuildMultiGatewayService(t *testing.T) {
+func TestBuildMultigatewayService(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -1676,19 +1676,19 @@ func TestBuildMultiGatewayService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       MultiGatewayHTTPPort,
+							Port:       MultigatewayHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       MultiGatewayGRPCPort,
+							Port:       MultigatewayGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "postgres",
-							Port:       MultiGatewayPostgresPort,
+							Port:       MultigatewayPostgresPort,
 							TargetPort: intstr.FromString("postgres"),
 							Protocol:   corev1.ProtocolTCP,
 						},
@@ -1740,19 +1740,19 @@ func TestBuildMultiGatewayService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       MultiGatewayHTTPPort,
+							Port:       MultigatewayHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       MultiGatewayGRPCPort,
+							Port:       MultigatewayGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "postgres",
-							Port:       MultiGatewayPostgresPort,
+							Port:       MultigatewayPostgresPort,
 							TargetPort: intstr.FromString("postgres"),
 							Protocol:   corev1.ProtocolTCP,
 						},
@@ -1806,19 +1806,19 @@ func TestBuildMultiGatewayService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       MultiGatewayHTTPPort,
+							Port:       MultigatewayHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       MultiGatewayGRPCPort,
+							Port:       MultigatewayGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "postgres",
-							Port:       MultiGatewayPostgresPort,
+							Port:       MultigatewayPostgresPort,
 							TargetPort: intstr.FromString("postgres"),
 							Protocol:   corev1.ProtocolTCP,
 						},
@@ -1872,19 +1872,19 @@ func TestBuildMultiGatewayService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       MultiGatewayHTTPPort,
+							Port:       MultigatewayHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       MultiGatewayGRPCPort,
+							Port:       MultigatewayGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "postgres",
-							Port:       MultiGatewayPostgresPort,
+							Port:       MultigatewayPostgresPort,
 							TargetPort: intstr.FromString("postgres"),
 							Protocol:   corev1.ProtocolTCP,
 						},
@@ -1934,10 +1934,10 @@ func TestBuildMultiGatewayService(t *testing.T) {
 				}
 			}
 
-			got, err := BuildMultiGatewayService(tc.cell, tc.scheme)
+			got, err := BuildMultigatewayService(tc.cell, tc.scheme)
 
 			if (err != nil) != tc.wantErr {
-				t.Errorf("BuildMultiGatewayService() error = %v, wantErr %v", err, tc.wantErr)
+				t.Errorf("BuildMultigatewayService() error = %v, wantErr %v", err, tc.wantErr)
 				return
 			}
 
@@ -1946,13 +1946,13 @@ func TestBuildMultiGatewayService(t *testing.T) {
 			}
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildMultiGatewayService() mismatch (-want +got):\n%s", diff)
+				t.Errorf("BuildMultigatewayService() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
 
-func TestBuildMultiGatewayDeployment_Observability(t *testing.T) {
+func TestBuildMultigatewayDeployment_Observability(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -1976,27 +1976,27 @@ func TestBuildMultiGatewayDeployment_Observability(t *testing.T) {
 			},
 		},
 	}
-	deploy, err := BuildMultiGatewayDeployment(cellObj, scheme)
+	deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
 	if err != nil {
-		t.Fatalf("BuildMultiGatewayDeployment failed: %v", err)
+		t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
 	}
 	if len(deploy.Spec.Template.Spec.Volumes) == 0 {
 		t.Errorf("expected volumes to contain otel config")
 	}
 	env := deploy.Spec.Template.Spec.Containers[0].Env
-	assertMultiGatewayEnvVar(
+	assertMultigatewayEnvVar(
 		t,
 		env,
 		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
 		"http://vmagent:4318/v1/metrics",
 	)
-	assertMultiGatewayEnvVar(t, env, "OTEL_METRICS_EXPORTER", "otlp")
-	assertMultiGatewayResourceAttribute(t, env, "multigres.project=project-ref-123")
-	assertMultiGatewayResourceAttribute(t, env, "multigres.cluster=test-cluster")
-	assertMultiGatewayResourceAttribute(t, env, "multigres.component=multigateway")
+	assertMultigatewayEnvVar(t, env, "OTEL_METRICS_EXPORTER", "otlp")
+	assertMultigatewayResourceAttribute(t, env, "multigres.project=project-ref-123")
+	assertMultigatewayResourceAttribute(t, env, "multigres.cluster=test-cluster")
+	assertMultigatewayResourceAttribute(t, env, "multigres.component=multigateway")
 }
 
-func assertMultiGatewayEnvVar(t *testing.T, envVars []corev1.EnvVar, name, want string) {
+func assertMultigatewayEnvVar(t *testing.T, envVars []corev1.EnvVar, name, want string) {
 	t.Helper()
 	for _, envVar := range envVars {
 		if envVar.Name == name {
@@ -2009,7 +2009,7 @@ func assertMultiGatewayEnvVar(t *testing.T, envVars []corev1.EnvVar, name, want 
 	t.Fatalf("expected env var %q, got none", name)
 }
 
-func assertMultiGatewayResourceAttribute(t *testing.T, envVars []corev1.EnvVar, want string) {
+func assertMultigatewayResourceAttribute(t *testing.T, envVars []corev1.EnvVar, want string) {
 	t.Helper()
 	for _, envVar := range envVars {
 		if envVar.Name == "OTEL_RESOURCE_ATTRIBUTES" {
@@ -2022,7 +2022,7 @@ func assertMultiGatewayResourceAttribute(t *testing.T, envVars []corev1.EnvVar, 
 	t.Fatalf("expected OTEL_RESOURCE_ATTRIBUTES to contain %q, got none", want)
 }
 
-func TestBuildMultiGatewayDeployment_TLS(t *testing.T) {
+func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -2045,9 +2045,9 @@ func TestBuildMultiGatewayDeployment_TLS(t *testing.T) {
 				},
 			},
 		}
-		deploy, err := BuildMultiGatewayDeployment(cellObj, scheme)
+		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiGatewayDeployment failed: %v", err)
+			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
 		}
 
 		// Verify TLS volume exists
@@ -2121,9 +2121,9 @@ func TestBuildMultiGatewayDeployment_TLS(t *testing.T) {
 				},
 			},
 		}
-		deploy, err := BuildMultiGatewayDeployment(cellObj, scheme)
+		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
 		if err != nil {
-			t.Fatalf("BuildMultiGatewayDeployment failed: %v", err)
+			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
 		}
 
 		// No TLS volume should exist

@@ -45,7 +45,7 @@ type CellReconciler struct {
 	Recorder record.EventRecorder
 }
 
-// Reconcile manages the MultiGateway deployment and per-cell services for a Cell.
+// Reconcile manages the Multigateway deployment and per-cell services for a Cell.
 func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	start := time.Now()
 	ctx, span := monitoring.StartReconcileSpan(
@@ -113,13 +113,13 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{RequeueAfter: localTopoServerRecheckDelay}, nil
 	}
 
-	// Reconcile MultiGateway Deployment
+	// Reconcile Multigateway Deployment
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "Cell.ReconcileDeployment")
-		if err := r.reconcileMultiGatewayDeployment(ctx, cell); err != nil {
+		if err := r.reconcileMultigatewayDeployment(ctx, cell); err != nil {
 			monitoring.RecordSpanError(childSpan, err)
 			childSpan.End()
-			logger.Error(err, "Failed to reconcile MultiGateway Deployment")
+			logger.Error(err, "Failed to reconcile Multigateway Deployment")
 			r.Recorder.Eventf(
 				cell,
 				"Warning",
@@ -132,18 +132,18 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		childSpan.End()
 	}
 
-	// Reconcile MultiGateway Service
+	// Reconcile Multigateway Service
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "Cell.ReconcileService")
-		if err := r.reconcileMultiGatewayService(ctx, cell); err != nil {
+		if err := r.reconcileMultigatewayService(ctx, cell); err != nil {
 			monitoring.RecordSpanError(childSpan, err)
 			childSpan.End()
-			logger.Error(err, "Failed to reconcile MultiGateway Service")
+			logger.Error(err, "Failed to reconcile Multigateway Service")
 			r.Recorder.Eventf(
 				cell,
 				"Warning",
 				"FailedApply",
-				"Failed to reconcile MultiGateway Service: %v",
+				"Failed to reconcile Multigateway Service: %v",
 				err,
 			)
 			return ctrl.Result{}, err
@@ -173,14 +173,14 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return ctrl.Result{}, nil
 }
 
-// reconcileMultiGatewayDeployment creates or updates the MultiGateway Deployment.
-func (r *CellReconciler) reconcileMultiGatewayDeployment(
+// reconcileMultigatewayDeployment creates or updates the Multigateway Deployment.
+func (r *CellReconciler) reconcileMultigatewayDeployment(
 	ctx context.Context,
 	cell *multigresv1alpha1.Cell,
 ) error {
-	desired, err := BuildMultiGatewayDeployment(cell, r.Scheme)
+	desired, err := BuildMultigatewayDeployment(cell, r.Scheme)
 	if err != nil {
-		return fmt.Errorf("failed to build MultiGateway Deployment: %w", err)
+		return fmt.Errorf("failed to build Multigateway Deployment: %w", err)
 	}
 
 	// Server Side Apply
@@ -192,7 +192,7 @@ func (r *CellReconciler) reconcileMultiGatewayDeployment(
 		client.ForceOwnership,
 		client.FieldOwner("multigres-operator"),
 	); err != nil {
-		return fmt.Errorf("failed to apply MultiGateway Deployment: %w", err)
+		return fmt.Errorf("failed to apply Multigateway Deployment: %w", err)
 	}
 
 	r.Recorder.Eventf(
@@ -207,14 +207,14 @@ func (r *CellReconciler) reconcileMultiGatewayDeployment(
 	return nil
 }
 
-// reconcileMultiGatewayService creates or updates the MultiGateway Service.
-func (r *CellReconciler) reconcileMultiGatewayService(
+// reconcileMultigatewayService creates or updates the Multigateway Service.
+func (r *CellReconciler) reconcileMultigatewayService(
 	ctx context.Context,
 	cell *multigresv1alpha1.Cell,
 ) error {
-	desired, err := BuildMultiGatewayService(cell, r.Scheme)
+	desired, err := BuildMultigatewayService(cell, r.Scheme)
 	if err != nil {
-		return fmt.Errorf("failed to build MultiGateway Service: %w", err)
+		return fmt.Errorf("failed to build Multigateway Service: %w", err)
 	}
 
 	// Server Side Apply
@@ -226,7 +226,7 @@ func (r *CellReconciler) reconcileMultiGatewayService(
 		client.ForceOwnership,
 		client.FieldOwner("multigres-operator"),
 	); err != nil {
-		return fmt.Errorf("failed to apply MultiGateway Service: %w", err)
+		return fmt.Errorf("failed to apply Multigateway Service: %w", err)
 	}
 
 	r.Recorder.Eventf(
@@ -514,11 +514,11 @@ func (r *CellReconciler) patchLocalTopoServerWaitingStatus(
 // updateStatus updates the Cell status based on observed state.
 func (r *CellReconciler) updateStatus(ctx context.Context, cell *multigresv1alpha1.Cell) error {
 	oldPhase := cell.Status.Phase
-	// Get the MultiGateway Deployment to check status
+	// Get the Multigateway Deployment to check status
 	mgDeploy := &appsv1.Deployment{}
 	err := r.Get(
 		ctx,
-		client.ObjectKey{Namespace: cell.Namespace, Name: BuildMultiGatewayDeploymentName(cell)},
+		client.ObjectKey{Namespace: cell.Namespace, Name: BuildMultigatewayDeploymentName(cell)},
 		mgDeploy,
 	)
 	if err != nil {
@@ -526,14 +526,14 @@ func (r *CellReconciler) updateStatus(ctx context.Context, cell *multigresv1alph
 			// Deployment not created yet
 			return nil
 		}
-		return fmt.Errorf("failed to get MultiGateway Deployment for status: %w", err)
+		return fmt.Errorf("failed to get Multigateway Deployment for status: %w", err)
 	}
 
 	// Update conditions
 	r.setConditions(cell, mgDeploy)
 	cell.Status.GatewayReplicas = mgDeploy.Status.Replicas
 	cell.Status.GatewayReadyReplicas = mgDeploy.Status.ReadyReplicas
-	cell.Status.GatewayServiceName = BuildMultiGatewayServiceName(cell)
+	cell.Status.GatewayServiceName = BuildMultigatewayServiceName(cell)
 	monitoring.SetCellGatewayReplicas(
 		cell.Name,
 		cell.Namespace,
@@ -543,7 +543,7 @@ func (r *CellReconciler) updateStatus(ctx context.Context, cell *multigresv1alph
 
 	// List gateway pods for crash-loop detection
 	mgLabels := metadata.BuildStandardLabels(
-		cell.Labels[metadata.LabelMultigresCluster], MultiGatewayComponentName,
+		cell.Labels[metadata.LabelMultigresCluster], MultigatewayComponentName,
 	)
 	metadata.AddCellLabel(mgLabels, cell.Spec.Name)
 	podList := &corev1.PodList{}
@@ -619,15 +619,15 @@ func (r *CellReconciler) setConditions(
 		Type:               "Available",
 		ObservedGeneration: cell.Generation,
 		Status:             metav1.ConditionFalse,
-		Reason:             "MultiGatewayUnavailable",
+		Reason:             "MultigatewayUnavailable",
 		Message:            "No ready replicas available",
 	}
 
 	if mgDeploy.Status.ReadyReplicas > 0 {
 		availCond.Status = metav1.ConditionTrue
-		availCond.Reason = "MultiGatewayAvailable"
+		availCond.Reason = "MultigatewayAvailable"
 		availCond.Message = fmt.Sprintf(
-			"MultiGateway %d/%d replicas ready",
+			"Multigateway %d/%d replicas ready",
 			mgDeploy.Status.ReadyReplicas,
 			mgDeploy.Status.Replicas,
 		)
@@ -639,9 +639,9 @@ func (r *CellReconciler) setConditions(
 		Type:               "Ready",
 		ObservedGeneration: cell.Generation,
 		Status:             metav1.ConditionFalse,
-		Reason:             "MultiGatewayNotReady",
+		Reason:             "MultigatewayNotReady",
 		Message: fmt.Sprintf(
-			"MultiGateway %d/%d ready, waiting for full convergence",
+			"Multigateway %d/%d ready, waiting for full convergence",
 			mgDeploy.Status.ReadyReplicas,
 			mgDeploy.Status.Replicas,
 		),
@@ -653,7 +653,7 @@ func (r *CellReconciler) setConditions(
 
 	if allReady {
 		readyCond.Status = metav1.ConditionTrue
-		readyCond.Reason = "MultiGatewayReady"
+		readyCond.Reason = "MultigatewayReady"
 		readyCond.Message = "All replicas match desired state"
 	}
 	meta.SetStatusCondition(&cell.Status.Conditions, readyCond)

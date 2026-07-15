@@ -22,7 +22,7 @@ import (
 )
 
 // buildHashedName helper to generate the expected hashed name for tests
-// mimicking BuildMultiGatewayName logic
+// mimicking BuildMultigatewayName logic
 func buildHashedName(clusterName, cellName string) string {
 	return name.JoinWithConstraints(name.ServiceConstraints, clusterName, cellName, "multigateway")
 }
@@ -94,27 +94,27 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					cell.Labels["multigres.com/cluster"],
 					string(cell.Spec.Name),
 				)
-				// Verify MultiGateway Deployment was created
+				// Verify Multigateway Deployment was created
 				mgDeploy := &appsv1.Deployment{}
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedName, Namespace: "default"},
 					mgDeploy); err != nil {
-					t.Errorf("MultiGateway Deployment should exist: %v", err)
+					t.Errorf("Multigateway Deployment should exist: %v", err)
 				}
 
-				// Verify MultiGateway Service was created
+				// Verify Multigateway Service was created
 				mgSvc := &corev1.Service{}
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedName, Namespace: "default"},
 					mgSvc); err != nil {
-					t.Errorf("MultiGateway Service should exist: %v", err)
+					t.Errorf("Multigateway Service should exist: %v", err)
 				}
 
 				// Verify defaults
 				const wantReplicas int32 = 1
 				if *mgDeploy.Spec.Replicas != wantReplicas {
 					t.Errorf(
-						"MultiGateway Deployment replicas = %d, want %d",
+						"Multigateway Deployment replicas = %d, want %d",
 						*mgDeploy.Spec.Replicas,
 						wantReplicas,
 					)
@@ -130,9 +130,9 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone2",
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway: "custom/multigateway:v1.0.0",
+						Multigateway: "custom/multigateway:v1.0.0",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(5)),
 					},
 				},
@@ -169,22 +169,22 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				}, mgDeploy)
 				if err != nil {
-					t.Fatalf("Failed to get MultiGateway Deployment: %v", err)
+					t.Fatalf("Failed to get Multigateway Deployment: %v", err)
 				}
 
 				if *mgDeploy.Spec.Replicas != 5 {
 					t.Errorf(
-						"MultiGateway Deployment replicas = %d, want 5",
+						"Multigateway Deployment replicas = %d, want 5",
 						*mgDeploy.Spec.Replicas,
 					)
 				}
 
 				if len(mgDeploy.Spec.Template.Spec.Containers) == 0 {
-					t.Fatal("MultiGateway Deployment has no containers")
+					t.Fatal("Multigateway Deployment has no containers")
 				}
 				if mgDeploy.Spec.Template.Spec.Containers[0].Image != "custom/multigateway:v1.0.0" {
 					t.Errorf(
-						"MultiGateway image = %s, want custom/multigateway:v1.0.0",
+						"Multigateway image = %s, want custom/multigateway:v1.0.0",
 						mgDeploy.Spec.Template.Spec.Containers[0].Image,
 					)
 				}
@@ -225,7 +225,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				if err := c.Get(t.Context(),
 					types.NamespacedName{Name: hashedName, Namespace: "default"},
 					mgDeploy); err == nil {
-					t.Errorf("MultiGateway Deployment should NOT exist")
+					t.Errorf("Multigateway Deployment should NOT exist")
 				}
 			},
 		},
@@ -238,7 +238,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone4",
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
 					},
 				},
@@ -278,12 +278,12 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					conditionAssertion{
 						Type:   "Available",
 						Status: metav1.ConditionTrue,
-						Reason: "MultiGatewayAvailable",
+						Reason: "MultigatewayAvailable",
 					},
 					conditionAssertion{
 						Type:   "Ready",
 						Status: metav1.ConditionTrue,
-						Reason: "MultiGatewayReady",
+						Reason: "MultigatewayReady",
 					},
 				)
 
@@ -303,7 +303,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone5",
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(3)),
 					},
 				},
@@ -345,12 +345,12 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					conditionAssertion{
 						Type:   "Available",
 						Status: metav1.ConditionTrue,
-						Reason: "MultiGatewayAvailable",
+						Reason: "MultigatewayAvailable",
 					},
 					conditionAssertion{
 						Type:   "Ready",
 						Status: metav1.ConditionFalse,
-						Reason: "MultiGatewayNotReady",
+						Reason: "MultigatewayNotReady",
 					},
 				)
 			},
@@ -366,7 +366,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone-pending",
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(1)),
 					},
 				},
@@ -435,7 +435,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			},
 			wantErr: true,
 		},
-		"error on Get MultiGateway Deployment in updateStatus (network error)": {
+		"error on Get Multigateway Deployment in updateStatus (network error)": {
 			cell: &multigresv1alpha1.Cell{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cell-status",
@@ -460,7 +460,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 			},
 			failureConfig: &testutil.FailureConfig{
-				// Fail MultiGateway Deployment Get in updateStatus.
+				// Fail Multigateway Deployment Get in updateStatus.
 				// Since we switched to SSA, there are no Gets in reconcile loop.
 				// The only Get is in updateStatus.
 				OnGet: testutil.FailKeyAfterNCalls(0, testutil.ErrNetworkTimeout),
@@ -501,7 +501,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			},
 			wantErr: true,
 		},
-		"error on MultiGateway Deployment patch": {
+		"error on Multigateway Deployment patch": {
 			cell: &multigresv1alpha1.Cell{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cell",
@@ -523,7 +523,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			},
 			wantErr: true,
 		},
-		"error on MultiGateway Service patch": {
+		"error on Multigateway Service patch": {
 			cell: &multigresv1alpha1.Cell{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cell",

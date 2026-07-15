@@ -86,9 +86,9 @@ func TestCellReconciliation(t *testing.T) {
 
 					ZoneID: "usw1-az1",
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway: "ghcr.io/multigres/multigres:main",
+						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -218,9 +218,9 @@ func TestCellReconciliation(t *testing.T) {
 
 					ZoneID: "usw1-az2",
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway: "ghcr.io/multigres/multigres:main",
+						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(3)),
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -350,9 +350,9 @@ func TestCellReconciliation(t *testing.T) {
 
 					ZoneID: "usw1-az3",
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway: "custom/multigateway:v1.0.0",
+						Multigateway: "custom/multigateway:v1.0.0",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -482,9 +482,9 @@ func TestCellReconciliation(t *testing.T) {
 
 					ZoneID: "usw1-az4",
 					Images: multigresv1alpha1.CellImages{
-						MultiGateway: "ghcr.io/multigres/multigres:main",
+						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					MultiGateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
 						Affinity: &corev1.Affinity{
 							NodeAffinity: &corev1.NodeAffinity{

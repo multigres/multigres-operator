@@ -16,15 +16,15 @@ limitations under the License.
 
 // Package cell implements the controller for the Cell resource.
 //
-// The Cell controller manages the MultiGateway component, which serves as the
+// The Cell controller manages the Multigateway component, which serves as the
 // entry point for client connections within a failure domain (cell). Its
 // responsibilities include:
 //
-//   - MultiGateway Deployment: Creates and maintains a Deployment that runs the
-//     MultiGateway proxy. This component routes client queries to the appropriate
+//   - Multigateway Deployment: Creates and maintains a Deployment that runs the
+//     Multigateway proxy. This component routes client queries to the appropriate
 //     shards based on the topology configuration.
 //
-//   - MultiGateway Service: Exposes the MultiGateway Deployment via a Kubernetes
+//   - Multigateway Service: Exposes the Multigateway Deployment via a Kubernetes
 //     Service, providing a stable endpoint for clients within the cell.
 //
 //   - Status Aggregation: Monitors the Deployment's availability and updates the

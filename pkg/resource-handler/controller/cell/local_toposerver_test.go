@@ -166,7 +166,7 @@ func TestCellReconcilerWaitsForManagedLocalTopoServer(t *testing.T) {
 		Namespace: cell.Namespace,
 	}, deployment)
 	if !errors.IsNotFound(err) {
-		t.Fatalf("MultiGateway Deployment get error = %v, want NotFound", err)
+		t.Fatalf("Multigateway Deployment get error = %v, want NotFound", err)
 	}
 }
 
@@ -185,13 +185,13 @@ func TestCellReconcilerSetsWaitingStatusForManagedLocalTopoServer(t *testing.T) 
 	meta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
 		Type:               "Available",
 		Status:             metav1.ConditionTrue,
-		Reason:             "MultiGatewayAvailable",
+		Reason:             "MultigatewayAvailable",
 		ObservedGeneration: cell.Generation,
 	})
 	meta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
-		Reason:             "MultiGatewayReady",
+		Reason:             "MultigatewayReady",
 		ObservedGeneration: cell.Generation,
 	})
 	if err := fakeClient.Status().Update(t.Context(), cell); err != nil {

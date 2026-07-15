@@ -85,13 +85,13 @@ func TestBuildPoolHeadlessService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       DefaultMultiPoolerHTTPPort,
+							Port:       DefaultMultipoolerHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       DefaultMultiPoolerGRPCPort,
+							Port:       DefaultMultipoolerGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},
@@ -172,13 +172,13 @@ func TestBuildPoolHeadlessService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       DefaultMultiPoolerHTTPPort,
+							Port:       DefaultMultipoolerHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       DefaultMultiPoolerGRPCPort,
+							Port:       DefaultMultipoolerGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},
@@ -256,13 +256,13 @@ func TestBuildPoolHeadlessService(t *testing.T) {
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "http",
-							Port:       DefaultMultiPoolerHTTPPort,
+							Port:       DefaultMultipoolerHTTPPort,
 							TargetPort: intstr.FromString("http"),
 							Protocol:   corev1.ProtocolTCP,
 						},
 						{
 							Name:       "grpc",
-							Port:       DefaultMultiPoolerGRPCPort,
+							Port:       DefaultMultipoolerGRPCPort,
 							TargetPort: intstr.FromString("grpc"),
 							Protocol:   corev1.ProtocolTCP,
 						},

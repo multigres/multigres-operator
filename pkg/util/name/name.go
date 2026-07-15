@@ -20,7 +20,7 @@ limitations under the License.
 //  1. For dynamic, user-defined, or nested resources (e.g., Cells, TableGroups, Shards),
 //     we use JoinWithConstraints to append a safety hash. This prevents collisions when
 //     strings are truncated to fit Kubernetes length limits (e.g., 63 chars for labels).
-//  2. For singleton or static resources (e.g., GlobalTopo, MultiAdmin) that are 1:1 with
+//  2. For singleton or static resources (e.g., GlobalTopo, Multiadmin) that are 1:1 with
 //     the cluster and have predictable short names, we use simple string concatenation
 //     without hashing for better readability and predictability.
 package name

@@ -11,15 +11,15 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
-// reconcileMultiOrchDeployment creates or updates the MultiOrch Deployment for a specific cell.
-func (r *ShardReconciler) reconcileMultiOrchDeployment(
+// reconcileMultiorchDeployment creates or updates the Multiorch Deployment for a specific cell.
+func (r *ShardReconciler) reconcileMultiorchDeployment(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	cellName string,
 ) error {
-	desired, err := BuildMultiOrchDeployment(shard, cellName, r.Scheme)
+	desired, err := BuildMultiorchDeployment(shard, cellName, r.Scheme)
 	if err != nil {
-		return fmt.Errorf("failed to build MultiOrch Deployment: %w", err)
+		return fmt.Errorf("failed to build Multiorch Deployment: %w", err)
 	}
 
 	// Server Side Apply
@@ -31,7 +31,7 @@ func (r *ShardReconciler) reconcileMultiOrchDeployment(
 		client.ForceOwnership,
 		client.FieldOwner("multigres-operator"),
 	); err != nil {
-		return fmt.Errorf("failed to apply MultiOrch Deployment: %w", err)
+		return fmt.Errorf("failed to apply Multiorch Deployment: %w", err)
 	}
 
 	r.Recorder.Eventf(
@@ -46,15 +46,15 @@ func (r *ShardReconciler) reconcileMultiOrchDeployment(
 	return nil
 }
 
-// reconcileMultiOrchService creates or updates the MultiOrch Service for a specific cell.
-func (r *ShardReconciler) reconcileMultiOrchService(
+// reconcileMultiorchService creates or updates the Multiorch Service for a specific cell.
+func (r *ShardReconciler) reconcileMultiorchService(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	cellName string,
 ) error {
-	desired, err := BuildMultiOrchService(shard, cellName, r.Scheme)
+	desired, err := BuildMultiorchService(shard, cellName, r.Scheme)
 	if err != nil {
-		return fmt.Errorf("failed to build MultiOrch Service: %w", err)
+		return fmt.Errorf("failed to build Multiorch Service: %w", err)
 	}
 
 	// Server Side Apply
@@ -66,7 +66,7 @@ func (r *ShardReconciler) reconcileMultiOrchService(
 		client.ForceOwnership,
 		client.FieldOwner("multigres-operator"),
 	); err != nil {
-		return fmt.Errorf("failed to apply MultiOrch Service: %w", err)
+		return fmt.Errorf("failed to apply Multiorch Service: %w", err)
 	}
 
 	r.Recorder.Eventf(

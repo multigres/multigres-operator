@@ -23,10 +23,10 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
-// TestReconcileMultiGatewayDeployment_InvalidScheme tests the error path when BuildMultiGatewayDeployment fails.
+// TestReconcileMultigatewayDeployment_InvalidScheme tests the error path when BuildMultigatewayDeployment fails.
 // This should never happen in production - scheme is properly set up in main.go.
 // Test exists for coverage of defensive error handling.
-func TestReconcileMultiGatewayDeployment_InvalidScheme(t *testing.T) {
+func TestReconcileMultigatewayDeployment_InvalidScheme(t *testing.T) {
 	// Empty scheme without Cell type registered
 	invalidScheme := runtime.NewScheme()
 
@@ -50,14 +50,14 @@ func TestReconcileMultiGatewayDeployment_InvalidScheme(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	err := reconciler.reconcileMultiGatewayDeployment(context.Background(), cell)
+	err := reconciler.reconcileMultigatewayDeployment(context.Background(), cell)
 	if err == nil {
-		t.Error("reconcileMultiGatewayDeployment() should error with invalid scheme")
+		t.Error("reconcileMultigatewayDeployment() should error with invalid scheme")
 	}
 }
 
-// TestReconcileMultiGatewayService_InvalidScheme tests the error path when BuildMultiGatewayService fails.
-func TestReconcileMultiGatewayService_InvalidScheme(t *testing.T) {
+// TestReconcileMultigatewayService_InvalidScheme tests the error path when BuildMultigatewayService fails.
+func TestReconcileMultigatewayService_InvalidScheme(t *testing.T) {
 	invalidScheme := runtime.NewScheme()
 
 	cell := &multigresv1alpha1.Cell{
@@ -80,14 +80,14 @@ func TestReconcileMultiGatewayService_InvalidScheme(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	err := reconciler.reconcileMultiGatewayService(context.Background(), cell)
+	err := reconciler.reconcileMultigatewayService(context.Background(), cell)
 	if err == nil {
-		t.Error("reconcileMultiGatewayService() should error with invalid scheme")
+		t.Error("reconcileMultigatewayService() should error with invalid scheme")
 	}
 }
 
-// TestUpdateStatus_MultiGatewayDeploymentNotFound tests the NotFound path in updateStatus.
-func TestUpdateStatus_MultiGatewayDeploymentNotFound(t *testing.T) {
+// TestUpdateStatus_MultigatewayDeploymentNotFound tests the NotFound path in updateStatus.
+func TestUpdateStatus_MultigatewayDeploymentNotFound(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme) // Need Deployment type registered for Get to work
@@ -114,18 +114,18 @@ func TestUpdateStatus_MultiGatewayDeploymentNotFound(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	// Call updateStatus when MultiGateway Deployment doesn't exist yet
+	// Call updateStatus when Multigateway Deployment doesn't exist yet
 	err := reconciler.updateStatus(context.Background(), cell)
 	if err != nil {
 		t.Errorf(
-			"updateStatus() should not error when MultiGateway Deployment not found, got: %v",
+			"updateStatus() should not error when Multigateway Deployment not found, got: %v",
 			err,
 		)
 	}
 }
 
-// TestReconcileMultiGatewayDeployment_PatchError tests error path on Patch MultiGateway Deployment.
-func TestReconcileMultiGatewayDeployment_PatchError(t *testing.T) {
+// TestReconcileMultigatewayDeployment_PatchError tests error path on Patch Multigateway Deployment.
+func TestReconcileMultigatewayDeployment_PatchError(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -162,14 +162,14 @@ func TestReconcileMultiGatewayDeployment_PatchError(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	err := reconciler.reconcileMultiGatewayDeployment(context.Background(), cell)
+	err := reconciler.reconcileMultigatewayDeployment(context.Background(), cell)
 	if err == nil {
-		t.Error("reconcileMultiGatewayDeployment() should error on Patch failure")
+		t.Error("reconcileMultigatewayDeployment() should error on Patch failure")
 	}
 }
 
-// TestReconcileMultiGatewayService_PatchError tests error path on Patch MultiGateway Service.
-func TestReconcileMultiGatewayService_PatchError(t *testing.T) {
+// TestReconcileMultigatewayService_PatchError tests error path on Patch Multigateway Service.
+func TestReconcileMultigatewayService_PatchError(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -206,13 +206,13 @@ func TestReconcileMultiGatewayService_PatchError(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	err := reconciler.reconcileMultiGatewayService(context.Background(), cell)
+	err := reconciler.reconcileMultigatewayService(context.Background(), cell)
 	if err == nil {
-		t.Error("reconcileMultiGatewayService() should error on Patch failure")
+		t.Error("reconcileMultigatewayService() should error on Patch failure")
 	}
 }
 
-// TestUpdateStatus_GetError tests error path on Get MultiGateway Deployment (not NotFound).
+// TestUpdateStatus_GetError tests error path on Get Multigateway Deployment (not NotFound).
 func TestUpdateStatus_GetError(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -293,8 +293,8 @@ func TestSetConditions_ZeroReplicas(t *testing.T) {
 	if availCond.Status != metav1.ConditionFalse {
 		t.Errorf("Condition status = %s, want False (zero replicas)", availCond.Status)
 	}
-	if availCond.Reason != "MultiGatewayUnavailable" {
-		t.Errorf("Condition reason = %s, want MultiGatewayUnavailable", availCond.Reason)
+	if availCond.Reason != "MultigatewayUnavailable" {
+		t.Errorf("Condition reason = %s, want MultigatewayUnavailable", availCond.Reason)
 	}
 
 	readyCond := conditions[1]
@@ -304,8 +304,8 @@ func TestSetConditions_ZeroReplicas(t *testing.T) {
 	if readyCond.Status != metav1.ConditionFalse {
 		t.Errorf("Condition status = %s, want False", readyCond.Status)
 	}
-	if readyCond.Reason != "MultiGatewayNotReady" {
-		t.Errorf("Condition reason = %s, want MultiGatewayNotReady", readyCond.Reason)
+	if readyCond.Reason != "MultigatewayNotReady" {
+		t.Errorf("Condition reason = %s, want MultigatewayNotReady", readyCond.Reason)
 	}
 }
 
@@ -375,8 +375,8 @@ func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
 		},
 	}
 
-	deployName := BuildMultiGatewayDeploymentName(cell)
-	mgLabels := metadata.BuildStandardLabels("test-cluster", MultiGatewayComponentName)
+	deployName := BuildMultigatewayDeploymentName(cell)
+	mgLabels := metadata.BuildStandardLabels("test-cluster", MultigatewayComponentName)
 	metadata.AddCellLabel(mgLabels, cell.Spec.Name)
 
 	deploy := &appsv1.Deployment{

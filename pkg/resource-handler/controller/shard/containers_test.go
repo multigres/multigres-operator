@@ -15,7 +15,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
-func TestBuildMultiPoolerContainer(t *testing.T) {
+func TestBuildMultipoolerContainer(t *testing.T) {
 	tests := map[string]struct {
 		shard     *multigresv1alpha1.Shard
 		poolSpec  multigresv1alpha1.PoolSpec
@@ -51,7 +51,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 			serviceID: "p-test-id",
 			want: corev1.Container{
 				Name:  "multipooler",
-				Image: multigresv1alpha1.DefaultMultiPoolerImage,
+				Image: multigresv1alpha1.DefaultMultipoolerImage,
 				Args: []string{
 					"multipooler",
 					"--http-port=15200",
@@ -72,7 +72,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
 				},
-				Ports:     buildMultiPoolerContainerPorts(),
+				Ports:     buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
@@ -83,7 +83,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds:    5,
@@ -93,7 +93,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds: 10,
@@ -102,7 +102,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds: 5,
@@ -142,7 +142,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 						Implementation: "etcd",
 					},
 					Images: multigresv1alpha1.ShardImages{
-						MultiPooler: "custom/multipooler:v1.0.0",
+						Multipooler: "custom/multipooler:v1.0.0",
 					},
 					LogLevels: multigresv1alpha1.ComponentLogLevels{
 						Pgctld:       "info",
@@ -181,7 +181,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
 				},
-				Ports:     buildMultiPoolerContainerPorts(),
+				Ports:     buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
@@ -192,7 +192,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds:    5,
@@ -202,7 +202,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds: 10,
@@ -211,7 +211,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds: 5,
@@ -278,7 +278,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 			serviceID: "p-resource-id",
 			want: corev1.Container{
 				Name:  "multipooler",
-				Image: multigresv1alpha1.DefaultMultiPoolerImage,
+				Image: multigresv1alpha1.DefaultMultipoolerImage,
 				Args: []string{
 					"multipooler",
 					"--http-port=15200",
@@ -299,7 +299,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
 				},
-				Ports: buildMultiPoolerContainerPorts(),
+				Ports: buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse("100m"),
@@ -319,7 +319,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds:    5,
@@ -329,7 +329,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds: 10,
@@ -338,7 +338,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiPoolerHTTPPort),
+							Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
 						},
 					},
 					PeriodSeconds: 5,
@@ -369,7 +369,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := buildMultiPoolerContainer(
+			got := buildMultipoolerContainer(
 				tc.shard,
 				tc.poolSpec,
 				"primary",
@@ -378,7 +378,7 @@ func TestBuildMultiPoolerContainer(t *testing.T) {
 			)
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildMultiPoolerContainer() mismatch (-want +got):\n%s", diff)
+				t.Errorf("buildMultipoolerContainer() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -466,7 +466,7 @@ func TestPoolContainers_CustomPostgresSuperuser(t *testing.T) {
 	})
 
 	t.Run("multipooler", func(t *testing.T) {
-		c := buildMultiPoolerContainer(shard, pool, "primary", "zone1", "p-test-id")
+		c := buildMultipoolerContainer(shard, pool, "primary", "zone1", "p-test-id")
 		assertEnvVarValue(t, c.Env, "POSTGRES_USER", customSuperuser)
 	})
 
@@ -495,7 +495,7 @@ func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
 
 	for name, c := range map[string]corev1.Container{
 		"pgctld":            buildPgctldSidecar(shard, pool),
-		"multipooler":       buildMultiPoolerContainer(shard, pool, "primary", "zone1", "p-test-id"),
+		"multipooler":       buildMultipoolerContainer(shard, pool, "primary", "zone1", "p-test-id"),
 		"postgres-exporter": buildPostgresExporterContainer(shard, pool),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -557,7 +557,7 @@ func TestPoolContainers_PostgresPasswordSecretRef(t *testing.T) {
 	t.Fatalf("expected postgres password Secret volume in pool volumes")
 }
 
-func TestBuildMultiOrchContainer(t *testing.T) {
+func TestBuildMultiorchContainer(t *testing.T) {
 	tests := map[string]struct {
 		shard    *multigresv1alpha1.Shard
 		cellName string
@@ -586,7 +586,7 @@ func TestBuildMultiOrchContainer(t *testing.T) {
 			cellName: "zone1",
 			want: corev1.Container{
 				Name:  "multiorch",
-				Image: multigresv1alpha1.DefaultMultiOrchImage,
+				Image: multigresv1alpha1.DefaultMultiorchImage,
 				Args: []string{
 					"multiorch",
 					"--http-port=15300",
@@ -597,13 +597,13 @@ func TestBuildMultiOrchContainer(t *testing.T) {
 					"--watch-targets=testdb/default/0",
 					"--log-level=info",
 				},
-				Ports:     buildMultiOrchContainerPorts(),
+				Ports:     buildMultiorchContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/ready",
-							Port: intstr.FromInt32(DefaultMultiOrchHTTPPort),
+							Port: intstr.FromInt32(DefaultMultiorchHTTPPort),
 						},
 					},
 					PeriodSeconds:    5,
@@ -613,7 +613,7 @@ func TestBuildMultiOrchContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/live",
-							Port: intstr.FromInt32(DefaultMultiOrchHTTPPort),
+							Port: intstr.FromInt32(DefaultMultiorchHTTPPort),
 						},
 					},
 					PeriodSeconds: 10,
@@ -622,7 +622,7 @@ func TestBuildMultiOrchContainer(t *testing.T) {
 					ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{
 							Path: "/ready",
-							Port: intstr.FromInt32(DefaultMultiOrchHTTPPort),
+							Port: intstr.FromInt32(DefaultMultiorchHTTPPort),
 						},
 					},
 					PeriodSeconds: 5,
@@ -633,10 +633,10 @@ func TestBuildMultiOrchContainer(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := buildMultiOrchContainer(tc.shard, tc.cellName)
+			got := buildMultiorchContainer(tc.shard, tc.cellName)
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildMultiOrchContainer() mismatch (-want +got):\n%s", diff)
+				t.Errorf("buildMultiorchContainer() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1037,15 +1037,15 @@ func assertContainsFlag(t *testing.T, args []string, want string) {
 	t.Errorf("args %v does not contain flag %q", args, want)
 }
 
-func TestBuildMultiPoolerContainer_WithObservability(t *testing.T) {
-	c := buildMultiPoolerContainer(
+func TestBuildMultipoolerContainer_WithObservability(t *testing.T) {
+	c := buildMultipoolerContainer(
 		otelShard(),
 		multigresv1alpha1.PoolSpec{},
 		"primary",
 		"zone1",
 		"p-otel1234",
 	)
-	assertContainsOTELEnvVar(t, c.Env, "buildMultiPoolerContainer")
+	assertContainsOTELEnvVar(t, c.Env, "buildMultipoolerContainer")
 	assertEnvVarValue(
 		t,
 		c.Env,
@@ -1057,9 +1057,9 @@ func TestBuildMultiPoolerContainer_WithObservability(t *testing.T) {
 	assertOTELResourceAttribute(t, c.Env, "multigres.component=multipooler")
 }
 
-func TestBuildMultiOrchContainer_WithObservability(t *testing.T) {
-	c := buildMultiOrchContainer(otelShard(), "zone1")
-	assertContainsOTELEnvVar(t, c.Env, "buildMultiOrchContainer")
+func TestBuildMultiorchContainer_WithObservability(t *testing.T) {
+	c := buildMultiorchContainer(otelShard(), "zone1")
+	assertContainsOTELEnvVar(t, c.Env, "buildMultiorchContainer")
 	assertEnvVarValue(
 		t,
 		c.Env,
@@ -1360,7 +1360,7 @@ func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
 	})
 }
 
-func TestMultiPoolerSidecar_PgBackRestCertArgs(t *testing.T) {
+func TestMultipoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 	baseShard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{"multigres.com/cluster": "test"},
@@ -1382,7 +1382,7 @@ func TestMultiPoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 			Type: multigresv1alpha1.BackupTypeS3,
 			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
 		}
-		c := buildMultiPoolerContainer(
+		c := buildMultipoolerContainer(
 			shard,
 			multigresv1alpha1.PoolSpec{},
 			"primary",
@@ -1397,7 +1397,7 @@ func TestMultiPoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 
 	t.Run("no cert args when no backup", func(t *testing.T) {
 		shard := baseShard.DeepCopy()
-		c := buildMultiPoolerContainer(
+		c := buildMultipoolerContainer(
 			shard,
 			multigresv1alpha1.PoolSpec{},
 			"primary",

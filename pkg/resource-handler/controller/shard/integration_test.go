@@ -117,8 +117,8 @@ func TestShardReconciliation(t *testing.T) {
 					TableGroupName: "default",
 					ShardName:      "0",
 					Images: multigresv1alpha1.ShardImages{
-						MultiOrch:   "ghcr.io/multigres/multigres:main",
-						MultiPooler: "ghcr.io/multigres/multigres:main",
+						Multiorch:   "ghcr.io/multigres/multigres:main",
+						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -126,7 +126,7 @@ func TestShardReconciliation(t *testing.T) {
 						RootPath:       "/multigres/global",
 						Implementation: "etcd",
 					},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -146,7 +146,7 @@ func TestShardReconciliation(t *testing.T) {
 				},
 			},
 			wantResources: []client.Object{
-				// MultiOrch Deployment for zone-a
+				// Multiorch Deployment for zone-a
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "test-shard-multiorch-zone-a",
@@ -219,7 +219,7 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 				},
-				// MultiOrch Service for zone-a
+				// Multiorch Service for zone-a
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "test-shard-multiorch-zone-a",
@@ -236,7 +236,7 @@ func TestShardReconciliation(t *testing.T) {
 						Selector: metadata.GetSelectorLabels(shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a")),
 					},
 				},
-				// MultiOrch Deployment for zone-b
+				// Multiorch Deployment for zone-b
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "test-shard-multiorch-zone-b",
@@ -309,7 +309,7 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 				},
-				// MultiOrch Service for zone-b
+				// Multiorch Service for zone-b
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "test-shard-multiorch-zone-b",
@@ -372,8 +372,8 @@ func TestShardReconciliation(t *testing.T) {
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Images: multigresv1alpha1.ShardImages{
-						MultiOrch:   "ghcr.io/multigres/multigres:main",
-						MultiPooler: "ghcr.io/multigres/multigres:main",
+						Multiorch:   "ghcr.io/multigres/multigres:main",
+						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -381,7 +381,7 @@ func TestShardReconciliation(t *testing.T) {
 						RootPath:       "/multigres/global",
 						Implementation: "etcd",
 					},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -401,7 +401,7 @@ func TestShardReconciliation(t *testing.T) {
 				},
 			},
 			wantResources: []client.Object{
-				// MultiOrch Deployment for zone-a
+				// Multiorch Deployment for zone-a
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "delete-policy-shard-multiorch-zone-a",
@@ -474,7 +474,7 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 				},
-				// MultiOrch Service for zone-a
+				// Multiorch Service for zone-a
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "delete-policy-shard-multiorch-zone-a",
@@ -533,8 +533,8 @@ func TestShardReconciliation(t *testing.T) {
 					TableGroupName: "default",
 					ShardName:      "0",
 					Images: multigresv1alpha1.ShardImages{
-						MultiOrch:   "ghcr.io/multigres/multigres:main",
-						MultiPooler: "ghcr.io/multigres/multigres:main",
+						Multiorch:   "ghcr.io/multigres/multigres:main",
+						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
 					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -542,7 +542,7 @@ func TestShardReconciliation(t *testing.T) {
 						RootPath:       "/multigres/global",
 						Implementation: "etcd",
 					},
-					MultiOrch: multigresv1alpha1.MultiOrchSpec{
+					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone1", "zone2"},
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -562,7 +562,7 @@ func TestShardReconciliation(t *testing.T) {
 				},
 			},
 			wantResources: []client.Object{
-				// MultiOrch Deployment for zone1
+				// Multiorch Deployment for zone1
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "multi-cell-shard-multiorch-zone1",
@@ -635,7 +635,7 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 				},
-				// MultiOrch Service for zone1
+				// Multiorch Service for zone1
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "multi-cell-shard-multiorch-zone1",
@@ -652,7 +652,7 @@ func TestShardReconciliation(t *testing.T) {
 						Selector: metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-multiorch-zone1", "multiorch", "zone1")),
 					},
 				},
-				// MultiOrch Deployment for zone2
+				// Multiorch Deployment for zone2
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "multi-cell-shard-multiorch-zone2",
@@ -725,7 +725,7 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 				},
-				// MultiOrch Service for zone2
+				// Multiorch Service for zone2
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:            "multi-cell-shard-multiorch-zone2",
@@ -1092,12 +1092,12 @@ func TestReconcileDeletions(t *testing.T) {
 
 			TableGroupName: "default",
 			ShardName:      "0",
-			MultiOrch: multigresv1alpha1.MultiOrchSpec{
+			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Images: multigresv1alpha1.ShardImages{
-				MultiOrch:   "ghcr.io/multigres/multigres:main",
-				MultiPooler: "ghcr.io/multigres/multigres:main",
+				Multiorch:   "ghcr.io/multigres/multigres:main",
+				Multipooler: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",
 			},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
