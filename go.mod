@@ -1,6 +1,6 @@
 module github.com/multigres/multigres-operator
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/go-logr/logr v1.4.3
