@@ -1329,6 +1329,60 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 	})
 }
 
+func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
+	t.Run("nil when no backup", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
+		vol := buildPgBackRestCipherKeyVolume(shard)
+		if vol != nil {
+			t.Fatalf("expected nil volume when no backup, got %+v", vol)
+		}
+	})
+
+	t.Run("nil when backup configured but encryption disabled", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+				},
+			},
+		}
+		vol := buildPgBackRestCipherKeyVolume(shard)
+		if vol != nil {
+			t.Fatalf("expected nil volume when encryption disabled, got %+v", vol)
+		}
+	})
+
+	t.Run("user-provided secret volume", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "my-cipher-secret",
+					},
+				},
+			},
+		}
+		vol := buildPgBackRestCipherKeyVolume(shard)
+		if vol == nil {
+			t.Fatal("expected non-nil volume for user-provided cipher key")
+		}
+		if vol.Name != PgBackRestCipherKeyVolumeName {
+			t.Errorf("volume name = %q, want %q", vol.Name, PgBackRestCipherKeyVolumeName)
+		}
+		if vol.Secret == nil {
+			t.Fatal("expected Secret volume source")
+		}
+		if vol.Secret.SecretName != "my-cipher-secret" {
+			t.Errorf("secret name = %q, want %q", vol.Secret.SecretName, "my-cipher-secret")
+		}
+		if vol.Secret.DefaultMode == nil || *vol.Secret.DefaultMode != 0o444 {
+			t.Errorf("defaultMode = %v, want 0444", vol.Secret.DefaultMode)
+		}
+	})
+}
+
 func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
 	t.Run("cert args present when backup configured", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
@@ -1357,6 +1411,24 @@ func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-dir")
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-port")
 		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
+	})
+
+	t.Run("no cipher key flag or mount even when encryption enabled", func(t *testing.T) {
+		// Upstream only wired --pgbackrest-cipher-key-file into multipooler,
+		// not pgctld; pgctld must never get the cipher volume/flag.
+		shard := &multigresv1alpha1.Shard{
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
+					},
+				},
+			},
+		}
+		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
+		assertNotContainsFlag(t, c.Args, "--pgbackrest-cipher-key-file")
+		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
 	})
 }
 
@@ -1408,6 +1480,52 @@ func TestMultipoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-key-file")
 		assertNotContainsFlag(t, c.Args, "--pgbackrest-ca-file")
 		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
+	})
+
+	t.Run("cipher key flag and mount present when encryption enabled", func(t *testing.T) {
+		shard := baseShard.DeepCopy()
+		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeS3,
+			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
+			Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+				SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
+			},
+		}
+		c := buildMultipoolerContainer(
+			shard,
+			multigresv1alpha1.PoolSpec{},
+			"primary",
+			"zone1",
+			"p-cipher123",
+		)
+		assertContainsFlag(
+			t,
+			c.Args,
+			"--pgbackrest-cipher-key-file=/secrets/pgbackrest-cipher/keys.json",
+		)
+		assertContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
+		for _, m := range c.VolumeMounts {
+			if m.Name == PgBackRestCipherKeyVolumeName && !m.ReadOnly {
+				t.Error("pgbackrest cipher key volume mount should be read-only")
+			}
+		}
+	})
+
+	t.Run("no cipher key flag or mount when encryption disabled", func(t *testing.T) {
+		shard := baseShard.DeepCopy()
+		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeS3,
+			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
+		}
+		c := buildMultipoolerContainer(
+			shard,
+			multigresv1alpha1.PoolSpec{},
+			"primary",
+			"zone1",
+			"p-nocipher123",
+		)
+		assertNotContainsFlag(t, c.Args, "--pgbackrest-cipher-key-file")
+		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
 	})
 }
 
@@ -1492,6 +1610,54 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 		for _, v := range volumes {
 			if v.Name == PgBackRestCertVolumeName {
 				t.Error("cert volume should not be present when no backup configured")
+			}
+		}
+	})
+
+	t.Run("cipher key volume present when encryption enabled", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-shard",
+				Labels: map[string]string{"multigres.com/cluster": "test"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
+					},
+				},
+			},
+		}
+		volumes := buildPoolVolumes(shard, "zone1")
+		found := false
+		for _, v := range volumes {
+			if v.Name == PgBackRestCipherKeyVolumeName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected pgbackrest-cipher volume when encryption configured")
+		}
+	})
+
+	t.Run("no cipher key volume when encryption disabled", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "test-shard",
+				Labels: map[string]string{"multigres.com/cluster": "test"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+				},
+			},
+		}
+		volumes := buildPoolVolumes(shard, "zone1")
+		for _, v := range volumes {
+			if v.Name == PgBackRestCipherKeyVolumeName {
+				t.Error("cipher key volume should not be present when encryption disabled")
 			}
 		}
 	})

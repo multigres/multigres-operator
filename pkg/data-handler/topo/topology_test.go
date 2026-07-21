@@ -251,6 +251,80 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 		}
 	})
 
+	t.Run("creates database with encryption enabled", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+
+		backup := &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeFilesystem,
+			Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+				Path: "/custom/path",
+			},
+			Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+				SecretName: "my-cipher-secret",
+			},
+		}
+
+		err := topo.RegisterDatabaseFromSpec(
+			context.Background(), store, recorder, owner,
+			multigresv1alpha1.DatabaseConfig{Name: "encdb"},
+			[]string{"cell1"}, backup, "",
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		db, err := store.GetDatabase(context.Background(), "encdb")
+		if err != nil {
+			t.Fatalf("database not found: %v", err)
+		}
+		if !db.BackupLocation.GetRequireInitialRepoEncryption() {
+			t.Error("expected RequireInitialRepoEncryption=true")
+		}
+	})
+
+	t.Run("update path propagates encryption flag", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+		ctx := context.Background()
+
+		dbConfig := multigresv1alpha1.DatabaseConfig{Name: "encupddb"}
+
+		if err := topo.RegisterDatabaseFromSpec(
+			ctx, store, recorder, owner, dbConfig,
+			[]string{"cell1"}, nil, "",
+		); err != nil {
+			t.Fatalf("first registration: %v", err)
+		}
+
+		backup := &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeFilesystem,
+			Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+				Path: "/custom/path",
+			},
+			Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+				SecretName: "my-cipher-secret",
+			},
+		}
+
+		if err := topo.RegisterDatabaseFromSpec(
+			ctx, store, recorder, owner, dbConfig,
+			[]string{"cell1"}, backup, "",
+		); err != nil {
+			t.Fatalf("re-registration: %v", err)
+		}
+
+		db, err := store.GetDatabase(ctx, "encupddb")
+		if err != nil {
+			t.Fatalf("database not found: %v", err)
+		}
+		if !db.BackupLocation.GetRequireInitialRepoEncryption() {
+			t.Error("expected RequireInitialRepoEncryption=true after update")
+		}
+	})
+
 	t.Run("uses database-level durability policy", func(t *testing.T) {
 		t.Parallel()
 		store := newMemoryStore(t, "cell1")

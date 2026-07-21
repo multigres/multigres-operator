@@ -127,6 +127,8 @@ func UnregisterDatabase(
 
 // GetBackupLocation extracts the backup location from the shard config.
 func GetBackupLocation(shard *multigresv1alpha1.Shard) *clustermetadatapb.BackupLocation {
+	requireInitialRepoEncryption := shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil
+
 	if shard.Spec.Backup != nil &&
 		shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeS3 &&
 		shard.Spec.Backup.S3 != nil {
@@ -140,6 +142,7 @@ func GetBackupLocation(shard *multigresv1alpha1.Shard) *clustermetadatapb.Backup
 					UseEnvCredentials: shard.Spec.Backup.S3.UseEnvCredentials,
 				},
 			},
+			RequireInitialRepoEncryption: requireInitialRepoEncryption,
 		}
 	}
 
@@ -157,6 +160,7 @@ func GetBackupLocation(shard *multigresv1alpha1.Shard) *clustermetadatapb.Backup
 				Path: path,
 			},
 		},
+		RequireInitialRepoEncryption: requireInitialRepoEncryption,
 	}
 }
 

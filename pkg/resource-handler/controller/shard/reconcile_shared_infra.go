@@ -154,6 +154,42 @@ func (r *ShardReconciler) reconcilePgBackRestCerts(
 	return rotator.Bootstrap(ctx)
 }
 
+// reconcileBackupCipherSecret validates the pgBackRest backup encryption
+// cipher key Secret when client-side backup encryption is enabled.
+func (r *ShardReconciler) reconcileBackupCipherSecret(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) error {
+	if shard.Spec.Backup == nil || shard.Spec.Backup.Encryption == nil {
+		return nil
+	}
+
+	secretName := shard.Spec.Backup.Encryption.SecretName
+	if secretName == "" {
+		return fmt.Errorf(
+			"pgbackrest cipher key secret name is required when encryption is enabled",
+		)
+	}
+
+	// Validate via APIReader instead of the cached client because the informer cache
+	// only stores operator-labeled Secrets.
+	secret := &corev1.Secret{}
+	if err := r.APIReader.Get(ctx, types.NamespacedName{
+		Name:      secretName,
+		Namespace: shard.Namespace,
+	}, secret); err != nil {
+		return fmt.Errorf("pgbackrest cipher key secret %q not found: %w", secretName, err)
+	}
+	if _, ok := secret.Data[PgBackRestCipherKeyDataKey]; !ok {
+		return fmt.Errorf(
+			"pgbackrest cipher key secret %q missing required key %q",
+			secretName,
+			PgBackRestCipherKeyDataKey,
+		)
+	}
+	return nil
+}
+
 // reconcileSharedBackupPVC creates or updates the shared backup PVC for a specific cell.
 func (r *ShardReconciler) reconcileSharedBackupPVC(
 	ctx context.Context,

@@ -181,6 +181,21 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile pgBackRest backup encryption cipher key Secret (required when
+	// client-side backup encryption is enabled)
+	if err := r.reconcileBackupCipherSecret(ctx, shard); err != nil {
+		monitoring.RecordSpanError(span, err)
+		logger.Error(err, "Failed to reconcile pgBackRest cipher key Secret")
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"CipherKeyError",
+			"Failed to reconcile pgBackRest cipher key Secret: %v",
+			err,
+		)
+		return ctrl.Result{}, err
+	}
+
 	// Compute Multiorch cells
 	multiorchCells, err := getMultiorchCells(shard)
 	if err != nil {

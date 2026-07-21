@@ -1878,6 +1878,215 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 	})
 }
 
+func TestReconcileBackupCipherSecret(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	t.Run("nil backup config returns nil and creates no secret", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
+			Spec:       multigresv1alpha1.ShardSpec{},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		r := &ShardReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(10),
+			APIReader: c,
+		}
+
+		if err := r.reconcileBackupCipherSecret(context.Background(), shard); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var secrets corev1.SecretList
+		if err := c.List(context.Background(), &secrets); err != nil {
+			t.Fatalf("failed to list secrets: %v", err)
+		}
+		if len(secrets.Items) != 0 {
+			t.Errorf("expected no secrets created, got %d", len(secrets.Items))
+		}
+	})
+
+	t.Run("backup without encryption returns nil and creates no secret", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+				},
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		r := &ShardReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(10),
+			APIReader: c,
+		}
+
+		if err := r.reconcileBackupCipherSecret(context.Background(), shard); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var secrets corev1.SecretList
+		if err := c.List(context.Background(), &secrets); err != nil {
+			t.Fatalf("failed to list secrets: %v", err)
+		}
+		if len(secrets.Items) != 0 {
+			t.Errorf("expected no secrets created, got %d", len(secrets.Items))
+		}
+	})
+
+	t.Run("user-provided secret valid, no operator secret created", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-shard", Namespace: "default",
+				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "my-cipher-secret", // #nosec G101 -- Secret object name, not a credential
+					},
+				},
+			},
+		}
+
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-cipher-secret", Namespace: "default"},
+			Data: map[string][]byte{
+				PgBackRestCipherKeyDataKey: []byte(`{"1":"user-supplied-passphrase"}`),
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, secret).Build()
+		r := &ShardReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(10),
+			APIReader: c,
+		}
+
+		if err := r.reconcileBackupCipherSecret(context.Background(), shard); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var secrets corev1.SecretList
+		if err := c.List(context.Background(), &secrets); err != nil {
+			t.Fatalf("failed to list secrets: %v", err)
+		}
+		if len(secrets.Items) != 1 {
+			t.Errorf("expected only the user-provided secret to exist, got %d", len(secrets.Items))
+		}
+	})
+
+	t.Run("user-provided secret not found returns error", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-shard", Namespace: "default",
+				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "missing-cipher-secret",
+					},
+				},
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		r := &ShardReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(10),
+			APIReader: c,
+		}
+
+		err := r.reconcileBackupCipherSecret(context.Background(), shard)
+		if err == nil {
+			t.Error("expected error for missing secret")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("expected 'not found' error, got: %v", err)
+		}
+	})
+
+	t.Run("user-provided secret missing required key returns error", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-shard", Namespace: "default",
+				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "partial-cipher-secret",
+					},
+				},
+			},
+		}
+
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "partial-cipher-secret", Namespace: "default"},
+			Data: map[string][]byte{
+				"wrong-key": []byte("irrelevant"),
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, secret).Build()
+		r := &ShardReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(10),
+			APIReader: c,
+		}
+
+		err := r.reconcileBackupCipherSecret(context.Background(), shard)
+		if err == nil {
+			t.Error("expected error for missing key")
+		}
+		if !strings.Contains(err.Error(), PgBackRestCipherKeyDataKey) {
+			t.Errorf("expected error about missing %q, got: %v", PgBackRestCipherKeyDataKey, err)
+		}
+	})
+
+	t.Run("empty secret name returns error", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-shard", Namespace: "default",
+				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type:       multigresv1alpha1.BackupTypeFilesystem,
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{},
+				},
+			},
+		}
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		r := &ShardReconciler{
+			Client:    c,
+			Scheme:    scheme,
+			Recorder:  record.NewFakeRecorder(10),
+			APIReader: c,
+		}
+
+		err := r.reconcileBackupCipherSecret(context.Background(), shard)
+		if err == nil {
+			t.Error("expected error for empty secret name")
+		}
+	})
+}
+
 func TestCreateMissingResources(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)

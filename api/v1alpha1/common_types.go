@@ -150,6 +150,7 @@ const (
 // BackupConfig defines the pgBackRest backup configuration.
 // +kubebuilder:validation:XValidation:rule="self.type != 's3' || has(self.s3)",message="s3 config is required when type is 's3'"
 // +kubebuilder:validation:XValidation:rule="self.type != 'filesystem' || has(self.filesystem)",message="filesystem config is required when type is 'filesystem'"
+// +kubebuilder:validation:XValidation:rule="has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption) || self.encryption == oldSelf.encryption)",message="encryption is immutable and cannot be added, removed, or changed after creation"
 type BackupConfig struct {
 	// Type is the backup storage backend (filesystem or s3).
 	Type BackupType `json:"type"`
@@ -170,6 +171,20 @@ type BackupConfig struct {
 	// When SecretName is empty, the operator auto-generates and rotates certificates.
 	// +optional
 	PgBackRestTLS *PgBackRestTLSConfig `json:"pgbackrestTLS,omitempty"`
+
+	// Encryption enables client-side pgBackRest backup encryption.
+	// +optional
+	Encryption *BackupEncryptionConfig `json:"encryption,omitempty"`
+}
+
+// BackupEncryptionConfig defines client-side pgBackRest backup encryption settings.
+type BackupEncryptionConfig struct {
+	// SecretName references an existing Secret containing the cipher key
+	// file under key "keys.json": a JSON document mapping backup
+	// repository generation to passphrase, e.g. {"1": "<passphrase>"}.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName"`
 }
 
 // FilesystemBackupConfig defines settings for filesystem-based backups.
@@ -505,6 +520,10 @@ func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {
 
 	if child.PgBackRestTLS != nil {
 		merged.PgBackRestTLS = child.PgBackRestTLS.DeepCopy()
+	}
+
+	if child.Encryption != nil {
+		merged.Encryption = child.Encryption.DeepCopy()
 	}
 
 	return merged

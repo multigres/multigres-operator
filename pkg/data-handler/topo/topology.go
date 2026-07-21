@@ -47,6 +47,8 @@ func RegisterDatabaseFromSpec(
 		BootstrapDurabilityPolicy: bootstrapDurabilityPolicy,
 	}
 
+	requireInitialRepoEncryption := backup != nil && backup.Encryption != nil
+
 	if backup != nil && backup.Type == multigresv1alpha1.BackupTypeS3 && backup.S3 != nil {
 		dbMetadata.BackupLocation = &clustermetadatapb.BackupLocation{
 			Location: &clustermetadatapb.BackupLocation_S3{
@@ -58,6 +60,7 @@ func RegisterDatabaseFromSpec(
 					UseEnvCredentials: backup.S3.UseEnvCredentials,
 				},
 			},
+			RequireInitialRepoEncryption: requireInitialRepoEncryption,
 		}
 	} else {
 		path := "/backups"
@@ -71,6 +74,7 @@ func RegisterDatabaseFromSpec(
 					Path: path,
 				},
 			},
+			RequireInitialRepoEncryption: requireInitialRepoEncryption,
 		}
 	}
 

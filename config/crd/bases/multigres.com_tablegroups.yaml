@@ -53,6 +53,20 @@ spec:
                 description: Backup is the backup configuration inherited from MultigresCluster
                   -> Database -> TableGroup.
                 properties:
+                  encryption:
+                    description: Encryption enables client-side pgBackRest backup
+                      encryption.
+                    properties:
+                      secretName:
+                        description: |-
+                          SecretName references an existing Secret containing the cipher key
+                          file under key "keys.json": a JSON document mapping backup
+                          repository generation to passphrase, e.g. {"1": "<passphrase>"}.
+                        minLength: 1
+                        type: string
+                    required:
+                    - secretName
+                    type: object
                   filesystem:
                     description: |-
                       Filesystem defines configuration for local/PVC-based backups.
@@ -159,6 +173,10 @@ spec:
                   rule: self.type != 's3' || has(self.s3)
                 - message: filesystem config is required when type is 'filesystem'
                   rule: self.type != 'filesystem' || has(self.filesystem)
+                - message: encryption is immutable and cannot be added, removed, or
+                    changed after creation
+                  rule: has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption)
+                    || self.encryption == oldSelf.encryption)
               cellTopologyLabels:
                 additionalProperties:
                   additionalProperties:
@@ -479,6 +497,20 @@ spec:
                       description: Backup is the backup configuration inherited from
                         MultigresCluster.
                       properties:
+                        encryption:
+                          description: Encryption enables client-side pgBackRest backup
+                            encryption.
+                          properties:
+                            secretName:
+                              description: |-
+                                SecretName references an existing Secret containing the cipher key
+                                file under key "keys.json": a JSON document mapping backup
+                                repository generation to passphrase, e.g. {"1": "<passphrase>"}.
+                              minLength: 1
+                              type: string
+                          required:
+                          - secretName
+                          type: object
                         filesystem:
                           description: |-
                             Filesystem defines configuration for local/PVC-based backups.
@@ -585,6 +617,10 @@ spec:
                         rule: self.type != 's3' || has(self.s3)
                       - message: filesystem config is required when type is 'filesystem'
                         rule: self.type != 'filesystem' || has(self.filesystem)
+                      - message: encryption is immutable and cannot be added, removed,
+                          or changed after creation
+                        rule: has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption)
+                          || self.encryption == oldSelf.encryption)
                     initdbArgs:
                       description: InitdbArgs is the resolved initdb arguments for
                         this shard.

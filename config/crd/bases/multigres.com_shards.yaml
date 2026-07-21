@@ -54,6 +54,20 @@ spec:
                   Backup is the fully resolved backup configuration for this shard.
                   Inherited from MultigresCluster.Spec.Backup by the resolver.
                 properties:
+                  encryption:
+                    description: Encryption enables client-side pgBackRest backup
+                      encryption.
+                    properties:
+                      secretName:
+                        description: |-
+                          SecretName references an existing Secret containing the cipher key
+                          file under key "keys.json": a JSON document mapping backup
+                          repository generation to passphrase, e.g. {"1": "<passphrase>"}.
+                        minLength: 1
+                        type: string
+                    required:
+                    - secretName
+                    type: object
                   filesystem:
                     description: |-
                       Filesystem defines configuration for local/PVC-based backups.
@@ -160,6 +174,10 @@ spec:
                   rule: self.type != 's3' || has(self.s3)
                 - message: filesystem config is required when type is 'filesystem'
                   rule: self.type != 'filesystem' || has(self.filesystem)
+                - message: encryption is immutable and cannot be added, removed, or
+                    changed after creation
+                  rule: has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption)
+                    || self.encryption == oldSelf.encryption)
               cellTopologyLabels:
                 additionalProperties:
                   additionalProperties:

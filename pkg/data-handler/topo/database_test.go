@@ -454,4 +454,34 @@ func TestGetBackupLocation(t *testing.T) {
 			t.Errorf("expected default path /backups, got %s", fs.Path)
 		}
 	})
+
+	t.Run("encryption enabled", func(t *testing.T) {
+		t.Parallel()
+		shard := &multigresv1alpha1.Shard{
+			Spec: multigresv1alpha1.ShardSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+						Path: "/custom/backups",
+					},
+					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+						SecretName: "my-cipher-secret",
+					},
+				},
+			},
+		}
+		loc := topo.GetBackupLocation(shard)
+		if !loc.GetRequireInitialRepoEncryption() {
+			t.Error("expected RequireInitialRepoEncryption=true")
+		}
+	})
+
+	t.Run("encryption not set", func(t *testing.T) {
+		t.Parallel()
+		shard := &multigresv1alpha1.Shard{}
+		loc := topo.GetBackupLocation(shard)
+		if loc.GetRequireInitialRepoEncryption() {
+			t.Error("expected RequireInitialRepoEncryption=false")
+		}
+	})
 }

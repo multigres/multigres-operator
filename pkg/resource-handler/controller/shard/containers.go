@@ -84,6 +84,22 @@ const (
 	// PgBackRestPort is the port for the pgBackRest TLS server
 	PgBackRestPort = 8432
 
+	// PgBackRestCipherKeyVolumeName is the name of the volume for the pgBackRest
+	// backup encryption cipher key.
+	PgBackRestCipherKeyVolumeName = "pgbackrest-cipher"
+
+	// PgBackRestCipherKeyMountPath is where the pgBackRest cipher key Secret is mounted.
+	PgBackRestCipherKeyMountPath = "/secrets/pgbackrest-cipher"
+
+	// PgBackRestCipherKeyDataKey is the key within the cipher Secret holding the
+	// JSON document that maps pgBackRest repository generation to passphrase,
+	// e.g. {"1": "<passphrase>"}.
+	PgBackRestCipherKeyDataKey = "keys.json"
+
+	// PgBackRestCipherKeyFilePath is the full path to the mounted cipher key
+	// file, passed to multipooler via --pgbackrest-cipher-key-file.
+	PgBackRestCipherKeyFilePath = PgBackRestCipherKeyMountPath + "/" + PgBackRestCipherKeyDataKey
+
 	// DefaultMultipoolerConnPoolGlobalCapacity keeps multipooler below pgctld's
 	// small default max_connections so admin and internal connections have headroom.
 	DefaultMultipoolerConnPoolGlobalCapacity = 40
@@ -398,6 +414,12 @@ func buildMultipoolerContainer(
 		)
 	}
 
+	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
+		args = append(args,
+			"--pgbackrest-cipher-key-file="+PgBackRestCipherKeyFilePath,
+		)
+	}
+
 	c := corev1.Container{
 		Name:            "multipooler",
 		Image:           image,
@@ -468,6 +490,13 @@ func buildMultipoolerContainer(
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
 			Name:      PgBackRestCertVolumeName,
 			MountPath: PgBackRestCertMountPath,
+			ReadOnly:  true,
+		})
+	}
+	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      PgBackRestCipherKeyVolumeName,
+			MountPath: PgBackRestCipherKeyMountPath,
 			ReadOnly:  true,
 		})
 	}
@@ -595,6 +624,9 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 	if certVol := buildPgBackRestCertVolume(shard); certVol != nil {
 		volumes = append(volumes, *certVol)
 	}
+	if cipherVol := buildPgBackRestCipherKeyVolume(shard); cipherVol != nil {
+		volumes = append(volumes, *cipherVol)
+	}
 	if otelVol, _ := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,
 	); otelVol != nil {
@@ -714,6 +746,28 @@ func buildPgBackRestCertVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
 						},
 					},
 				},
+			},
+		},
+	}
+}
+
+// buildPgBackRestCipherKeyVolume creates the volume for the pgBackRest backup
+// encryption cipher key file. Returns nil if encryption is not configured.
+func buildPgBackRestCipherKeyVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
+	if shard.Spec.Backup == nil || shard.Spec.Backup.Encryption == nil {
+		return nil
+	}
+
+	secretName := shard.Spec.Backup.Encryption.SecretName
+
+	// secret must be readable by users.
+	defaultMode := int32(0o444)
+	return &corev1.Volume{
+		Name: PgBackRestCipherKeyVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName:  secretName,
+				DefaultMode: &defaultMode,
 			},
 		},
 	}
