@@ -14,6 +14,10 @@ import (
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 )
 
+func routingState(role clustermetadata.RoutingRole) *clustermetadata.RoutingState {
+	return &clustermetadata.RoutingState{Role: role}
+}
+
 func TestFindPrimaryPooler(t *testing.T) {
 	t.Parallel()
 
@@ -79,14 +83,16 @@ func TestFindPrimaryPooler(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
-			Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
+			Hostname:     "replica-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell2", Name: "primary-pod"},
-			Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell2", Name: "primary-pod"},
+			Hostname:     "primary-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -119,8 +125,9 @@ func TestFindPrimaryPooler(t *testing.T) {
 		// A dead primary whose pod is gone, marked LIFECYCLE_SHUTDOWN, must not
 		// be returned as the live primary.
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "dead-primary"},
-			Hostname: "dead-primary", Type: clustermetadata.PoolerType_PRIMARY,
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "dead-primary"},
+			Hostname:     "dead-primary",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 			},
@@ -139,6 +146,40 @@ func TestFindPrimaryPooler(t *testing.T) {
 		}
 		if primary != nil {
 			t.Errorf("expected nil primary (dead primary skipped), got %s", primary.Id.Name)
+		}
+	})
+
+	t.Run("skips a quarantined primary", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		ctx := t.Context()
+		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "quarantined-primary"},
+			Hostname:     "quarantined-primary",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			LifecycleStatus: &clustermetadata.PoolerLifecycle{
+				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_QUARANTINED,
+			},
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false)
+
+		shard := &multigresv1alpha1.Shard{
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName: "db", TableGroupName: "tg", ShardName: "0",
+			},
+		}
+
+		primary, err := topo.FindPrimaryPooler(ctx, store, shard, []string{"cell1"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if primary != nil {
+			t.Errorf("expected nil primary (quarantined primary skipped), got %s", primary.Id.Name)
 		}
 	})
 }
@@ -197,8 +238,14 @@ func TestFindPrimaryPooler_TopoUnavailableSkip(t *testing.T) {
 			cells: map[string][]*topoclient.MultipoolerInfo{
 				"cell2": {{
 					Multipooler: &clustermetadata.Multipooler{
-						Id:       &clustermetadata.ID{Cell: "cell2", Name: "primary-pod"},
-						Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
+						Id: &clustermetadata.ID{
+							Cell: "cell2",
+							Name: "primary-pod",
+						},
+						Hostname: "primary-pod",
+						RoutingState: routingState(
+							clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+						),
 					},
 				}},
 			},
@@ -272,19 +319,22 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
-			Hostname: "active-pod", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
+			Hostname:     "active-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
-			Hostname: "stale-pod", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
+			Hostname:     "stale-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "dead-pod"},
-			Hostname: "dead-pod", Type: clustermetadata.PoolerType_DRAINED,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "dead-pod"},
+			Hostname:     "dead-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -316,16 +366,20 @@ func TestMarkDeadPoolers(t *testing.T) {
 			byName[p.Id.Name] = p.Multipooler
 		}
 
-		// Dead poolers marked LIFECYCLE_SHUTDOWN. Type (role) is left as-is —
-		// lifecycle is the source of truth and role-readers skip shut-down entries.
+		// Dead poolers are marked LIFECYCLE_SHUTDOWN. Routing state is left as-is;
+		// lifecycle is the source of truth and role readers skip shut-down entries.
 		for _, name := range []string{"stale-pod", "dead-pod"} {
 			mp := byName[name]
 			if !isShutdown(mp) {
 				t.Errorf("expected %s to be LIFECYCLE_SHUTDOWN, got %v", name, mp.LifecycleStatus)
 			}
 		}
-		if mp := byName["stale-pod"]; mp.Type != clustermetadata.PoolerType_REPLICA {
-			t.Errorf("expected stale-pod Type left untouched (REPLICA), got %v", mp.Type)
+		mp := byName["stale-pod"]
+		if topo.PoolerRoutingRole(mp) != clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA {
+			t.Errorf(
+				"expected stale-pod routing role left untouched (REPLICA), got %v",
+				topo.PoolerRoutingRole(mp),
+			)
 		}
 
 		// Active pooler left untouched.
@@ -344,8 +398,9 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "already-dead"},
-			Hostname: "already-dead", Type: clustermetadata.PoolerType_DRAINED,
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "already-dead"},
+			Hostname:     "already-dead",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 			},
@@ -380,9 +435,10 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "pod-1"},
-			Hostname: "pod-1", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "pod-1"},
+			Hostname:     "pod-1",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -442,16 +498,16 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
-			Hostname: "active-pod.headless-svc.ns.svc.cluster.local",
-			Type:     clustermetadata.PoolerType_PRIMARY,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
+			Hostname:     "active-pod.headless-svc.ns.svc.cluster.local",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
-			Hostname: "stale-pod.headless-svc.ns.svc.cluster.local",
-			Type:     clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
+			Hostname:     "stale-pod.headless-svc.ns.svc.cluster.local",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -514,7 +570,9 @@ func TestMarkDeadPoolers(t *testing.T) {
 					Multipooler: &clustermetadata.Multipooler{
 						Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
 						Hostname: "stale-pod",
-						Type:     clustermetadata.PoolerType_REPLICA,
+						RoutingState: routingState(
+							clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
+						),
 						ShardKey: &clustermetadata.ShardKey{
 							Database:   "db",
 							TableGroup: "tg",
@@ -553,9 +611,14 @@ func TestMarkDeadPoolers(t *testing.T) {
 			getMultipoolersByCellFunc: func(ctx context.Context, cell string, opts *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				p := &topoclient.MultipoolerInfo{
 					Multipooler: &clustermetadata.Multipooler{
-						Id:       &clustermetadata.ID{Cell: "cell1", Name: "stale-pod-no-hostname"},
+						Id: &clustermetadata.ID{
+							Cell: "cell1",
+							Name: "stale-pod-no-hostname",
+						},
 						Hostname: "",
-						Type:     clustermetadata.PoolerType_REPLICA,
+						RoutingState: routingState(
+							clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
+						),
 						ShardKey: &clustermetadata.ShardKey{
 							Database:   "db",
 							TableGroup: "tg",
@@ -617,9 +680,10 @@ func TestForceUnregisterPod(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "other-pod"},
-			Hostname: "other-pod", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "other-pod"},
+			Hostname:     "other-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -649,9 +713,10 @@ func TestForceUnregisterPod(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "my-pod"},
-			Hostname: "my-pod", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "my-pod"},
+			Hostname:     "my-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -732,7 +797,7 @@ func TestCollectCells(t *testing.T) {
 func TestGetPoolerStatus(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns roles for all pooler types", func(t *testing.T) {
+	t.Run("returns advertised routing roles", func(t *testing.T) {
 		t.Parallel()
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
@@ -742,18 +807,29 @@ func TestGetPoolerStatus(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary"},
-			Hostname: "primary", Type: clustermetadata.PoolerType_PRIMARY,
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary"},
+			Hostname:     "primary",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false)
+		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica"},
+			Hostname:     "replica",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false)
+		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
+			Id:       &clustermetadata.ID{Cell: "cell1", Name: "unknown"},
+			Hostname: "unknown",
 			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica"},
-			Hostname: "replica", Type: clustermetadata.PoolerType_REPLICA,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
-		}, false)
-		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "drained"},
-			Hostname: "drained", Type: clustermetadata.PoolerType_DRAINED,
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "quarantined"},
+			Hostname:     "quarantined",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			LifecycleStatus: &clustermetadata.PoolerLifecycle{
+				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_QUARANTINED,
+			},
 			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
@@ -767,7 +843,12 @@ func TestGetPoolerStatus(t *testing.T) {
 			},
 		}
 
-		result := topo.GetPoolerStatus(ctx, store, shard, []string{"primary", "replica", "drained"})
+		result := topo.GetPoolerStatus(
+			ctx,
+			store,
+			shard,
+			[]string{"primary", "replica", "unknown", "quarantined"},
+		)
 		if !result.QuerySuccess {
 			t.Error("expected QuerySuccess=true")
 		}
@@ -777,8 +858,11 @@ func TestGetPoolerStatus(t *testing.T) {
 		if result.Roles["replica"] != "REPLICA" {
 			t.Errorf("expected REPLICA, got %s", result.Roles["replica"])
 		}
-		if result.Roles["drained"] != "DRAINED" {
-			t.Errorf("expected DRAINED, got %s", result.Roles["drained"])
+		if result.Roles["unknown"] != "REPLICA" {
+			t.Errorf("expected REPLICA fallback, got %s", result.Roles["unknown"])
+		}
+		if result.Roles["quarantined"] != "DRAINED" {
+			t.Errorf("expected DRAINED, got %s", result.Roles["quarantined"])
 		}
 	})
 
@@ -792,8 +876,9 @@ func TestGetPoolerStatus(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "shutdown-pod"},
-			Hostname: "shutdown-pod", Type: clustermetadata.PoolerType_PRIMARY,
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "shutdown-pod"},
+			Hostname:     "shutdown-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 			},
@@ -829,9 +914,10 @@ func TestGetPoolerStatus(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "orphaned-pod"},
-			Hostname: "orphaned-pod", Type: clustermetadata.PoolerType_PRIMARY,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "orphaned-pod"},
+			Hostname:     "orphaned-pod",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -883,9 +969,10 @@ func TestGetPoolerStatus(t *testing.T) {
 
 		ctx := t.Context()
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-			Id:       &clustermetadata.ID{Cell: "cell1", Name: "my-pod-0"},
-			Hostname: "", Type: clustermetadata.PoolerType_PRIMARY,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			Id:           &clustermetadata.ID{Cell: "cell1", Name: "my-pod-0"},
+			Hostname:     "",
+			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{

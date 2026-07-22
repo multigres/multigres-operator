@@ -115,7 +115,7 @@ func ExecuteDrainStateMachine(
 		}
 	}
 
-	isPrimary := myPooler != nil && myPooler.Type == clustermetadatapb.PoolerType_PRIMARY
+	isPrimary := myPooler != nil && topo.IsPrimaryPooler(myPooler.Multipooler)
 
 	switch state {
 	case metadata.DrainStateRequested:

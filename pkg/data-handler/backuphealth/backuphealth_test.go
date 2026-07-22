@@ -354,8 +354,10 @@ func TestEvaluate(t *testing.T) {
 	t.Run("Primary found but GetBackups fails", func(t *testing.T) {
 		primaryInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "primary-1"},
-				Type: clustermetadata.PoolerType_PRIMARY,
+				Id: &clustermetadata.ID{Name: "primary-1"},
+				RoutingState: &clustermetadata.RoutingState{
+					Role: clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+				},
 			},
 		}
 		store := &mockTopoStore{
@@ -378,8 +380,10 @@ func TestEvaluate(t *testing.T) {
 	t.Run("Primary found and EvaluateBackups runs", func(t *testing.T) {
 		primaryInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "primary-1"},
-				Type: clustermetadata.PoolerType_PRIMARY,
+				Id: &clustermetadata.ID{Name: "primary-1"},
+				RoutingState: &clustermetadata.RoutingState{
+					Role: clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+				},
 			},
 		}
 		store := &mockTopoStore{

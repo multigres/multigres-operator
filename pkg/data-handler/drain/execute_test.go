@@ -25,6 +25,10 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
+func routingState(role clustermetadata.RoutingRole) *clustermetadata.RoutingState {
+	return &clustermetadata.RoutingState{Role: role}
+}
+
 // mockRPCClient implements just the methods these drain tests exercise.
 type mockRPCClient struct {
 	rpcclient.MultipoolerClient
@@ -108,9 +112,9 @@ func TestReplicaDrainFlow(t *testing.T) {
 
 	// Add primary
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod",
-		Type:     clustermetadata.PoolerType_PRIMARY,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -119,9 +123,9 @@ func TestReplicaDrainFlow(t *testing.T) {
 	}, false)
 	// Add our replica pod
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
-		Hostname: "test-pod-0",
-		Type:     clustermetadata.PoolerType_REPLICA,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
+		Hostname:     "test-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -222,8 +226,9 @@ func TestPrimaryDrainFlow(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
-		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_PRIMARY,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
+		Hostname:     "test-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -231,8 +236,9 @@ func TestPrimaryDrainFlow(t *testing.T) {
 		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
-		Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
+		Hostname:     "replica-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -301,8 +307,9 @@ func TestPrimaryDrainFlowNilRPCClient(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
-		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_PRIMARY,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
+		Hostname:     "test-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -310,8 +317,9 @@ func TestPrimaryDrainFlowNilRPCClient(t *testing.T) {
 		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
-		Hostname: "replica-pod", Type: clustermetadata.PoolerType_REPLICA,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
+		Hostname:     "replica-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -382,8 +390,9 @@ func TestStuckTerminatingPod(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
-		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_REPLICA,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
+		Hostname:     "test-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -538,9 +547,9 @@ func TestReplicaDrain_SkipsRPCWhenPrimaryDraining(t *testing.T) {
 
 	// Register primary and replica in topo
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod",
-		Type:     clustermetadata.PoolerType_PRIMARY,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -548,9 +557,9 @@ func TestReplicaDrain_SkipsRPCWhenPrimaryDraining(t *testing.T) {
 		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0",
-		Type:     clustermetadata.PoolerType_REPLICA,
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 		ShardKey: &clustermetadata.ShardKey{
 			Database:   "test-db",
 			TableGroup: "test-tg",
@@ -632,9 +641,14 @@ func TestReplicaDrain_DrainingState_FindPrimaryError(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// Since there's no primary in topo, findPrimaryPooler returns nil,nil.
@@ -705,14 +719,30 @@ func TestReplicaDrain_DrainingState_PrimaryDraining(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id: &clustermetadata.ID{
+			Cell: "cell1",
+			Name: "primary-pod",
+		},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id: &clustermetadata.ID{
+			Cell: "cell1",
+			Name: "replica-pod-0",
+		},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// In DrainStateDraining, if primary is draining, should requeue without advancing
@@ -864,14 +894,30 @@ func TestReplicaDrain_PrimaryTerminatingOrMissing(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id: &clustermetadata.ID{
+			Cell: "cell1",
+			Name: "primary-pod",
+		},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id: &clustermetadata.ID{
+			Cell: "cell1",
+			Name: "replica-pod-0",
+		},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	requeue, err := drain.ExecuteDrainStateMachine(
@@ -951,14 +997,24 @@ func TestReplicaDrain_DrainingState_PrimaryTerminating(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// In DrainStateDraining, primary is terminating, should skip standby verification
@@ -1087,9 +1143,14 @@ func TestDrain_StuckDrainTimeout_DeletionTimestampFallback(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
-		Hostname: "test-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "test-pod-0"},
+		Hostname:     "test-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	requeue, err := drain.ExecuteDrainStateMachine(ctx, c, nil, recorder, store, shardObj, pod)
@@ -1233,14 +1294,24 @@ func TestReplicaDrain_RPCError(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	// RPC error on UpdateConsensusRule should requeue
@@ -1317,14 +1388,24 @@ func TestReplicaDrain_DrainingState_RPCError(t *testing.T) {
 
 	ctx := context.Background()
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
-		Hostname: "primary-pod", Type: clustermetadata.PoolerType_PRIMARY,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary-pod"},
+		Hostname:     "primary-pod",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 	_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
-		Id:       &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
-		Hostname: "replica-pod-0", Type: clustermetadata.PoolerType_REPLICA,
-		ShardKey: &clustermetadata.ShardKey{Database: "test-db", TableGroup: "test-tg", Shard: "0"},
+		Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod-0"},
+		Hostname:     "replica-pod-0",
+		RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+		ShardKey: &clustermetadata.ShardKey{
+			Database:   "test-db",
+			TableGroup: "test-tg",
+			Shard:      "0",
+		},
 	}, false)
 
 	requeue, err := drain.ExecuteDrainStateMachine(
@@ -1394,9 +1475,9 @@ func TestDrainStateMachine_RandomizedInvariants(t *testing.T) {
 		metadata.DrainStateAcknowledged,
 	}
 
-	poolerTypes := []clustermetadata.PoolerType{
-		clustermetadata.PoolerType_PRIMARY,
-		clustermetadata.PoolerType_REPLICA,
+	routingRoles := []clustermetadata.RoutingRole{
+		clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+		clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
 	}
 
 	const iterations = 500
@@ -1410,16 +1491,16 @@ func TestDrainStateMachine_RandomizedInvariants(t *testing.T) {
 		numPods := 2 + rng.IntN(4) // 2-5 pods
 		podNames := make([]string, numPods)
 		initialStates := make([]string, numPods)
-		podTypes := make([]clustermetadata.PoolerType, numPods)
+		podRoles := make([]clustermetadata.RoutingRole, numPods)
 
 		// First pod is always primary, rest are replicas.
 		for j := range numPods {
 			podNames[j] = fmt.Sprintf("pod-%d", j)
 			initialStates[j] = activeDrainStates[rng.IntN(len(activeDrainStates))]
 			if j == 0 {
-				podTypes[j] = clustermetadata.PoolerType_PRIMARY
+				podRoles[j] = clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY
 			} else {
-				podTypes[j] = poolerTypes[rng.IntN(len(poolerTypes))]
+				podRoles[j] = routingRoles[rng.IntN(len(routingRoles))]
 			}
 		}
 
@@ -1480,9 +1561,9 @@ func TestDrainStateMachine_RandomizedInvariants(t *testing.T) {
 
 		for j := range numPods {
 			_ = store.RegisterMultipooler(context.Background(), &clustermetadata.Multipooler{
-				Id:       &clustermetadata.ID{Cell: "cell1", Name: podNames[j]},
-				Hostname: podNames[j],
-				Type:     podTypes[j],
+				Id:           &clustermetadata.ID{Cell: "cell1", Name: podNames[j]},
+				Hostname:     podNames[j],
+				RoutingState: routingState(podRoles[j]),
 				ShardKey: &clustermetadata.ShardKey{
 					Database:   "db",
 					TableGroup: "tg",

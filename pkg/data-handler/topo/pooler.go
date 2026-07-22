@@ -21,7 +21,8 @@ const deadPoolerReason = "operator: no backing pod for pooler"
 
 // PoolerStatusResult holds the result of querying pooler roles from the topology.
 type PoolerStatusResult struct {
-	// Roles maps hostname to role string (PRIMARY, REPLICA, DRAINED).
+	// Roles maps hostname to its operator-facing role
+	// (PRIMARY, REPLICA, DRAINED).
 	Roles map[string]string
 	// QuerySuccess indicates whether all topology queries succeeded.
 	QuerySuccess bool
@@ -52,11 +53,10 @@ func GetPoolerStatus(
 					continue
 				}
 				roleName := "REPLICA"
-				switch p.Type {
-				case clustermetadatapb.PoolerType_PRIMARY:
-					roleName = "PRIMARY"
-				case clustermetadatapb.PoolerType_DRAINED:
+				if isLifecycleQuarantined(p.Multipooler) {
 					roleName = "DRAINED"
+				} else if IsPrimaryPooler(p.Multipooler) {
+					roleName = "PRIMARY"
 				}
 				// Match the topology entry to an actual managed pod.
 				podName := matchPoolerToPod(p, managedPodNames)
@@ -105,8 +105,9 @@ func FindPrimaryPooler(
 		}
 		anySuccess = true
 		for _, p := range poolers {
-			if p.Type == clustermetadatapb.PoolerType_PRIMARY &&
-				!isLifecycleShutdown(p.Multipooler) {
+			if IsPrimaryPooler(p.Multipooler) &&
+				!isLifecycleShutdown(p.Multipooler) &&
+				!isLifecycleQuarantined(p.Multipooler) {
 				return p.Multipooler, nil
 			}
 		}
@@ -115,6 +116,22 @@ func FindPrimaryPooler(
 		return nil, fmt.Errorf("all %d cell(s) unavailable, cannot determine primary", len(cells))
 	}
 	return nil, nil
+}
+
+// PoolerRoutingRole returns the pooler's advertised routing role. RoutingState
+// is the upstream source of truth for primary/replica decisions; the legacy
+// Multipooler.Type projection is deprecated and will be removed upstream.
+func PoolerRoutingRole(mp *clustermetadatapb.Multipooler) clustermetadatapb.RoutingRole {
+	if mp == nil {
+		return clustermetadatapb.RoutingRole_ROUTING_ROLE_UNKNOWN
+	}
+	return mp.GetRoutingState().GetRole()
+}
+
+// IsPrimaryPooler reports whether the pooler advertises the writable primary
+// routing role.
+func IsPrimaryPooler(mp *clustermetadatapb.Multipooler) bool {
+	return PoolerRoutingRole(mp) == clustermetadatapb.RoutingRole_ROUTING_ROLE_PRIMARY
 }
 
 // CollectCells returns the sorted, deduplicated set of cell names from the shard's pools.
@@ -260,6 +277,14 @@ func isLifecycleShutdown(mp *clustermetadatapb.Multipooler) bool {
 	return mp != nil &&
 		mp.LifecycleStatus != nil &&
 		mp.LifecycleStatus.Status == clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN
+}
+
+// isLifecycleQuarantined reports whether the pooler is retained for
+// investigation and must not count toward healthy shard capacity.
+func isLifecycleQuarantined(mp *clustermetadatapb.Multipooler) bool {
+	return mp != nil &&
+		mp.LifecycleStatus != nil &&
+		mp.LifecycleStatus.Status == clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_QUARANTINED
 }
 
 // poolerMatchesAnyActivePod returns true when the pooler record corresponds to

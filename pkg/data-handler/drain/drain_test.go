@@ -465,8 +465,8 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		t.Parallel()
 		podInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "test-pod"},
-				Type: clustermetadata.PoolerType_REPLICA,
+				Id:           &clustermetadata.ID{Name: "test-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 			},
 		}
 		pod := &corev1.Pod{
@@ -515,14 +515,14 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		t.Parallel()
 		podInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "test-pod"},
-				Type: clustermetadata.PoolerType_REPLICA,
+				Id:           &clustermetadata.ID{Name: "test-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 			},
 		}
 		primaryInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "primary-pod"},
-				Type: clustermetadata.PoolerType_PRIMARY,
+				Id:           &clustermetadata.ID{Name: "primary-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 			},
 		}
 		primaryPod := &corev1.Pod{
@@ -574,8 +574,8 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		t.Parallel()
 		podInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "test-pod"},
-				Type: clustermetadata.PoolerType_REPLICA,
+				Id:           &clustermetadata.ID{Name: "test-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 			},
 		}
 		pod := &corev1.Pod{
@@ -624,14 +624,14 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		t.Parallel()
 		podInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "test-pod"},
-				Type: clustermetadata.PoolerType_REPLICA,
+				Id:           &clustermetadata.ID{Name: "test-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 			},
 		}
 		primaryInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "primary-pod"},
-				Type: clustermetadata.PoolerType_PRIMARY,
+				Id:           &clustermetadata.ID{Name: "primary-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
 			},
 		}
 		primaryPod := &corev1.Pod{
@@ -683,8 +683,8 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 		t.Parallel()
 		podInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
-				Id:   &clustermetadata.ID{Name: "test-pod"},
-				Type: clustermetadata.PoolerType_REPLICA,
+				Id:           &clustermetadata.ID{Name: "test-pod"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
 			},
 		}
 		pod := &corev1.Pod{
