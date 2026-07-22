@@ -125,6 +125,48 @@ func TestResolver_ResolveShard(t *testing.T) {
 				},
 			},
 		},
+		"Inline Pool Container Identity": {
+			config: &multigresv1alpha1.ShardConfig{
+				Spec: &multigresv1alpha1.ShardInlineSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"p": {
+							Postgres: multigresv1alpha1.ContainerConfig{
+								RunAsUser:  ptr.To(int64(1000)),
+								RunAsGroup: ptr.To(int64(1001)),
+							},
+							Multipooler: multigresv1alpha1.ContainerConfig{
+								RunAsUser:  ptr.To(int64(1000)),
+								RunAsGroup: ptr.To(int64(3001)),
+							},
+						},
+					},
+				},
+			},
+			wantOrch: &multigresv1alpha1.MultiorchSpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(1)),
+					Resources: DefaultResourcesOrch(),
+				},
+			},
+			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"p": {
+					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
+					Storage: multigresv1alpha1.StorageSpec{
+						Size: DefaultEtcdStorageSize,
+					},
+					Postgres: multigresv1alpha1.ContainerConfig{
+						Resources:  DefaultResourcesPostgres(),
+						RunAsUser:  ptr.To(int64(1000)),
+						RunAsGroup: ptr.To(int64(1001)),
+					},
+					Multipooler: multigresv1alpha1.ContainerConfig{
+						Resources:  DefaultResourcesPooler(),
+						RunAsUser:  ptr.To(int64(1000)),
+						RunAsGroup: ptr.To(int64(3001)),
+					},
+				},
+			},
+		},
 		"Dynamic Cell Injection": {
 			config: &multigresv1alpha1.ShardConfig{
 				Spec: &multigresv1alpha1.ShardInlineSpec{
@@ -409,6 +451,129 @@ func TestResolver_ResolveShardTemplate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
+	base := multigresv1alpha1.PoolSpec{
+		Postgres: multigresv1alpha1.ContainerConfig{
+			RunAsUser:  ptr.To(int64(1000)),
+			RunAsGroup: ptr.To(int64(1001)),
+		},
+		Multipooler: multigresv1alpha1.ContainerConfig{
+			RunAsUser:  ptr.To(int64(1000)),
+			RunAsGroup: ptr.To(int64(1002)),
+		},
+	}
+	override := multigresv1alpha1.PoolSpec{
+		Postgres: multigresv1alpha1.ContainerConfig{
+			RunAsGroup: ptr.To(int64(2001)),
+		},
+		Multipooler: multigresv1alpha1.ContainerConfig{
+			RunAsGroup: ptr.To(int64(2002)),
+		},
+	}
+
+	got := mergePoolSpec(base, override)
+	assertPoolIdentity := func(
+		name string,
+		config multigresv1alpha1.ContainerConfig,
+		wantUser, wantGroup int64,
+	) {
+		t.Helper()
+		if config.RunAsUser == nil || *config.RunAsUser != wantUser {
+			t.Errorf("%s runAsUser = %v, want %d", name, config.RunAsUser, wantUser)
+		}
+		if config.RunAsGroup == nil || *config.RunAsGroup != wantGroup {
+			t.Errorf("%s runAsGroup = %v, want %d", name, config.RunAsGroup, wantGroup)
+		}
+	}
+	assertPoolIdentity("postgres", got.Postgres, 1000, 2001)
+	assertPoolIdentity("multipooler", got.Multipooler, 1000, 2002)
+
+	*override.Postgres.RunAsGroup = 9999
+	*override.Multipooler.RunAsGroup = 9999
+	assertPoolIdentity("postgres after source mutation", got.Postgres, 1000, 2001)
+	assertPoolIdentity("multipooler after source mutation", got.Multipooler, 1000, 2002)
+}
+
+func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
+	t.Parallel()
+
+	t.Run("override multipooler UID can match template postgres UID", func(t *testing.T) {
+		t.Parallel()
+
+		_, pools, _, _, _, _ := mergeShardConfig(
+			&multigresv1alpha1.ShardTemplate{
+				Spec: multigresv1alpha1.ShardTemplateSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"rw": {
+							Postgres: multigresv1alpha1.ContainerConfig{
+								RunAsUser: ptr.To(int64(1000)),
+							},
+						},
+					},
+				},
+			},
+			&multigresv1alpha1.ShardOverrides{
+				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+					"rw": {
+						Multipooler: multigresv1alpha1.ContainerConfig{
+							RunAsUser: ptr.To(int64(1000)),
+						},
+					},
+				},
+			},
+			nil,
+			nil,
+			nil,
+		)
+
+		got := pools["rw"]
+		if got.Postgres.RunAsUser == nil || *got.Postgres.RunAsUser != 1000 {
+			t.Fatalf("postgres runAsUser = %v, want 1000", got.Postgres.RunAsUser)
+		}
+		if got.Multipooler.RunAsUser == nil || *got.Multipooler.RunAsUser != 1000 {
+			t.Fatalf("multipooler runAsUser = %v, want 1000", got.Multipooler.RunAsUser)
+		}
+	})
+
+	t.Run("mismatched override remains visible for resolved validation", func(t *testing.T) {
+		t.Parallel()
+
+		_, pools, _, _, _, _ := mergeShardConfig(
+			&multigresv1alpha1.ShardTemplate{
+				Spec: multigresv1alpha1.ShardTemplateSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"rw": {
+							Postgres: multigresv1alpha1.ContainerConfig{
+								RunAsUser: ptr.To(int64(1000)),
+							},
+						},
+					},
+				},
+			},
+			&multigresv1alpha1.ShardOverrides{
+				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+					"rw": {
+						Multipooler: multigresv1alpha1.ContainerConfig{
+							RunAsUser: ptr.To(int64(2000)),
+						},
+					},
+				},
+			},
+			nil,
+			nil,
+			nil,
+		)
+
+		got := pools["rw"]
+		if got.Postgres.RunAsUser == nil || *got.Postgres.RunAsUser != 1000 {
+			t.Fatalf("postgres runAsUser = %v, want 1000", got.Postgres.RunAsUser)
+		}
+		if got.Multipooler.RunAsUser == nil || *got.Multipooler.RunAsUser != 2000 {
+			t.Fatalf("multipooler runAsUser = %v, want 2000", got.Multipooler.RunAsUser)
+		}
+	})
 }
 
 func TestMergeShardConfig(t *testing.T) {

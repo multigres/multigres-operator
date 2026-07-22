@@ -271,8 +271,20 @@ func mergePoolSpec(
 	if !isResourcesZero(override.Postgres.Resources) {
 		out.Postgres.Resources = *override.Postgres.Resources.DeepCopy()
 	}
+	if override.Postgres.RunAsUser != nil {
+		out.Postgres.RunAsUser = ptr.To(*override.Postgres.RunAsUser)
+	}
+	if override.Postgres.RunAsGroup != nil {
+		out.Postgres.RunAsGroup = ptr.To(*override.Postgres.RunAsGroup)
+	}
 	if !isResourcesZero(override.Multipooler.Resources) {
 		out.Multipooler.Resources = *override.Multipooler.Resources.DeepCopy()
+	}
+	if override.Multipooler.RunAsUser != nil {
+		out.Multipooler.RunAsUser = ptr.To(*override.Multipooler.RunAsUser)
+	}
+	if override.Multipooler.RunAsGroup != nil {
+		out.Multipooler.RunAsGroup = ptr.To(*override.Multipooler.RunAsGroup)
 	}
 	if override.Affinity != nil {
 		out.Affinity = override.Affinity.DeepCopy()

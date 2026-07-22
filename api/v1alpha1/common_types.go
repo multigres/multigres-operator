@@ -130,6 +130,20 @@ type ContainerConfig struct {
 	// Resources defines the compute resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// RunAsUser sets the UID for the container process. When unset, Kubernetes
+	// and the container runtime apply the image's default user.
+	// Images that declare USER by name may need this set to a numeric UID when
+	// RunAsNonRoot enforcement is required.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	RunAsUser *int64 `json:"runAsUser,omitempty"`
+
+	// RunAsGroup sets the primary GID for the container process. When unset,
+	// Kubernetes and the container runtime apply their default group handling.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	RunAsGroup *int64 `json:"runAsGroup,omitempty"`
 }
 
 // ============================================================================

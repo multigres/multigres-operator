@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -77,7 +78,7 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
 					RunAsUser:    ptr.To(DefaultPostgresUID),
-					RunAsGroup:   ptr.To(DefaultPostgresUID),
+					RunAsGroup:   ptr.To(DefaultMultipoolerGID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -185,8 +186,6 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
-					RunAsUser:    ptr.To(DefaultPostgresUID),
-					RunAsGroup:   ptr.To(DefaultPostgresUID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -313,7 +312,7 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
 					RunAsUser:    ptr.To(DefaultPostgresUID),
-					RunAsGroup:   ptr.To(DefaultPostgresUID),
+					RunAsGroup:   ptr.To(DefaultMultipoolerGID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -388,9 +387,7 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 	}
-	pool := multigresv1alpha1.PoolSpec{}
-
-	got := buildPostgresExporterContainer(shard, pool)
+	got := buildPostgresExporterContainer(shard)
 
 	want := corev1.Container{
 		Name:  "postgres-exporter",
@@ -415,8 +412,8 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 		},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: ptr.To(true),
-			RunAsUser:    ptr.To(DefaultPostgresUID),
-			RunAsGroup:   ptr.To(DefaultPostgresUID),
+			RunAsUser:    ptr.To(DefaultPostgresExporterUID),
+			RunAsGroup:   ptr.To(DefaultPostgresExporterGID),
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
@@ -471,7 +468,7 @@ func TestPoolContainers_CustomPostgresSuperuser(t *testing.T) {
 	})
 
 	t.Run("postgres-exporter", func(t *testing.T) {
-		c := buildPostgresExporterContainer(shard, pool)
+		c := buildPostgresExporterContainer(shard)
 		assertEnvVarValue(t, c.Env, "DATA_SOURCE_USER", customSuperuser)
 	})
 }
@@ -496,7 +493,7 @@ func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
 	for name, c := range map[string]corev1.Container{
 		"pgctld":            buildPgctldSidecar(shard, pool),
 		"multipooler":       buildMultipoolerContainer(shard, pool, "primary", "zone1", "p-test-id"),
-		"postgres-exporter": buildPostgresExporterContainer(shard, pool),
+		"postgres-exporter": buildPostgresExporterContainer(shard),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "postgres-exporter" {
@@ -681,6 +678,8 @@ func TestBuildPgctldSidecar(t *testing.T) {
 		if c.Image != multigresv1alpha1.DefaultPostgresImage {
 			t.Errorf("Image = %q, want %q", c.Image, multigresv1alpha1.DefaultPostgresImage)
 		}
+		assert.Equal(t, DefaultPostgresUID, *c.SecurityContext.RunAsUser)
+		assert.Equal(t, DefaultPostgresGID, *c.SecurityContext.RunAsGroup)
 		if c.Command[0] != "/usr/local/bin/pgctld" {
 			t.Errorf("Command = %v, want /usr/local/bin/pgctld", c.Command)
 		}
@@ -706,6 +705,8 @@ func TestBuildPgctldSidecar(t *testing.T) {
 		if c.Image != "custom/pgctld:v1" {
 			t.Errorf("Image = %q, want %q", c.Image, "custom/pgctld:v1")
 		}
+		assert.Nil(t, c.SecurityContext.RunAsUser)
+		assert.Nil(t, c.SecurityContext.RunAsGroup)
 	})
 
 	t.Run("with observability", func(t *testing.T) {

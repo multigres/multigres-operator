@@ -5,6 +5,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -271,7 +272,7 @@ func buildPgctldSidecar(
 		Resources:       pool.Postgres.Resources,
 		RestartPolicy:   &sidecarRestartPolicy,
 		Env:             env,
-		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
+		SecurityContext: buildPgctldSecurityContext(image, pool.Postgres),
 		VolumeMounts:    volumeMounts,
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -307,7 +308,6 @@ func buildPgctldSidecar(
 // buildPostgresExporterContainer creates the postgres_exporter sidecar for scraping local postgres metrics.
 func buildPostgresExporterContainer(
 	shard *multigresv1alpha1.Shard,
-	pool multigresv1alpha1.PoolSpec,
 ) corev1.Container {
 	return corev1.Container{
 		Name:  "postgres-exporter",
@@ -330,7 +330,10 @@ func buildPostgresExporterContainer(
 				Value: PostgresPasswordFilePath,
 			},
 		},
-		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
+		SecurityContext: buildContainerSecurityContext(
+			ptr.To(DefaultPostgresExporterUID),
+			ptr.To(DefaultPostgresExporterGID),
+		),
 		VolumeMounts: []corev1.VolumeMount{
 			postgresPasswordVolumeMount(),
 		},
@@ -404,7 +407,7 @@ func buildMultipoolerContainer(
 		Args:            args,
 		Ports:           buildMultipoolerContainerPorts(),
 		Resources:       pool.Multipooler.Resources,
-		SecurityContext: buildContainerSecurityContext(pool.FSGroup),
+		SecurityContext: buildMultipoolerSecurityContext(shard, pool),
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{

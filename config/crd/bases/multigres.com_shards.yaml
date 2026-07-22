@@ -2501,6 +2501,22 @@ spec:
                                 More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                               type: object
                           type: object
+                        runAsGroup:
+                          description: |-
+                            RunAsGroup sets the primary GID for the container process. When unset,
+                            Kubernetes and the container runtime apply their default group handling.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        runAsUser:
+                          description: |-
+                            RunAsUser sets the UID for the container process. When unset, Kubernetes
+                            and the container runtime apply the image's default user.
+                            Images that declare USER by name may need this set to a numeric UID when
+                            RunAsNonRoot enforcement is required.
+                          format: int64
+                          minimum: 1
+                          type: integer
                       type: object
                     postgres:
                       description: Postgres container configuration.
@@ -2565,6 +2581,22 @@ spec:
                                 More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                               type: object
                           type: object
+                        runAsGroup:
+                          description: |-
+                            RunAsGroup sets the primary GID for the container process. When unset,
+                            Kubernetes and the container runtime apply their default group handling.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        runAsUser:
+                          description: |-
+                            RunAsUser sets the UID for the container process. When unset, Kubernetes
+                            and the container runtime apply the image's default user.
+                            Images that declare USER by name may need this set to a numeric UID when
+                            RunAsNonRoot enforcement is required.
+                          format: int64
+                          minimum: 1
+                          type: integer
                       type: object
                     pvcDeletionPolicy:
                       description: |-
