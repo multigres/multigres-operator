@@ -256,7 +256,35 @@ const (
 	// multigateway TLS certificate, matching the non-HA project convention.
 	// Referenced by both the Certificate spec and the Deployment volume.
 	CertSecretName = "generated-certs"
+
+	// Component certificate names used for internal gRPC TLS/mTLS.
+	ComponentMultiAdminTLS   = "multiadmin"
+	ComponentMultiGatewayTLS = "multigateway"
+
+	// InternalTLSIdentityDomain is the logical DNS suffix used for internal
+	// component identities. These names are verified through an explicit gRPC
+	// server-name override and are not expected to resolve through cluster DNS.
+	InternalTLSIdentityDomain = "multigres.internal"
+	ComponentMultiOrchTLS     = "multiorch"
+	ComponentMultiPoolerTLS   = "multipooler"
 )
+
+// ComponentCertSecretName returns the cert-manager Secret name for an internal
+// component certificate. By convention this is the same value as the CN/SAN
+// returned by ComponentCertCommonName.
+func ComponentCertSecretName(component, clusterName, namespace string) string {
+	return ComponentCertCommonName(component, clusterName, namespace)
+}
+
+// ComponentCertCommonName returns the logical DNS identity used as CN/SAN for
+// an internal component certificate. It is intentionally independent of the
+// end user facing CertCommonName and the workload's k8s routing name.
+func ComponentCertCommonName(component, clusterName, namespace string) string {
+	if component == "" || clusterName == "" || namespace == "" {
+		return ""
+	}
+	return component + "." + clusterName + "." + namespace + "." + InternalTLSIdentityDomain
+}
 
 // ============================================================================
 // Domain Specific Types (Strong Typing)

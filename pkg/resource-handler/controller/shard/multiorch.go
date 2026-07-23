@@ -84,6 +84,13 @@ func BuildMultiorchDeployment(
 		deployment.Spec.Template.Spec.Volumes = append(
 			deployment.Spec.Template.Spec.Volumes, *otelVol)
 	}
+	if shardTLSConfigured(shard) {
+		deployment.Spec.Template.Spec.Volumes = append(
+			deployment.Spec.Template.Spec.Volumes, buildShardTLSVolume(
+				shard,
+				multigresv1alpha1.ComponentMultiOrchTLS,
+			))
+	}
 
 	if err := ctrl.SetControllerReference(shard, deployment, scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)

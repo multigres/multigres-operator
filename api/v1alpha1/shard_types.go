@@ -196,6 +196,11 @@ type ShardSpec struct {
 	// Secret.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
 
+	// CertCommonName is the DNS name used by shard-side mTLS clients and servers.
+	// Inherited from MultigresCluster.Spec.CertCommonName.
+	// +optional
+	CertCommonName string `json:"certCommonName,omitempty"`
+
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Each entry is a map like {"topology.kubernetes.io/zone": "us-east-1a"}.
 	// Propagated from the cluster's cell configs so the shard controller

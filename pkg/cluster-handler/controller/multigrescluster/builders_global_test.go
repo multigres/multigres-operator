@@ -2,8 +2,10 @@ package multigrescluster
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -172,6 +174,93 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		}
 		if len(got.Spec.Template.Spec.Containers[0].VolumeMounts) == 0 {
 			t.Errorf("Expected OTEL volume mount to be added")
+		}
+	})
+
+	t.Run("Success with internal mTLS", func(t *testing.T) {
+		tlsCluster := cluster.DeepCopy()
+		tlsCluster.Spec.CertCommonName = "db.abc123.supabase.red"
+
+		got, err := BuildMultiadminDeployment(tlsCluster, spec, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+		}
+
+		var foundVol bool
+		for _, v := range got.Spec.Template.Spec.Volumes {
+			if v.Name == multiAdminTLSVolumeName {
+				foundVol = true
+				if v.Secret == nil {
+					t.Fatal("TLS volume should use Secret source")
+				}
+				wantSecretName := "multiadmin.my-cluster.default.multigres.internal" //nolint:gosec // test constant
+				if v.Secret.SecretName != wantSecretName {
+					t.Errorf(
+						"TLS secretName = %q, want %q",
+						v.Secret.SecretName,
+						wantSecretName,
+					)
+				}
+				if strings.Contains(v.Secret.SecretName, tlsCluster.Spec.CertCommonName) {
+					t.Errorf(
+						"internal TLS secretName %q must not contain public CertCommonName %q",
+						v.Secret.SecretName,
+						tlsCluster.Spec.CertCommonName,
+					)
+				}
+				if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
+					t.Errorf(
+						"TLS secret defaultMode = %v, want 0444",
+						v.Secret.DefaultMode,
+					)
+				}
+			}
+		}
+		if !foundVol {
+			t.Fatalf("expected TLS volume %q", multiAdminTLSVolumeName)
+		}
+
+		container := got.Spec.Template.Spec.Containers[0]
+		var foundMount bool
+		for _, m := range container.VolumeMounts {
+			if m.Name == multiAdminTLSVolumeName {
+				foundMount = true
+				if m.MountPath != multiAdminTLSMountPath {
+					t.Errorf(
+						"TLS mount path = %q, want %q",
+						m.MountPath,
+						multiAdminTLSMountPath,
+					)
+				}
+			}
+		}
+		if !foundMount {
+			t.Fatalf("expected TLS volume mount %q", multiAdminTLSVolumeName)
+		}
+
+		wantArgs := []string{
+			"--grpc-cert", multiAdminTLSCertFile,
+			"--grpc-key", multiAdminTLSKeyFile,
+			"--grpc-ca", multiAdminTLSCAFile,
+			"--grpc-server-ca", multiAdminTLSCAFile,
+			"--multipooler-grpc-cert", multiAdminTLSCertFile,
+			"--multipooler-grpc-key", multiAdminTLSKeyFile,
+			"--multipooler-grpc-ca", multiAdminTLSCAFile,
+			"--multipooler-grpc-server-name",
+			"multipooler.my-cluster.default.multigres.internal",
+			"--multipooler-grpc-require-tls",
+		}
+		tailArgs := container.Args[len(container.Args)-len(wantArgs):]
+		if diff := cmp.Diff(wantArgs, tailArgs); diff != "" {
+			t.Errorf("mTLS args mismatch (-want +got):\n%s", diff)
+		}
+		serverName := tailArgs[len(tailArgs)-2]
+		if strings.Contains(serverName, tlsCluster.Spec.CertCommonName) {
+			t.Errorf(
+				"multipooler gRPC server name %q must not contain public CertCommonName %q",
+				serverName,
+				tlsCluster.Spec.CertCommonName,
+			)
 		}
 	})
 

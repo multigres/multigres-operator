@@ -131,6 +131,22 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 
+	t.Run("CertCommonName propagates from TableGroup to Shard", func(t *testing.T) {
+		tgWithTLS := tg.DeepCopy()
+		tgWithTLS.Spec.CertCommonName = "db.abc123.supabase.red"
+
+		got, err := BuildShard(tgWithTLS, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if got.Spec.CertCommonName != "db.abc123.supabase.red" {
+			t.Errorf(
+				"Spec.CertCommonName = %v, want db.abc123.supabase.red",
+				got.Spec.CertCommonName,
+			)
+		}
+	})
+
 	t.Run("DurabilityPolicy empty when not set on TableGroup", func(t *testing.T) {
 		got, err := BuildShard(tg, shardSpec, scheme)
 		if err != nil {

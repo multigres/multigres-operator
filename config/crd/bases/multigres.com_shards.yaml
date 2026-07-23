@@ -189,6 +189,11 @@ spec:
                   Propagated from the cluster's cell configs so the shard controller
                   can inject nodeSelector without looking up Cell CRs.
                 type: object
+              certCommonName:
+                description: |-
+                  CertCommonName is the DNS name used by shard-side mTLS clients and servers.
+                  Inherited from MultigresCluster.Spec.CertCommonName.
+                type: string
               databaseName:
                 description: DatabaseName is the name of the logical database this
                   shard belongs to.

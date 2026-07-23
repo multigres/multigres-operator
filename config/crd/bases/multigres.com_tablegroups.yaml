@@ -186,6 +186,11 @@ spec:
                   CellTopologyLabels maps cell names to their topology nodeSelector labels.
                   Propagated from the cluster's cell configs.
                 type: object
+              certCommonName:
+                description: |-
+                  CertCommonName is the DNS name used by shard-side mTLS clients and servers.
+                  Inherited from MultigresCluster.Spec.CertCommonName.
+                type: string
               databaseName:
                 description: DatabaseName is the name of the logical database.
                 maxLength: 30

@@ -106,6 +106,23 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("CertCommonName", func(t *testing.T) {
+		c := *cluster
+		c.Spec.CertCommonName = "db.abc123.supabase.red"
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-tls"}
+		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.CertCommonName != "db.abc123.supabase.red" {
+			t.Errorf(
+				"CertCommonName = %q, want %q",
+				got.Spec.CertCommonName,
+				"db.abc123.supabase.red",
+			)
+		}
+	})
+
 	t.Run("Name Truncation", func(t *testing.T) {
 		longName := strings.Repeat("a", 250) // Very long name
 		tgCfg := &multigresv1alpha1.TableGroupConfig{

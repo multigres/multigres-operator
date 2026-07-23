@@ -99,6 +99,20 @@ const (
 	// PgBackRestCipherKeyFilePath is the full path to the mounted cipher key
 	// file, passed to multipooler via --pgbackrest-cipher-key-file.
 	PgBackRestCipherKeyFilePath = PgBackRestCipherKeyMountPath + "/" + PgBackRestCipherKeyDataKey
+	// ShardTLSVolumeName is the volume for the generated shard-side mTLS Secret.
+	ShardTLSVolumeName = "tls-certs"
+
+	// ShardTLSMountPath is where shard-side mTLS certificates are mounted.
+	ShardTLSMountPath = "/etc/multigres/tls"
+
+	// ShardTLSCertFile is the mounted certificate path from the generated Secret.
+	ShardTLSCertFile = ShardTLSMountPath + "/tls.crt"
+
+	// ShardTLSKeyFile is the mounted private key path from the generated Secret.
+	ShardTLSKeyFile = ShardTLSMountPath + "/tls.key"
+
+	// ShardTLSCAFile is the mounted CA certificate path from the generated Secret.
+	ShardTLSCAFile = ShardTLSMountPath + "/ca.crt"
 
 	// DefaultMultipoolerConnPoolGlobalCapacity keeps multipooler below pgctld's
 	// small default max_connections so admin and internal connections have headroom.
@@ -167,6 +181,35 @@ func postgresPasswordVolumeMount() corev1.VolumeMount {
 	return corev1.VolumeMount{
 		Name:      PostgresPasswordVolumeName,
 		MountPath: PostgresPasswordMountPath,
+		ReadOnly:  true,
+	}
+}
+
+func shardTLSConfigured(shard *multigresv1alpha1.Shard) bool {
+	return shard.Spec.CertCommonName != ""
+}
+
+func buildShardTLSVolume(shard *multigresv1alpha1.Shard, component string) corev1.Volume {
+	defaultMode := int32(0o444)
+	return corev1.Volume{
+		Name: ShardTLSVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName: multigresv1alpha1.ComponentCertSecretName(
+					component,
+					shard.Labels[metadata.LabelMultigresCluster],
+					shard.Namespace,
+				),
+				DefaultMode: &defaultMode,
+			},
+		},
+	}
+}
+
+func shardTLSVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{
+		Name:      ShardTLSVolumeName,
+		MountPath: ShardTLSMountPath,
 		ReadOnly:  true,
 	}
 }
@@ -413,6 +456,14 @@ func buildMultipoolerContainer(
 			"--pgbackrest-ca-file="+PgBackRestCertMountPath+"/ca.crt",
 		)
 	}
+	if shardTLSConfigured(shard) {
+		args = append(args,
+			"--grpc-cert", ShardTLSCertFile,
+			"--grpc-key", ShardTLSKeyFile,
+			"--grpc-ca", ShardTLSCAFile,
+			"--grpc-server-ca", ShardTLSCAFile,
+		)
+	}
 
 	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
 		args = append(args,
@@ -500,6 +551,10 @@ func buildMultipoolerContainer(
 			ReadOnly:  true,
 		})
 	}
+
+	if shardTLSConfigured(shard) {
+		c.VolumeMounts = append(c.VolumeMounts, shardTLSVolumeMount())
+	}
 	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,
 	); otelMount != nil {
@@ -527,6 +582,24 @@ func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 		"--cell=" + cellName,
 		"--watch-targets=" + watchTarget,
 		"--log-level=" + string(shard.Spec.LogLevels.Multiorch),
+	}
+	if shardTLSConfigured(shard) {
+		args = append(args,
+			"--grpc-cert", ShardTLSCertFile,
+			"--grpc-key", ShardTLSKeyFile,
+			"--grpc-ca", ShardTLSCAFile,
+			"--grpc-server-ca", ShardTLSCAFile,
+			"--multipooler-grpc-cert", ShardTLSCertFile,
+			"--multipooler-grpc-key", ShardTLSKeyFile,
+			"--multipooler-grpc-ca", ShardTLSCAFile,
+			"--multipooler-grpc-server-name",
+			multigresv1alpha1.ComponentCertCommonName(
+				multigresv1alpha1.ComponentMultiPoolerTLS,
+				shard.Labels[metadata.LabelMultigresCluster],
+				shard.Namespace,
+			),
+			"--multipooler-grpc-require-tls",
+		)
 	}
 
 	c := corev1.Container{
@@ -571,6 +644,9 @@ func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 		shard.Spec.Observability,
 	); otelMount != nil {
 		c.VolumeMounts = append(c.VolumeMounts, *otelMount)
+	}
+	if shardTLSConfigured(shard) {
+		c.VolumeMounts = append(c.VolumeMounts, shardTLSVolumeMount())
 	}
 	return c
 }
@@ -626,6 +702,12 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 	}
 	if cipherVol := buildPgBackRestCipherKeyVolume(shard); cipherVol != nil {
 		volumes = append(volumes, *cipherVol)
+	}
+	if shardTLSConfigured(shard) {
+		volumes = append(volumes, buildShardTLSVolume(
+			shard,
+			multigresv1alpha1.ComponentMultiPoolerTLS,
+		))
 	}
 	if otelVol, _ := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,

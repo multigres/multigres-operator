@@ -41,6 +41,14 @@ const (
 	tlsMountPath  = "/etc/multigateway/tls"
 	tlsCertFile   = tlsMountPath + "/tls.crt"
 	tlsKeyFile    = tlsMountPath + "/tls.key"
+	tlsCAFile     = tlsMountPath + "/ca.crt"
+
+	// Internal TLS volume/mount constants for gRPC mTLS between components.
+	internalTLSVolumeName = tlsVolumeName + "-internal"
+	internalTLSMountPath  = tlsMountPath + "-internal"
+	internalTLSCertFile   = internalTLSMountPath + "/tls.crt"
+	internalTLSKeyFile    = internalTLSMountPath + "/tls.key"
+	internalTLSCAFile     = internalTLSMountPath + "/ca.crt"
 )
 
 // BuildMultigatewayDeploymentName generates the Deployment name.
@@ -227,12 +235,25 @@ func BuildMultigatewayDeployment(
 	// Mount TLS certificate and add flags when CertCommonName is configured.
 	if cell.Spec.CertCommonName != "" {
 		podSpec := &deployment.Spec.Template.Spec
-		defaultMode := int32(0o440)
+		defaultMode := int32(0o444)
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
 			Name: tlsVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName:  multigresv1alpha1.CertSecretName,
+					DefaultMode: &defaultMode,
+				},
+			},
+		})
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
+			Name: internalTLSVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: multigresv1alpha1.ComponentCertSecretName(
+						multigresv1alpha1.ComponentMultiGatewayTLS,
+						clusterName,
+						cell.Namespace,
+					),
 					DefaultMode: &defaultMode,
 				},
 			},
@@ -244,10 +265,29 @@ func BuildMultigatewayDeployment(
 				MountPath: tlsMountPath,
 				ReadOnly:  true,
 			},
+			corev1.VolumeMount{
+				Name:      internalTLSVolumeName,
+				MountPath: internalTLSMountPath,
+				ReadOnly:  true,
+			},
 		)
 		podSpec.Containers[0].Args = append(podSpec.Containers[0].Args,
 			"--pg-tls-cert-file", tlsCertFile,
 			"--pg-tls-key-file", tlsKeyFile,
+			"--grpc-cert", internalTLSCertFile,
+			"--grpc-key", internalTLSKeyFile,
+			"--grpc-ca", internalTLSCAFile,
+			"--grpc-server-ca", internalTLSCAFile,
+			"--multipooler-grpc-cert", internalTLSCertFile,
+			"--multipooler-grpc-key", internalTLSKeyFile,
+			"--multipooler-grpc-ca", internalTLSCAFile,
+			"--multipooler-grpc-server-name",
+			multigresv1alpha1.ComponentCertCommonName(
+				multigresv1alpha1.ComponentMultiPoolerTLS,
+				clusterName,
+				cell.Namespace,
+			),
+			"--multipooler-grpc-require-tls",
 		)
 	}
 
