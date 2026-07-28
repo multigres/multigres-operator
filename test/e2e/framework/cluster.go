@@ -140,7 +140,7 @@ func setupCluster(name string) (*Cluster, error) {
 
 	// Load images (batch — single CLI call, idempotent).
 	preset := testutil.DefaultOperatorPreset()
-	imgs := append([]string{preset.Image}, testutil.MultigresImages...)
+	imgs := append([]string{preset.Image}, runtimeImages()...)
 	if err := LoadImages(ctx, name, imgs); err != nil {
 		return nil, fmt.Errorf("load images: %w", err)
 	}

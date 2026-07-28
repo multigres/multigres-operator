@@ -32,6 +32,41 @@ on:
         default: ''
         required: false
         type: string
+      # Component image overrides are deliberately independent. Callers can
+      # replace the whole data plane (nightly compatibility), selected
+      # components (version-skew), or only postgres (custom Postgres builds).
+      # An empty input leaves that component unset in the test CR, so the
+      # checked-out operator applies its compiled-in default.
+      postgres-image:
+        description: Override the postgres/pgctld image in every e2e MultigresCluster
+        default: ''
+        required: false
+        type: string
+      multiadmin-image:
+        description: Override the multiadmin image in every e2e MultigresCluster
+        default: ''
+        required: false
+        type: string
+      multiadmin-web-image:
+        description: Override the multiadmin-web image in every e2e MultigresCluster
+        default: ''
+        required: false
+        type: string
+      multiorch-image:
+        description: Override the multiorch image in every e2e MultigresCluster
+        default: ''
+        required: false
+        type: string
+      multipooler-image:
+        description: Override the multipooler image in every e2e MultigresCluster
+        default: ''
+        required: false
+        type: string
+      multigateway-image:
+        description: Override the multigateway image in every e2e MultigresCluster
+        default: ''
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -46,6 +81,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
@@ -79,12 +115,75 @@ jobs:
         if: inputs.operator-image-artifact != ''
         run: docker load -i /tmp/operator-image.tar
 
+      # This source-level override keeps `ref: <old-operator-commit>` useful:
+      # refs predating E2E_* support still compile the requested runtime images
+      # into the operator. Current refs also apply the same values to test CRs.
+      - name: Apply runtime image overrides
+        env:
+          POSTGRES_IMAGE: ${{ inputs.postgres-image }}
+          MULTIADMIN_IMAGE: ${{ inputs.multiadmin-image }}
+          MULTIADMIN_WEB_IMAGE: ${{ inputs.multiadmin-web-image }}
+          MULTIORCH_IMAGE: ${{ inputs.multiorch-image }}
+          MULTIPOOLER_IMAGE: ${{ inputs.multipooler-image }}
+          MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
+        run: |
+          replace_default() {
+            local constant="$1"
+            local image="$2"
+            [ -n "$image" ] || return 0
+            local escaped="${image//&/\\&}"
+            sed -i -E \
+              "s|(${constant}[[:space:]]*=[[:space:]]*\")[^\"]+\"|\\1${escaped}\"|" \
+              api/v1alpha1/image_defaults.go
+            grep -F "${constant} = \"${image}\"" api/v1alpha1/image_defaults.go
+          }
+
+          replace_default DefaultPostgresImage "$POSTGRES_IMAGE"
+          replace_default DefaultMultiadminImage "$MULTIADMIN_IMAGE"
+          replace_default DefaultMultiadminWebImage "$MULTIADMIN_WEB_IMAGE"
+          replace_default DefaultMultiorchImage "$MULTIORCH_IMAGE"
+          replace_default DefaultMultipoolerImage "$MULTIPOOLER_IMAGE"
+          replace_default DefaultMultigatewayImage "$MULTIGATEWAY_IMAGE"
+
       - name: Build operator image
         if: inputs.operator-image-artifact == ''
         run: make container
 
       - name: Pull e2e images
-        run: make pull-e2e-images
+        env:
+          POSTGRES_IMAGE: ${{ inputs.postgres-image }}
+          MULTIADMIN_IMAGE: ${{ inputs.multiadmin-image }}
+          MULTIADMIN_WEB_IMAGE: ${{ inputs.multiadmin-web-image }}
+          MULTIORCH_IMAGE: ${{ inputs.multiorch-image }}
+          MULTIPOOLER_IMAGE: ${{ inputs.multipooler-image }}
+          MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
+        run: |
+          images=("gcr.io/etcd-development/etcd:v3.6.7")
+
+          # One upstream multigres image supplies all four Go components.
+          if [ -z "$MULTIADMIN_IMAGE" ] ||
+             [ -z "$MULTIORCH_IMAGE" ] ||
+             [ -z "$MULTIPOOLER_IMAGE" ] ||
+             [ -z "$MULTIGATEWAY_IMAGE" ]; then
+            images+=("ghcr.io/multigres/multigres:main")
+          fi
+          [ -n "$POSTGRES_IMAGE" ] ||
+            images+=("ghcr.io/multigres/pgctld:main")
+          [ -n "$MULTIADMIN_WEB_IMAGE" ] ||
+            images+=("ghcr.io/multigres/multiadmin-web:main")
+
+          for image in \
+            "$POSTGRES_IMAGE" \
+            "$MULTIADMIN_IMAGE" \
+            "$MULTIADMIN_WEB_IMAGE" \
+            "$MULTIORCH_IMAGE" \
+            "$MULTIPOOLER_IMAGE" \
+            "$MULTIGATEWAY_IMAGE"; do
+            [ -z "$image" ] || images+=("$image")
+          done
+
+          E2E_IMAGES="$(printf '%s\n' "${images[@]}" | sort -u | tr '\n' ' ')" \
+            make pull-e2e-images
 
       - name: Compute test packages
         id: packages
@@ -108,6 +207,12 @@ jobs:
           go test -tags=e2e ${{ steps.packages.outputs.packages }} -v -count=1 -timeout=${{ inputs.timeout-minutes }}m
         env:
           E2E_KEEP_CLUSTERS: never
+          E2E_POSTGRES_IMAGE: ${{ inputs.postgres-image }}
+          E2E_MULTIADMIN_IMAGE: ${{ inputs.multiadmin-image }}
+          E2E_MULTIADMIN_WEB_IMAGE: ${{ inputs.multiadmin-web-image }}
+          E2E_MULTIORCH_IMAGE: ${{ inputs.multiorch-image }}
+          E2E_MULTIPOOLER_IMAGE: ${{ inputs.multipooler-image }}
+          E2E_MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
 
       - name: Collect Kind logs on failure
         if: failure()
