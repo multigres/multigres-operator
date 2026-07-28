@@ -1,15 +1,11 @@
 name: Proto sync failure tracking
 
-on:
+on: # zizmor: ignore[dangerous-triggers] Observer never loads or executes PR content.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
 
-# workflow_run executes from the default branch, so it can safely record a
-# failure from the bot-created PR without checking out or running PR code.
-permissions:
-  issues: write
-  pull-requests: read
+permissions: {}
 
 concurrency:
   group: proto-sync-failure-tracking
@@ -23,6 +19,9 @@ jobs:
       github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      issues: write # Label the PR and create or update its tracking issue.
+      pull-requests: read # Verify the PR head, branch, body, and bot identity.
     steps:
       - name: Create or update upstream-impact issue
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8

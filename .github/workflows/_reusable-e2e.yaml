@@ -36,34 +36,35 @@ on:
       # replace the whole data plane (nightly compatibility), selected
       # components (version-skew), or only postgres (custom Postgres builds).
       # An empty input leaves that component unset in the test CR, so the
-      # checked-out operator applies its compiled-in default.
+      # checked-out operator applies its compiled-in default. Non-empty values
+      # must be fully qualified OCI references with either a tag or sha256 digest.
       postgres-image:
-        description: Override the postgres/pgctld image in every e2e MultigresCluster
+        description: Fully qualified postgres/pgctld OCI image override
         default: ''
         required: false
         type: string
       multiadmin-image:
-        description: Override the multiadmin image in every e2e MultigresCluster
+        description: Fully qualified multiadmin OCI image override
         default: ''
         required: false
         type: string
       multiadmin-web-image:
-        description: Override the multiadmin-web image in every e2e MultigresCluster
+        description: Fully qualified multiadmin-web OCI image override
         default: ''
         required: false
         type: string
       multiorch-image:
-        description: Override the multiorch image in every e2e MultigresCluster
+        description: Fully qualified multiorch OCI image override
         default: ''
         required: false
         type: string
       multipooler-image:
-        description: Override the multipooler image in every e2e MultigresCluster
+        description: Fully qualified multipooler OCI image override
         default: ''
         required: false
         type: string
       multigateway-image:
-        description: Override the multigateway image in every e2e MultigresCluster
+        description: Fully qualified multigateway OCI image override
         default: ''
         required: false
         type: string
@@ -127,6 +128,16 @@ jobs:
           MULTIPOOLER_IMAGE: ${{ inputs.multipooler-image }}
           MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
         run: |
+          validate_image() {
+            local image="$1"
+            [ -z "$image" ] ||
+              [[ "$image" =~ ^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9._/-]+(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[0-9a-f]{64})$ ]] ||
+              {
+                echo "::error::Invalid OCI image reference"
+                return 1
+              }
+          }
+
           replace_default() {
             local constant="$1"
             local image="$2"
@@ -137,6 +148,13 @@ jobs:
               api/v1alpha1/image_defaults.go
             grep -F "${constant} = \"${image}\"" api/v1alpha1/image_defaults.go
           }
+
+          validate_image "$POSTGRES_IMAGE"
+          validate_image "$MULTIADMIN_IMAGE"
+          validate_image "$MULTIADMIN_WEB_IMAGE"
+          validate_image "$MULTIORCH_IMAGE"
+          validate_image "$MULTIPOOLER_IMAGE"
+          validate_image "$MULTIGATEWAY_IMAGE"
 
           replace_default DefaultPostgresImage "$POSTGRES_IMAGE"
           replace_default DefaultMultiadminImage "$MULTIADMIN_IMAGE"
@@ -186,25 +204,41 @@ jobs:
             make pull-e2e-images
 
       - name: Compute test packages
-        id: packages
+        env:
+          MODE: ${{ inputs.mode }}
+          TEST_SPEC: ${{ inputs.test-spec }}
         run: |
-          mode="${{ inputs.mode }}"
-          spec="${{ inputs.test-spec }}"
-          if [ -z "$spec" ]; then
-            echo "packages=./test/e2e/${mode}/..." >> "$GITHUB_OUTPUT"
+          case "$MODE" in
+            shared | dedicated) ;;
+            *)
+              echo "::error::Mode must be 'shared' or 'dedicated'"
+              exit 1
+              ;;
+          esac
+
+          package_file="$RUNNER_TEMP/e2e-packages"
+          if [ -z "$TEST_SPEC" ]; then
+            printf './test/e2e/%s/...\n' "$MODE" > "$package_file"
           else
-            pkgs=""
-            for t in $(echo "$spec" | tr ',' ' '); do
-              pkgs="$pkgs ./test/e2e/${mode}/${t}/"
+            : > "$package_file"
+            IFS=',' read -r -a tests <<< "$TEST_SPEC"
+            for test_name in "${tests[@]}"; do
+              [[ "$test_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] ||
+                {
+                  echo "::error::Invalid e2e test name"
+                  exit 1
+                }
+              package="./test/e2e/${MODE}/${test_name}/"
+              [ -d "$package" ] ||
+                {
+                  echo "::error::Unknown e2e test '$test_name' for mode '$MODE'"
+                  exit 1
+                }
+              printf '%s\n' "$package" >> "$package_file"
             done
-            echo "packages=$pkgs" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run e2e tests
-        run: |
-          OPERATOR_IMG=$(make -s print-img) \
-          REPO_ROOT=$(pwd) \
-          go test -tags=e2e ${{ steps.packages.outputs.packages }} -v -count=1 -timeout=${{ inputs.timeout-minutes }}m
         env:
           E2E_KEEP_CLUSTERS: never
           E2E_POSTGRES_IMAGE: ${{ inputs.postgres-image }}
@@ -213,6 +247,24 @@ jobs:
           E2E_MULTIORCH_IMAGE: ${{ inputs.multiorch-image }}
           E2E_MULTIPOOLER_IMAGE: ${{ inputs.multipooler-image }}
           E2E_MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
+          TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        run: |
+          [[ "$TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] ||
+            {
+              echo "::error::Timeout must be a whole number of minutes"
+              exit 1
+            }
+          mapfile -t packages < "$RUNNER_TEMP/e2e-packages"
+          [ "${#packages[@]}" -gt 0 ] ||
+            {
+              echo "::error::No e2e test packages selected"
+              exit 1
+            }
+
+          OPERATOR_IMG="$(make -s print-img)" \
+          REPO_ROOT="$GITHUB_WORKSPACE" \
+          go test -tags=e2e "${packages[@]}" -v -count=1 \
+            "-timeout=${TIMEOUT_MINUTES}m"
 
       - name: Collect Kind logs on failure
         if: failure()

@@ -1,14 +1,11 @@
 name: Nightly upstream compatibility
 
 on:
-  repository_dispatch:
-    types: [nightly-published]
-# Fallback if the post-publish repository dispatch is missed. Each run selects
-# only a fully successful upstream nightly build; an in-progress build is never
-# consumed. A SHA already recorded green is skipped, while failed attempts may
-# be retried.
+# Poll once after the upstream 05:00 UTC build. The run selects only a fully
+# successful nightly build; an in-progress build is never consumed. A SHA
+# already recorded green is skipped, while failures can be retried manually.
   schedule:
-    - cron: "0 7,9,11 * * *"
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       upstream-sha:
@@ -34,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      actions: read
+      actions: read # Read prior canary runs and green-state artifacts.
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       short-sha: ${{ steps.resolve.outputs.short_sha }}
@@ -62,7 +59,7 @@ jobs:
               },
             );
             const canonicalRuns = runs
-              .filter((run) => ['schedule', 'repository_dispatch'].includes(run.event))
+              .filter((run) => run.event === 'schedule')
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             for (const run of canonicalRuns) {
               const { data } = await github.rest.actions.listWorkflowRunArtifacts({
@@ -86,12 +83,10 @@ jobs:
       - name: Resolve upstream SHA
         id: resolve
         env:
-          DISPATCH_SHA: ${{ github.event.client_payload.sha }}
           INPUT_SHA: ${{ inputs.upstream-sha }}
           INPUT_OPERATOR_REF: ${{ inputs.operator-ref }}
         run: |
-          sha="$DISPATCH_SHA"
-          [ -n "$sha" ] || sha="$INPUT_SHA"
+          sha="$INPUT_SHA"
           if [ -z "$sha" ]; then
             run_id="$(
               curl --fail --retry 3 --silent --show-error \
@@ -137,38 +132,22 @@ jobs:
             echo "multiadmin_web_image=ghcr.io/multigres/multiadmin-web:nightly-sha-$short_sha"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
-        with:
-          app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
-          private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
-          owner: multigres
-          repositories: multigres
-          permission-contents: read
-
       - name: Validate and gate upstream SHA
         id: gate
         env:
           SHA: ${{ steps.resolve.outputs.sha }}
           OPERATOR_REF: ${{ steps.resolve.outputs.operator_ref }}
           EVENT_NAME: ${{ github.event_name }}
-          DISPATCH_SENDER: ${{ github.event.sender.login }}
-          EXPECTED_SENDER: ${{ steps.app-token.outputs.app-slug }}[bot]
           LAST_GREEN_SHA: ${{ steps.last-green.outputs.sha }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if [ "$EVENT_NAME" = "repository_dispatch" ]; then
-            [ -n "$EXPECTED_SENDER" ] &&
-              [ "${DISPATCH_SENDER,,}" = "${EXPECTED_SENDER,,}" ] ||
-              {
-                echo "::error::nightly-published dispatch came from an unexpected sender"
-                exit 1
-              }
-          fi
-
-          gh api "repos/multigres/multigres/compare/main...$SHA" --jq '.status' |
-            grep -qE '^(identical|behind)$' ||
+          relation="$(
+            curl --fail --retry 3 --silent --show-error \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/multigres/multigres/compare/main...$SHA" |
+              jq -r '.status'
+          )"
+          [[ "$relation" =~ ^(identical|behind)$ ]] ||
             { echo "::error::SHA is not on multigres/main"; exit 1; }
 
           should_run=true
@@ -176,9 +155,11 @@ jobs:
              [ "$OPERATOR_REF" = "main" ] &&
              [ -n "$LAST_GREEN_SHA" ]; then
             relation="$(
-              gh api \
-                "repos/multigres/multigres/compare/$LAST_GREEN_SHA...$SHA" \
-                --jq '.status'
+              curl --fail --retry 3 --silent --show-error \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/multigres/multigres/compare/$LAST_GREEN_SHA...$SHA" |
+                jq -r '.status'
             )"
             case "$relation" in
               identical | behind)
@@ -206,12 +187,20 @@ jobs:
     if: needs.resolve.outputs.should-run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions: {}
+    permissions:
+      attestations: read # Fetch signed provenance from GitHub.
+      packages: read # Authenticate to GHCR for OCI verification.
     outputs:
       multigres-image: ${{ steps.images.outputs.multigres_image }}
       pgctld-image: ${{ steps.images.outputs.pgctld_image }}
       multiadmin-web-image: ${{ steps.images.outputs.multiadmin_web_image }}
     steps:
+      - name: Authenticate to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
       - name: Resolve immutable nightly image digests
         id: images
         env:
@@ -235,6 +224,47 @@ jobs:
             echo "pgctld_image=$(resolve_digest "$PGCTLD_IMAGE")"
             echo "multiadmin_web_image=$(resolve_digest "$MULTIADMIN_WEB_IMAGE")"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify nightly image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+          MULTIGRES_IMAGE: ${{ steps.images.outputs.multigres_image }}
+          PGCTLD_IMAGE: ${{ steps.images.outputs.pgctld_image }}
+          MULTIADMIN_WEB_IMAGE: ${{ steps.images.outputs.multiadmin_web_image }}
+        run: |
+          verify_image() {
+            local image="$1"
+            local expected_name="${image%@*}"
+            local verification
+            verification="$(
+              gh attestation verify "oci://$image" \
+                --repo multigres/multigres \
+                --signer-workflow \
+                  multigres/multigres/.github/workflows/nightly-build.yml \
+                --source-ref refs/heads/main \
+                --source-digest "$UPSTREAM_SHA" \
+                --deny-self-hosted-runners \
+                --format json
+            )"
+            jq -e --arg expected_name "$expected_name" '
+              any(
+                .[];
+                any(
+                  .verificationResult.statement.subject[]?;
+                  .name == $expected_name
+                )
+              )
+            ' <<< "$verification" > /dev/null ||
+              {
+                echo "::error::Attestation subject does not match $expected_name"
+                return 1
+              }
+          }
+
+          verify_image "$MULTIGRES_IMAGE"
+          verify_image "$PGCTLD_IMAGE"
+          verify_image "$MULTIADMIN_WEB_IMAGE"
 
   e2e:
     name: Canary e2e
@@ -263,7 +293,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      issues: write
+      issues: write # Create or update the compatibility tracking issue.
     steps:
       - name: Update tracking issue
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -290,7 +320,7 @@ jobs:
               process.env.E2E_RESULT === 'success';
             const canonicalRun =
               process.env.OPERATOR_REF === 'main' &&
-              ['schedule', 'repository_dispatch'].includes(process.env.EVENT_NAME);
+              process.env.EVENT_NAME === 'schedule';
             const failureStage =
               process.env.RESOLVE_RESULT !== 'success' ? 'SHA resolution/validation' :
               process.env.PREFLIGHT_RESULT !== 'success' ? 'nightly image preflight' :
@@ -415,8 +445,7 @@ jobs:
           needs.preflight.result == 'success' &&
           needs.e2e.result == 'success' &&
           needs.resolve.outputs.operator-ref == 'main' &&
-          (github.event_name == 'schedule' ||
-           github.event_name == 'repository_dispatch')
+          github.event_name == 'schedule'
         env:
           SHA: ${{ needs.resolve.outputs.sha }}
         run: |
@@ -429,8 +458,7 @@ jobs:
           needs.preflight.result == 'success' &&
           needs.e2e.result == 'success' &&
           needs.resolve.outputs.operator-ref == 'main' &&
-          (github.event_name == 'schedule' ||
-           github.event_name == 'repository_dispatch')
+          github.event_name == 'schedule'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: nightly-compatibility-green-${{ needs.resolve.outputs.sha }}
