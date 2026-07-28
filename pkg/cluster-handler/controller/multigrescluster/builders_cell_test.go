@@ -104,6 +104,34 @@ func TestBuildCell(t *testing.T) {
 		}
 	})
 
+	t.Run("Propagates InternalTLS", func(t *testing.T) {
+		clusterWithInternalTLS := cluster.DeepCopy()
+		clusterWithInternalTLS.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{
+			Enabled: ptr.To(true),
+		}
+
+		got, err := BuildCell(
+			clusterWithInternalTLS,
+			cellCfg,
+			gatewaySpec,
+			noGatewayPlacement,
+			localTopoSpec,
+			globalTopoRef,
+			allCells,
+			scheme,
+		)
+		if err != nil {
+			t.Fatalf("BuildCell() error = %v", err)
+		}
+		if got.Spec.InternalTLS != clusterWithInternalTLS.Spec.InternalTLS {
+			t.Fatalf(
+				"InternalTLS = %#v, want propagated pointer %#v",
+				got.Spec.InternalTLS,
+				clusterWithInternalTLS.Spec.InternalTLS,
+			)
+		}
+	})
+
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
 		_, err := BuildCell(

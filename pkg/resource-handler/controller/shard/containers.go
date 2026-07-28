@@ -186,7 +186,7 @@ func postgresPasswordVolumeMount() corev1.VolumeMount {
 }
 
 func shardTLSConfigured(shard *multigresv1alpha1.Shard) bool {
-	return shard.Spec.CertCommonName != ""
+	return shard.Spec.InternalTLS.IsEnabled()
 }
 
 func buildShardTLSVolume(shard *multigresv1alpha1.Shard, component string) corev1.Volume {

@@ -8,6 +8,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
@@ -79,6 +80,24 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("Propagates InternalTLS", func(t *testing.T) {
+		c := cluster.DeepCopy()
+		c.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)}
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-internal-tls"}
+
+		got, err := BuildTableGroup(c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.InternalTLS != c.Spec.InternalTLS {
+			t.Fatalf(
+				"InternalTLS = %#v, want propagated pointer %#v",
+				got.Spec.InternalTLS,
+				c.Spec.InternalTLS,
+			)
+		}
+	})
+
 	t.Run("PostgresPasswordSecretRef", func(t *testing.T) {
 		c := *cluster
 		c.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
@@ -102,23 +121,6 @@ func TestBuildTableGroup(t *testing.T) {
 				"PostgresPasswordSecretRef.Key = %q, want %q",
 				got.Spec.PostgresPasswordSecretRef.Key,
 				"current",
-			)
-		}
-	})
-
-	t.Run("CertCommonName", func(t *testing.T) {
-		c := *cluster
-		c.Spec.CertCommonName = "db.abc123.supabase.red"
-		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-tls"}
-		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.CertCommonName != "db.abc123.supabase.red" {
-			t.Errorf(
-				"CertCommonName = %q, want %q",
-				got.Spec.CertCommonName,
-				"db.abc123.supabase.red",
 			)
 		}
 	})

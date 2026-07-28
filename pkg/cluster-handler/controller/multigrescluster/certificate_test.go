@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -168,6 +169,7 @@ func TestBuildInternalCertificates(t *testing.T) {
 			UID:       "cluster-uid",
 		},
 		Spec: multigresv1alpha1.MultigresClusterSpec{
+			InternalTLS:    &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
 			CertCommonName: "db.abc123.supabase.red",
 		},
 	}
@@ -234,8 +236,6 @@ func TestBuildInternalCertificates(t *testing.T) {
 			wantDNSNames = append(
 				wantDNSNames,
 				"multipooler.test-cluster.supabase.multigres.internal",
-				cluster.Spec.CertCommonName,
-				"abc123.supabase.red",
 			)
 		}
 		if diff := cmp.Diff(wantDNSNames, spec["dnsNames"]); diff != "" {
@@ -262,59 +262,107 @@ func TestBuildInternalCertificates(t *testing.T) {
 		changedByName[cert.GetName()] = cert
 	}
 
-	gatewayName := "multigateway.test-cluster.supabase.multigres.internal"
-	gatewayChecked := false
 	for _, originalCert := range got {
 		changedCert, ok := changedByName[originalCert.GetName()]
 		if !ok {
 			t.Fatalf("Certificate %q missing after external name change", originalCert.GetName())
 		}
-		if originalCert.GetName() != gatewayName {
-			if diff := cmp.Diff(originalCert, changedCert); diff != "" {
-				t.Errorf(
-					"internal Certificate %q changed with external CertCommonName (-want +got):\n%s",
-					originalCert.GetName(),
-					diff,
-				)
-			}
-			continue
-		}
-
-		gatewayChecked = true
-		changedSpec, ok := changedCert.Object["spec"].(map[string]any)
-		if !ok {
-			t.Fatal("changed multigateway spec is not a map")
-		}
-		wantChangedDNSNames := []any{
-			gatewayName,
-			"multipooler.test-cluster.supabase.multigres.internal",
-			"db.changed.supabase.red",
-			"changed.supabase.red",
-		}
-		if diff := cmp.Diff(wantChangedDNSNames, changedSpec["dnsNames"]); diff != "" {
-			t.Errorf("changed multigateway dnsNames mismatch (-want +got):\n%s", diff)
-		}
-
-		originalWithoutDNSNames := originalCert.DeepCopy()
-		changedWithoutDNSNames := changedCert.DeepCopy()
-		delete(originalWithoutDNSNames.Object["spec"].(map[string]any), "dnsNames")
-		delete(changedWithoutDNSNames.Object["spec"].(map[string]any), "dnsNames")
-		if diff := cmp.Diff(originalWithoutDNSNames, changedWithoutDNSNames); diff != "" {
+		if diff := cmp.Diff(originalCert, changedCert); diff != "" {
 			t.Errorf(
-				"multigateway Certificate changed beyond public DNS SANs (-want +got):\n%s",
+				"internal Certificate %q changed with external CertCommonName (-want +got):\n%s",
+				originalCert.GetName(),
 				diff,
 			)
 		}
-	}
-	if !gatewayChecked {
-		t.Fatal("multigateway Certificate was not checked after external name change")
 	}
 }
 
 func TestReconcileCertificate(t *testing.T) {
 	scheme := setupScheme()
+	wantInternalCertificates := func(
+		cluster *multigresv1alpha1.MultigresCluster,
+	) map[string]string {
+		want := make(map[string]string, 4)
+		for _, component := range []string{
+			multigresv1alpha1.ComponentMultiAdminTLS,
+			multigresv1alpha1.ComponentMultiGatewayTLS,
+			multigresv1alpha1.ComponentMultiOrchTLS,
+			multigresv1alpha1.ComponentMultiPoolerTLS,
+		} {
+			name := multigresv1alpha1.ComponentCertCommonName(
+				component,
+				cluster.Name,
+				cluster.Namespace,
+			)
+			want[name] = multigresv1alpha1.ComponentCertSecretName(
+				component,
+				cluster.Name,
+				cluster.Namespace,
+			)
+		}
+		return want
+	}
+	assertCertificates := func(
+		t *testing.T,
+		fc client.Client,
+		cluster *multigresv1alpha1.MultigresCluster,
+		want map[string]string,
+	) {
+		t.Helper()
+		certificates := &unstructured.UnstructuredList{}
+		certificates.SetGroupVersionKind(certGVK)
+		if err := fc.List(
+			t.Context(),
+			certificates,
+			client.InNamespace(cluster.Namespace),
+		); err != nil {
+			t.Fatalf("list Certificates: %v", err)
+		}
+		if len(certificates.Items) != len(want) {
+			t.Fatalf("got %d Certificates, want %d", len(certificates.Items), len(want))
+		}
 
-	t.Run("no-op when CertCommonName is empty and no prior cert", func(t *testing.T) {
+		seen := make(map[string]struct{}, len(certificates.Items))
+		for _, certificate := range certificates.Items {
+			wantSecret, ok := want[certificate.GetName()]
+			if !ok {
+				t.Errorf("unexpected Certificate %q", certificate.GetName())
+				continue
+			}
+			if _, duplicate := seen[certificate.GetName()]; duplicate {
+				t.Errorf("duplicate Certificate %q", certificate.GetName())
+			}
+			seen[certificate.GetName()] = struct{}{}
+
+			gotSecret, found, err := unstructured.NestedString(
+				certificate.Object,
+				"spec",
+				"secretName",
+			)
+			if err != nil {
+				t.Errorf("Certificate %q secretName: %v", certificate.GetName(), err)
+			} else if !found {
+				t.Errorf("Certificate %q has no secretName", certificate.GetName())
+			} else if gotSecret != wantSecret {
+				t.Errorf(
+					"Certificate %q secretName = %q, want %q",
+					certificate.GetName(),
+					gotSecret,
+					wantSecret,
+				)
+			}
+			if len(certificate.GetOwnerReferences()) != 1 ||
+				certificate.GetOwnerReferences()[0].UID != cluster.UID {
+				t.Errorf(
+					"Certificate %q is not exclusively owned by cluster %q",
+					certificate.GetName(),
+					cluster.Name,
+				)
+			}
+		}
+	}
+
+	t.Run("creates only internal Certificates when internal TLS is enabled", func(t *testing.T) {
 		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := &MultigresClusterReconciler{
 			Client:   fc,
@@ -322,16 +370,24 @@ func TestReconcileCertificate(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 		cluster := &multigresv1alpha1.MultigresCluster{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "multigres.com/v1alpha1",
+				Kind:       "MultigresCluster",
+			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "c1", Namespace: "default", UID: "uid-1",
+			},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				InternalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
 			},
 		}
 		if err := r.reconcileCertificate(t.Context(), cluster); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		assertCertificates(t, fc, cluster, wantInternalCertificates(cluster))
 	})
 
-	t.Run("creates Certificate when CertCommonName is set", func(t *testing.T) {
+	t.Run("CertCommonName alone creates only the public Certificate", func(t *testing.T) {
 		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := &MultigresClusterReconciler{
 			Client:   fc,
@@ -354,20 +410,100 @@ func TestReconcileCertificate(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		got := &unstructured.Unstructured{}
-		got.SetGroupVersionKind(certGVK)
-		if err := fc.Get(t.Context(), types.NamespacedName{
-			Name: "db.abc123.supabase.red", Namespace: "default",
-		}, got); err != nil {
-			t.Fatalf("Certificate should exist: %v", err)
-		}
-		if got.GetOwnerReferences()[0].Name != "c2" {
-			t.Errorf(
-				"ownerRef.Name = %q, want c2",
-				got.GetOwnerReferences()[0].Name,
-			)
-		}
+		assertCertificates(t, fc, cluster, map[string]string{
+			cluster.Spec.CertCommonName: multigresv1alpha1.CertSecretName,
+		})
 	})
+	t.Run(
+		"disabled internal TLS creates no Certificates without a public name",
+		func(t *testing.T) {
+			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			r := &MultigresClusterReconciler{
+				Client:   fc,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "c2-disabled", Namespace: "default", UID: "uid-2-disabled",
+				},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					InternalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(false)},
+				},
+			}
+			if err := r.reconcileCertificate(t.Context(), cluster); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertCertificates(t, fc, cluster, map[string]string{})
+		},
+	)
+	t.Run("creates internal and public Certificates when both are enabled", func(t *testing.T) {
+		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := &MultigresClusterReconciler{
+			Client:   fc,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+		cluster := &multigresv1alpha1.MultigresCluster{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "multigres.com/v1alpha1",
+				Kind:       "MultigresCluster",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "c2-both", Namespace: "default", UID: "uid-2-both",
+			},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				InternalTLS:    &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
+				CertCommonName: "db.both.supabase.red",
+			},
+		}
+		if err := r.reconcileCertificate(t.Context(), cluster); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := wantInternalCertificates(cluster)
+		want[cluster.Spec.CertCommonName] = multigresv1alpha1.CertSecretName
+		assertCertificates(t, fc, cluster, want)
+	})
+
+	t.Run(
+		"disabling internal TLS deletes internal Certificates but keeps public",
+		func(t *testing.T) {
+			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			r := &MultigresClusterReconciler{
+				Client:   fc,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+			cluster := &multigresv1alpha1.MultigresCluster{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "multigres.com/v1alpha1",
+					Kind:       "MultigresCluster",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "c2-toggle", Namespace: "default", UID: "uid-2-toggle",
+				},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					InternalTLS:    &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
+					CertCommonName: "db.toggle.supabase.red",
+				},
+			}
+			if err := r.reconcileCertificate(t.Context(), cluster); err != nil {
+				t.Fatalf("create internal and public Certificates: %v", err)
+			}
+			want := wantInternalCertificates(cluster)
+			want[cluster.Spec.CertCommonName] = multigresv1alpha1.CertSecretName
+			assertCertificates(t, fc, cluster, want)
+
+			cluster.Spec.InternalTLS.Enabled = ptr.To(false)
+			if err := r.reconcileCertificate(t.Context(), cluster); err != nil {
+				t.Fatalf("disable internal TLS: %v", err)
+			}
+			assertCertificates(t, fc, cluster, map[string]string{
+				cluster.Spec.CertCommonName: multigresv1alpha1.CertSecretName,
+			})
+		},
+	)
 
 	t.Run("idempotent on repeated calls", func(t *testing.T) {
 		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -427,6 +563,7 @@ func TestReconcileCertificate(t *testing.T) {
 				Name: "c8", Namespace: "default", UID: "uid-8",
 			},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
+				InternalTLS:    &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
 				CertCommonName: "db.noop.supabase.red",
 			},
 		}

@@ -6,6 +6,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -106,6 +107,25 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 
+	t.Run("InternalTLS propagates from TableGroup to Shard", func(t *testing.T) {
+		tgWithInternalTLS := tg.DeepCopy()
+		tgWithInternalTLS.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{
+			Enabled: ptr.To(true),
+		}
+
+		got, err := BuildShard(tgWithInternalTLS, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if got.Spec.InternalTLS != tgWithInternalTLS.Spec.InternalTLS {
+			t.Fatalf(
+				"Spec.InternalTLS = %#v, want propagated pointer %#v",
+				got.Spec.InternalTLS,
+				tgWithInternalTLS.Spec.InternalTLS,
+			)
+		}
+	})
+
 	t.Run("PostgresPasswordSecretRef propagates from TableGroup to Shard", func(t *testing.T) {
 		tgWithRef := tg.DeepCopy()
 		tgWithRef.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
@@ -127,22 +147,6 @@ func TestBuildShard(t *testing.T) {
 			t.Errorf(
 				"Spec.PostgresPasswordSecretRef.Key = %v, want current",
 				got.Spec.PostgresPasswordSecretRef.Key,
-			)
-		}
-	})
-
-	t.Run("CertCommonName propagates from TableGroup to Shard", func(t *testing.T) {
-		tgWithTLS := tg.DeepCopy()
-		tgWithTLS.Spec.CertCommonName = "db.abc123.supabase.red"
-
-		got, err := BuildShard(tgWithTLS, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
-		if got.Spec.CertCommonName != "db.abc123.supabase.red" {
-			t.Errorf(
-				"Spec.CertCommonName = %v, want db.abc123.supabase.red",
-				got.Spec.CertCommonName,
 			)
 		}
 	})

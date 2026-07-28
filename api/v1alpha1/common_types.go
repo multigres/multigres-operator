@@ -125,6 +125,21 @@ type TopologyPruningConfig struct {
 	Enabled *bool `json:"enabled,omitempty"`
 }
 
+// InternalTLSConfig controls mutual TLS for communication between internal
+// Multigres components.
+type InternalTLSConfig struct {
+	// Enabled controls whether internal component mTLS is enabled.
+	// Default: false (nil or empty means disabled).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether internal component mTLS is enabled. It is safe to
+// call on a nil receiver.
+func (c *InternalTLSConfig) IsEnabled() bool {
+	return c != nil && c.Enabled != nil && *c.Enabled
+}
+
 // ContainerConfig defines generic container configuration.
 type ContainerConfig struct {
 	// Resources defines the compute resource requirements.

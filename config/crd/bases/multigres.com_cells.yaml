@@ -66,9 +66,8 @@ spec:
                 x-kubernetes-list-type: set
               certCommonName:
                 description: |-
-                  CertCommonName is the DNS name for the multigateway TLS certificate.
-                  When set, the cluster controller creates a cert-manager Certificate and
-                  the cell controller mounts the TLS secret into multigateway pods.
+                  CertCommonName is the DNS name for the public PostgreSQL TLS certificate
+                  terminated by multigateway. It does not enable internal component mTLS.
                   Inherited from MultigresCluster.Spec.CertCommonName.
                 type: string
               globalTopoServer:
@@ -133,6 +132,17 @@ spec:
                     type: string
                 required:
                 - multigateway
+                type: object
+              internalTLS:
+                description: |-
+                  InternalTLS is the resolved internal component mTLS configuration.
+                  When omitted or enabled is false, internal mTLS is disabled.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether internal component mTLS is enabled.
+                      Default: false (nil or empty means disabled).
+                    type: boolean
                 type: object
               logLevels:
                 description: |-

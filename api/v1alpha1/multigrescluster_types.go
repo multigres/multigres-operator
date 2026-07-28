@@ -147,11 +147,17 @@ type MultigresClusterSpec struct {
 	// Postgres superuser password.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
 
+	// InternalTLS configures mutual TLS for communication between internal
+	// Multigres components. When omitted or enabled is false, internal mTLS is disabled.
+	// +optional
+	InternalTLS *InternalTLSConfig `json:"internalTLS,omitempty"`
+
 	// CertCommonName is the DNS name used as the Common Name and SAN for the
-	// multigateway TLS certificate (e.g., "db.abc123.supabase.red").
+	// public PostgreSQL TLS certificate terminated by multigateway
+	// (e.g., "db.abc123.supabase.red"). It does not enable internal component mTLS.
 	// When set, the cluster controller creates a cert-manager Certificate resource
-	// and the cell controller mounts the resulting TLS secret into the multigateway pods.
-	// When empty, the multigateway runs without TLS.
+	// and the cell controller mounts the resulting TLS secret into multigateway pods.
+	// When empty, public PostgreSQL connections use no TLS.
 	// +optional
 	CertCommonName string `json:"certCommonName,omitempty"`
 }

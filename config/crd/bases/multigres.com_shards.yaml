@@ -189,11 +189,6 @@ spec:
                   Propagated from the cluster's cell configs so the shard controller
                   can inject nodeSelector without looking up Cell CRs.
                 type: object
-              certCommonName:
-                description: |-
-                  CertCommonName is the DNS name used by shard-side mTLS clients and servers.
-                  Inherited from MultigresCluster.Spec.CertCommonName.
-                type: string
               databaseName:
                 description: DatabaseName is the name of the logical database this
                   shard belongs to.
@@ -289,6 +284,17 @@ spec:
                   from the cluster spec.
                 maxLength: 512
                 type: string
+              internalTLS:
+                description: |-
+                  InternalTLS is the resolved internal component mTLS configuration.
+                  Inherited from MultigresCluster.Spec.InternalTLS by the resolver.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether internal component mTLS is enabled.
+                      Default: false (nil or empty means disabled).
+                    type: boolean
+                type: object
               logLevels:
                 description: |-
                   LogLevels is the resolved log level configuration for shard-level components.

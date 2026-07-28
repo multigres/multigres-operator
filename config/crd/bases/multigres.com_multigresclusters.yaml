@@ -2577,10 +2577,11 @@ spec:
               certCommonName:
                 description: |-
                   CertCommonName is the DNS name used as the Common Name and SAN for the
-                  multigateway TLS certificate (e.g., "db.abc123.supabase.red").
+                  public PostgreSQL TLS certificate terminated by multigateway
+                  (e.g., "db.abc123.supabase.red"). It does not enable internal component mTLS.
                   When set, the cluster controller creates a cert-manager Certificate resource
-                  and the cell controller mounts the resulting TLS secret into the multigateway pods.
-                  When empty, the multigateway runs without TLS.
+                  and the cell controller mounts the resulting TLS secret into multigateway pods.
+                  When empty, public PostgreSQL connections use no TLS.
                 type: string
               databases:
                 description: Databases defines the logical databases, table groups,
@@ -8370,6 +8371,17 @@ spec:
                     maxLength: 512
                     minLength: 1
                     type: string
+                type: object
+              internalTLS:
+                description: |-
+                  InternalTLS configures mutual TLS for communication between internal
+                  Multigres components. When omitted or enabled is false, internal mTLS is disabled.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls whether internal component mTLS is enabled.
+                      Default: false (nil or empty means disabled).
+                    type: boolean
                 type: object
               logLevels:
                 description: |-

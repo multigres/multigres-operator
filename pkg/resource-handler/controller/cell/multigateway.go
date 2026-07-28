@@ -232,19 +232,9 @@ func BuildMultigatewayDeployment(
 		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, *otelMount)
 	}
 
-	// Mount TLS certificate and add flags when CertCommonName is configured.
-	if cell.Spec.CertCommonName != "" {
-		podSpec := &deployment.Spec.Template.Spec
-		defaultMode := int32(0o444)
-		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
-			Name: tlsVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName:  multigresv1alpha1.CertSecretName,
-					DefaultMode: &defaultMode,
-				},
-			},
-		})
+	podSpec := &deployment.Spec.Template.Spec
+	defaultMode := int32(0o444)
+	if cell.Spec.InternalTLS.IsEnabled() {
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
 			Name: internalTLSVolumeName,
 			VolumeSource: corev1.VolumeSource{
@@ -261,19 +251,12 @@ func BuildMultigatewayDeployment(
 		podSpec.Containers[0].VolumeMounts = append(
 			podSpec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{
-				Name:      tlsVolumeName,
-				MountPath: tlsMountPath,
-				ReadOnly:  true,
-			},
-			corev1.VolumeMount{
 				Name:      internalTLSVolumeName,
 				MountPath: internalTLSMountPath,
 				ReadOnly:  true,
 			},
 		)
 		podSpec.Containers[0].Args = append(podSpec.Containers[0].Args,
-			"--pg-tls-cert-file", tlsCertFile,
-			"--pg-tls-key-file", tlsKeyFile,
 			"--grpc-cert", internalTLSCertFile,
 			"--grpc-key", internalTLSKeyFile,
 			"--grpc-ca", internalTLSCAFile,
@@ -288,6 +271,30 @@ func BuildMultigatewayDeployment(
 				cell.Namespace,
 			),
 			"--multipooler-grpc-require-tls",
+		)
+	}
+
+	if cell.Spec.CertCommonName != "" {
+		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{
+			Name: tlsVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  multigresv1alpha1.CertSecretName,
+					DefaultMode: &defaultMode,
+				},
+			},
+		})
+		podSpec.Containers[0].VolumeMounts = append(
+			podSpec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{
+				Name:      tlsVolumeName,
+				MountPath: tlsMountPath,
+				ReadOnly:  true,
+			},
+		)
+		podSpec.Containers[0].Args = append(podSpec.Containers[0].Args,
+			"--pg-tls-cert-file", tlsCertFile,
+			"--pg-tls-key-file", tlsKeyFile,
 		)
 	}
 

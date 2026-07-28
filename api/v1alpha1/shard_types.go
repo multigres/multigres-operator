@@ -161,6 +161,11 @@ type ShardSpec struct {
 	// +optional
 	PVCDeletionPolicy *PVCDeletionPolicy `json:"pvcDeletionPolicy,omitempty"`
 
+	// InternalTLS is the resolved internal component mTLS configuration.
+	// Inherited from MultigresCluster.Spec.InternalTLS by the resolver.
+	// +optional
+	InternalTLS *InternalTLSConfig `json:"internalTLS,omitempty"`
+
 	// Observability configures OpenTelemetry for shard-level data-plane components.
 	// Inherited from MultigresCluster.Spec.Observability by the resolver.
 	// +optional
@@ -195,11 +200,6 @@ type ShardSpec struct {
 	// PostgresPasswordSecretRef is the resolved Postgres superuser password
 	// Secret.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
-
-	// CertCommonName is the DNS name used by shard-side mTLS clients and servers.
-	// Inherited from MultigresCluster.Spec.CertCommonName.
-	// +optional
-	CertCommonName string `json:"certCommonName,omitempty"`
 
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Each entry is a map like {"topology.kubernetes.io/zone": "us-east-1a"}.

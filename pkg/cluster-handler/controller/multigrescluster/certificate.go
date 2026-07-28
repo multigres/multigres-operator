@@ -109,12 +109,6 @@ func buildInternalCertificates(
 				cluster.Name,
 				cluster.Namespace,
 			))
-			// Keep the public gateway DNS identities as SANs while retaining
-			// the internal logical identity as this certificate's CN and name.
-			dnsNames = append(
-				dnsNames,
-				publicGatewayDNSNames(cluster.Spec.CertCommonName)...,
-			)
 		}
 		cert, err := buildCertificateFromSpec(cluster, scheme, certSpec{
 			name: cn,
@@ -174,11 +168,11 @@ func buildCertificateFromSpec(
 	return cert, nil
 }
 
-// reconcileCertificate ensures the cert-manager Certificate matches the
-// cluster spec. When CertCommonName is set it creates or updates the
-// Certificate. When CertCommonName is empty it deletes a previously-managed
-// Certificate (identified by the generated-certs secret convention) so that
-// disabling TLS is deterministic.
+// reconcileCertificate ensures the cert-manager Certificates match the
+// cluster spec: the internal component certificates when internal mTLS is
+// enabled, and the public multigateway certificate when CertCommonName is
+// set. Certificates no longer desired are deleted along with their generated
+// secrets, so disabling either feature is deterministic.
 func (r *MultigresClusterReconciler) reconcileCertificate(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
@@ -188,25 +182,23 @@ func (r *MultigresClusterReconciler) reconcileCertificate(
 		return err
 	}
 
-	if cluster.Spec.CertCommonName == "" {
-		if err := r.deleteOwnedCertificates(ctx, cluster, certList, nil, nil); err != nil {
-			return err
+	desiredCerts := make([]*unstructured.Unstructured, 0, 5)
+	if cluster.Spec.InternalTLS.IsEnabled() {
+		internalCerts, err := buildInternalCertificates(cluster, r.Scheme)
+		if err != nil {
+			return fmt.Errorf("failed to build internal cert-manager Certificates: %w", err)
 		}
-		return nil
+		desiredCerts = append(desiredCerts, internalCerts...)
 	}
-
-	desired, err := buildCertificate(cluster, r.Scheme)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to build cert-manager Certificate: %w", err,
-		)
+	if cluster.Spec.CertCommonName != "" {
+		publicCert, err := buildCertificate(cluster, r.Scheme)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to build public cert-manager Certificate: %w", err,
+			)
+		}
+		desiredCerts = append(desiredCerts, publicCert)
 	}
-	desiredCerts := []*unstructured.Unstructured{desired}
-	internalCerts, err := buildInternalCertificates(cluster, r.Scheme)
-	if err != nil {
-		return fmt.Errorf("failed to build internal cert-manager Certificates: %w", err)
-	}
-	desiredCerts = append(desiredCerts, internalCerts...)
 
 	keepNames := make(map[string]struct{}, len(desiredCerts))
 	keepSecretNames := make(map[string]struct{}, len(desiredCerts))
@@ -291,9 +283,8 @@ func findCertificateByName(
 
 // deleteOwnedCertificates removes cert-manager Certificates owned by this
 // cluster whose name is not in keepNames, along with each one's generated
-// secret (unless its name is in keepSecretNames. Pass nil for both
-// maps to delete all certificates and secrets owned by this cluster (used
-// when TLS is disabled).
+// secret (unless its name is in keepSecretNames). With empty maps every
+// owned certificate and secret is deleted (used when TLS is disabled).
 func (r *MultigresClusterReconciler) deleteOwnedCertificates(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,

@@ -59,6 +59,7 @@ func BuildCell(
 			},
 			Observability:  cluster.Spec.Observability,
 			LogLevels:      cluster.Spec.LogLevels,
+			InternalTLS:    cluster.Spec.InternalTLS,
 			CertCommonName: cluster.Spec.CertCommonName,
 		},
 	}

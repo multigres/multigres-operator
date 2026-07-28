@@ -63,6 +63,7 @@ func BuildShard(
 				shardSpec.PVCDeletionPolicy,
 				tg.Spec.PVCDeletionPolicy,
 			),
+			InternalTLS:               tg.Spec.InternalTLS,
 			Observability:             tg.Spec.Observability,
 			LogLevels:                 tg.Spec.LogLevels,
 			Backup:                    shardSpec.Backup,
@@ -70,7 +71,6 @@ func BuildShard(
 			DurabilityPolicy:          tg.Spec.DurabilityPolicy,
 			PostgresSuperuser:         tg.Spec.PostgresSuperuser,
 			PostgresPasswordSecretRef: tg.Spec.PostgresPasswordSecretRef,
-			CertCommonName:            tg.Spec.CertCommonName,
 			CellTopologyLabels:        tg.Spec.CellTopologyLabels,
 		},
 	}

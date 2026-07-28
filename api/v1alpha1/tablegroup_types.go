@@ -64,6 +64,11 @@ type TableGroupSpec struct {
 	// +optional
 	PVCDeletionPolicy *PVCDeletionPolicy `json:"pvcDeletionPolicy,omitempty"`
 
+	// InternalTLS is the resolved internal component mTLS configuration.
+	// Inherited from MultigresCluster.Spec.InternalTLS.
+	// +optional
+	InternalTLS *InternalTLSConfig `json:"internalTLS,omitempty"`
+
 	// Observability configures OpenTelemetry for shard-level data-plane components.
 	// Inherited from MultigresCluster.Spec.Observability.
 	// +optional
@@ -101,11 +106,6 @@ type TableGroupSpec struct {
 
 	// PostgresPasswordSecretRef is inherited from the MultigresCluster.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
-
-	// CertCommonName is the DNS name used by shard-side mTLS clients and servers.
-	// Inherited from MultigresCluster.Spec.CertCommonName.
-	// +optional
-	CertCommonName string `json:"certCommonName,omitempty"`
 }
 
 // ShardResolvedSpec represents the fully calculated spec for a shard,

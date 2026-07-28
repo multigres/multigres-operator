@@ -200,7 +200,7 @@ func BuildMultiadminDeployment(
 		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts, *otelMount)
 	}
 
-	if cluster.Spec.CertCommonName != "" {
+	if cluster.Spec.InternalTLS.IsEnabled() {
 		podSpec := &deploy.Spec.Template.Spec
 		defaultMode := int32(0o444)
 		podSpec.Volumes = append(podSpec.Volumes, corev1.Volume{

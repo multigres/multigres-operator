@@ -88,9 +88,13 @@ type CellSpec struct {
 	// +optional
 	LogLevels ComponentLogLevels `json:"logLevels,omitempty"`
 
-	// CertCommonName is the DNS name for the multigateway TLS certificate.
-	// When set, the cluster controller creates a cert-manager Certificate and
-	// the cell controller mounts the TLS secret into multigateway pods.
+	// InternalTLS is the resolved internal component mTLS configuration.
+	// When omitted or enabled is false, internal mTLS is disabled.
+	// +optional
+	InternalTLS *InternalTLSConfig `json:"internalTLS,omitempty"`
+
+	// CertCommonName is the DNS name for the public PostgreSQL TLS certificate
+	// terminated by multigateway. It does not enable internal component mTLS.
 	// Inherited from MultigresCluster.Spec.CertCommonName.
 	// +optional
 	CertCommonName string `json:"certCommonName,omitempty"`

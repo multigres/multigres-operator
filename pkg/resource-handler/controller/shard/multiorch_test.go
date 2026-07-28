@@ -1,7 +1,6 @@
 package shard
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -769,11 +768,11 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "0",
-			CertCommonName: "db.abc123.supabase.red",
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 				Address:  "global-topo:2379",
 				RootPath: "/multigres/global",
 			},
+			InternalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
 		},
 	}
 
@@ -782,26 +781,21 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 		t.Fatalf("BuildMultiorchDeployment() error = %v", err)
 	}
 
+	found := false
 	for _, v := range got.Spec.Template.Spec.Volumes {
 		if v.Name != ShardTLSVolumeName {
 			continue
 		}
+		found = true
 		if v.Secret == nil {
 			t.Fatal("shard TLS volume should use Secret source")
 		}
 		wantSecretName := "multiorch.test-cluster.default.multigres.internal" //nolint:gosec // test constant
 		if v.Secret.SecretName != wantSecretName {
 			t.Errorf(
-				"shard TLS secret = %q, want %q",
+				"shard TLS secret = %q, want internal secret %q",
 				v.Secret.SecretName,
 				wantSecretName,
-			)
-		}
-		if strings.Contains(v.Secret.SecretName, shard.Spec.CertCommonName) {
-			t.Errorf(
-				"shard TLS secret %q must not contain public CertCommonName %q",
-				v.Secret.SecretName,
-				shard.Spec.CertCommonName,
 			)
 		}
 		if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
@@ -810,9 +804,39 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 				v.Secret.DefaultMode,
 			)
 		}
-		return
 	}
-	t.Error("expected shard TLS volume when certCommonName is set")
+	if !found {
+		t.Error("expected internal multiorch TLS volume when internal TLS is enabled")
+	}
+
+	for _, tc := range []struct {
+		name        string
+		internalTLS *multigresv1alpha1.InternalTLSConfig
+	}{
+		{name: "omitted"},
+		{
+			name:        "explicitly disabled",
+			internalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(false)},
+		},
+	} {
+		t.Run("absent when "+tc.name, func(t *testing.T) {
+			disabledShard := shard.DeepCopy()
+			disabledShard.Spec.InternalTLS = tc.internalTLS
+
+			disabled, err := BuildMultiorchDeployment(disabledShard, "zone-a", scheme)
+			if err != nil {
+				t.Fatalf("BuildMultiorchDeployment() error = %v", err)
+			}
+			for _, volume := range disabled.Spec.Template.Spec.Volumes {
+				if volume.Name == ShardTLSVolumeName {
+					t.Errorf(
+						"internal TLS volume should be absent for config %+v",
+						tc.internalTLS,
+					)
+				}
+			}
+		})
+	}
 }
 
 func TestBuildMultiorchService(t *testing.T) {

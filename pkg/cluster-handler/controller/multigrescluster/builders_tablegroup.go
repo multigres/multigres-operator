@@ -67,6 +67,7 @@ func BuildTableGroup(
 				tgCfg.Backup,
 				multigresv1alpha1.MergeBackupConfig(dbCfg.Backup, cluster.Spec.Backup),
 			),
+			InternalTLS:        cluster.Spec.InternalTLS,
 			Observability:      cluster.Spec.Observability,
 			LogLevels:          cluster.Spec.LogLevels,
 			CellTopologyLabels: buildCellTopologyLabels(cluster),
@@ -77,7 +78,6 @@ func BuildTableGroup(
 			),
 			PostgresSuperuser:         cluster.Spec.PostgresSuperuser,
 			PostgresPasswordSecretRef: cluster.Spec.PostgresPasswordSecretRef,
-			CertCommonName:            cluster.Spec.CertCommonName,
 		},
 	}
 

@@ -2,7 +2,6 @@ package multigrescluster
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -177,9 +176,12 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		}
 	})
 
-	t.Run("Success with internal mTLS", func(t *testing.T) {
+	t.Run("Success with internal mTLS and empty CertCommonName", func(t *testing.T) {
 		tlsCluster := cluster.DeepCopy()
-		tlsCluster.Spec.CertCommonName = "db.abc123.supabase.red"
+		tlsCluster.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)}
+		if tlsCluster.Spec.CertCommonName != "" {
+			t.Fatalf("test requires empty CertCommonName, got %q", tlsCluster.Spec.CertCommonName)
+		}
 
 		got, err := BuildMultiadminDeployment(tlsCluster, spec, scheme)
 		if err != nil {
@@ -199,13 +201,6 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 						"TLS secretName = %q, want %q",
 						v.Secret.SecretName,
 						wantSecretName,
-					)
-				}
-				if strings.Contains(v.Secret.SecretName, tlsCluster.Spec.CertCommonName) {
-					t.Errorf(
-						"internal TLS secretName %q must not contain public CertCommonName %q",
-						v.Secret.SecretName,
-						tlsCluster.Spec.CertCommonName,
 					)
 				}
 				if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
@@ -254,15 +249,54 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		if diff := cmp.Diff(wantArgs, tailArgs); diff != "" {
 			t.Errorf("mTLS args mismatch (-want +got):\n%s", diff)
 		}
-		serverName := tailArgs[len(tailArgs)-2]
-		if strings.Contains(serverName, tlsCluster.Spec.CertCommonName) {
-			t.Errorf(
-				"multipooler gRPC server name %q must not contain public CertCommonName %q",
-				serverName,
-				tlsCluster.Spec.CertCommonName,
-			)
-		}
 	})
+
+	for name, mutateCluster := range map[string]func(*multigresv1alpha1.MultigresCluster){
+		"nil InternalTLS": func(*multigresv1alpha1.MultigresCluster) {},
+		"disabled InternalTLS with public CertCommonName": func(
+			cluster *multigresv1alpha1.MultigresCluster,
+		) {
+			cluster.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(false)}
+			cluster.Spec.CertCommonName = "db.public.example.com"
+		},
+	} {
+		t.Run("No internal mTLS when "+name, func(t *testing.T) {
+			disabledCluster := cluster.DeepCopy()
+			mutateCluster(disabledCluster)
+			got, err := BuildMultiadminDeployment(disabledCluster, spec, scheme)
+			if err != nil {
+				t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+			}
+
+			for _, volume := range got.Spec.Template.Spec.Volumes {
+				if volume.Name == multiAdminTLSVolumeName {
+					t.Errorf("unexpected TLS volume %q", multiAdminTLSVolumeName)
+				}
+			}
+			container := got.Spec.Template.Spec.Containers[0]
+			for _, mount := range container.VolumeMounts {
+				if mount.Name == multiAdminTLSVolumeName {
+					t.Errorf("unexpected TLS volume mount %q", multiAdminTLSVolumeName)
+				}
+			}
+			internalTLSArgs := map[string]struct{}{
+				"--grpc-cert":                    {},
+				"--grpc-key":                     {},
+				"--grpc-ca":                      {},
+				"--grpc-server-ca":               {},
+				"--multipooler-grpc-cert":        {},
+				"--multipooler-grpc-key":         {},
+				"--multipooler-grpc-ca":          {},
+				"--multipooler-grpc-server-name": {},
+				"--multipooler-grpc-require-tls": {},
+			}
+			for _, arg := range container.Args {
+				if _, found := internalTLSArgs[arg]; found {
+					t.Errorf("unexpected internal TLS argument %q", arg)
+				}
+			}
+		})
+	}
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
