@@ -2,6 +2,8 @@ package multigrescluster
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -140,6 +142,22 @@ func buildInternalCertificates(
 	return certs, nil
 }
 
+// maxCommonNameBytes is the X.509 upper bound for the CN attribute
+// (RFC 5280 ub-common-name). cert-manager's webhook rejects longer CNs.
+const maxCommonNameBytes = 64
+
+// truncateCommonName returns cn unchanged when it fits the X.509 CN limit.
+// Longer values are truncated and given a deterministic hash suffix so the
+// result stays unique per identity and stable across reconciles.
+func truncateCommonName(cn string) string {
+	if len(cn) <= maxCommonNameBytes {
+		return cn
+	}
+	sum := sha256.Sum256([]byte(cn))
+	suffix := "-" + hex.EncodeToString(sum[:4])
+	return cn[:maxCommonNameBytes-len(suffix)] + suffix
+}
+
 func buildCertificateFromSpec(
 	cluster *multigresv1alpha1.MultigresCluster,
 	scheme *runtime.Scheme,
@@ -155,10 +173,13 @@ func buildCertificateFromSpec(
 	}
 
 	cert.Object["spec"] = map[string]any{
-		"secretName":     spec.secretName,
-		"dnsNames":       spec.dnsNames,
-		"duration":       CertDuration,
-		"literalSubject": fmt.Sprintf(CertLiteralSubjectTemplate, spec.commonName),
+		"secretName": spec.secretName,
+		"dnsNames":   spec.dnsNames,
+		"duration":   CertDuration,
+		"literalSubject": fmt.Sprintf(
+			CertLiteralSubjectTemplate,
+			truncateCommonName(spec.commonName),
+		),
 		"issuerRef": map[string]any{
 			"name":  CertIssuerName,
 			"kind":  "ClusterIssuer",
