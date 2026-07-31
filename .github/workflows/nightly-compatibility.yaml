@@ -1,0 +1,463 @@
+name: Nightly upstream compatibility
+
+on:
+# Poll once after the upstream 05:00 UTC build. The run selects only a fully
+# successful nightly build; an in-progress build is never consumed. A SHA
+# already recorded green is skipped, while failures can be retried manually.
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream-sha:
+        description: Full multigres commit SHA (empty uses the latest successful nightly build)
+        required: false
+        default: ""
+        type: string
+      operator-ref:
+        description: Operator ref to test (useful for intentionally testing an incompatible pair)
+        required: false
+        default: main
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: nightly-upstream-compatibility
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve immutable nightly
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read # Read prior canary runs and green-state artifacts.
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      short-sha: ${{ steps.resolve.outputs.short_sha }}
+      operator-ref: ${{ steps.resolve.outputs.operator_ref }}
+      last-green-sha: ${{ steps.last-green.outputs.sha }}
+      should-run: ${{ steps.gate.outputs.should_run }}
+      multigres-image: ${{ steps.resolve.outputs.multigres_image }}
+      pgctld-image: ${{ steps.resolve.outputs.pgctld_image }}
+      multiadmin-web-image: ${{ steps.resolve.outputs.multiadmin_web_image }}
+    steps:
+      - name: Find last green canary
+        id: last-green
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const prefix = 'nightly-compatibility-green-';
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'nightly-compatibility.yaml',
+                status: 'success',
+                per_page: 100,
+              },
+            );
+            const canonicalRuns = runs
+              .filter((run) => run.event === 'schedule')
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            for (const run of canonicalRuns) {
+              const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+                per_page: 100,
+              });
+              const artifact = data.artifacts.find((candidate) =>
+                !candidate.expired &&
+                candidate.name.startsWith(prefix) &&
+                /^[0-9a-f]{40}$/.test(candidate.name.slice(prefix.length))
+              );
+              if (artifact) {
+                core.setOutput('sha', artifact.name.slice(prefix.length));
+                return;
+              }
+            }
+            core.setOutput('sha', '');
+
+      - name: Resolve upstream SHA
+        id: resolve
+        env:
+          INPUT_SHA: ${{ inputs.upstream-sha }}
+          INPUT_OPERATOR_REF: ${{ inputs.operator-ref }}
+        run: |
+          sha="$INPUT_SHA"
+          if [ -z "$sha" ]; then
+            sha="$(
+              curl --fail --retry 3 --silent --show-error \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/multigres/multigres/actions/workflows/nightly-build.yml/runs?branch=main&status=success&per_page=1" |
+                jq -r '.workflow_runs[0].head_sha // empty'
+            )"
+            [ -n "$sha" ] ||
+              { echo "::error::No successful upstream nightly build found"; exit 1; }
+          fi
+
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] ||
+            { echo "::error::Expected a full upstream commit SHA, got '$sha'"; exit 1; }
+          short_sha="${sha:0:7}"
+          operator_ref="${INPUT_OPERATOR_REF:-main}"
+          [[ "$operator_ref" =~ ^[A-Za-z0-9._/@+-]+$ ]] ||
+            { echo "::error::Invalid operator ref '$operator_ref'"; exit 1; }
+
+          {
+            echo "sha=$sha"
+            echo "short_sha=$short_sha"
+            echo "operator_ref=$operator_ref"
+            echo "multigres_image=ghcr.io/multigres/multigres:nightly-sha-$sha"
+            echo "pgctld_image=ghcr.io/multigres/pgctld:nightly-sha-$sha"
+            echo "multiadmin_web_image=ghcr.io/multigres/multiadmin-web:nightly-sha-$sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate and gate upstream SHA
+        id: gate
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+          OPERATOR_REF: ${{ steps.resolve.outputs.operator_ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          LAST_GREEN_SHA: ${{ steps.last-green.outputs.sha }}
+        run: |
+          relation="$(
+            curl --fail --retry 3 --silent --show-error \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/multigres/multigres/compare/main...$SHA" |
+              jq -r '.status'
+          )"
+          [[ "$relation" =~ ^(identical|behind)$ ]] ||
+            { echo "::error::SHA is not on multigres/main"; exit 1; }
+
+          should_run=true
+          if [ "$EVENT_NAME" != "workflow_dispatch" ] &&
+             [ "$OPERATOR_REF" = "main" ] &&
+             [ -n "$LAST_GREEN_SHA" ]; then
+            relation="$(
+              curl --fail --retry 3 --silent --show-error \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/multigres/multigres/compare/$LAST_GREEN_SHA...$SHA" |
+                jq -r '.status'
+            )"
+            case "$relation" in
+              identical | behind)
+                should_run=false
+                ;;
+              ahead)
+                ;;
+              *)
+                echo "::error::Upstream SHA diverges from the last green SHA"
+                exit 1
+                ;;
+            esac
+          fi
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
+      - name: Record skipped duplicate or stale request
+        if: steps.gate.outputs.should_run == 'false'
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: echo "Skipping $SHA because it is not newer than the last green SHA."
+
+  preflight:
+    name: Verify immutable nightly
+    needs: resolve
+    if: needs.resolve.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      packages: read # Authenticate to GHCR for OCI verification.
+    outputs:
+      multigres-image: ${{ steps.images.outputs.multigres_image }}
+      pgctld-image: ${{ steps.images.outputs.pgctld_image }}
+      multiadmin-web-image: ${{ steps.images.outputs.multiadmin_web_image }}
+    steps:
+      - name: Authenticate to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+      - name: Resolve immutable nightly image digests
+        id: images
+        env:
+          MULTIGRES_IMAGE: ${{ needs.resolve.outputs.multigres-image }}
+          PGCTLD_IMAGE: ${{ needs.resolve.outputs.pgctld-image }}
+          MULTIADMIN_WEB_IMAGE: ${{ needs.resolve.outputs.multiadmin-web-image }}
+        run: |
+          resolve_digest() {
+            local image="$1"
+            local digest
+            digest="$(
+              docker buildx imagetools inspect "$image" \
+                --format '{{json .Manifest}}' |
+                jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
+            )"
+            echo "${image%:*}@$digest"
+          }
+
+          {
+            echo "multigres_image=$(resolve_digest "$MULTIGRES_IMAGE")"
+            echo "pgctld_image=$(resolve_digest "$PGCTLD_IMAGE")"
+            echo "multiadmin_web_image=$(resolve_digest "$MULTIADMIN_WEB_IMAGE")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify nightly image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+          MULTIGRES_IMAGE: ${{ steps.images.outputs.multigres_image }}
+          PGCTLD_IMAGE: ${{ steps.images.outputs.pgctld_image }}
+          MULTIADMIN_WEB_IMAGE: ${{ steps.images.outputs.multiadmin_web_image }}
+        run: |
+          verify_image() {
+            local image="$1"
+            local expected_name="${image%@*}"
+            local verification
+            verification="$(
+              gh attestation verify "oci://$image" \
+                --repo multigres/multigres \
+                --bundle-from-oci \
+                --signer-workflow \
+                  multigres/multigres/.github/workflows/nightly-build.yml \
+                --source-ref refs/heads/main \
+                --source-digest "$UPSTREAM_SHA" \
+                --deny-self-hosted-runners \
+                --format json
+            )"
+            jq -e --arg expected_name "$expected_name" '
+              any(
+                .[];
+                any(
+                  .verificationResult.statement.subject[]?;
+                  .name == $expected_name
+                )
+              )
+            ' <<< "$verification" > /dev/null ||
+              {
+                echo "::error::Attestation subject does not match $expected_name"
+                return 1
+              }
+          }
+
+          verify_image "$MULTIGRES_IMAGE"
+          verify_image "$PGCTLD_IMAGE"
+          verify_image "$MULTIADMIN_WEB_IMAGE"
+
+  e2e:
+    name: Canary e2e
+    needs: [resolve, preflight]
+    if: needs.preflight.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      ref: ${{ needs.resolve.outputs.operator-ref }}
+      timeout-minutes: 30
+      postgres-image: ${{ needs.preflight.outputs.pgctld-image }}
+      multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
+      multiadmin-web-image: ${{ needs.preflight.outputs.multiadmin-web-image }}
+      multiorch-image: ${{ needs.preflight.outputs.multigres-image }}
+      multipooler-image: ${{ needs.preflight.outputs.multigres-image }}
+      multigateway-image: ${{ needs.preflight.outputs.multigres-image }}
+
+  report:
+    name: Record compatibility result
+    needs: [resolve, preflight, e2e]
+    if: >-
+      always() &&
+      (needs.resolve.result != 'success' ||
+       needs.resolve.outputs.should-run == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write # Create or update the compatibility tracking issue.
+    steps:
+      - name: Update tracking issue
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+          SHORT_SHA: ${{ needs.resolve.outputs.short-sha }}
+          LAST_GREEN_SHA: ${{ needs.resolve.outputs.last-green-sha }}
+          OPERATOR_REF: ${{ needs.resolve.outputs.operator-ref }}
+          IMAGE_TAG: nightly-sha-${{ needs.resolve.outputs.sha }}
+        with:
+          script: |
+            const marker = '<!-- nightly-compatibility-canary -->';
+            const label = 'upstream-compatibility';
+            const runUrl =
+              `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}` +
+              `/actions/runs/${context.runId}`;
+            const succeeded =
+              process.env.RESOLVE_RESULT === 'success' &&
+              process.env.PREFLIGHT_RESULT === 'success' &&
+              process.env.E2E_RESULT === 'success';
+            const canonicalRun =
+              process.env.OPERATOR_REF === 'main' &&
+              process.env.EVENT_NAME === 'schedule';
+            const failureStage =
+              process.env.RESOLVE_RESULT !== 'success' ? 'SHA resolution/validation' :
+              process.env.PREFLIGHT_RESULT !== 'success' ? 'nightly image preflight' :
+              'operator e2e';
+            const upstreamSha = process.env.UPSTREAM_SHA || 'unknown';
+            const shortSha = process.env.SHORT_SHA || 'unknown';
+
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+                color: 'd73a4a',
+                description: 'Compatibility impact from an upstream Multigres change',
+              });
+            }
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+              per_page: 100,
+            });
+            const tracking = issues.find(
+              (issue) => !issue.pull_request && issue.body?.includes(marker),
+            );
+
+            if (succeeded) {
+              // Diagnostic skew runs must not advance or clear the canonical
+              // main-vs-nightly compatibility state.
+              if (!canonicalRun) {
+                core.info(
+                  `Diagnostic ${process.env.EVENT_NAME} run passed; ` +
+                  'leaving the main canary state unchanged.',
+                );
+                return;
+              }
+              if (tracking) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: tracking.number,
+                  body:
+                    `✅ Compatibility recovered at ` +
+                    `[multigres@${upstreamSha}]` +
+                    `(https://github.com/multigres/multigres/commit/${upstreamSha}). ` +
+                    `[Canary run](${runUrl})`,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: tracking.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+              }
+              return;
+            }
+
+            const range =
+              process.env.LAST_GREEN_SHA && process.env.UPSTREAM_SHA
+              ? `[${process.env.LAST_GREEN_SHA.slice(0, 7)}...${shortSha}]` +
+                `(https://github.com/multigres/multigres/compare/` +
+                `${process.env.LAST_GREEN_SHA}...${upstreamSha})`
+              : 'Unavailable (this is the first recorded canary result)';
+            const title =
+              `Nightly compatibility canary failing at multigres/${shortSha}`;
+            const body = `${marker}
+            ## Nightly compatibility failure
+
+            The nightly compatibility canary failed during **${failureStage}** for
+            ${process.env.UPSTREAM_SHA
+              ? `[multigres@${upstreamSha}](https://github.com/multigres/multigres/commit/${upstreamSha})`
+              : 'an unresolved upstream SHA'}.
+
+            - **Upstream image tag:** \`${process.env.IMAGE_TAG}\`
+            - **Operator ref:** \`${process.env.OPERATOR_REF}\`
+            - **Range since last green:** ${range}
+            - **Latest failed run:** [GitHub Actions](${runUrl})
+
+            This issue is updated on consecutive nightly failures and closed by the
+            first green canary, so one compatibility breakage produces one issue.
+            `;
+
+            if (tracking) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: tracking.number,
+                title,
+                body,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: tracking.number,
+                body:
+                  `Still failing during ${failureStage} at \`${upstreamSha}\`. ` +
+                  `[Latest run](${runUrl})`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: [label],
+              });
+            }
+
+      - name: Write green state
+        if: >-
+          needs.resolve.result == 'success' &&
+          needs.preflight.result == 'success' &&
+          needs.e2e.result == 'success' &&
+          needs.resolve.outputs.operator-ref == 'main' &&
+          github.event_name == 'schedule'
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          mkdir -p /tmp/nightly-compatibility
+          echo "$SHA" > /tmp/nightly-compatibility/upstream-sha
+
+      - name: Preserve green state
+        if: >-
+          needs.resolve.result == 'success' &&
+          needs.preflight.result == 'success' &&
+          needs.e2e.result == 'success' &&
+          needs.resolve.outputs.operator-ref == 'main' &&
+          github.event_name == 'schedule'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: nightly-compatibility-green-${{ needs.resolve.outputs.sha }}
+          path: /tmp/nightly-compatibility/upstream-sha
+          retention-days: 90
+
+      - name: Fail when canary failed
+        if: >-
+          always() &&
+          (needs.resolve.result != 'success' ||
+           needs.preflight.result != 'success' ||
+           needs.e2e.result != 'success')
+        env:
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+        run: |
+          echo "::error::Canary results: resolve=$RESOLVE_RESULT preflight=$PREFLIGHT_RESULT e2e=$E2E_RESULT"
+          exit 1

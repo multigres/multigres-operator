@@ -33,7 +33,8 @@ func testRemoveCell(t *testing.T) {
 	// Create cluster with 2 cells so we can try removing one.
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
 	cr.Spec.Cells = append(cr.Spec.Cells, multigresv1alpha1.CellConfig{
-		Name: "zone-b",
+		Name:   "zone-b",
+		Region: "us-central1",
 	})
 	if err := c.Create(context.Background(), cr); err != nil {
 		t.Fatalf("create MultigresCluster: %v", err)

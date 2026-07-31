@@ -1,0 +1,146 @@
+name: Proto sync failure tracking
+
+on: # zizmor: ignore[dangerous-triggers] Observer never loads or executes PR content.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: proto-sync-failure-tracking
+  cancel-in-progress: false
+
+jobs:
+  track:
+    name: Surface failed proto sync
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write # Label the PR and create or update its tracking issue.
+      pull-requests: read # Verify the PR head, branch, body, and bot identity.
+    steps:
+      - name: Create or update upstream-impact issue
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          # Exact App bot login, for example "multigres-bot[bot]".
+          EXPECTED_BOT_LOGIN: ${{ vars.MULTIGRES_BOT_LOGIN }}
+        with:
+          script: |
+            const prs = context.payload.workflow_run.pull_requests;
+            if (!prs?.length) {
+              core.info('The failed CI run is not associated with a pull request.');
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prs[0].number,
+            });
+            const expectedRepo = `${context.repo.owner}/${context.repo.repo}`;
+            const branchMatch = pr.head.ref.match(/^chore\/sync-proto-([0-9a-f]{7})$/);
+            const upstreamSha =
+              pr.body?.match(/multigres\/multigres@([0-9a-f]{40})/)?.[1];
+            const matchesSyncShape =
+              pr.head.repo?.full_name === expectedRepo &&
+              pr.user?.type === 'Bot' &&
+              branchMatch &&
+              upstreamSha?.startsWith(branchMatch[1]);
+            if (!matchesSyncShape) {
+              core.info(`PR #${pr.number} is not an automated proto-sync PR.`);
+              return;
+            }
+
+            const expectedBotLogin =
+              process.env.EXPECTED_BOT_LOGIN?.trim().toLowerCase();
+            if (!expectedBotLogin) {
+              core.setFailed(
+                'Could not resolve the expected GitHub App bot identity.',
+              );
+              return;
+            }
+            if (pr.user?.login?.toLowerCase() !== expectedBotLogin) {
+              core.info(
+                `PR #${pr.number} was opened by an unexpected bot identity.`,
+              );
+              return;
+            }
+
+            const label = 'upstream-impact';
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+                color: 'b60205',
+                description: 'An upstream change requires operator follow-up',
+              });
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: [label],
+            });
+
+            const marker = `<!-- proto-sync-failure:${pr.number} -->`;
+            const runUrl = context.payload.workflow_run.html_url;
+            const title = `Proto sync PR #${pr.number} failed CI (${upstreamSha})`;
+            const body = `${marker}
+            ## Upstream proto sync failed
+
+            Automated proto-sync PR #${pr.number} failed CI. This records the
+            upstream impact even if the generated PR is later repaired in place.
+
+            - **Proto-sync PR:** ${pr.html_url}
+            - **Upstream SHA:** \`${upstreamSha}\`
+            - **Failed CI run:** ${runUrl}
+            `;
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              labels: label,
+              per_page: 100,
+            });
+            const existing = issues.find(
+              (issue) => !issue.pull_request && issue.body?.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body,
+                state: 'open',
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `CI failed again: ${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: [label],
+              });
+            }

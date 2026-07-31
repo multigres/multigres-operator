@@ -277,6 +277,60 @@ func TestBuildInternalCertificates(t *testing.T) {
 	}
 }
 
+func TestTruncateCommonName(t *testing.T) {
+	const shortCN = "multiadmin.mgc-x.ha-project-x.multigres.internal"
+	const longCN = "multiadmin.mgc-iaogrkvrpaubkinljowl.ha-project-iaogrkvrpaubkinljowl.multigres.internal"
+	const longCNVariant = "multiadmin.mgc-iaogrkvrpaubkinljowm.ha-project-iaogrkvrpaubkinljowl.multigres.internal"
+
+	t.Run("short CN is returned unchanged", func(t *testing.T) {
+		if len(shortCN) > maxCommonNameBytes {
+			t.Fatalf(
+				"test fixture shortCN is %d bytes, want <= %d",
+				len(shortCN),
+				maxCommonNameBytes,
+			)
+		}
+		got := truncateCommonName(shortCN)
+		if diff := cmp.Diff(shortCN, got); diff != "" {
+			t.Errorf("truncateCommonName() mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("long CN is truncated to the X.509 limit", func(t *testing.T) {
+		if len(longCN) <= maxCommonNameBytes {
+			t.Fatalf("test fixture longCN is %d bytes, want > %d", len(longCN), maxCommonNameBytes)
+		}
+		got := truncateCommonName(longCN)
+		if len(got) > maxCommonNameBytes {
+			t.Errorf(
+				"truncateCommonName() = %q (%d bytes), want <= %d bytes",
+				got,
+				len(got),
+				maxCommonNameBytes,
+			)
+		}
+	})
+
+	t.Run("truncation is deterministic", func(t *testing.T) {
+		first := truncateCommonName(longCN)
+		second := truncateCommonName(longCN)
+		if diff := cmp.Diff(first, second); diff != "" {
+			t.Errorf("truncateCommonName() not deterministic (-first +second):\n%s", diff)
+		}
+	})
+
+	t.Run("different long inputs produce different outputs", func(t *testing.T) {
+		got := truncateCommonName(longCN)
+		gotVariant := truncateCommonName(longCNVariant)
+		if got == gotVariant {
+			t.Errorf(
+				"truncateCommonName() collided: %q == %q for different inputs",
+				got, gotVariant,
+			)
+		}
+	})
+}
+
 func TestReconcileCertificate(t *testing.T) {
 	scheme := setupScheme()
 	wantInternalCertificates := func(

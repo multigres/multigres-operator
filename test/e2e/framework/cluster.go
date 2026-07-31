@@ -80,16 +80,32 @@ func (c *Cluster) CRClient() (client.Client, error) {
 	return client.New(c.RestCfg, client.Options{Scheme: scheme})
 }
 
-// LoadImages loads multiple container images into a Kind cluster in a single
-// `kind load docker-image` call. This is ~2× faster than loading one-by-one
-// because Kind creates one shared archive instead of five separate ones.
+// LoadImages loads locally tagged container images into a Kind cluster in a
+// single `kind load docker-image` call. Digest-pinned images are pulled by
+// Kubernetes instead: Kind's Docker archive import does not preserve a usable
+// name for digest-only references.
 func LoadImages(ctx context.Context, clusterName string, images []string) error {
-	logf("loading %d images into %s...", len(images), clusterName)
+	images = kindLoadableImages(images)
+	if len(images) == 0 {
+		return nil
+	}
+	logf("loading %d locally tagged images into %s...", len(images), clusterName)
 	args := append([]string{"load", "docker-image", "--name", clusterName}, images...)
 	cmd := exec.CommandContext(ctx, "kind", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func kindLoadableImages(images []string) []string {
+	loadable := make([]string, 0, len(images))
+	for _, image := range images {
+		if strings.Contains(image, "@") {
+			continue
+		}
+		loadable = append(loadable, image)
+	}
+	return loadable
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +148,7 @@ func setupCluster(name string) (*Cluster, error) {
 	// Label nodes with cloud topology labels so pods with nodeSelectors
 	// derived from zoneId/region fields can be scheduled in Kind.
 	if err := labelAllNodes(kubecfg, map[string]string{
-		"topology.k8s.aws/zone-id":     "us-central1-a",
+		"topology.k8s.aws/zone-id":      "us-central1-a",
 		"topology.kubernetes.io/region": "us-central1",
 	}); err != nil {
 		return nil, fmt.Errorf("label kind nodes: %w", err)
@@ -140,7 +156,7 @@ func setupCluster(name string) (*Cluster, error) {
 
 	// Load images (batch — single CLI call, idempotent).
 	preset := testutil.DefaultOperatorPreset()
-	imgs := append([]string{preset.Image}, testutil.MultigresImages...)
+	imgs := append([]string{preset.Image}, runtimeImages()...)
 	if err := LoadImages(ctx, name, imgs); err != nil {
 		return nil, fmt.Errorf("load images: %w", err)
 	}

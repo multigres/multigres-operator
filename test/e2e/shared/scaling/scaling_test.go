@@ -73,6 +73,7 @@ func testScaleMultigateway(t *testing.T) {
 		"spec": {
 			"cells": [{
 				"name": "zone-a",
+				"zoneId": "us-central1-a",
 				"spec": {
 					"multigateway": {
 						"replicas": 2
@@ -133,14 +134,14 @@ func testLargeScaleMultigateway(t *testing.T) {
 
 	// Scale 1 → 5.
 	framework.PatchCluster(t, c, cr, []byte(`{
-		"spec": {"cells": [{"name": "zone-a", "spec": {"multigateway": {"replicas": 5}}}]}
+		"spec": {"cells": [{"name": "zone-a", "zoneId": "us-central1-a", "spec": {"multigateway": {"replicas": 5}}}]}
 	}`))
 	framework.WaitForDeploymentReplicas(t, c, ns, "multigateway", 5)
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Scale 5 → 1.
 	framework.PatchCluster(t, c, cr, []byte(`{
-		"spec": {"cells": [{"name": "zone-a", "spec": {"multigateway": {"replicas": 1}}}]}
+		"spec": {"cells": [{"name": "zone-a", "zoneId": "us-central1-a", "spec": {"multigateway": {"replicas": 1}}}]}
 	}`))
 	framework.WaitForDeploymentReplicas(t, c, ns, "multigateway", 1)
 	cluster.WaitForAllPodsReady(t, ns)

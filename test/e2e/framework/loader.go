@@ -74,6 +74,7 @@ func MustLoadCluster(repoRelPath, namespace string) *multigresv1alpha1.Multigres
 	for _, obj := range objs {
 		if cr, ok := obj.(*multigresv1alpha1.MultigresCluster); ok {
 			cr.Namespace = namespace
+			applyImageOverrides(cr)
 			WithCIResources(&cr.Spec)
 			return cr
 		}
