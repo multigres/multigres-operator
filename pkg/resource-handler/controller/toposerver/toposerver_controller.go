@@ -433,7 +433,9 @@ func (r *TopoServerReconciler) SetupWithManager(
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(
+			predicate.GenerationChangedPredicate{},
+		)).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		WithOptions(controllerOpts).

@@ -53,6 +53,9 @@ const (
 	// ComponentGlobalTopo identifies the global-topo component.
 	ComponentGlobalTopo = "global-topo"
 
+	// ComponentTopoServer identifies the toposerver component.
+	ComponentTopoServer = "toposerver"
+
 	// ComponentCell identifies the cell component.
 	ComponentCell = "cell"
 

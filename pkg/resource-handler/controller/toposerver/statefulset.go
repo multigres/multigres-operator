@@ -18,7 +18,7 @@ import (
 
 const (
 	// ComponentName is the component label value for toposerver resources
-	ComponentName = "toposerver"
+	ComponentName = metadata.ComponentTopoServer
 
 	// DefaultReplicas is the default number of etcd replicas
 	DefaultReplicas int32 = 3

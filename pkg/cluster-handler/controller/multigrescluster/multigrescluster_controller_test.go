@@ -1271,6 +1271,7 @@ func TestReconciler_PatchTrackingLabelsError(t *testing.T) {
 	scheme := setupScheme()
 	coreTpl, cellTpl, shardTpl, baseCluster, clusterName, namespace := setupFixtures(t)
 	baseCluster.Labels = nil // trigger patch
+	baseCluster.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 
 	baseClient := fake.NewClientBuilder().
 		WithScheme(scheme).

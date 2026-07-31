@@ -50,6 +50,7 @@ type MultigresClusterReconciler struct {
 // +kubebuilder:rbac:groups=multigres.com,resources=cells;tablegroups;toposervers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=multigres.com,resources=shards,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 func (r *MultigresClusterReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
@@ -103,6 +104,13 @@ func (r *MultigresClusterReconciler) Reconcile(
 		defer span.End()
 		ctx = monitoring.EnrichLoggerWithTrace(ctx)
 		l = log.FromContext(ctx)
+	}
+
+	if !cluster.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, cluster)
+	}
+	if err := r.ensureClusterFinalizer(ctx, cluster); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	res := resolver.NewResolver(r.Client, cluster.Namespace)
@@ -162,10 +170,6 @@ func (r *MultigresClusterReconciler) Reconcile(
 			}
 			l.V(1).Info("Patched tracking labels on cluster")
 		}
-	}
-
-	if !cluster.DeletionTimestamp.IsZero() {
-		return r.handleDeletion(ctx, cluster)
 	}
 
 	{
@@ -312,8 +316,29 @@ func (r *MultigresClusterReconciler) Reconcile(
 	return ctrl.Result{}, nil
 }
 
-// handleDeletion performs best-effort cleanup by deleting Cells and TableGroups.
-// Without finalizers, Kubernetes GC cascade via ownerReferences handles the rest.
+func (r *MultigresClusterReconciler) ensureClusterFinalizer(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) error {
+	if slices.Contains(cluster.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
+		return nil
+	}
+
+	before := cluster.DeepCopy()
+	cluster.Finalizers = append(cluster.Finalizers, multigresv1alpha1.FinalizerClusterCleanup)
+	patch := client.MergeFromWithOptions(
+		before,
+		client.MergeFromWithOptimisticLock{},
+	)
+	if err := r.Patch(ctx, cluster, patch); err != nil {
+		return fmt.Errorf("failed to add cluster cleanup finalizer: %w", err)
+	}
+
+	return nil
+}
+
+// handleDeletion deletes cluster children and retained topology PVCs before
+// releasing the cluster cleanup finalizer.
 func (r *MultigresClusterReconciler) handleDeletion(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
@@ -358,7 +383,57 @@ func (r *MultigresClusterReconciler) handleDeletion(
 		}
 	}
 
-	l.Info("Cluster best-effort cleanup complete")
+	// Topology PVCs may outlive their TopoServer when a cluster switches from
+	// managed to external topology. Clean them up from the cluster lifecycle so
+	// they cannot be orphaned when the cluster is later deleted.
+	topoPVCs := &corev1.PersistentVolumeClaimList{}
+	if err := r.List(
+		ctx,
+		topoPVCs,
+		ns,
+		client.MatchingLabels{
+			metadata.LabelMultigresCluster: cluster.Name,
+			metadata.LabelAppComponent:     metadata.ComponentTopoServer,
+		},
+	); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to list topo PVCs: %w", err)
+	}
+	for i := range topoPVCs.Items {
+		if topoPVCs.Items[i].DeletionTimestamp.IsZero() {
+			if err := r.Delete(ctx, &topoPVCs.Items[i]); err != nil && !errors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf(
+					"failed to delete topo PVC %q: %w",
+					topoPVCs.Items[i].Name,
+					err,
+				)
+			}
+			l.Info("Initiated topo PVC deletion", "pvc", topoPVCs.Items[i].Name)
+		}
+	}
+
+	if slices.Contains(cluster.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
+		before := cluster.DeepCopy()
+
+		cluster.Finalizers = slices.DeleteFunc(
+			cluster.Finalizers,
+			func(finalizer string) bool {
+				return finalizer == multigresv1alpha1.FinalizerClusterCleanup
+			},
+		)
+
+		patch := client.MergeFromWithOptions(
+			before,
+			client.MergeFromWithOptimisticLock{},
+		)
+		if err := r.Patch(ctx, cluster, patch); err != nil {
+			return ctrl.Result{}, fmt.Errorf(
+				"failed to remove cluster cleanup finalizer: %w",
+				err,
+			)
+		}
+	}
+
+	l.Info("Cluster cleanup complete")
 	r.Recorder.Event(cluster, "Normal", "CleanupComplete", "Initiated deletion of child resources")
 	return ctrl.Result{}, nil
 }
@@ -416,6 +491,10 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 			}
 
 			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+			if e.ObjectOld.GetDeletionTimestamp().IsZero() &&
+				!e.ObjectNew.GetDeletionTimestamp().IsZero() {
 				return true
 			}
 
