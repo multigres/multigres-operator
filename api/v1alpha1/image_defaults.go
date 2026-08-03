@@ -5,25 +5,25 @@ package v1alpha1
 const (
 	// DefaultPostgresImage is the default container image for PostgreSQL instances.
 	// Uses the pgctld image which bundles PostgreSQL, pgctld, and pgbackrest.
-	DefaultPostgresImage = "ghcr.io/multigres/pgctld:sha-54b4c18"
+	DefaultPostgresImage = "ghcr.io/multigres/pgctld:sha-300f673"
 
 	// DefaultEtcdImage is the default container image for the managed Etcd cluster.
 	DefaultEtcdImage = "gcr.io/etcd-development/etcd:v3.6.7"
 
 	// DefaultMultiadminImage is the default container image for the Multiadmin component.
-	DefaultMultiadminImage = "ghcr.io/multigres/multigres:sha-54b4c18"
+	DefaultMultiadminImage = "ghcr.io/multigres/multigres:sha-300f673"
 
 	// DefaultMultiadminWebImage is the default container image for the MultiadminWeb component.
-	DefaultMultiadminWebImage = "ghcr.io/multigres/multiadmin-web:sha-95eb327"
+	DefaultMultiadminWebImage = "ghcr.io/multigres/multiadmin-web:sha-64da1ab"
 
 	// DefaultMultiorchImage is the default container image for the Multiorch component.
-	DefaultMultiorchImage = "ghcr.io/multigres/multigres:sha-54b4c18"
+	DefaultMultiorchImage = "ghcr.io/multigres/multigres:sha-300f673"
 
 	// DefaultMultipoolerImage is the default container image for the Multipooler component.
-	DefaultMultipoolerImage = "ghcr.io/multigres/multigres:sha-54b4c18"
+	DefaultMultipoolerImage = "ghcr.io/multigres/multigres:sha-300f673"
 
 	// DefaultMultigatewayImage is the default container image for the Multigateway component.
-	DefaultMultigatewayImage = "ghcr.io/multigres/multigres:sha-54b4c18"
+	DefaultMultigatewayImage = "ghcr.io/multigres/multigres:sha-300f673"
 
 	// DefaultPostgresExporterImage is the default container image for postgres_exporter sidecars.
 	DefaultPostgresExporterImage = "quay.io/prometheuscommunity/postgres-exporter:v0.18.1"
