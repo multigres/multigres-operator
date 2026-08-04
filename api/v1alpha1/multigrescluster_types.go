@@ -92,9 +92,9 @@ type MultigresClusterSpec struct {
 	Databases []DatabaseConfig `json:"databases,omitempty"`
 
 	// PVCDeletionPolicy controls PVC lifecycle management for all stateful components.
-	// Defaults to Retain/Delete — PVCs are kept on cluster deletion but removed on scale-down.
+	// Defaults to Delete/Delete — PVC lifecycle is handled by the operator.
 	// +optional
-	// +kubebuilder:default={whenDeleted: "Retain", whenScaled: "Delete"}
+	// +kubebuilder:default={whenDeleted: "Delete", whenScaled: "Delete"}
 	PVCDeletionPolicy *PVCDeletionPolicy `json:"pvcDeletionPolicy,omitempty"`
 
 	// Observability configures OpenTelemetry for data-plane components.

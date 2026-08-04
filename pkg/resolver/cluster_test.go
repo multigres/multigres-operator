@@ -69,7 +69,7 @@ func TestResolver_PopulateClusterDefaults(t *testing.T) {
 						Multigateway: DefaultLogLevel,
 					},
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+						WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -135,7 +135,7 @@ func TestResolver_PopulateClusterDefaults(t *testing.T) {
 						Multigateway: DefaultLogLevel,
 					},
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+						WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -209,7 +209,7 @@ func TestResolver_PopulateClusterDefaults(t *testing.T) {
 						Multigateway: DefaultLogLevel,
 					},
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+						WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -296,7 +296,7 @@ func TestResolver_PopulateClusterDefaults(t *testing.T) {
 						Multigateway: DefaultLogLevel,
 					},
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+						WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -378,7 +378,7 @@ func TestResolver_PopulateClusterDefaults(t *testing.T) {
 						Multigateway: DefaultLogLevel,
 					},
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+						WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{

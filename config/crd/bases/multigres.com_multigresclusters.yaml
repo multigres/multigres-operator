@@ -10631,11 +10631,11 @@ spec:
                 type: string
               pvcDeletionPolicy:
                 default:
-                  whenDeleted: Retain
+                  whenDeleted: Delete
                   whenScaled: Delete
                 description: |-
                   PVCDeletionPolicy controls PVC lifecycle management for all stateful components.
-                  Defaults to Retain/Delete — PVCs are kept on cluster deletion but removed on scale-down.
+                  Defaults to Delete/Delete — PVC lifecycle is handled by the operator.
                 properties:
                   whenDeleted:
                     default: Retain

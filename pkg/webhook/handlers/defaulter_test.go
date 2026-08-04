@@ -176,7 +176,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 					},
 					DurabilityPolicy: "AT_LEAST_2",
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-						WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+						WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -479,7 +479,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						},
 						DurabilityPolicy: "AT_LEAST_2",
 						PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
-							WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+							WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
