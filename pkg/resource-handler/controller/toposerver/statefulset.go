@@ -39,7 +39,16 @@ func BuildStatefulSet(
 	toposerver *multigresv1alpha1.TopoServer,
 	scheme *runtime.Scheme,
 ) (*appsv1.StatefulSet, error) {
-	pvcPolicy := toposerver.Spec.PVCDeletionPolicy
+	// Topo PVCs are only ever removed via the MultigresCluster deletion
+	// finalizer (handleDeletion), never via the StatefulSet's native
+	// retention policy, deleting or recreating just this StatefulSet must
+	// never drop etcd data. WhenScaled still follows the resolved policy.
+	stsRetentionPolicy := &multigresv1alpha1.PVCDeletionPolicy{
+		WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+	}
+	if toposerver.Spec.PVCDeletionPolicy != nil {
+		stsRetentionPolicy.WhenScaled = toposerver.Spec.PVCDeletionPolicy.WhenScaled
+	}
 	replicas := DefaultReplicas
 	if toposerver.Spec.Etcd != nil && toposerver.Spec.Etcd.Replicas != nil {
 		replicas = *toposerver.Spec.Etcd.Replicas
@@ -134,7 +143,7 @@ func BuildStatefulSet(
 				},
 			},
 			VolumeClaimTemplates:                 buildVolumeClaimTemplates(toposerver),
-			PersistentVolumeClaimRetentionPolicy: pvc.BuildRetentionPolicy(pvcPolicy),
+			PersistentVolumeClaimRetentionPolicy: pvc.BuildRetentionPolicy(stsRetentionPolicy),
 		},
 	}
 
