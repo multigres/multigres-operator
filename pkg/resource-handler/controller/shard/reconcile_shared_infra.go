@@ -146,12 +146,31 @@ func (r *ShardReconciler) reconcilePgBackRestCerts(
 		ExtKeyUsages: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth,
 		},
-		Organization:  "Multigres",
-		Owner:         shard,
-		ComponentName: "pgbackrest",
-		Labels:        metadata.BuildStandardLabels(clusterName, "pgbackrest-tls"),
+		Organization:       "Multigres",
+		Owner:              shard,
+		ComponentName:      "pgbackrest",
+		Labels:             metadata.BuildStandardLabels(clusterName, "pgbackrest-tls"),
+		AdditionalDNSNames: pgBackRestPoolDNSNames(shard),
 	})
 	return rotator.Bootstrap(ctx)
+}
+
+// pgBackRestPoolDNSNames returns the DNS SANs needed for the pgBackRest server
+// cert to be validated when pgbackrest clients connect to a specific replica
+// pod for pg2 (standby) backups. Those connections target the pod's per-pool,
+// per-cell headless-Service FQDN (<pod>.<headless-svc>.<ns>.svc[.cluster.local]).
+func pgBackRestPoolDNSNames(shard *multigresv1alpha1.Shard) []string {
+	var dnsNames []string
+	for poolName, poolSpec := range shard.Spec.Pools {
+		for _, cellName := range poolSpec.Cells {
+			headlessName := buildPoolHeadlessServiceName(shard, string(poolName), string(cellName))
+			dnsNames = append(dnsNames,
+				fmt.Sprintf("*.%s.%s.svc", headlessName, shard.Namespace),
+				fmt.Sprintf("*.%s.%s.svc.cluster.local", headlessName, shard.Namespace),
+			)
+		}
+	}
+	return dnsNames
 }
 
 // reconcileBackupCipherSecret validates the pgBackRest backup encryption

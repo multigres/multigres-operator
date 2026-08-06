@@ -180,6 +180,66 @@ func TestManager_EnsureCerts(t *testing.T) {
 			checkFiles:    true,
 			wantGenerated: true,
 		},
+		"Rotation: DNS SANs Changed": {
+			existingObjects: []client.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: testCASecretName, Namespace: namespace},
+					Data: map[string][]byte{
+						"ca.crt": validCABytes,
+						"ca.key": validCAKeyBytes,
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: testServerSecretName, Namespace: namespace},
+					Data: map[string][]byte{
+						// validCert only has expectedDNSName as a SAN; the
+						// AdditionalDNSNames below add a new one, so the
+						// existing cert is stale and must be rotated.
+						"tls.crt": validCert,
+						"tls.key": []byte("key"),
+					},
+				},
+			},
+			customOptions: &Options{
+				CASecretName:       testCASecretName,
+				ServerSecretName:   testServerSecretName,
+				WaitForProjection:  true,
+				AdditionalDNSNames: []string{"*.extra-pool.test-ns.svc.cluster.local"},
+			},
+			checkFiles:    true,
+			wantGenerated: true,
+		},
+		"Idempotency: Same DNS SANs (with AdditionalDNSNames)": {
+			existingObjects: []client.Object{
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: testCASecretName, Namespace: namespace},
+					Data: map[string][]byte{
+						"ca.crt": validCABytes,
+						"ca.key": validCAKeyBytes,
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{Name: testServerSecretName, Namespace: namespace},
+					Data: map[string][]byte{
+						"tls.crt": generateSignedCertPEM(
+							t,
+							ca,
+							time.Now().Add(365*24*time.Hour),
+							[]string{expectedDNSName, "*.extra-pool.test-ns.svc.cluster.local"},
+						),
+						"tls.key": []byte("key"),
+					},
+				},
+			},
+			customOptions: &Options{
+				CASecretName:       testCASecretName,
+				ServerSecretName:   testServerSecretName,
+				WaitForProjection:  true,
+				AdditionalDNSNames: []string{"*.extra-pool.test-ns.svc.cluster.local"},
+			},
+			checkFiles:    true,
+			wantGenerated: false,
+		},
 		"Rotation: Corrupt Cert Body": {
 			existingObjects: []client.Object{
 				&corev1.Secret{
@@ -1078,6 +1138,31 @@ func TestManager_ExtKeyUsages(t *testing.T) {
 			t.Errorf("Expected default [ServerAuth], got %v", cert.ExtKeyUsage)
 		}
 	})
+}
+
+func TestDNSNameSetsEqual(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		a, b []string
+		want bool
+	}{
+		"both empty":          {nil, nil, true},
+		"same order":          {[]string{"a", "b"}, []string{"a", "b"}, true},
+		"different order":     {[]string{"a", "b"}, []string{"b", "a"}, true},
+		"with duplicates":     {[]string{"a", "a", "b"}, []string{"a", "b"}, true},
+		"different length":    {[]string{"a"}, []string{"a", "b"}, false},
+		"same length, differ": {[]string{"a", "b"}, []string{"a", "c"}, false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := dnsNameSetsEqual(tc.a, tc.b); got != tc.want {
+				t.Errorf("dnsNameSetsEqual(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestManager_Misc(t *testing.T) {
