@@ -19,21 +19,35 @@ type ResolveShardOptions struct {
 	MaterializeCellDefaults bool
 }
 
+// ResolvedShard is the fully merged and defaulted configuration for a single
+// Shard, produced by ResolveShard. Grouping the fields in a struct keeps call
+// sites self-documenting and lets new config layers be added without changing
+// every signature and call site in the resolve chain.
+type ResolvedShard struct {
+	Multiorch         multigresv1alpha1.MultiorchSpec
+	Pools             map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec
+	PVCDeletionPolicy *multigresv1alpha1.PVCDeletionPolicy
+	Backup            *multigresv1alpha1.BackupConfig
+	InitdbArgs        multigresv1alpha1.InitdbArgs
+	PostgresConfigRef *multigresv1alpha1.PostgresConfigRef
+	PostgresConfig    map[string]string
+}
+
 // ResolveShard determines the final configuration for a specific Shard.
 func (r *Resolver) ResolveShard(
 	ctx context.Context,
 	shardSpec *multigresv1alpha1.ShardConfig,
 	opts ResolveShardOptions,
-) (*multigresv1alpha1.MultiorchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef, error) {
+) (*ResolvedShard, error) {
 	// 1. Fetch Template
 	templateName := shardSpec.ShardTemplate
 	tpl, err := r.ResolveShardTemplate(ctx, templateName)
 	if err != nil {
-		return nil, nil, nil, nil, "", nil, err
+		return nil, err
 	}
 
 	// 2. Merge Logic
-	multiorch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef := mergeShardConfig(
+	res := mergeShardConfig(
 		tpl,
 		shardSpec.Overrides,
 		shardSpec.Spec,
@@ -42,35 +56,35 @@ func (r *Resolver) ResolveShard(
 	)
 
 	// 3. Apply Deep Defaults (Level 4)
-	defaultStatelessSpec(&multiorch.StatelessSpec, DefaultResourcesOrch(), 1)
+	defaultStatelessSpec(&res.Multiorch.StatelessSpec, DefaultResourcesOrch(), 1)
 
-	if backupCfg == nil {
-		backupCfg = &multigresv1alpha1.BackupConfig{
+	if res.Backup == nil {
+		res.Backup = &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeFilesystem,
 		}
 	}
-	defaultBackupConfig(backupCfg)
+	defaultBackupConfig(res.Backup)
 
 	// Contextual Defaulting: Lazy Cell Injection
 	// If the resolved configuration has no cells defined, it means "run everywhere".
 	// We inject the full list of cluster cells here.
-	if opts.MaterializeCellDefaults && len(multiorch.Cells) == 0 && len(opts.AllCellNames) > 0 {
+	if opts.MaterializeCellDefaults && len(res.Multiorch.Cells) == 0 && len(opts.AllCellNames) > 0 {
 		for _, c := range opts.AllCellNames {
-			multiorch.Cells = append(multiorch.Cells, multigresv1alpha1.CellName(c))
+			res.Multiorch.Cells = append(res.Multiorch.Cells, multigresv1alpha1.CellName(c))
 		}
 		// Sort for deterministic output
-		slices.Sort(multiorch.Cells)
+		slices.Sort(res.Multiorch.Cells)
 	}
 
-	if len(pools) == 0 {
-		pools[DefaultPoolName] = multigresv1alpha1.PoolSpec{
+	if len(res.Pools) == 0 {
+		res.Pools[DefaultPoolName] = multigresv1alpha1.PoolSpec{
 			Type:  "readWrite",
-			Cells: multiorch.Cells,
+			Cells: res.Multiorch.Cells,
 		}
 	}
 
-	for name := range pools {
-		p := pools[name]
+	for name := range res.Pools {
+		p := res.Pools[name]
 
 		// Contextual Defaulting for Pools
 		if opts.MaterializeCellDefaults && len(p.Cells) == 0 && len(opts.AllCellNames) > 0 {
@@ -100,10 +114,10 @@ func (r *Resolver) ResolveShard(
 		}
 
 		defaultPoolSpec(&p)
-		pools[name] = p
+		res.Pools[name] = p
 	}
 
-	return &multiorch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef, nil
+	return res, nil
 }
 
 // ResolveShardTemplate fetches and resolves a ShardTemplate by name.
@@ -148,89 +162,107 @@ func mergeShardConfig(
 	inline *multigresv1alpha1.ShardInlineSpec,
 	backupOverride *multigresv1alpha1.BackupConfig,
 	inheritedBackup *multigresv1alpha1.BackupConfig,
-) (multigresv1alpha1.MultiorchSpec, map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, *multigresv1alpha1.PVCDeletionPolicy, *multigresv1alpha1.BackupConfig, multigresv1alpha1.InitdbArgs, *multigresv1alpha1.PostgresConfigRef) {
+) *ResolvedShard {
 	// 1. Start with Template (Base)
-	var multiorch multigresv1alpha1.MultiorchSpec
-	pools := make(map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec)
-	var pvcPolicy *multigresv1alpha1.PVCDeletionPolicy
-	var initdbArgs multigresv1alpha1.InitdbArgs
-	var postgresConfigRef *multigresv1alpha1.PostgresConfigRef
+	res := &ResolvedShard{
+		Pools: make(map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec),
+	}
 	// Start with inherited backup as base
-	var backupCfg *multigresv1alpha1.BackupConfig
 	if inheritedBackup != nil {
-		backupCfg = inheritedBackup.DeepCopy()
+		res.Backup = inheritedBackup.DeepCopy()
 	}
 
 	if template != nil {
 		if template.Spec.Multiorch != nil {
-			multiorch = *template.Spec.Multiorch.DeepCopy()
+			res.Multiorch = *template.Spec.Multiorch.DeepCopy()
 		}
 		for k, v := range template.Spec.Pools {
-			pools[k] = *v.DeepCopy()
+			res.Pools[k] = *v.DeepCopy()
 		}
 		if template.Spec.PVCDeletionPolicy != nil {
-			pvcPolicy = template.Spec.PVCDeletionPolicy
+			res.PVCDeletionPolicy = template.Spec.PVCDeletionPolicy
 		}
-		initdbArgs = template.Spec.InitdbArgs
+		res.InitdbArgs = template.Spec.InitdbArgs
 		if template.Spec.PostgresConfigRef != nil {
-			postgresConfigRef = template.Spec.PostgresConfigRef
+			res.PostgresConfigRef = template.Spec.PostgresConfigRef
 		}
+		res.PostgresConfig = mergePostgresConfig(res.PostgresConfig, template.Spec.PostgresConfig)
 	}
 
 	// 2. Apply Overrides (Explicit Template Modification)
 	if overrides != nil {
 		if overrides.Multiorch != nil {
-			mergeMultiorchSpec(&multiorch, overrides.Multiorch)
+			mergeMultiorchSpec(&res.Multiorch, overrides.Multiorch)
 		}
 		for k, v := range overrides.Pools {
-			if existingPool, exists := pools[k]; exists {
-				pools[k] = mergePoolSpec(existingPool, v)
+			if existingPool, exists := res.Pools[k]; exists {
+				res.Pools[k] = mergePoolSpec(existingPool, v)
 			} else {
-				pools[k] = v
+				res.Pools[k] = v
 			}
 		}
 		if overrides.InitdbArgs != "" {
-			initdbArgs = overrides.InitdbArgs
+			res.InitdbArgs = overrides.InitdbArgs
 		}
 		if overrides.PostgresConfigRef != nil {
-			postgresConfigRef = overrides.PostgresConfigRef
+			res.PostgresConfigRef = overrides.PostgresConfigRef
 		}
+		res.PostgresConfig = mergePostgresConfig(res.PostgresConfig, overrides.PostgresConfig)
 	}
 
 	// 3. Apply Inline Spec (Primary Overlay)
 	// This merges the inline definition on top of the template+overrides.
 	if inline != nil {
-		mergeMultiorchSpec(&multiorch, &inline.Multiorch)
+		mergeMultiorchSpec(&res.Multiorch, &inline.Multiorch)
 
 		for k, v := range inline.Pools {
-			if existingPool, exists := pools[k]; exists {
-				pools[k] = mergePoolSpec(existingPool, v)
+			if existingPool, exists := res.Pools[k]; exists {
+				res.Pools[k] = mergePoolSpec(existingPool, v)
 			} else {
-				pools[k] = v
+				res.Pools[k] = v
 			}
 		}
 
 		// Inline PVCDeletionPolicy overrides template
 		if inline.PVCDeletionPolicy != nil {
-			pvcPolicy = inline.PVCDeletionPolicy
+			res.PVCDeletionPolicy = inline.PVCDeletionPolicy
 		}
 
 		if inline.InitdbArgs != "" {
-			initdbArgs = inline.InitdbArgs
+			res.InitdbArgs = inline.InitdbArgs
 		}
 
 		if inline.PostgresConfigRef != nil {
-			postgresConfigRef = inline.PostgresConfigRef
+			res.PostgresConfigRef = inline.PostgresConfigRef
 		}
+		res.PostgresConfig = mergePostgresConfig(res.PostgresConfig, inline.PostgresConfig)
 	}
 
 	// 4. Apply Backup Override (from ShardConfig.Backup)
 	// We use MergeBackupConfig so that ShardConfig overrides inherited config
 	if backupOverride != nil {
-		backupCfg = multigresv1alpha1.MergeBackupConfig(backupOverride, backupCfg)
+		res.Backup = multigresv1alpha1.MergeBackupConfig(backupOverride, res.Backup)
 	}
 
-	return multiorch, pools, pvcPolicy, backupCfg, initdbArgs, postgresConfigRef
+	return res
+}
+
+// mergePostgresConfig overlays override onto base per key (override wins on
+// conflicts) and returns the merged map. It returns nil when the result would
+// be empty so an unused field stays nil through the resolve chain, matching how
+// PostgresConfigRef stays nil when unset. The inputs are never mutated.
+func mergePostgresConfig(base, override map[string]string) map[string]string {
+	if len(base) == 0 && len(override) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range override {
+		out[k] = v
+	}
+	return out
 }
 
 func mergeMultiorchSpec(

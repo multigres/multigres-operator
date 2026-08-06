@@ -2740,12 +2740,23 @@ spec:
                 x-kubernetes-validations:
                 - message: pool names must be < 63 chars
                   rule: self.all(key, size(key) < 63)
+              postgresConfig:
+                additionalProperties:
+                  type: string
+                description: |-
+                  PostgresConfig is the resolved map of PostgreSQL parameter (GUC) names to
+                  string values for this shard. The operator renders it over its defaults and
+                  any PostgresConfigRef content (PostgresConfig wins on key conflicts) into
+                  the postgresql.conf mounted into pgctld.
+                maxProperties: 200
+                type: object
               postgresConfigRef:
                 description: |-
-                  PostgresConfigRef references a ConfigMap containing extra postgresql.conf
-                  lines appended to pgctld's auto-tuned defaults. The operator mounts it and
-                  sets POSTGRES_INITDB_EXTRA_CONF on pgctld; PostgreSQL's last-write-wins
-                  rule lets you override specific params without replacing the whole config.
+                  PostgresConfigRef references a ConfigMap whose postgresql.conf lines are
+                  merged into the operator-rendered config for this shard's pools. This field
+                  is deprecated in favor of the inline PostgresConfig map; it remains
+                  supported for backward compatibility and will be removed in a future
+                  version.
                 properties:
                   key:
                     description: Key is the key within the ConfigMap's data that contains
@@ -2978,6 +2989,26 @@ spec:
               poolsReady:
                 description: PoolsReady indicates if all data pools are ready.
                 type: boolean
+              postgresConfig:
+                description: PostgresConfig reports the rollout state of the rendered
+                  postgresql.conf.
+                properties:
+                  error:
+                    description: |-
+                      Error is non-empty when the config could not be rendered or read (for
+                      example, a missing PostgresConfigRef ConfigMap).
+                    type: string
+                  inProgress:
+                    description: |-
+                      InProgress is true while the desired rendered config has not yet landed on
+                      every pool pod (a config rollout is under way).
+                    type: boolean
+                  lastAppliedAt:
+                    description: LastAppliedAt is when the rendered config last settled
+                      onto every pool pod.
+                    format: date-time
+                    type: string
+                type: object
               readyReplicas:
                 description: ReadyReplicas is the total number of ready pods across
                   all pools in this shard.

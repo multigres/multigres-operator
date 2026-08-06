@@ -49,3 +49,33 @@ func BuildPgHbaConfigMap(
 
 	return cm, nil
 }
+
+// BuildPostgresConfigMap creates the operator-owned ConfigMap holding the
+// rendered postgresql.conf for a shard. It is shared across all pools in the
+// shard and mounted into every pool pod.
+func BuildPostgresConfigMap(
+	shard *multigresv1alpha1.Shard,
+	rendered string,
+	scheme *runtime.Scheme,
+) (*corev1.ConfigMap, error) {
+	clusterName := shard.Labels["multigres.com/cluster"]
+	labels := metadata.BuildStandardLabels(clusterName, "postgres-config")
+	labels = metadata.MergeLabels(labels, shard.GetObjectMeta().GetLabels())
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      PostgresConfigMapName(shard.Name),
+			Namespace: shard.Namespace,
+			Labels:    labels,
+		},
+		Data: map[string]string{
+			PostgresConfigMapKey: rendered,
+		},
+	}
+
+	if err := ctrl.SetControllerReference(shard, cm, scheme); err != nil {
+		return nil, fmt.Errorf("failed to set controller reference: %w", err)
+	}
+
+	return cm, nil
+}

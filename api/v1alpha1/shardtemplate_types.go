@@ -37,12 +37,20 @@ type ShardTemplateSpec struct {
 	// +optional
 	InitdbArgs InitdbArgs `json:"initdbArgs,omitempty"`
 
-	// PostgresConfigRef references a ConfigMap containing extra postgresql.conf
-	// lines appended to pgctld's auto-tuned defaults. The ConfigMap must exist in
-	// the same namespace. When set, the operator mounts it and sets
-	// POSTGRES_INITDB_EXTRA_CONF on pgctld.
+	// PostgresConfigRef references a ConfigMap whose postgresql.conf lines are
+	// merged into the operator-rendered config for this shard's pools. This field
+	// is deprecated in favor of the inline PostgresConfig map; it remains
+	// supported for backward compatibility and will be removed in a future
+	// version.
 	// +optional
 	PostgresConfigRef *PostgresConfigRef `json:"postgresConfigRef,omitempty"`
+
+	// PostgresConfig is a map of PostgreSQL parameter (GUC) names to string
+	// values, merged into the operator-rendered postgresql.conf. It takes
+	// precedence over PostgresConfigRef and the operator's built-in defaults.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=200
+	PostgresConfig map[string]string `json:"postgresConfig,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:MaxProperties=8

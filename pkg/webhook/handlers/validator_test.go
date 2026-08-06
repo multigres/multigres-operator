@@ -1355,3 +1355,90 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 		}
 	})
 }
+
+func TestValidatePostgresConfig(t *testing.T) {
+	t.Parallel()
+
+	cluster := func(spec, overrides map[string]string) *multigresv1alpha1.MultigresCluster {
+		sc := multigresv1alpha1.ShardConfig{Name: "0-inf"}
+		if spec != nil {
+			sc.Spec = &multigresv1alpha1.ShardInlineSpec{PostgresConfig: spec}
+		}
+		if overrides != nil {
+			sc.Overrides = &multigresv1alpha1.ShardOverrides{PostgresConfig: overrides}
+		}
+		return &multigresv1alpha1.MultigresCluster{
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Databases: []multigresv1alpha1.DatabaseConfig{{
+					Name: "postgres",
+					TableGroups: []multigresv1alpha1.TableGroupConfig{{
+						Name:   "default",
+						Shards: []multigresv1alpha1.ShardConfig{sc},
+					}},
+				}},
+			},
+		}
+	}
+
+	tests := map[string]struct {
+		cluster *multigresv1alpha1.MultigresCluster
+		wantErr string
+	}{
+		"no postgres config":  {cluster: cluster(nil, nil)},
+		"valid inline map":    {cluster: cluster(map[string]string{"max_connections": "200"}, nil)},
+		"valid overrides map": {cluster: cluster(nil, map[string]string{"work_mem": "16MB"})},
+		"unknown param in inline": {
+			cluster: cluster(map[string]string{"maxx_connections": "200"}, nil),
+			wantErr: "unknown parameter",
+		},
+		"bad value in overrides": {
+			cluster: cluster(nil, map[string]string{"fsync": "maybe"}),
+			wantErr: "fsync",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := validatePostgresConfig(tc.cluster)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected nil, got %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+			// The error must identify the shard location.
+			if tc.wantErr != "" && err != nil && !strings.Contains(err.Error(), "shard") {
+				t.Errorf("error should name the shard, got %v", err)
+			}
+		})
+	}
+}
+
+func TestTemplateValidator_ShardTemplatePostgresConfig(t *testing.T) {
+	t.Parallel()
+
+	fakeClient := fake.NewClientBuilder().WithScheme(setupScheme()).Build()
+	validator := NewTemplateValidator(fakeClient, "ShardTemplate")
+
+	valid := &multigresv1alpha1.ShardTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "good"},
+		Spec: multigresv1alpha1.ShardTemplateSpec{
+			PostgresConfig: map[string]string{"max_connections": "200"},
+		},
+	}
+	if _, err := validator.ValidateCreate(t.Context(), valid); err != nil {
+		t.Errorf("valid postgresConfig rejected: %v", err)
+	}
+
+	bad := &multigresv1alpha1.ShardTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "bad"},
+		Spec: multigresv1alpha1.ShardTemplateSpec{
+			PostgresConfig: map[string]string{"bogus_param": "1"},
+		},
+	}
+	if _, err := validator.ValidateUpdate(t.Context(), bad, bad); err == nil ||
+		!strings.Contains(err.Error(), "unknown parameter") {
+		t.Errorf("expected unknown-parameter error, got %v", err)
+	}
+}

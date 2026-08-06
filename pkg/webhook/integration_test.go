@@ -308,6 +308,41 @@ func TestWebhook_Validation(t *testing.T) {
 			t.Fatal("Expected error creating cluster with missing template, got nil")
 		}
 	})
+
+	t.Run("Should Reject Unknown Postgres Parameter", func(t *testing.T) {
+		cluster := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "bad-guc", Namespace: testNamespace},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{{Name: "c", ZoneID: "use1-az1"}},
+				Databases: []multigresv1alpha1.DatabaseConfig{{
+					Name:    "postgres",
+					Default: true,
+					TableGroups: []multigresv1alpha1.TableGroupConfig{{
+						Name:    "default",
+						Default: true,
+						Shards: []multigresv1alpha1.ShardConfig{{
+							Name: "0-inf",
+							Spec: &multigresv1alpha1.ShardInlineSpec{
+								PostgresConfig: map[string]string{"maxx_connections": "1"},
+								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+									"main": {Type: "readWrite"},
+								},
+							},
+						}},
+					}},
+				}},
+			},
+		}
+		setTestPostgresPasswordSecretRef(cluster)
+
+		err := k8sClient.Create(ctx, cluster)
+		if err == nil {
+			t.Fatal("expected rejection for unknown postgres parameter")
+		}
+		if !strings.Contains(err.Error(), "unknown parameter") {
+			t.Fatalf("expected 'unknown parameter' error, got: %v", err)
+		}
+	})
 }
 
 func TestWebhook_TemplateProtection(t *testing.T) {

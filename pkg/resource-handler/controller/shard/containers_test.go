@@ -830,68 +830,57 @@ func TestBuildPgctldSidecar(t *testing.T) {
 		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INITDB_ARGS")
 	})
 
-	t.Run("has POSTGRES_INITDB_EXTRA_CONF env when postgresConfigRef set", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{
-			PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{
-				Name: "my-pg-config",
-				Key:  "custom.conf",
-			},
-		}}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
-		for _, e := range c.Env {
-			if e.Name == "POSTGRES_INITDB_EXTRA_CONF" {
-				if e.Value != PostgresConfigFilePath {
-					t.Errorf(
-						"POSTGRES_INITDB_EXTRA_CONF = %q, want %q",
-						e.Value,
-						PostgresConfigFilePath,
-					)
+	// The operator always renders postgresql.conf, so pgctld always gets the
+	// POSTGRES_INITDB_EXTRA_CONF env and the config volume mount — with or
+	// without a legacy PostgresConfigRef.
+	t.Run("always sets POSTGRES_INITDB_EXTRA_CONF env", func(t *testing.T) {
+		for name, shard := range map[string]*multigresv1alpha1.Shard{
+			"with ref": {Spec: multigresv1alpha1.ShardSpec{
+				PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{Name: "my-pg-config", Key: "custom.conf"},
+			}},
+			"without ref": {Spec: multigresv1alpha1.ShardSpec{}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
+				assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
+				for _, e := range c.Env {
+					if e.Name == "POSTGRES_INITDB_EXTRA_CONF" && e.Value != PostgresConfigFilePath {
+						t.Errorf(
+							"POSTGRES_INITDB_EXTRA_CONF = %q, want %q",
+							e.Value,
+							PostgresConfigFilePath,
+						)
+					}
 				}
-			}
+			})
 		}
 	})
 
-	t.Run("no POSTGRES_INITDB_EXTRA_CONF env when postgresConfigRef nil", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
-	})
-
-	t.Run("has postgres config volume mount when postgresConfigRef set", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{
-			PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{
-				Name: "my-pg-config",
-				Key:  "custom.conf",
-			},
-		}}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsVolumeMount(t, c.VolumeMounts, PostgresConfigVolumeName)
-		for _, m := range c.VolumeMounts {
-			if m.Name == PostgresConfigVolumeName {
-				if m.MountPath != PostgresConfigMountPath {
-					t.Errorf(
-						"postgres config mount path = %q, want %q",
-						m.MountPath,
-						PostgresConfigMountPath,
-					)
+	t.Run("always mounts the postgres config volume read-only", func(t *testing.T) {
+		for name, shard := range map[string]*multigresv1alpha1.Shard{
+			"with ref": {Spec: multigresv1alpha1.ShardSpec{
+				PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{Name: "my-pg-config", Key: "custom.conf"},
+			}},
+			"without ref": {Spec: multigresv1alpha1.ShardSpec{}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
+				assertContainsVolumeMount(t, c.VolumeMounts, PostgresConfigVolumeName)
+				for _, m := range c.VolumeMounts {
+					if m.Name == PostgresConfigVolumeName {
+						if m.MountPath != PostgresConfigMountPath {
+							t.Errorf(
+								"postgres config mount path = %q, want %q",
+								m.MountPath,
+								PostgresConfigMountPath,
+							)
+						}
+						if !m.ReadOnly {
+							t.Error("postgres config volume mount should be read-only")
+						}
+					}
 				}
-				if !m.ReadOnly {
-					t.Error("postgres config volume mount should be read-only")
-				}
-			}
-		}
-	})
-
-	t.Run("no postgres config volume mount when postgresConfigRef nil", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		for _, m := range c.VolumeMounts {
-			if m.Name == PostgresConfigVolumeName {
-				t.Error(
-					"should not have postgres config volume mount when postgresConfigRef is nil",
-				)
-			}
+			})
 		}
 	})
 }
@@ -1790,18 +1779,15 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 		}
 	})
 
-	t.Run("postgres config volume present when postgresConfigRef set", func(t *testing.T) {
+	t.Run("always projects the operator-owned postgres config ConfigMap", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "test-shard",
 				Labels: map[string]string{"multigres.com/cluster": "test"},
 			},
-			Spec: multigresv1alpha1.ShardSpec{
-				PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{
-					Name: "my-pg-config",
-					Key:  "custom.conf",
-				},
-			},
+			// No PostgresConfigRef: the operator still renders and mounts its own
+			// ConfigMap.
+			Spec: multigresv1alpha1.ShardSpec{},
 		}
 		volumes := buildPoolVolumes(shard, "zone1")
 		found := false
@@ -1809,41 +1795,26 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 			if v.Name == PostgresConfigVolumeName {
 				found = true
 				if v.ConfigMap == nil {
-					t.Error("postgres config volume should use ConfigMap source")
-				} else {
-					if v.ConfigMap.Name != "my-pg-config" {
-						t.Errorf("postgres config ConfigMap name = %q, want %q",
-							v.ConfigMap.Name, "my-pg-config")
-					}
-					if len(v.ConfigMap.Items) != 1 || v.ConfigMap.Items[0].Key != "custom.conf" ||
-						v.ConfigMap.Items[0].Path != "postgresql.conf" {
-						t.Errorf(
-							"postgres config ConfigMap items = %+v, want [{Key:custom.conf Path:postgresql.conf}]",
-							v.ConfigMap.Items,
-						)
-					}
+					t.Fatal("postgres config volume should use ConfigMap source")
+				}
+				if v.ConfigMap.Name != PostgresConfigMapName("test-shard") {
+					t.Errorf("postgres config ConfigMap name = %q, want %q",
+						v.ConfigMap.Name, PostgresConfigMapName("test-shard"))
+				}
+				if len(v.ConfigMap.Items) != 1 ||
+					v.ConfigMap.Items[0].Key != PostgresConfigMapKey ||
+					v.ConfigMap.Items[0].Path != "postgresql.conf" {
+					t.Errorf(
+						"postgres config ConfigMap items = %+v, want [{Key:%s Path:postgresql.conf}]",
+						v.ConfigMap.Items,
+						PostgresConfigMapKey,
+					)
 				}
 				break
 			}
 		}
 		if !found {
 			t.Error("expected postgres-config volume in pool volumes")
-		}
-	})
-
-	t.Run("no postgres config volume when postgresConfigRef nil", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   "test-shard",
-				Labels: map[string]string{"multigres.com/cluster": "test"},
-			},
-			Spec: multigresv1alpha1.ShardSpec{},
-		}
-		volumes := buildPoolVolumes(shard, "zone1")
-		for _, v := range volumes {
-			if v.Name == PostgresConfigVolumeName {
-				t.Error("should not have postgres config volume when postgresConfigRef is nil")
-			}
 		}
 	})
 

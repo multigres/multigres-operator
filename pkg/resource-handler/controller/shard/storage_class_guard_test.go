@@ -384,7 +384,7 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 			Recorder: record.NewFakeRecorder(100),
 		}
 
-		if err := r.updateStatus(t.Context(), shard); err != nil {
+		if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
 			t.Fatalf("updateStatus: %v", err)
 		}
 

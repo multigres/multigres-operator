@@ -938,6 +938,19 @@ func TestShardReconciliation(t *testing.T) {
 
 			filteredResources := append([]client.Object{}, tc.wantResources...)
 
+			// The controller stamps the rendered-config hash on the shard, which
+			// BuildPoolPod folds into each pod's spec-hash. Reproduce it here so
+			// the expected pods match the ones the controller creates. These test
+			// shards have no PostgresConfigRef, so the ref content is empty.
+			_, configHash, err := shardcontroller.RenderPostgresConfig(tc.shard, "")
+			if err != nil {
+				t.Fatalf("Failed to render postgres config hash: %v", err)
+			}
+			if tc.shard.Annotations == nil {
+				tc.shard.Annotations = map[string]string{}
+			}
+			tc.shard.Annotations[metadata.AnnotationPostgresConfigHash] = configHash
+
 			// Append literal expected Pods and PVCs based on Shard Spec
 			backupCells := map[string]bool{}
 			for poolName, poolSpec := range tc.shard.Spec.Pools {

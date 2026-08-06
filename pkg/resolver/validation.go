@@ -386,7 +386,7 @@ func (r *Resolver) ValidateClusterLogic(
 				// ------------------------------------------------------------------
 				// Dry-Run Resolution
 				// We pass allCellNames just like the Reconciler would, to simulate the final state
-				orch, pools, _, backupCfg, _, _, err := r.ResolveShard(
+				resolved, err := r.ResolveShard(
 					ctx,
 					&shard,
 					ResolveShardOptions{
@@ -402,6 +402,7 @@ func (r *Resolver) ValidateClusterLogic(
 						err,
 					)
 				}
+				orch, pools, backupCfg := &resolved.Multiorch, resolved.Pools, resolved.Backup
 
 				// Pool Name Format: CRD structural schema does not enforce
 				// validation markers on map keys, so validate explicitly.
@@ -599,7 +600,7 @@ func (r *Resolver) ValidateClusterLogic(
 		for _, tg := range db.TableGroups {
 			tgBackup := multigresv1alpha1.MergeBackupConfig(tg.Backup, dbBackup)
 			for _, shard := range tg.Shards {
-				_, pools, _, backupCfg, _, _, err := r.ResolveShard(
+				resolved, err := r.ResolveShard(
 					ctx,
 					&shard,
 					ResolveShardOptions{
@@ -611,6 +612,7 @@ func (r *Resolver) ValidateClusterLogic(
 				if err != nil {
 					continue // already validated in section 2
 				}
+				pools, backupCfg := resolved.Pools, resolved.Backup
 
 				for poolName, pool := range pools {
 					if pool.Storage.Class == "" {

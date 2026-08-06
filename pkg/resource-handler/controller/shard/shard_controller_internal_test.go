@@ -424,7 +424,7 @@ func TestUpdateStatus_PoolPodsNotFound(t *testing.T) {
 	}
 
 	// Call updateStatus when pool Pods don't exist yet
-	err := reconciler.updateStatus(context.Background(), shard)
+	err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
 	if err != nil {
 		t.Errorf("updateStatus() should not error when pool Pods not found, got: %v", err)
 	}
@@ -781,7 +781,7 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 				APIReader: fakeClient,
 			}
 
-			err := reconciler.updateStatus(context.Background(), shard)
+			err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
 			if tc.expectError && err == nil {
 				t.Error("updateStatus() should error but didn't")
 			}
@@ -854,7 +854,7 @@ func TestUpdateStatus_GetError(t *testing.T) {
 		APIReader: fakeClient,
 	}
 
-	err := reconciler.updateStatus(context.Background(), shard)
+	err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
 	if err == nil {
 		t.Error("updateStatus() should error on Get failure")
 	}
@@ -927,7 +927,7 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 		APIReader: baseClient,
 	}
 
-	err := reconciler.updateStatus(context.Background(), shard)
+	err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
 	if err != nil {
 		t.Fatalf("updateStatus() unexpected error: %v", err)
 	}
@@ -4533,7 +4533,7 @@ func TestUpdateStatus_ProgressingPhase(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
-	err := r.updateStatus(t.Context(), shard)
+	err := r.updateStatus(t.Context(), shard, renderedConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4574,7 +4574,8 @@ func TestUpdatePoolsStatus_PoolEmptyEvent(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
-	totalPods, readyPods, _, err := r.updatePoolsStatus(t.Context(), shard, cellsSet)
+	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "")
+	totalPods, readyPods := pools.totalPods, pools.readyPods
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4717,7 +4718,7 @@ func TestUpdateStatus_HealthyPhase(t *testing.T) {
 	recorder := record.NewFakeRecorder(10)
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
-	err := r.updateStatus(t.Context(), shard)
+	err := r.updateStatus(t.Context(), shard, renderedConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4778,7 +4779,8 @@ func TestUpdatePoolsStatus_TerminatingPodExcluded(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
-	totalPods, readyPods, _, err := r.updatePoolsStatus(t.Context(), shard, cellsSet)
+	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "")
+	totalPods, readyPods := pools.totalPods, pools.readyPods
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4976,7 +4978,8 @@ func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
-	totalPods, readyPods, _, err := r.updatePoolsStatus(t.Context(), shard, cellsSet)
+	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "")
+	totalPods, readyPods := pools.totalPods, pools.readyPods
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -5058,7 +5061,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.updateStatus(t.Context(), shard); err != nil {
+		if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if shard.Status.Phase != multigresv1alpha1.PhaseDegraded {
@@ -5106,7 +5109,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.updateStatus(t.Context(), s); err != nil {
+		if err := r.updateStatus(t.Context(), s, renderedConfig{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if s.Status.Phase != multigresv1alpha1.PhaseDegraded {
@@ -5157,7 +5160,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.updateStatus(t.Context(), s); err != nil {
+		if err := r.updateStatus(t.Context(), s, renderedConfig{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if s.Status.Phase == multigresv1alpha1.PhaseDegraded {
@@ -5165,6 +5168,112 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 				"expected Progressing (not Degraded) for running pod with prior restarts, got %q",
 				s.Status.Phase,
 			)
+		}
+	})
+}
+
+// TestUpdatePoolsStatus_ConfigApplyFailing verifies the content-vs-health split
+// in the config-rollout signal: a crash-looping pod that already carries the
+// desired config hash marks the rollout as not-yet-settled (a bad GUC value
+// Postgres rejects at startup looks exactly like this), while a crash-looping
+// pod that carries a stale hash is only ordinary drift.
+func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard-cfgfail",
+			Namespace: "default",
+			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "db",
+			TableGroupName: "tg",
+			ShardName:      "s1",
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"primary": {
+					Cells:           []multigresv1alpha1.CellName{"zone1"},
+					ReplicasPerCell: ptr.To(int32(1)),
+				},
+			},
+			Multiorch: multigresv1alpha1.MultiorchSpec{
+				Cells: []multigresv1alpha1.CellName{"zone1"},
+			},
+		},
+	}
+
+	labels := buildPoolLabelsWithCell(shard, "primary", "zone1")
+	podName := BuildPoolPodName(shard, "primary", "zone1", 0)
+
+	const desiredHash = "desired-config-hash"
+
+	crashLoopingPod := func(configHash string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      podName,
+				Namespace: "default",
+				Labels:    labels,
+				Annotations: map[string]string{
+					metadata.AnnotationPostgresConfigHash: configHash,
+				},
+			},
+			Status: corev1.PodStatus{
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name: "postgres",
+						State: corev1.ContainerState{
+							Waiting: &corev1.ContainerStateWaiting{
+								Reason: "CrashLoopBackOff",
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("crash-looping pod on desired config is not settled", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(shard, crashLoopingPod(desiredHash)).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		pools, err := r.updatePoolsStatus(
+			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !pools.poolDegraded {
+			t.Error("expected poolDegraded=true for a crash-looping pod")
+		}
+		// The pod already carries the desired hash, so there is no content drift;
+		// configInProgress can only be true here via the apply-failing path (a
+		// desired-config pod crash-looping), which is exactly what must not settle.
+		if !pools.configInProgress {
+			t.Error("expected configInProgress=true: desired config is on a crash-looping pod")
+		}
+	})
+
+	t.Run("crash-looping pod on stale config is unsettled via drift", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(shard, crashLoopingPod("stale-hash")).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		pools, err := r.updatePoolsStatus(
+			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !pools.poolDegraded {
+			t.Error("expected poolDegraded=true for a crash-looping pod")
+		}
+		// The pod carries a stale hash, so config is unsettled via content drift.
+		if !pools.configInProgress {
+			t.Error("expected configInProgress=true: the pod carries a stale hash")
 		}
 	})
 }
@@ -5254,7 +5363,7 @@ func TestUpdateStatus_DegradedOnMultiorchCrashLoop(t *testing.T) {
 		Build()
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-	if err := r.updateStatus(t.Context(), shard); err != nil {
+	if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if shard.Status.Phase != multigresv1alpha1.PhaseDegraded {
@@ -5605,12 +5714,12 @@ func TestEnqueueFromPostgresConfigMap(t *testing.T) {
 	}
 }
 
-func TestComputePostgresConfigHash(t *testing.T) {
+func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
-	t.Run("returns hash of referenced key", func(t *testing.T) {
+	t.Run("produces a deterministic hash over the rendered config", func(t *testing.T) {
 		cm := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "pg-config", Namespace: "default"},
 			Data:       map[string]string{"custom.conf": "shared_buffers = '8GB'"},
@@ -5626,22 +5735,24 @@ func TestComputePostgresConfigHash(t *testing.T) {
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
-		r := &ShardReconciler{Client: c}
+		r := &ShardReconciler{Client: c, Scheme: scheme}
 
-		hash, err := r.computePostgresConfigHash(context.Background(), shard)
+		rc := r.renderEffectiveConfig(context.Background(), shard)
+		hash, err := rc.hash, rc.err
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
-		}
-		if hash == "" {
-			t.Error("hash should not be empty")
 		}
 		if len(hash) != 64 {
 			t.Errorf("hash length = %d, want 64 (SHA-256 hex)", len(hash))
 		}
 
-		// Same content should produce same hash
-		hash2, _ := r.computePostgresConfigHash(context.Background(), shard)
-		if hash != hash2 {
+		// Same content should produce the same hash.
+		rc2 := r.renderEffectiveConfig(context.Background(), shard)
+		hash2, err := rc2.hash, rc2.err
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if hash2 != hash {
 			t.Errorf("hash not deterministic: %q != %q", hash, hash2)
 		}
 	})
@@ -5657,7 +5768,7 @@ func TestComputePostgresConfigHash(t *testing.T) {
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm1, cm2).Build()
-		r := &ShardReconciler{Client: c}
+		r := &ShardReconciler{Client: c, Scheme: scheme}
 
 		shard1 := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"},
@@ -5678,8 +5789,16 @@ func TestComputePostgresConfigHash(t *testing.T) {
 			},
 		}
 
-		h1, _ := r.computePostgresConfigHash(context.Background(), shard1)
-		h2, _ := r.computePostgresConfigHash(context.Background(), shard2)
+		rc1 := r.renderEffectiveConfig(context.Background(), shard1)
+		h1, err := rc1.hash, rc1.err
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		rc2 := r.renderEffectiveConfig(context.Background(), shard2)
+		h2, err := rc2.hash, rc2.err
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if h1 == h2 {
 			t.Error("different ConfigMap content should produce different hashes")
 		}
@@ -5701,11 +5820,11 @@ func TestComputePostgresConfigHash(t *testing.T) {
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
-		r := &ShardReconciler{Client: c}
+		r := &ShardReconciler{Client: c, Scheme: scheme}
 
-		_, err := r.computePostgresConfigHash(context.Background(), shard)
+		err := r.renderEffectiveConfig(context.Background(), shard).err
 		if err == nil {
-			t.Error("expected error for missing key")
+			t.Fatal("expected error for missing key")
 		}
 		if !strings.Contains(err.Error(), "missing-key") {
 			t.Errorf("error should mention missing key, got: %v", err)
@@ -5724,10 +5843,9 @@ func TestComputePostgresConfigHash(t *testing.T) {
 		}
 
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
-		r := &ShardReconciler{Client: c}
+		r := &ShardReconciler{Client: c, Scheme: scheme}
 
-		_, err := r.computePostgresConfigHash(context.Background(), shard)
-		if err == nil {
+		if r.renderEffectiveConfig(context.Background(), shard).err == nil {
 			t.Error("expected error for missing ConfigMap")
 		}
 	})

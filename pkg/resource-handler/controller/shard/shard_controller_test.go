@@ -1304,7 +1304,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Recorder: record.NewFakeRecorder(100),
 		}
 
-		if err := r.updateStatus(context.Background(), shard); err != nil {
+		if err := r.updateStatus(context.Background(), shard, renderedConfig{}); err != nil {
 			t.Fatalf("updateStatus failed: %v", err)
 		}
 
@@ -1420,7 +1420,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Recorder: record.NewFakeRecorder(100),
 		}
 
-		if err := r.updateStatus(context.Background(), shard); err != nil {
+		if err := r.updateStatus(context.Background(), shard, renderedConfig{}); err != nil {
 			t.Fatalf("updateStatus failed: %v", err)
 		}
 
@@ -1528,12 +1528,13 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 		}
 
 		cellsSet := make(map[multigresv1alpha1.CellName]bool)
-		totalPods, readyPods, _, err := r.updatePoolsStatus(
-			context.Background(), shard, cellsSet,
+		pools, err := r.updatePoolsStatus(
+			context.Background(), shard, cellsSet, "",
 		)
 		if err != nil {
 			t.Fatalf("updatePoolsStatus failed: %v", err)
 		}
+		totalPods, readyPods := pools.totalPods, pools.readyPods
 
 		// Verify aggregate: desired for primary is 3 pods per cell * 2 cells = 6 pods
 		if totalPods != 6 {

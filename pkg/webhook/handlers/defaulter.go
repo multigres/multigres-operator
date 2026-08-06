@@ -217,7 +217,7 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 				if !isUsingTemplate {
 					// We pass cell names for contextual cell defaulting, but leave
 					// MaterializeCellDefaults false so the stored spec remains dynamic.
-					multiorchSpec, poolsSpec, resolvedPvcPolicy, resolvedBackupConfig, resolvedInitdbArgs, resolvedPostgresConfigRef, err := scopedResolver.ResolveShard(
+					resolved, err := scopedResolver.ResolveShard(
 						ctx,
 						shard,
 						resolver.ResolveShardOptions{
@@ -231,21 +231,20 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 
 					// Preserve PVCDeletionPolicy if it was set in the original spec
 					// Otherwise, use the resolved policy (from template)
-					var pvcPolicy *multigresv1alpha1.PVCDeletionPolicy
+					pvcPolicy := resolved.PVCDeletionPolicy
 					if shard.Spec != nil && shard.Spec.PVCDeletionPolicy != nil {
 						pvcPolicy = shard.Spec.PVCDeletionPolicy
-					} else {
-						pvcPolicy = resolvedPvcPolicy
 					}
 
 					shard.Spec = &multigresv1alpha1.ShardInlineSpec{
-						Multiorch:         *multiorchSpec,
-						InitdbArgs:        resolvedInitdbArgs,
-						PostgresConfigRef: resolvedPostgresConfigRef,
-						Pools:             poolsSpec,
+						Multiorch:         resolved.Multiorch,
+						InitdbArgs:        resolved.InitdbArgs,
+						PostgresConfigRef: resolved.PostgresConfigRef,
+						PostgresConfig:    resolved.PostgresConfig,
+						Pools:             resolved.Pools,
 						PVCDeletionPolicy: pvcPolicy,
 					}
-					shard.Backup = resolvedBackupConfig
+					shard.Backup = resolved.Backup
 				}
 			}
 		}

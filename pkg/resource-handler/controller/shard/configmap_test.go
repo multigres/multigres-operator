@@ -118,6 +118,51 @@ func TestBuildPgHbaConfigMap(t *testing.T) {
 	}
 }
 
+func TestBuildPostgresConfigMap(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			UID:       "test-uid",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+	}
+
+	t.Run("stores rendered content under the config key with an owner ref", func(t *testing.T) {
+		rendered := "# rendered\nmax_connections = 200\n"
+		cm, err := BuildPostgresConfigMap(shard, rendered, scheme)
+		if err != nil {
+			t.Fatalf("BuildPostgresConfigMap() error = %v", err)
+		}
+		if cm.Name != PostgresConfigMapName(shard.Name) {
+			t.Errorf("name = %q, want %q", cm.Name, PostgresConfigMapName(shard.Name))
+		}
+		if cm.Namespace != shard.Namespace {
+			t.Errorf("namespace = %q, want %q", cm.Namespace, shard.Namespace)
+		}
+		if got := cm.Data[PostgresConfigMapKey]; got != rendered {
+			t.Errorf("Data[%q] = %q, want %q", PostgresConfigMapKey, got, rendered)
+		}
+		if len(cm.OwnerReferences) != 1 ||
+			cm.OwnerReferences[0].Name != shard.Name ||
+			cm.OwnerReferences[0].Kind != "Shard" {
+			t.Errorf("owner reference = %+v, want Shard/%s", cm.OwnerReferences, shard.Name)
+		}
+		if !ptr.Deref(cm.OwnerReferences[0].Controller, false) {
+			t.Error("expected owner reference to be controller")
+		}
+	})
+
+	t.Run("returns error on invalid scheme", func(t *testing.T) {
+		if _, err := BuildPostgresConfigMap(shard, "x", runtime.NewScheme()); err == nil {
+			t.Error("expected error with empty scheme")
+		}
+	})
+}
+
 func TestDefaultPgHbaTemplateEmbedded(t *testing.T) {
 	// Verify the embedded template is not empty
 	if DefaultPgHbaTemplate == "" {

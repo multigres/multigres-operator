@@ -8,6 +8,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/postgresconfig"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
 )
@@ -62,6 +63,10 @@ const (
 	// PostgresConfigFilePath is the full path to the extra postgresql.conf file
 	// passed to pgctld via POSTGRES_INITDB_EXTRA_CONF.
 	PostgresConfigFilePath = PostgresConfigMountPath + "/postgresql.conf"
+
+	// PostgresConfigMapKey is the key under which the operator stores the
+	// rendered postgresql.conf in its per-shard config ConfigMap.
+	PostgresConfigMapKey = postgresconfig.ConfigFileName
 
 	// PostgresPasswordSecretKey is the key within the Secret that holds the password
 	PostgresPasswordSecretKey = "password"
@@ -126,6 +131,14 @@ const (
 // PgHbaConfigMapName returns the per-shard ConfigMap name for the pg_hba template.
 func PgHbaConfigMapName(shardName string) string {
 	return shardName + "-pg-hba"
+}
+
+// PostgresConfigMapName returns the per-shard ConfigMap name for the
+// operator-rendered postgresql.conf. Config is rendered once per shard and
+// mounted into every pod of the shard (see the design doc for why it is
+// shard-level and not per-pool).
+func PostgresConfigMapName(shardName string) string {
+	return shardName + "-postgres-config"
 }
 
 func postgresPasswordSecretRef(shard *multigresv1alpha1.Shard) (name, key string) {
@@ -272,12 +285,12 @@ func buildPgctldSidecar(
 			Value: string(shard.Spec.InitdbArgs),
 		})
 	}
-	if shard.Spec.PostgresConfigRef != nil {
-		env = append(env, corev1.EnvVar{
-			Name:  "POSTGRES_INITDB_EXTRA_CONF",
-			Value: PostgresConfigFilePath,
-		})
-	}
+	// The operator always renders postgresql.conf (baseline + overrides), so
+	// pgctld always reads the operator-owned config file.
+	env = append(env, corev1.EnvVar{
+		Name:  "POSTGRES_INITDB_EXTRA_CONF",
+		Value: PostgresConfigFilePath,
+	})
 	env = append(env, s3EnvVars(shard.Spec.Backup)...)
 	if otelVars := buildRuntimeOTELEnvVars(shard, "pgctld"); len(otelVars) > 0 {
 		env = append(env, otelVars...)
@@ -302,13 +315,11 @@ func buildPgctldSidecar(
 			ReadOnly:  true,
 		},
 		postgresPasswordVolumeMount(),
-	}
-	if shard.Spec.PostgresConfigRef != nil {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		{
 			Name:      PostgresConfigVolumeName,
 			MountPath: PostgresConfigMountPath,
 			ReadOnly:  true,
-		})
+		},
 	}
 	if shard.Spec.Backup != nil {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -671,19 +682,19 @@ func buildRuntimeOTELEnvVars(
 
 // buildPoolVolumes assembles the complete list of volumes for a pool pod.
 // Conditionally includes the pgBackRest cert volume when backup is configured.
-// buildPostgresConfigVolume creates a volume that projects a specific key from
-// the user-provided ConfigMap to the expected postgresql.conf filename so
-// pgctld picks it up via POSTGRES_INITDB_EXTRA_CONF.
-func buildPostgresConfigVolume(ref *multigresv1alpha1.PostgresConfigRef) corev1.Volume {
+// buildPostgresConfigVolume projects the operator-rendered postgresql.conf from
+// the per-shard config ConfigMap to the expected filename so pgctld picks it up
+// via POSTGRES_INITDB_EXTRA_CONF.
+func buildPostgresConfigVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 	return corev1.Volume{
 		Name: PostgresConfigVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			ConfigMap: &corev1.ConfigMapVolumeSource{
 				LocalObjectReference: corev1.LocalObjectReference{
-					Name: ref.Name,
+					Name: PostgresConfigMapName(shard.Name),
 				},
 				Items: []corev1.KeyToPath{
-					{Key: ref.Key, Path: "postgresql.conf"},
+					{Key: PostgresConfigMapKey, Path: "postgresql.conf"},
 				},
 			},
 		},
@@ -696,9 +707,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		buildSocketDirVolume(),
 		buildPgHbaVolume(shard.Name),
 		buildPostgresPasswordVolume(shard),
-	}
-	if shard.Spec.PostgresConfigRef != nil {
-		volumes = append(volumes, buildPostgresConfigVolume(shard.Spec.PostgresConfigRef))
+		buildPostgresConfigVolume(shard),
 	}
 	if certVol := buildPgBackRestCertVolume(shard); certVol != nil {
 		volumes = append(volumes, *certVol)

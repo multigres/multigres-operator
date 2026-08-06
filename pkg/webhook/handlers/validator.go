@@ -15,6 +15,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/postgresconfig"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -103,7 +104,16 @@ func (v *MultigresClusterValidator) validate(
 		childSpan.End()
 	}
 
-	// 2. Deep Logic Validation (Safety Checks)
+	// 2. PostgreSQL parameter (GUC) validation. Runs before the deep-logic step
+	// because that step returns early when it emits warnings, which must not
+	// bypass rejecting invalid GUCs.
+	if err := validatePostgresConfig(cluster); err != nil {
+		monitoring.RecordSpanError(span, err)
+		monitoring.RecordWebhookRequest("VALIDATE", "MultigresCluster", err, time.Since(start))
+		return nil, err
+	}
+
+	// 3. Deep Logic Validation (Safety Checks)
 	{
 		_, childSpan := monitoring.StartChildSpan(ctx, "Webhook.ValidateLogic")
 		if warnings, err := v.validateLogic(ctx, cluster); err != nil {
@@ -184,6 +194,34 @@ func validateNoStorageShrink(
 	}
 
 	return nil, nil
+}
+
+// validatePostgresConfig checks every spec.postgresConfig map in the cluster
+// (inline spec and overrides, at each shard) against the PostgreSQL parameter
+// catalog, rejecting unknown names and gross type mismatches.
+func validatePostgresConfig(cluster *multigresv1alpha1.MultigresCluster) error {
+	for _, db := range cluster.Spec.Databases {
+		for _, tg := range db.TableGroups {
+			for _, shard := range tg.Shards {
+				maps := []map[string]string{}
+				if shard.Spec != nil {
+					maps = append(maps, shard.Spec.PostgresConfig)
+				}
+				if shard.Overrides != nil {
+					maps = append(maps, shard.Overrides.PostgresConfig)
+				}
+				for _, m := range maps {
+					if err := postgresconfig.Validate(m); err != nil {
+						return fmt.Errorf(
+							"database %q tablegroup %q shard %q: %w",
+							db.Name, tg.Name, shard.Name, err,
+						)
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // collectPoolStorageSizes walks the cluster spec and returns a map of
@@ -285,25 +323,26 @@ func NewTemplateValidator(c client.Client, kind string) *TemplateValidator {
 	return &TemplateValidator{Client: c, Kind: kind}
 }
 
-// ValidateCreate validates pool name map keys for ShardTemplates on creation.
+// ValidateCreate validates ShardTemplates on creation (pool names, GUCs).
 func (v *TemplateValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validatePoolNames(obj)
+	return v.validateShardTemplate(obj)
 }
 
-// ValidateUpdate validates pool name map keys for ShardTemplates on update.
+// ValidateUpdate validates ShardTemplates on update (pool names, GUCs).
 func (v *TemplateValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validatePoolNames(newObj)
+	return v.validateShardTemplate(newObj)
 }
 
-// validatePoolNames validates pool name map keys for ShardTemplates.
-// CRD structural schema does not enforce validation markers on map keys.
-func (v *TemplateValidator) validatePoolNames(obj runtime.Object) (admission.Warnings, error) {
+// validateShardTemplate validates a ShardTemplate's pool name map keys (the CRD
+// structural schema does not enforce validation markers on map keys) and its
+// postgresConfig parameters.
+func (v *TemplateValidator) validateShardTemplate(obj runtime.Object) (admission.Warnings, error) {
 	if v.Kind != "ShardTemplate" {
 		return nil, nil
 	}
@@ -315,6 +354,9 @@ func (v *TemplateValidator) validatePoolNames(obj runtime.Object) (admission.War
 		if err := resolver.ValidatePoolName(poolName); err != nil {
 			return nil, err
 		}
+	}
+	if err := postgresconfig.Validate(tpl.Spec.PostgresConfig); err != nil {
+		return nil, err
 	}
 	return nil, nil
 }

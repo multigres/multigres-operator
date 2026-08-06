@@ -1,0 +1,113 @@
+# PostgreSQL configuration rendered by multigres-operator.
+# port, listen_addresses, unix_socket_directories, data_directory, hba_file and
+# ident_file are intentionally omitted: pgctld pins them via command-line args.
+
+#------------------------------------------------------------------------------
+# CONNECTIONS AND AUTHENTICATION
+#------------------------------------------------------------------------------
+
+max_connections = {{.MaxConnections}}
+
+authentication_timeout = 1min		# 1s-600s
+password_encryption = scram-sha-256	# scram-sha-256 or md5
+
+# - SSL -
+ssl = off
+ssl_ca_file = ''
+ssl_cert_file = ''
+ssl_crl_file = ''
+ssl_crl_dir = ''
+ssl_key_file = ''
+ssl_ciphers = 'HIGH:MEDIUM:+3DES:!aNULL' # allowed SSL ciphers
+ssl_prefer_server_ciphers = on
+ssl_ecdh_curve = 'prime256v1'
+ssl_min_protocol_version = 'TLSv1.2'
+ssl_max_protocol_version = ''
+ssl_dh_params_file = ''
+ssl_passphrase_command = ''
+ssl_passphrase_command_supports_reload = off
+
+#------------------------------------------------------------------------------
+# RESOURCE USAGE (except WAL)
+#------------------------------------------------------------------------------
+
+# - Memory -
+shared_buffers = {{.SharedBuffers}}			# min 128kB (change requires restart)
+maintenance_work_mem = {{.MaintenanceWorkMem}}		# min 1MB
+work_mem = {{.WorkMem}}				# min 64kB
+
+# - Kernel Resources -
+max_worker_processes = {{.MaxWorkerProcesses}}		# (change requires restart)
+
+# - Asynchronous Behavior -
+effective_io_concurrency = {{.EffectiveIoConcurrency}}	# 1-1000; 0 disables prefetching
+max_parallel_workers = {{.MaxParallelWorkers}}		# max number of parallel workers
+max_parallel_workers_per_gather = {{.MaxParallelWorkersPerGather}}
+max_parallel_maintenance_workers = {{.MaxParallelMaintenanceWorkers}}
+
+#------------------------------------------------------------------------------
+# WRITE-AHEAD LOG
+#------------------------------------------------------------------------------
+
+wal_level = logical			# minimal, replica, or logical (change requires restart)
+wal_buffers = {{.WalBuffers}}			# min 32kB (change requires restart)
+min_wal_size = {{.MinWalSize}}
+max_wal_size = {{.MaxWalSize}}
+wal_keep_size = {{.WalKeepSize}}
+
+# - Checkpoints -
+checkpoint_completion_target = {{.CheckpointCompletionTarget}}	# 0.0 - 1.0
+checkpoint_flush_after = 256kB		# measured in pages, 0 disables
+
+#------------------------------------------------------------------------------
+# REPLICATION
+#------------------------------------------------------------------------------
+
+max_wal_senders = {{.MaxWalSenders}}		# (change requires restart)
+max_replication_slots = {{.MaxReplicationSlots}}	# (change requires restart)
+# Protect the primary's disk; a logical consumer that exceeds this cap can
+# lose its slot at checkpoint and require resynchronization.
+max_slot_wal_keep_size = {{.MaxSlotWalKeepSize}}   # in megabytes; -1 disables
+
+#------------------------------------------------------------------------------
+# QUERY TUNING
+#------------------------------------------------------------------------------
+
+effective_cache_size = {{.EffectiveCacheSize}}
+random_page_cost = {{.RandomPageCost}}			# same scale as above
+default_statistics_target = {{.DefaultStatisticsTarget}}	# range 1-10000
+
+#------------------------------------------------------------------------------
+# REPORTING AND LOGGING
+#------------------------------------------------------------------------------
+
+log_line_prefix = '%h %m [%p] %q%u@%d '
+log_statement = 'ddl'			# none, ddl, mod, all
+log_timezone = 'UTC'
+
+#------------------------------------------------------------------------------
+# PROCESS TITLE
+#------------------------------------------------------------------------------
+
+cluster_name = '{{.ClusterName}}'		# added to process titles if nonempty (change requires restart)
+
+#------------------------------------------------------------------------------
+# CLIENT CONNECTION DEFAULTS
+#------------------------------------------------------------------------------
+
+row_security = on
+timezone = 'UTC'
+lc_messages = 'en_US.UTF-8'
+lc_monetary = 'en_US.UTF-8'
+lc_numeric = 'en_US.UTF-8'
+lc_time = 'en_US.UTF-8'
+default_text_search_config = 'pg_catalog.english'
+jit_provider = 'llvmjit'		# JIT library to use
+
+#------------------------------------------------------------------------------
+# CUSTOMIZED OPTIONS
+#------------------------------------------------------------------------------
+
+auto_explain.log_min_duration = 10s
+cron.database_name = 'postgres'
+wal_log_hints = 'on'

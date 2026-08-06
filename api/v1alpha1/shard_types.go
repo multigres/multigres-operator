@@ -144,12 +144,21 @@ type ShardSpec struct {
 	// +optional
 	InitdbArgs InitdbArgs `json:"initdbArgs,omitempty"`
 
-	// PostgresConfigRef references a ConfigMap containing extra postgresql.conf
-	// lines appended to pgctld's auto-tuned defaults. The operator mounts it and
-	// sets POSTGRES_INITDB_EXTRA_CONF on pgctld; PostgreSQL's last-write-wins
-	// rule lets you override specific params without replacing the whole config.
+	// PostgresConfigRef references a ConfigMap whose postgresql.conf lines are
+	// merged into the operator-rendered config for this shard's pools. This field
+	// is deprecated in favor of the inline PostgresConfig map; it remains
+	// supported for backward compatibility and will be removed in a future
+	// version.
 	// +optional
 	PostgresConfigRef *PostgresConfigRef `json:"postgresConfigRef,omitempty"`
+
+	// PostgresConfig is the resolved map of PostgreSQL parameter (GUC) names to
+	// string values for this shard. The operator renders it over its defaults and
+	// any PostgresConfigRef content (PostgresConfig wins on key conflicts) into
+	// the postgresql.conf mounted into pgctld.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=200
+	PostgresConfig map[string]string `json:"postgresConfig,omitempty"`
 
 	// Pools is the map of fully resolved data pool configurations.
 	// +kubebuilder:validation:MaxProperties=8
@@ -240,11 +249,42 @@ type ShardImages struct {
 // CR Controller Status Specs
 // ============================================================================
 
+// PostgresConfigStatus reports the rollout state of the operator-rendered
+// postgresql.conf for a shard, so a caller can tell whether a config change has
+// finished rolling out or failed without inspecting pods.
+//
+// InProgress is content-based: it compares the config effective on the pods
+// against the desired render, so it reflects any config change — a spec edit, a
+// PostgresConfigRef ConfigMap edit, or a new operator baseline on upgrade — none
+// of which are captured by generation alone. A caller checks
+// InProgress == false && Error == "" for "settled", and uses the shard's
+// top-level status.observedGeneration as the freshness watermark for a spec
+// change.
+type PostgresConfigStatus struct {
+	// InProgress is true while the desired rendered config has not yet landed on
+	// every pool pod (a config rollout is under way).
+	// +optional
+	InProgress bool `json:"inProgress,omitempty"`
+
+	// LastAppliedAt is when the rendered config last settled onto every pool pod.
+	// +optional
+	LastAppliedAt *metav1.Time `json:"lastAppliedAt,omitempty"`
+
+	// Error is non-empty when the config could not be rendered or read (for
+	// example, a missing PostgresConfigRef ConfigMap).
+	// +optional
+	Error string `json:"error,omitempty"`
+}
+
 // ShardStatus defines the observed state of Shard.
 type ShardStatus struct {
 	// ObservedGeneration is the most recent generation observed.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// PostgresConfig reports the rollout state of the rendered postgresql.conf.
+	// +optional
+	PostgresConfig *PostgresConfigStatus `json:"postgresConfig,omitempty"`
 
 	// Conditions represent the latest available observations.
 	// +optional

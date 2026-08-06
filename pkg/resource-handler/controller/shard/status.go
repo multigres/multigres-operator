@@ -19,16 +19,21 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
 
-// updateStatus updates the Shard status based on observed state.
+// updateStatus updates the Shard status based on observed state. rendered is the
+// shard's effective-config render result (hash + any render/read error) computed
+// once per reconcile by renderEffectiveConfig: the hash detects whether pods
+// carry the current config, and a non-nil rendered.err (e.g. a missing
+// PostgresConfigRef ConfigMap) is surfaced in the config status.
 func (r *ShardReconciler) updateStatus(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
+	rendered renderedConfig,
 ) error {
 	oldPhase := shard.Status.Phase
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 
 	// Update pools status
-	totalPods, readyPods, poolDegraded, err := r.updatePoolsStatus(ctx, shard, cellsSet)
+	pools, err := r.updatePoolsStatus(ctx, shard, cellsSet, rendered.hash)
 	if err != nil {
 		return err
 	}
@@ -43,15 +48,20 @@ func (r *ShardReconciler) updateStatus(
 	shard.Status.Cells = cellSetToSlice(cellsSet)
 
 	// Update aggregate status fields
-	shard.Status.PoolsReady = (totalPods > 0 && totalPods == readyPods)
-	shard.Status.ReadyReplicas = readyPods
+	shard.Status.PoolsReady = (pools.totalPods > 0 && pools.totalPods == pools.readyPods)
+	shard.Status.ReadyReplicas = pools.readyPods
+
+	// Report config rollout state from the pool scan (content drift or a
+	// desired-config pod crash-looping; see poolStatus.configInProgress). A
+	// render/read error is reported without settling.
+	r.setPostgresConfigStatus(shard, pools.configInProgress, rendered.err)
 
 	// Update Phase — Degraded takes priority over Healthy so crash-looping
 	// pods are always surfaced even when the old replica is still serving.
 	switch {
-	case poolDegraded || orchDegraded:
+	case pools.poolDegraded || orchDegraded:
 		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
-		if poolDegraded {
+		if pools.poolDegraded {
 			shard.Status.Message = "One or more pool pods are crash-looping"
 		} else {
 			shard.Status.Message = "One or more Multiorch pods are crash-looping"
@@ -69,7 +79,7 @@ func (r *ShardReconciler) updateStatus(
 	}
 
 	// Update conditions
-	r.setConditions(shard, totalPods, readyPods)
+	r.setConditions(shard, pools.totalPods, pools.readyPods)
 
 	shard.Status.ObservedGeneration = shard.Generation
 
@@ -104,6 +114,7 @@ func (r *ShardReconciler) updateStatus(
 			LastBackupTime:     shard.Status.LastBackupTime,
 			LastBackupType:     shard.Status.LastBackupType,
 			PodRoles:           shard.Status.PodRoles,
+			PostgresConfig:     shard.Status.PostgresConfig,
 		},
 	}
 
@@ -135,17 +146,44 @@ func (r *ShardReconciler) updateStatus(
 	return nil
 }
 
-// updatePoolsStatus aggregates status from all pool pods.
-// Returns total desired pods, ready pods, whether any pod is degraded (crash-looping),
-// and tracks cells in the cellsSet.
+// poolStatus is the aggregate of the pool-pod scan: pod counts, whether any pool
+// pod is crash-looping (drives Phase=Degraded), and whether the rendered config
+// has not yet settled on every pod (drives PostgresConfigStatus). Returning it as
+// a struct keeps the pod-health and config-rollout signals from being smuggled
+// through a positional multi-bool return.
+type poolStatus struct {
+	totalPods, readyPods int32
+	poolDegraded         bool
+
+	// configInProgress is true while the rendered config has not yet converged
+	// onto every live pod (content drift) or a pod already carrying the desired
+	// config is crash-looping. The latter is the narrow, config-attributable
+	// slice of pod health we intentionally couple to: a GUC value Postgres
+	// rejects at startup would otherwise be reported as applied. An unrelated
+	// crash-loop on a pod that does not carry the desired config does not affect
+	// config status (it still lacks the hash, so it reads as drift, not apply
+	// failure — either way the rollout is correctly reported as unsettled).
+	configInProgress bool
+}
+
+// updatePoolsStatus aggregates status from all pool pods and tracks cells in the
+// cellsSet.
 func (r *ShardReconciler) updatePoolsStatus(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	cellsSet map[multigresv1alpha1.CellName]bool,
-) (int32, int32, bool, error) {
-	var totalPods, readyPods int32
-	var poolDegraded bool
+	desiredConfigHash string,
+) (poolStatus, error) {
 	clusterName := shard.Labels[metadata.LabelMultigresCluster]
+
+	var ps poolStatus
+
+	// Track whether every live pod carries the desired config hash, and whether
+	// a pod that already carries it is crash-looping (config that Postgres
+	// rejects at startup manifests exactly this way).
+	liveCount := 0
+	allConfigCurrent := true
+	configApplyFailing := false
 
 	for poolName, poolSpec := range shard.Spec.Pools {
 		var poolDesired, poolReady int32
@@ -164,7 +202,7 @@ func (r *ShardReconciler) updatePoolsStatus(
 				client.InNamespace(shard.Namespace),
 				client.MatchingLabels(selector),
 			); err != nil {
-				return 0, 0, false, fmt.Errorf("failed to list pods for status: %w", err)
+				return poolStatus{}, fmt.Errorf("failed to list pods for status: %w", err)
 			}
 
 			var cellReady int32
@@ -183,9 +221,23 @@ func (r *ShardReconciler) updatePoolsStatus(
 					continue
 				}
 
+				// A live pod is config-current when it carries the desired hash.
+				liveCount++
+				podHasDesiredConfig := pod.Annotations[metadata.AnnotationPostgresConfigHash] == desiredConfigHash
+				if !podHasDesiredConfig {
+					allConfigCurrent = false
+				}
+
 				// Detect crash-looping pods so the phase can escalate to Degraded.
+				// When the crash-looper already carries the desired config, treat
+				// the rollout as not-yet-settled: a bad GUC value fails Postgres
+				// startup here, and reporting such a config as applied would be a
+				// silent false positive.
 				if status.IsCrashLooping(pod) {
-					poolDegraded = true
+					ps.poolDegraded = true
+					if podHasDesiredConfig {
+						configApplyFailing = true
+					}
 				}
 
 				// Check if pod is ready
@@ -217,8 +269,8 @@ func (r *ShardReconciler) updatePoolsStatus(
 			poolReady += cellReady
 		}
 
-		totalPods += poolDesired
-		readyPods += poolReady
+		ps.totalPods += poolDesired
+		ps.readyPods += poolReady
 
 		monitoring.SetShardPoolReplicas(
 			clusterName, shard.Name, string(poolName), "", shard.Namespace,
@@ -226,7 +278,15 @@ func (r *ShardReconciler) updatePoolsStatus(
 		)
 	}
 
-	return totalPods, readyPods, poolDegraded, nil
+	// Content-based drift: at least one live pod carries a config hash other than
+	// the desired render. This is the "effective != desired" signal — it covers a
+	// spec edit, a PostgresConfigRef ConfigMap edit, and an operator-baseline
+	// change on upgrade alike, none of which the shard generation captures. When
+	// reload lands, the observed side migrates from "pod recreated with the hash"
+	// to "pgctld reports the loaded version"; the comparison stays the same.
+	configDrift := liveCount > 0 && !allConfigCurrent
+	ps.configInProgress = configDrift || configApplyFailing
+	return ps, nil
 }
 
 // updateMultiorchStatus checks Multiorch Deployments and sets OrchReady status.
@@ -288,6 +348,42 @@ func (r *ShardReconciler) updateMultiorchStatus(
 
 	shard.Status.OrchReady = orchReady
 	return orchDegraded, nil
+}
+
+// setPostgresConfigStatus records the rollout state of the rendered config on
+// the shard status from the content-drift signal. inProgress is true while some
+// pod still lacks the desired config; LastAppliedAt is (re)stamped only on the
+// transition into "settled", so it stays stable while nothing is changing and
+// advances for any change — including a PostgresConfigRef edit or a new operator
+// baseline that never bumps the shard generation. A config error is reported
+// without settling.
+func (r *ShardReconciler) setPostgresConfigStatus(
+	shard *multigresv1alpha1.Shard,
+	inProgress bool,
+	configErr error,
+) {
+	prev := shard.Status.PostgresConfig
+	st := &multigresv1alpha1.PostgresConfigStatus{}
+	if prev != nil {
+		st.LastAppliedAt = prev.LastAppliedAt
+	}
+
+	switch {
+	case configErr != nil:
+		st.Error = configErr.Error()
+	case inProgress:
+		st.InProgress = true
+	default:
+		// Settled: stamp LastAppliedAt only when transitioning from an unsettled
+		// state, so a steady-state config does not churn the timestamp.
+		wasUnsettled := prev == nil || prev.InProgress || prev.Error != ""
+		if wasUnsettled {
+			now := metav1.Now()
+			st.LastAppliedAt = &now
+		}
+	}
+
+	shard.Status.PostgresConfig = st
 }
 
 // cellSetToSlice converts a cell set (map) to a slice.

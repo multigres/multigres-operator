@@ -478,6 +478,87 @@ func WaitForQueryServing(t testing.TB, c *Cluster, ns, gatewaySvc string) {
 	}
 }
 
+// PsqlExec runs a single SQL statement through the gateway from a ready postgres
+// pod and returns the trimmed result. ok is false (non-fatal) when no serving
+// pod is found or psql fails, so callers can poll. sql must not contain single
+// quotes (it is single-quoted into the shell command).
+func (c *Cluster) PsqlExec(t testing.TB, ns, gwSvc, sql string) (string, bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	pods, err := c.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return "", false
+	}
+	var targetPod string
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		// pgctld/postgres runs as a native sidecar (an init container with an
+		// always restart policy), so check both container lists.
+		for _, cs := range pod.Status.ContainerStatuses {
+			if cs.Name == "postgres" && cs.Ready {
+				targetPod = pod.Name
+			}
+		}
+		if targetPod == "" {
+			for _, cs := range pod.Status.InitContainerStatuses {
+				if cs.Name == "postgres" && cs.Ready {
+					targetPod = pod.Name
+				}
+			}
+		}
+		if targetPod != "" {
+			break
+		}
+	}
+	if targetPod == "" {
+		return "", false
+	}
+
+	args := []string{
+		"--kubeconfig", c.Kubeconfig,
+		"exec", "-n", ns, targetPod, "-c", "postgres", "--",
+		"sh", "-c",
+		fmt.Sprintf(
+			"PGPASSWORD=postgres psql -h %s -p 5432 -U postgres -d postgres -t -A -c '%s'",
+			gwSvc, sql,
+		),
+	}
+	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	if err != nil {
+		t.Logf("psql %q via %s: %v: %s", sql, gwSvc, err, strings.TrimSpace(string(out)))
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
+}
+
+// WaitForPsqlValue polls a query until it returns want, failing the test on
+// timeout. Use it to assert an effective GUC value (e.g. "SHOW work_mem" →
+// "16MB"), tolerating the brief window while a config change rolls out.
+func WaitForPsqlValue(t testing.TB, c *Cluster, ns, gwSvc, sql, want string) {
+	t.Helper()
+	// Generous: a config change rolls out via a primary-last restart of every
+	// pool pod, which takes minutes on kind. Read-only asserts match on the
+	// first poll, so this ceiling only bites during a rollout.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	var last string
+	err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		v, ok := c.PsqlExec(t, ns, gwSvc, sql)
+		if !ok {
+			return false, nil
+		}
+		last = v
+		return v == want, nil
+	})
+	if err != nil {
+		t.Fatalf("query %q: got %q, want %q: %v", sql, last, want, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Mutation & assertion helpers
 // ---------------------------------------------------------------------------
