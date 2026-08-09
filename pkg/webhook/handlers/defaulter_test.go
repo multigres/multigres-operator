@@ -87,9 +87,15 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						{
 							Name: "c1",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								Multigateway: multigresv1alpha1.StatelessSpec{
-									Replicas:  ptr.To(int32(1)),
-									Resources: resolver.DefaultResourcesGateway(),
+								Multigateway: multigresv1alpha1.MultigatewaySpec{
+									StatelessSpec: multigresv1alpha1.StatelessSpec{
+										Replicas:  ptr.To(int32(1)),
+										Resources: resolver.DefaultResourcesGateway(),
+									},
+									// Failover buffering is defaulted to enabled.
+									Buffer: &multigresv1alpha1.GatewayBufferConfig{
+										Enabled: ptr.To(true),
+									},
 								},
 							},
 						},

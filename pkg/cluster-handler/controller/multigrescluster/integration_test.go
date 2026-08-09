@@ -109,7 +109,7 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 		&multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 			},
 		},
 		&multigresv1alpha1.ShardTemplate{
@@ -225,7 +225,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Cells: []multigresv1alpha1.CellConfig{
 						{Name: "zone-a", ZoneID: "use1-az1", Spec: &multigresv1alpha1.CellInlineSpec{
-							Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+							Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 						}},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{
@@ -495,10 +495,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							ImagePullPolicy:  corev1.PullAlways,
 							ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
 						},
-						Multigateway: multigresv1alpha1.StatelessSpec{
+						Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),
 							Resources: resolver.DefaultResourcesGateway(), // Expected default
-						},
+						}},
 						AllCells: []multigresv1alpha1.CellName{"zone-a"},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 							Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
@@ -855,10 +855,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							Multigateway:    resolver.DefaultMultigatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
-						Multigateway: multigresv1alpha1.StatelessSpec{
+						Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)), // From default template
 							Resources: resolver.DefaultResourcesGateway(),
-						},
+						}},
 						AllCells: []multigresv1alpha1.CellName{"zone-a"},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 							Address:        "minimal-cluster-global-topo." + testNamespace + ".svc:2379",
@@ -1214,10 +1214,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							Multigateway:    resolver.DefaultMultigatewayImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
-						Multigateway: multigresv1alpha1.StatelessSpec{
+						Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 							Replicas:  ptr.To(int32(1)),
 							Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-						},
+						}},
 						AllCells: []multigresv1alpha1.CellName{"zone-a"},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 							Address:        "lazy-cluster-global-topo." + testNamespace + ".svc:2379",

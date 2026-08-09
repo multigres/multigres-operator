@@ -279,7 +279,7 @@ type CellConfig struct {
 type CellOverrides struct {
 	// Multigateway overrides.
 	// +optional
-	Multigateway *StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway *MultigatewaySpec `json:"multigateway,omitempty"`
 
 	// MultigatewayPlacement overrides.
 	// +optional
@@ -290,7 +290,7 @@ type CellOverrides struct {
 type CellInlineSpec struct {
 	// Multigateway configuration.
 	// +optional
-	Multigateway StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway MultigatewaySpec `json:"multigateway,omitempty"`
 
 	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional

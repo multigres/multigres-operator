@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -337,6 +338,28 @@ func (r *Resolver) ValidateClusterLogic(
 			); err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	// ------------------------------------------------------------------
+	// 0f. Gateway Buffer Validation (Dry-Run Resolution)
+	// ------------------------------------------------------------------
+	// Resolve each cell the same way the reconciler would (template +
+	// overrides + inline) so buffer misconfiguration is caught no matter
+	// which layer it comes from.
+	for _, cell := range cluster.Spec.Cells {
+		cellCfg := cell
+		if cellCfg.CellTemplate == "" && cluster.Spec.TemplateDefaults.CellTemplate != "" {
+			cellCfg.CellTemplate = cluster.Spec.TemplateDefaults.CellTemplate
+		}
+		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"validation failed: cannot resolve cell '%s': %w", cell.Name, err,
+			)
+		}
+		if err := validateGatewayBuffer(gateway.Buffer, cell.Name); err != nil {
+			return nil, err
 		}
 	}
 
@@ -745,6 +768,42 @@ func validatePoolRuntimeIdentity(
 			poolName,
 			*pool.Postgres.RunAsUser,
 			*pool.Multipooler.RunAsUser,
+		)
+	}
+	return nil
+}
+
+// validateGatewayBuffer checks the resolved multigateway buffer configuration.
+// Size fields are enforced by CRD schema minimums; durations need Go-side
+// checks because the schema stores them as opaque strings.
+func validateGatewayBuffer(
+	buffer *multigresv1alpha1.GatewayBufferConfig,
+	cellName multigresv1alpha1.CellName,
+) error {
+	if buffer == nil {
+		return nil
+	}
+	durations := []struct {
+		name  string
+		value *metav1.Duration
+	}{
+		{"window", buffer.Window},
+		{"maxFailoverDuration", buffer.MaxFailoverDuration},
+		{"minTimeBetweenFailovers", buffer.MinTimeBetweenFailovers},
+	}
+	for _, d := range durations {
+		if d.value != nil && d.value.Duration <= 0 {
+			return fmt.Errorf(
+				"cell '%s': multigateway buffer %s (%s) must be a positive duration",
+				cellName, d.name, d.value.Duration,
+			)
+		}
+	}
+	if buffer.Window != nil && buffer.MaxFailoverDuration != nil &&
+		buffer.Window.Duration > buffer.MaxFailoverDuration.Duration {
+		return fmt.Errorf(
+			"cell '%s': multigateway buffer window (%s) must be <= maxFailoverDuration (%s)",
+			cellName, buffer.Window.Duration, buffer.MaxFailoverDuration.Duration,
 		)
 	}
 	return nil

@@ -171,7 +171,7 @@ func createDefaults(c client.Client) error {
 		&multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 			},
 		},
 		&multigresv1alpha1.ShardTemplate{

@@ -30,14 +30,14 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		smallTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "small", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 			},
 		}
 		// "Large" Template -> Replicas: 5
 		largeTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "large", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))}},
 			},
 		}
 
@@ -74,7 +74,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						ZoneID:       "use1-az3",
 						CellTemplate: "large",
 						Overrides: &multigresv1alpha1.CellOverrides{
-							Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+							Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))}},
 						},
 					},
 
@@ -83,7 +83,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Name:   "zone-d",
 						ZoneID: "use1-az4",
 						Spec: &multigresv1alpha1.CellInlineSpec{
-							Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))},
+							Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))}},
 						},
 					},
 				},
@@ -125,10 +125,10 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Multigateway:    resolver.DefaultMultigatewayImage,
 						ImagePullPolicy: resolver.DefaultImagePullPolicy,
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 						Replicas:  ptr.To(replicas),
 						Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-					},
+					}},
 					AllCells: cellNames,
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
@@ -208,10 +208,10 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 					Multigateway:    resolver.DefaultMultigatewayImage,
 					ImagePullPolicy: resolver.DefaultImagePullPolicy,
 				},
-				Multigateway: multigresv1alpha1.StatelessSpec{
+				Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:  ptr.To(int32(1)),
 					Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-				},
+				}},
 				AllCells: []multigresv1alpha1.CellName{"zone-a"},
 				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 					Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
@@ -404,7 +404,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 				{
 					Name: "zone-a", ZoneID: "use1-az1",
 					Spec: &multigresv1alpha1.CellInlineSpec{
-						Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+						Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))}},
 					},
 				},
 			},
@@ -436,10 +436,10 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 				Multigateway:    resolver.DefaultMultigatewayImage,
 				ImagePullPolicy: resolver.DefaultImagePullPolicy,
 			},
-			Multigateway: multigresv1alpha1.StatelessSpec{
+			Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 				Replicas:  ptr.To(int32(2)),
 				Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-			},
+			}},
 			AllCells: []multigresv1alpha1.CellName{"zone-a"},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 				Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",

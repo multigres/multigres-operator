@@ -1149,6 +1149,53 @@ spec:
                             x-kubernetes-list-type: atomic
                         type: object
                     type: object
+                  buffer:
+                    description: Buffer configures request buffering during planned
+                      failovers.
+                    properties:
+                      drainConcurrency:
+                        description: |-
+                          DrainConcurrency is the number of buffered requests drained in
+                          parallel after the failover completes (--buffer-drain-concurrency).
+                          Binary default: 1.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      enabled:
+                        description: |-
+                          Enabled controls failover buffering (--buffer-enabled).
+                          Defaults to true via the admission webhook: the operator provisions
+                          HA clusters where transparent planned failover is expected.
+                        type: boolean
+                      maxFailoverDuration:
+                        description: |-
+                          MaxFailoverDuration is the session-level cap on how long one failover
+                          may keep requests buffered (--buffer-max-failover-duration). Must be
+                          >= window. Binary default: 20s.
+                        type: string
+                      minTimeBetweenFailovers:
+                        description: |-
+                          MinTimeBetweenFailovers is the minimum interval between two buffering
+                          events for the same shard (--buffer-min-time-between-failovers).
+                          Binary default: 1m.
+                        type: string
+                      size:
+                        description: |-
+                          Size is the maximum number of concurrently buffered requests
+                          (--buffer-size). Binary default: 1000.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      window:
+                        description: |-
+                          Window is the per-request buffering cap (--buffer-window); requests
+                          buffered longer than this fail. Binary default: 10s.
+                          Sizing note: on a 3-pooler test cluster the gateway-perceived failover
+                          duration averaged ~8.3s (consensus plus topology propagation) with a
+                          longer tail, so the 10s default can still evict a request or two per
+                          planned failover; 20s masked all of them.
+                        type: string
+                    type: object
                   podAnnotations:
                     additionalProperties:
                       type: string
