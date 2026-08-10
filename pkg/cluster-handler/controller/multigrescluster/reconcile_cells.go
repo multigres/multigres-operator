@@ -45,9 +45,7 @@ func (r *MultigresClusterReconciler) reconcileCells(
 		activeCellNames[cellCfg.Name] = true
 
 		// Apply global CellTemplate default (Level 2 in the 4-level override chain)
-		if cellCfg.CellTemplate == "" && cluster.Spec.TemplateDefaults.CellTemplate != "" {
-			cellCfg.CellTemplate = cluster.Spec.TemplateDefaults.CellTemplate
-		}
+		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
 
 		gatewaySpec, gatewayPlacement, localTopoSpec, err := res.ResolveCell(ctx, &cellCfg)
 		if err != nil {

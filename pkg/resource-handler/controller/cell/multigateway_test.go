@@ -2461,11 +2461,11 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
 			Enabled: ptr.To(true),
 		}))
-		if !slices.Contains(args, "--buffer-enabled") {
-			t.Errorf("expected --buffer-enabled in args, got %v", args)
+		if !slices.Contains(args, "--buffer-enabled=true") {
+			t.Errorf("expected --buffer-enabled=true in args, got %v", args)
 		}
 		for _, arg := range args {
-			if strings.HasPrefix(arg, "--buffer-") && arg != "--buffer-enabled" {
+			if strings.HasPrefix(arg, "--buffer-") && arg != "--buffer-enabled=true" {
 				t.Errorf("unexpected buffer flag %q for default config", arg)
 			}
 		}
@@ -2481,14 +2481,14 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 			DrainConcurrency:        ptr.To(int32(4)),
 		}))
 		want := []string{
-			"--buffer-enabled",
+			"--buffer-enabled=true",
 			"--buffer-window", "20s",
 			"--buffer-max-failover-duration", "30s",
 			"--buffer-min-time-between-failovers", "2m0s",
 			"--buffer-size", "500",
 			"--buffer-drain-concurrency", "4",
 		}
-		idx := slices.Index(args, "--buffer-enabled")
+		idx := slices.Index(args, "--buffer-enabled=true")
 		if idx < 0 || len(args) < idx+len(want) {
 			t.Fatalf("buffer args missing or truncated, got %v", args)
 		}
@@ -2506,13 +2506,13 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 		}
 	})
 
-	t.Run("disabled buffer omits --buffer-enabled", func(t *testing.T) {
+	t.Run("disabled buffer emits explicit --buffer-enabled=false", func(t *testing.T) {
 		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
 			Enabled: ptr.To(false),
 			Window:  &metav1.Duration{Duration: 20 * time.Second},
 		}))
-		if slices.Contains(args, "--buffer-enabled") {
-			t.Errorf("--buffer-enabled must not be set when disabled, got %v", args)
+		if !slices.Contains(args, "--buffer-enabled=false") {
+			t.Errorf("expected --buffer-enabled=false when disabled, got %v", args)
 		}
 	})
 }

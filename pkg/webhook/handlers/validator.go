@@ -307,7 +307,7 @@ func effectiveEtcdReplicas(cluster *multigresv1alpha1.MultigresCluster) int32 {
 // ============================================================================
 
 // +kubebuilder:webhook:path=/validate-multigres-com-v1alpha1-coretemplate,mutating=false,failurePolicy=fail,sideEffects=None,groups=multigres.com,resources=coretemplates,verbs=delete,versions=v1alpha1,name=vcoretemplate.kb.io,admissionReviewVersions=v1
-// +kubebuilder:webhook:path=/validate-multigres-com-v1alpha1-celltemplate,mutating=false,failurePolicy=fail,sideEffects=None,groups=multigres.com,resources=celltemplates,verbs=delete,versions=v1alpha1,name=vcelltemplate.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-multigres-com-v1alpha1-celltemplate,mutating=false,failurePolicy=fail,sideEffects=None,groups=multigres.com,resources=celltemplates,verbs=create;update;delete,versions=v1alpha1,name=vcelltemplate.kb.io,admissionReviewVersions=v1
 // +kubebuilder:webhook:path=/validate-multigres-com-v1alpha1-shardtemplate,mutating=false,failurePolicy=fail,sideEffects=None,groups=multigres.com,resources=shardtemplates,verbs=create;update;delete,versions=v1alpha1,name=vshardtemplate.kb.io,admissionReviewVersions=v1
 
 // TemplateValidator validates Delete events to ensure templates are not in use.
@@ -323,40 +323,58 @@ func NewTemplateValidator(c client.Client, kind string) *TemplateValidator {
 	return &TemplateValidator{Client: c, Kind: kind}
 }
 
-// ValidateCreate validates ShardTemplates on creation (pool names, GUCs).
+// ValidateCreate validates template content on creation.
 func (v *TemplateValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validateShardTemplate(obj)
+	return v.validateTemplateContent(obj)
 }
 
-// ValidateUpdate validates ShardTemplates on update (pool names, GUCs).
+// ValidateUpdate validates template content on update.
 func (v *TemplateValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validateShardTemplate(newObj)
+	return v.validateTemplateContent(newObj)
 }
 
-// validateShardTemplate validates a ShardTemplate's pool name map keys (the CRD
-// structural schema does not enforce validation markers on map keys) and its
-// postgresConfig parameters.
-func (v *TemplateValidator) validateShardTemplate(obj runtime.Object) (admission.Warnings, error) {
-	if v.Kind != "ShardTemplate" {
-		return nil, nil
-	}
-	tpl, ok := obj.(*multigresv1alpha1.ShardTemplate)
-	if !ok {
-		return nil, nil
-	}
-	for poolName := range tpl.Spec.Pools {
-		if err := resolver.ValidatePoolName(poolName); err != nil {
+// validateTemplateContent validates the parts of a template the CRD schema
+// cannot express: a ShardTemplate's pool name map keys and postgresConfig
+// parameters, and a CellTemplate's gateway buffer configuration. Templates are
+// validated on their own create/update as well as via the cluster dry-run,
+// because editing an already-referenced template otherwise bypasses admission
+// and ships the bad config straight to the Deployments.
+func (v *TemplateValidator) validateTemplateContent(
+	obj runtime.Object,
+) (admission.Warnings, error) {
+	switch v.Kind {
+	case "ShardTemplate":
+		tpl, ok := obj.(*multigresv1alpha1.ShardTemplate)
+		if !ok {
+			return nil, nil
+		}
+		for poolName := range tpl.Spec.Pools {
+			if err := resolver.ValidatePoolName(poolName); err != nil {
+				return nil, err
+			}
+		}
+		if err := postgresconfig.Validate(tpl.Spec.PostgresConfig); err != nil {
 			return nil, err
 		}
-	}
-	if err := postgresconfig.Validate(tpl.Spec.PostgresConfig); err != nil {
-		return nil, err
+	case "CellTemplate":
+		tpl, ok := obj.(*multigresv1alpha1.CellTemplate)
+		if !ok {
+			return nil, nil
+		}
+		if tpl.Spec.Multigateway != nil {
+			if err := resolver.ValidateGatewayBuffer(
+				tpl.Spec.Multigateway.Buffer,
+				fmt.Sprintf("CellTemplate '%s'", tpl.Name),
+			); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return nil, nil
 }

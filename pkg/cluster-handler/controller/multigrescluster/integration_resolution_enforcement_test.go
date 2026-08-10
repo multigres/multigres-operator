@@ -125,10 +125,13 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Multigateway:    resolver.DefaultMultigatewayImage,
 						ImagePullPolicy: resolver.DefaultImagePullPolicy,
 					},
-					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-						Replicas:  ptr.To(replicas),
-						Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-					}},
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas:  ptr.To(replicas),
+							Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
+						},
+						Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+					},
 					AllCells: cellNames,
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
@@ -208,10 +211,13 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 					Multigateway:    resolver.DefaultMultigatewayImage,
 					ImagePullPolicy: resolver.DefaultImagePullPolicy,
 				},
-				Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-					Replicas:  ptr.To(int32(1)),
-					Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-				}},
+				Multigateway: multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{
+						Replicas:  ptr.To(int32(1)),
+						Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
+					},
+					Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				},
 				AllCells: []multigresv1alpha1.CellName{"zone-a"},
 				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 					Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
@@ -436,10 +442,13 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 				Multigateway:    resolver.DefaultMultigatewayImage,
 				ImagePullPolicy: resolver.DefaultImagePullPolicy,
 			},
-			Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-				Replicas:  ptr.To(int32(2)),
-				Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
-			}},
+			Multigateway: multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(2)),
+					Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
+				},
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+			},
 			AllCells: []multigresv1alpha1.CellName{"zone-a"},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 				Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",

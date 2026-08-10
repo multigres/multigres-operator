@@ -226,8 +226,11 @@ func BuildMultigatewayDeployment(
 
 	if buf := cell.Spec.Multigateway.Buffer; buf != nil {
 		container := &deployment.Spec.Template.Spec.Containers[0]
-		if buf.Enabled != nil && *buf.Enabled {
-			container.Args = append(container.Args, "--buffer-enabled")
+		// Always pass the value explicitly so an operator-level opt-out keeps
+		// working even if the binary's --buffer-enabled default ever flips.
+		if buf.Enabled != nil {
+			container.Args = append(container.Args,
+				fmt.Sprintf("--buffer-enabled=%t", *buf.Enabled))
 		}
 		if buf.Window != nil {
 			container.Args = append(container.Args,

@@ -6,11 +6,11 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -349,16 +349,16 @@ func (r *Resolver) ValidateClusterLogic(
 	// which layer it comes from.
 	for _, cell := range cluster.Spec.Cells {
 		cellCfg := cell
-		if cellCfg.CellTemplate == "" && cluster.Spec.TemplateDefaults.CellTemplate != "" {
-			cellCfg.CellTemplate = cluster.Spec.TemplateDefaults.CellTemplate
-		}
+		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
 		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"validation failed: cannot resolve cell '%s': %w", cell.Name, err,
 			)
 		}
-		if err := validateGatewayBuffer(gateway.Buffer, cell.Name); err != nil {
+		if err := ValidateGatewayBuffer(
+			gateway.Buffer, fmt.Sprintf("cell '%s'", cell.Name),
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -773,37 +773,67 @@ func validatePoolRuntimeIdentity(
 	return nil
 }
 
-// validateGatewayBuffer checks the resolved multigateway buffer configuration.
-// Size fields are enforced by CRD schema minimums; durations need Go-side
-// checks because the schema stores them as opaque strings.
-func validateGatewayBuffer(
+// Defaults the multigateway binary applies to unset buffer flags (see
+// go/services/multigateway/buffer/config.go in multigres). The cross-field
+// check below must use them so admission matches binary startup validation
+// even when only one of the pair is set in the CR.
+const (
+	defaultBufferWindow              = 10 * time.Second
+	defaultBufferMaxFailoverDuration = 20 * time.Second
+)
+
+// ValidateGatewayBuffer checks a multigateway buffer configuration with the
+// same rules as the binary's Config.Validate, so bad configs are rejected at
+// admission instead of crashlooping gateway pods. Size fields are enforced by
+// CRD schema minimums; durations need Go-side checks because the schema
+// stores them as opaque strings. subject names the config source for error
+// messages (e.g. "cell 'zone-a'").
+func ValidateGatewayBuffer(
 	buffer *multigresv1alpha1.GatewayBufferConfig,
-	cellName multigresv1alpha1.CellName,
+	subject string,
 ) error {
 	if buffer == nil {
 		return nil
 	}
-	durations := []struct {
-		name  string
-		value *metav1.Duration
-	}{
-		{"window", buffer.Window},
-		{"maxFailoverDuration", buffer.MaxFailoverDuration},
-		{"minTimeBetweenFailovers", buffer.MinTimeBetweenFailovers},
+	// The binary skips buffer validation entirely when buffering is disabled.
+	if buffer.Enabled != nil && !*buffer.Enabled {
+		return nil
 	}
-	for _, d := range durations {
-		if d.value != nil && d.value.Duration <= 0 {
+	window := defaultBufferWindow
+	if buffer.Window != nil {
+		window = buffer.Window.Duration
+		if window <= 0 {
 			return fmt.Errorf(
-				"cell '%s': multigateway buffer %s (%s) must be a positive duration",
-				cellName, d.name, d.value.Duration,
+				"%s: multigateway buffer window (%s) must be a positive duration",
+				subject, window,
 			)
 		}
 	}
-	if buffer.Window != nil && buffer.MaxFailoverDuration != nil &&
-		buffer.Window.Duration > buffer.MaxFailoverDuration.Duration {
+	maxFailover := defaultBufferMaxFailoverDuration
+	if buffer.MaxFailoverDuration != nil {
+		maxFailover = buffer.MaxFailoverDuration.Duration
+		if maxFailover <= 0 {
+			return fmt.Errorf(
+				"%s: multigateway buffer maxFailoverDuration (%s) must be a positive duration",
+				subject, maxFailover,
+			)
+		}
+	}
+	// The binary accepts 0 here (no enforced gap between failovers).
+	if buffer.MinTimeBetweenFailovers != nil && buffer.MinTimeBetweenFailovers.Duration < 0 {
 		return fmt.Errorf(
-			"cell '%s': multigateway buffer window (%s) must be <= maxFailoverDuration (%s)",
-			cellName, buffer.Window.Duration, buffer.MaxFailoverDuration.Duration,
+			"%s: multigateway buffer minTimeBetweenFailovers (%s) must not be negative",
+			subject, buffer.MinTimeBetweenFailovers.Duration,
+		)
+	}
+	if window > maxFailover {
+		return fmt.Errorf(
+			"%s: multigateway buffer window (%s) must be <= maxFailoverDuration (%s); unset fields use the multigateway defaults (window %s, maxFailoverDuration %s)",
+			subject,
+			window,
+			maxFailover,
+			defaultBufferWindow,
+			defaultBufferMaxFailoverDuration,
 		)
 	}
 	return nil

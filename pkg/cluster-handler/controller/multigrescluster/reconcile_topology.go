@@ -63,10 +63,9 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		len(cluster.Spec.Cells))
 	for _, cellCfg := range cluster.Spec.Cells {
 		cellCfgForResolution := cellCfg
-		if cellCfgForResolution.CellTemplate == "" &&
-			cluster.Spec.TemplateDefaults.CellTemplate != "" {
-			cellCfgForResolution.CellTemplate = cluster.Spec.TemplateDefaults.CellTemplate
-		}
+		cellCfgForResolution.CellTemplate = cluster.Spec.EffectiveCellTemplate(
+			cellCfgForResolution.CellTemplate,
+		)
 		_, _, localTopoSpec, err := res.ResolveCell(ctx, &cellCfgForResolution)
 		if err != nil {
 			r.Recorder.Event(cluster, "Warning", "TemplateMissing", err.Error())

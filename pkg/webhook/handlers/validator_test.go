@@ -3,6 +3,7 @@ package handlers
 import (
 	"strings"
 	"testing"
+	"time"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
@@ -959,6 +960,44 @@ func TestTemplateValidator_ShardTemplatePoolNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
+	t.Parallel()
+	validator := NewTemplateValidator(nil, "CellTemplate")
+
+	bad := &multigresv1alpha1.CellTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "bad-buffer"},
+		Spec: multigresv1alpha1.CellTemplateSpec{
+			Multigateway: &multigresv1alpha1.MultigatewaySpec{
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Window:              &metav1.Duration{Duration: 30 * time.Second},
+					MaxFailoverDuration: &metav1.Duration{Duration: 20 * time.Second},
+				},
+			},
+		},
+	}
+	if _, err := validator.ValidateUpdate(t.Context(), bad, bad); err == nil ||
+		!strings.Contains(err.Error(), "must be <= maxFailoverDuration") {
+		t.Errorf("expected buffer validation error on update, got %v", err)
+	}
+	if _, err := validator.ValidateCreate(t.Context(), bad); err == nil {
+		t.Error("expected buffer validation error on create, got nil")
+	}
+
+	good := &multigresv1alpha1.CellTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "good-buffer"},
+		Spec: multigresv1alpha1.CellTemplateSpec{
+			Multigateway: &multigresv1alpha1.MultigatewaySpec{
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Window: &metav1.Duration{Duration: 5 * time.Second},
+				},
+			},
+		},
+	}
+	if _, err := validator.ValidateCreate(t.Context(), good); err != nil {
+		t.Errorf("expected valid buffer config to be accepted, got %v", err)
 	}
 }
 

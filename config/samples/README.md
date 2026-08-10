@@ -135,7 +135,7 @@ Pools default to `replicasPerCell: 1`, except a pool that spans a single cell de
 
 ## 6. Gateway Failover Buffering
 
-Multigateway can buffer client requests during planned failovers instead of surfacing errors. The operator enables this by default (`--buffer-enabled`); tune or disable it per cell via the `buffer` block next to the other gateway fields (see `no-templates.yaml`):
+Multigateway can buffer client requests during planned failovers instead of surfacing errors. The operator enables this by default (`--buffer-enabled=true`); tune or disable it per cell via the `buffer` block next to the other gateway fields (see `no-templates.yaml`):
 
 ```yaml
 cells:
