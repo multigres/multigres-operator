@@ -22,7 +22,10 @@ const deadPoolerReason = "operator: no backing pod for pooler"
 // PoolerStatusResult holds the result of querying pooler roles from the topology.
 type PoolerStatusResult struct {
 	// Roles maps hostname to its operator-facing role
-	// (PRIMARY, REPLICA, DRAINED).
+	// (PRIMARY, REPLICA, QUARANTINED). Shutdown poolers are omitted. QUARANTINED
+	// poolers are surfaced for visibility but are not routed and do not drive the
+	// stand-in-replica path; they are replaced via quarantine remediation (see
+	// GetQuarantinedPods).
 	Roles map[string]string
 	// QuerySuccess indicates whether all topology queries succeeded.
 	QuerySuccess bool
@@ -52,10 +55,18 @@ func GetPoolerStatus(
 				if isLifecycleShutdown(p.Multipooler) {
 					continue
 				}
+				// Quarantined poolers are unrecoverable (postgres cannot start).
+				// They are surfaced with a distinct QUARANTINED role so they are
+				// visible in Shard.Status.PodRoles, but they are not routed and do
+				// not drive the stand-in-replica path (which keyed on DRAINED).
+				// The operator replaces them via quarantine remediation (delete pod
+				// + wipe data PVC + re-bootstrap from backup); GetQuarantinedPods
+				// carries the reason for that.
 				roleName := "REPLICA"
-				if isLifecycleQuarantined(p.Multipooler) {
-					roleName = "DRAINED"
-				} else if IsPrimaryPooler(p.Multipooler) {
+				switch {
+				case isLifecycleQuarantined(p.Multipooler):
+					roleName = "QUARANTINED"
+				case IsPrimaryPooler(p.Multipooler):
 					roleName = "PRIMARY"
 				}
 				// Match the topology entry to an actual managed pod.
@@ -70,6 +81,59 @@ func GetPoolerStatus(
 		}
 	}
 	return result
+}
+
+// QuarantinedPod identifies a managed pod whose backing pooler has
+// self-quarantined, along with the human-readable reason the pooler recorded in
+// its topology lifecycle entry (e.g. "postgres failed to recover for 5m0s
+// across 60 attempts (last error: ...)").
+type QuarantinedPod struct {
+	PodName string
+	Reason  string
+}
+
+// GetQuarantinedPods returns the managed pods whose backing pooler has
+// self-quarantined (LIFECYCLE_QUARANTINED) in topology — postgres is
+// unrecoverably failing to start, so the node needs replacement and data
+// remediation — each with the reason recorded on its lifecycle entry. Only pods
+// present in managedPodNames are returned; the result is sorted by pod name for
+// deterministic, one-at-a-time remediation. A cell whose topology is
+// temporarily unavailable is skipped rather than failing the whole call.
+func GetQuarantinedPods(
+	ctx context.Context,
+	store topoclient.Store,
+	shard *multigresv1alpha1.Shard,
+	managedPodNames []string,
+) ([]QuarantinedPod, error) {
+	var quarantined []QuarantinedPod
+	for _, cell := range CollectCells(shard) {
+		poolers, err := store.GetMultipoolersByCell(ctx, cell, ShardFilter(shard))
+		if err != nil {
+			if IsTopoUnavailable(err) {
+				continue
+			}
+			return nil, fmt.Errorf(
+				"listing poolers in cell %q for quarantine detection: %w",
+				cell,
+				err,
+			)
+		}
+		for _, p := range poolers {
+			if !isLifecycleQuarantined(p.Multipooler) {
+				continue
+			}
+			if podName := matchPoolerToPod(p, managedPodNames); podName != "" {
+				quarantined = append(quarantined, QuarantinedPod{
+					PodName: podName,
+					Reason:  p.Multipooler.GetLifecycleStatus().GetReason(),
+				})
+			}
+		}
+	}
+	slices.SortFunc(quarantined, func(a, b QuarantinedPod) int {
+		return strings.Compare(a.PodName, b.PodName)
+	})
+	return quarantined, nil
 }
 
 // matchPoolerToPod finds the managed pod name that matches a topology pooler
