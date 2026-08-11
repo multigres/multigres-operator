@@ -12,7 +12,7 @@ spec:
         # ── Errors ────────────────────────────────────────────────
 
         - alert: MultigresClusterReconcileErrors
-          expr: rate(controller_runtime_reconcile_errors_total{controller=~"multigrescluster|tablegroup|shard|cell|toposerver"}[5m]) > 0
+          expr: rate(multigres_operator_reconcile_errors_total[5m]) > 0
           for: 5m
           labels:
             severity: warning
@@ -20,7 +20,8 @@ spec:
             summary: "MultigresCluster controller is failing reconciles"
             description: >-
               Controller {{ $labels.controller }} has had a non-zero reconcile
-              error rate for the last 5 minutes (current: {{ $value | humanize }}/s).
+              error rate for {{ $labels.namespace }}/{{ $labels.name }} over the
+              last 5 minutes (current: {{ $value | humanize }}/s).
             runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/MultigresClusterReconcileErrors.md"
 
         - alert: MultigresClusterDegraded

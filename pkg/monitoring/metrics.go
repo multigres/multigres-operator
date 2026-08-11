@@ -107,6 +107,14 @@ var (
 		},
 		[]string{"cluster", "shard", "pool", "cell", "namespace"},
 	)
+
+	reconcileErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "multigres_operator_reconcile_errors_total",
+			Help: "Total number of reconcile errors, keyed by the object that failed to reconcile.",
+		},
+		[]string{"controller", "name", "namespace"},
+	)
 )
 
 func init() {
@@ -123,6 +131,7 @@ func init() {
 		lastBackupAgeSeconds,
 		drainOperationsTotal,
 		rollingUpdateInProgress,
+		reconcileErrorsTotal,
 	)
 }
 
@@ -142,5 +151,16 @@ func Collectors() []prometheus.Collector {
 		lastBackupAgeSeconds,
 		drainOperationsTotal,
 		rollingUpdateInProgress,
+		reconcileErrorsTotal,
 	}
+}
+
+// RecordReconcileError increments the per-object reconcile error counter.
+// It is a no-op when err is nil, so callers can defer it unconditionally
+// over a named error return value.
+func RecordReconcileError(err error, controller, name, namespace string) {
+	if err == nil {
+		return
+	}
+	reconcileErrorsTotal.WithLabelValues(controller, name, namespace).Inc()
 }

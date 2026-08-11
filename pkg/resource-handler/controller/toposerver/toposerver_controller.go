@@ -43,7 +43,7 @@ type TopoServerReconciler struct {
 func (r *TopoServerReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
-) (ctrl.Result, error) {
+) (result ctrl.Result, err error) {
 	start := time.Now()
 	ctx, span := monitoring.StartReconcileSpan(
 		ctx,
@@ -53,6 +53,7 @@ func (r *TopoServerReconciler) Reconcile(
 		"TopoServer",
 	)
 	defer span.End()
+	defer func() { monitoring.RecordReconcileError(err, "toposerver", req.Name, req.Namespace) }()
 	ctx = monitoring.EnrichLoggerWithTrace(ctx)
 
 	logger := log.FromContext(ctx)

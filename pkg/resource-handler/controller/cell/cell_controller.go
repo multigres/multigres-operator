@@ -46,7 +46,10 @@ type CellReconciler struct {
 }
 
 // Reconcile manages the Multigateway deployment and per-cell services for a Cell.
-func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *CellReconciler) Reconcile(
+	ctx context.Context,
+	req ctrl.Request,
+) (result ctrl.Result, err error) {
 	start := time.Now()
 	ctx, span := monitoring.StartReconcileSpan(
 		ctx,
@@ -56,6 +59,7 @@ func (r *CellReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		"Cell",
 	)
 	defer span.End()
+	defer func() { monitoring.RecordReconcileError(err, "cell", req.Name, req.Namespace) }()
 	ctx = monitoring.EnrichLoggerWithTrace(ctx)
 
 	logger := log.FromContext(ctx)
