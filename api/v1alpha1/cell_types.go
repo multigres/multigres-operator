@@ -57,8 +57,10 @@ type MultigatewaySpec struct {
 // apply.
 type GatewayBufferConfig struct {
 	// Enabled controls failover buffering (--buffer-enabled).
-	// Defaults to true via the admission webhook: the operator provisions
-	// HA clusters where transparent planned failover is expected.
+	// The resolver defaults it to true when building Cells from a
+	// MultigresCluster: the operator provisions HA clusters where transparent
+	// planned failover is expected. On a hand-written Cell CR the field stays
+	// as authored (unset emits no flag; the binary default applies).
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 

@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
@@ -175,7 +176,6 @@ func defaultGatewayBuffer(spec *multigresv1alpha1.MultigatewaySpec) {
 		spec.Buffer = &multigresv1alpha1.GatewayBufferConfig{}
 	}
 	if spec.Buffer.Enabled == nil {
-		enabled := true
-		spec.Buffer.Enabled = &enabled
+		spec.Buffer.Enabled = ptr.To(true)
 	}
 }

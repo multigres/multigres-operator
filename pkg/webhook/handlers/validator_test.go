@@ -1024,6 +1024,49 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 		}
 	})
 
+	t.Run(
+		"create and update validate implicit consumers of the fallback template",
+		func(t *testing.T) {
+			t.Parallel()
+			// A cluster created before any 'default' CellTemplate existed: no
+			// explicit ref anywhere and no uses-cell-template label, yet its
+			// cells resolve through the implicit fallback template.
+			implicit := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "implicit", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{Name: "z1"}},
+				},
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(implicit).Build()
+			v := NewTemplateValidator(c, "CellTemplate")
+
+			fallback := &multigresv1alpha1.CellTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+				Spec: multigresv1alpha1.CellTemplateSpec{
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						Buffer: &multigresv1alpha1.GatewayBufferConfig{
+							Window: &metav1.Duration{Duration: 30 * time.Second},
+						},
+					},
+				},
+			}
+			if _, err := v.ValidateCreate(t.Context(), fallback); err == nil ||
+				!strings.Contains(err.Error(), "cell 'z1'") {
+				t.Errorf(
+					"creating 'default' must be validated against implicit consumers, got %v",
+					err,
+				)
+			}
+			if _, err := v.ValidateUpdate(t.Context(), nil, fallback); err == nil ||
+				!strings.Contains(err.Error(), "cell 'z1'") {
+				t.Errorf(
+					"updating 'default' must be validated against implicit consumers, got %v",
+					err,
+				)
+			}
+		},
+	)
+
 	t.Run("update accepted when consumer override completes the config", func(t *testing.T) {
 		t.Parallel()
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(consumer(

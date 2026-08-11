@@ -342,25 +342,13 @@ func (r *Resolver) ValidateClusterLogic(
 	}
 
 	// ------------------------------------------------------------------
-	// 0f. Gateway Buffer Validation (Dry-Run Resolution)
+	// 0f. Resolved Gateway Validation (Dry-Run Resolution)
 	// ------------------------------------------------------------------
 	// Resolve each cell the same way the reconciler would (template +
-	// overrides + inline) so buffer misconfiguration is caught no matter
+	// overrides + inline) so gateway misconfiguration is caught no matter
 	// which layer it comes from.
-	for _, cell := range cluster.Spec.Cells {
-		cellCfg := cell
-		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
-		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
-		if err != nil {
-			return nil, fmt.Errorf(
-				"validation failed: cannot resolve cell '%s': %w", cell.Name, err,
-			)
-		}
-		if err := ValidateGatewayBuffer(
-			gateway.Buffer, fmt.Sprintf("cell '%s'", cell.Name),
-		); err != nil {
-			return nil, err
-		}
+	if err := r.ValidateResolvedGateways(ctx, cluster, "", ""); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Iterate through every Shard and "Simulate" Resolution
@@ -776,11 +764,58 @@ func validatePoolRuntimeIdentity(
 // Defaults the multigateway binary applies to unset buffer flags (see
 // go/services/multigateway/buffer/config.go in multigres). The cross-field
 // check below must use them so admission matches binary startup validation
-// even when only one of the pair is set in the CR.
+// even when only one of the pair is set in the CR. A test asserts these stay
+// equal to the imported multigres module's defaults.
 const (
 	defaultBufferWindow              = 10 * time.Second
 	defaultBufferMaxFailoverDuration = 20 * time.Second
 )
+
+// ValidateResolvedGateways dry-run-resolves every cell of the cluster the
+// same way the reconciler would (template + overrides + inline) and validates
+// the resolved multigateway config: buffer rules and resource requirements.
+// It is the single implementation shared by cluster admission and the
+// CellTemplate webhook's consumer re-validation. onlyTemplate, when
+// non-empty, restricts the check to cells whose effective template resolves
+// to that name (an empty cell ref resolves to the implicit fallback
+// template). subjectPrefix is prepended to error subjects (e.g.
+// "MultigresCluster 'x' ").
+func (r *Resolver) ValidateResolvedGateways(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	onlyTemplate multigresv1alpha1.TemplateRef,
+	subjectPrefix string,
+) error {
+	for _, cell := range cluster.Spec.Cells {
+		cellCfg := cell
+		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
+		if onlyTemplate != "" {
+			effective := cellCfg.CellTemplate
+			if effective == "" {
+				effective = FallbackCellTemplate
+			}
+			if effective != onlyTemplate {
+				continue
+			}
+		}
+		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
+		if err != nil {
+			return fmt.Errorf(
+				"%scannot resolve cell '%s': %w", subjectPrefix, cell.Name, err,
+			)
+		}
+		subject := fmt.Sprintf("%scell '%s'", subjectPrefix, cell.Name)
+		if err := ValidateGatewayBuffer(gateway.Buffer, subject); err != nil {
+			return err
+		}
+		if err := validateResourceRequirements(
+			gateway.Resources, subject+" multigateway (resolved)",
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ValidateGatewayBuffer checks a fully resolved multigateway buffer
 // configuration with the same rules as the binary's Config.Validate, so bad

@@ -323,19 +323,25 @@ func NewTemplateValidator(c client.Client, kind string) *TemplateValidator {
 	return &TemplateValidator{Client: c, Kind: kind}
 }
 
-// ValidateCreate validates template content on creation.
+// ValidateCreate validates template content on creation, plus the merged
+// config of any consumers: normally a template cannot be referenced before it
+// exists, but clusters consume the implicit fallback template ("default")
+// before it is created, so creating it later must be validated against them.
 func (v *TemplateValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validateTemplateContent(obj)
+	if warnings, err := v.validateTemplateContent(obj); err != nil {
+		return warnings, err
+	}
+	return v.validateCellTemplateConsumers(ctx, obj)
 }
 
 // ValidateUpdate validates template content on update. For CellTemplates it
-// additionally re-validates the merged buffer config of every referencing
-// cluster: cluster admission only dry-runs on cluster create/update, so
-// without this an edit to an already-referenced template could ship an
-// invalid merged config straight to the gateway Deployments.
+// additionally re-validates the merged config of every referencing cluster:
+// cluster admission only dry-runs on cluster create/update, so without this
+// an edit to an already-referenced template could ship an invalid merged
+// config straight to the gateway Deployments.
 func (v *TemplateValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
@@ -386,25 +392,24 @@ func (v *TemplateValidator) validateTemplateContent(
 	return nil, nil
 }
 
-// validateCellTemplateConsumers dry-run-resolves every cell that references
-// the incoming CellTemplate content and validates the merged buffer config,
-// so a template edit is judged against what its consumers actually produce
-// rather than the template in isolation. Matches explicit references only,
-// like the delete-protection check.
+// validateCellTemplateConsumers dry-run-resolves every cell that consumes
+// the incoming CellTemplate content and validates the merged gateway config,
+// so a template write is judged against what its consumers actually produce
+// rather than the template in isolation. All clusters in the namespace are
+// listed (no uses-cell-template label pre-filter): the label is only stamped
+// at first reconcile, and clusters consuming the implicit fallback template
+// never carry it at all.
 func (v *TemplateValidator) validateCellTemplateConsumers(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
 	tpl, ok := obj.(*multigresv1alpha1.CellTemplate)
-	if v.Kind != "CellTemplate" || !ok {
+	if v.Kind != "CellTemplate" || !ok || tpl.Name == "" {
 		return nil, nil
 	}
 
 	clusters := &multigresv1alpha1.MultigresClusterList{}
-	if err := v.Client.List(ctx, clusters,
-		client.InNamespace(tpl.Namespace),
-		client.MatchingLabels{metadata.LabelUsesCellTemplate: "true"},
-	); err != nil {
+	if err := v.Client.List(ctx, clusters, client.InNamespace(tpl.Namespace)); err != nil {
 		return nil, fmt.Errorf("failed to list clusters for validation: %w", err)
 	}
 
@@ -412,28 +417,14 @@ func (v *TemplateValidator) validateCellTemplateConsumers(
 	// Resolve against the incoming template content, not the stored version.
 	res.CellTemplateCache[tpl.Name] = tpl
 
-	refName := multigresv1alpha1.TemplateRef(tpl.Name)
 	for i := range clusters.Items {
 		cluster := &clusters.Items[i]
-		for _, cell := range cluster.Spec.Cells {
-			cellCfg := cell
-			cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
-			if cellCfg.CellTemplate != refName {
-				continue
-			}
-			gateway, _, _, err := res.ResolveCell(ctx, &cellCfg)
-			if err != nil {
-				return nil, fmt.Errorf(
-					"cannot resolve cell '%s' of MultigresCluster '%s' with updated template: %w",
-					cell.Name, cluster.Name, err,
-				)
-			}
-			if err := resolver.ValidateGatewayBuffer(
-				gateway.Buffer,
-				fmt.Sprintf("MultigresCluster '%s' cell '%s'", cluster.Name, cell.Name),
-			); err != nil {
-				return nil, err
-			}
+		if err := res.ValidateResolvedGateways(
+			ctx, cluster,
+			multigresv1alpha1.TemplateRef(tpl.Name),
+			fmt.Sprintf("MultigresCluster '%s' ", cluster.Name),
+		); err != nil {
+			return nil, err
 		}
 	}
 	return nil, nil
