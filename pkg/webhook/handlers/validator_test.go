@@ -943,7 +943,19 @@ func TestTemplateValidator_ShardTemplatePoolNames(t *testing.T) {
 				case "Create":
 					_, err = validator.ValidateCreate(t.Context(), tc.obj)
 				case "Update":
-					_, err = validator.ValidateUpdate(t.Context(), tc.obj, tc.obj)
+					// Old object with a different spec, so the unchanged-spec
+					// short-circuit does not skip content validation.
+					_, err = validator.ValidateUpdate(
+						t.Context(),
+						&multigresv1alpha1.ShardTemplate{
+							Spec: multigresv1alpha1.ShardTemplateSpec{
+								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+									"sentinel-old": {Type: "readWrite"},
+								},
+							},
+						},
+						tc.obj,
+					)
 				}
 
 				if tc.wantErr == "" {
@@ -1016,13 +1028,85 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 
 	t.Run("update validates merged config of referencing clusters", func(t *testing.T) {
 		t.Parallel()
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(consumer(nil)).Build()
+		// The stored 'shared' template is empty, so the consumer is valid
+		// today; the incoming window-only content is what breaks it.
+		stored := &multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "default"},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(consumer(nil), stored).Build()
 		v := NewTemplateValidator(c, "CellTemplate")
 		// window 30s merges with no override: binary maxFailoverDuration
 		// default (20s) applies at startup, so the update must be rejected.
-		_, err := v.ValidateUpdate(t.Context(), nil, windowOnly)
+		_, err := v.ValidateUpdate(t.Context(), stored, windowOnly)
 		if err == nil || !strings.Contains(err.Error(), "cell 'z1'") {
 			t.Errorf("expected merged validation error naming the cell, got %v", err)
+		}
+	})
+
+	t.Run("metadata-only update never gated on consumer state", func(t *testing.T) {
+		t.Parallel()
+		// The consumer's merged config with this template is invalid, but an
+		// update that does not change the spec (annotations, finalizer
+		// removal) must not be blocked by it.
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(consumer(nil), windowOnly).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		relabeled := windowOnly.DeepCopy()
+		relabeled.Annotations = map[string]string{"touched": "true"}
+		if _, err := v.ValidateUpdate(t.Context(), windowOnly, relabeled); err != nil {
+			t.Errorf("metadata-only update must be accepted, got %v", err)
+		}
+	})
+
+	t.Run("pre-existing breakage does not wedge template writes", func(t *testing.T) {
+		t.Parallel()
+		// The consumer is already invalid with the stored content (window 30s
+		// vs stored maxFailoverDuration 15s); an update that leaves it equally
+		// invalid (maxFailoverDuration 20s) did not break it and must pass.
+		stored := tpl(&multigresv1alpha1.GatewayBufferConfig{
+			MaxFailoverDuration: &metav1.Duration{Duration: 15 * time.Second},
+		})
+		brokenConsumer := consumer(nil)
+		brokenConsumer.Spec.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
+			Multigateway: multigresv1alpha1.MultigatewaySpec{
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Window: &metav1.Duration{Duration: 30 * time.Second},
+				},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(brokenConsumer, stored).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		updated := tpl(&multigresv1alpha1.GatewayBufferConfig{
+			MaxFailoverDuration: &metav1.Duration{Duration: 20 * time.Second},
+		})
+		if _, err := v.ValidateUpdate(t.Context(), stored, updated); err != nil {
+			t.Errorf("write leaving a pre-broken consumer equally broken must pass, got %v", err)
+		}
+	})
+
+	t.Run("terminating consumers do not gate template writes", func(t *testing.T) {
+		t.Parallel()
+		now := metav1.Now()
+		terminating := consumer(nil)
+		terminating.Spec.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
+			Multigateway: multigresv1alpha1.MultigatewaySpec{
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Window: &metav1.Duration{Duration: 30 * time.Second},
+				},
+			},
+		}
+		terminating.DeletionTimestamp = &now
+		terminating.Finalizers = []string{"multigres.com/test"}
+		stored := &multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "default"},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(terminating, stored).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		if _, err := v.ValidateUpdate(t.Context(), stored, windowOnly); err != nil {
+			t.Errorf("terminating consumer must not gate the write, got %v", err)
 		}
 	})
 
@@ -1649,7 +1733,9 @@ func TestTemplateValidator_ShardTemplatePostgresConfig(t *testing.T) {
 			PostgresConfig: map[string]string{"bogus_param": "1"},
 		},
 	}
-	if _, err := validator.ValidateUpdate(t.Context(), bad, bad); err == nil ||
+	// Old object with a different spec, so the unchanged-spec short-circuit
+	// does not skip content validation.
+	if _, err := validator.ValidateUpdate(t.Context(), valid, bad); err == nil ||
 		!strings.Contains(err.Error(), "unknown parameter") {
 		t.Errorf("expected unknown-parameter error, got %v", err)
 	}

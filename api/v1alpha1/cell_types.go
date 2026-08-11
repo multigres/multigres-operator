@@ -72,7 +72,7 @@ type GatewayBufferConfig struct {
 	// planned failover; 20s masked all of them.
 	// +optional
 	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$`
 	Window *metav1.Duration `json:"window,omitempty"`
 
 	// MaxFailoverDuration is the session-level cap on how long one failover
@@ -80,7 +80,7 @@ type GatewayBufferConfig struct {
 	// >= window. Binary default: 20s.
 	// +optional
 	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$`
 	MaxFailoverDuration *metav1.Duration `json:"maxFailoverDuration,omitempty"`
 
 	// MinTimeBetweenFailovers is the minimum interval between two buffering
@@ -88,7 +88,7 @@ type GatewayBufferConfig struct {
 	// Binary default: 1m.
 	// +optional
 	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$`
 	MinTimeBetweenFailovers *metav1.Duration `json:"minTimeBetweenFailovers,omitempty"`
 
 	// Size is the maximum number of concurrently buffered requests

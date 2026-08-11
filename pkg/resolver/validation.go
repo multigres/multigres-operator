@@ -783,11 +783,7 @@ func (r *Resolver) ValidateResolvedGateways(
 		cellCfg := cell
 		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
 		if onlyTemplate != "" &&
-			EffectiveCellTemplateName(
-				cellCfg.CellTemplate,
-			) != EffectiveCellTemplateName(
-				onlyTemplate,
-			) {
+			EffectiveCellTemplateName(cellCfg.CellTemplate) != onlyTemplate {
 			continue
 		}
 		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
