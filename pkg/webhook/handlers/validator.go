@@ -331,20 +331,27 @@ func (v *TemplateValidator) ValidateCreate(
 	return v.validateTemplateContent(obj)
 }
 
-// ValidateUpdate validates template content on update.
+// ValidateUpdate validates template content on update. For CellTemplates it
+// additionally re-validates the merged buffer config of every referencing
+// cluster: cluster admission only dry-runs on cluster create/update, so
+// without this an edit to an already-referenced template could ship an
+// invalid merged config straight to the gateway Deployments.
 func (v *TemplateValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validateTemplateContent(newObj)
+	if warnings, err := v.validateTemplateContent(newObj); err != nil {
+		return warnings, err
+	}
+	return v.validateCellTemplateConsumers(ctx, newObj)
 }
 
-// validateTemplateContent validates the parts of a template the CRD schema
-// cannot express: a ShardTemplate's pool name map keys and postgresConfig
-// parameters, and a CellTemplate's gateway buffer configuration. Templates are
-// validated on their own create/update as well as via the cluster dry-run,
-// because editing an already-referenced template otherwise bypasses admission
-// and ships the bad config straight to the Deployments.
+// validateTemplateContent validates what a template can guarantee on its own,
+// where the CRD schema cannot express it: a ShardTemplate's pool name map
+// keys and postgresConfig parameters, and a CellTemplate's gateway buffer
+// intra-field rules. Cross-field buffer checks that depend on fields a
+// consuming cluster may supply are left to the resolved-config paths (cluster
+// dry-run and validateCellTemplateConsumers).
 func (v *TemplateValidator) validateTemplateContent(
 	obj runtime.Object,
 ) (admission.Warnings, error) {
@@ -368,9 +375,62 @@ func (v *TemplateValidator) validateTemplateContent(
 			return nil, nil
 		}
 		if tpl.Spec.Multigateway != nil {
-			if err := resolver.ValidateGatewayBuffer(
+			if err := resolver.ValidateGatewayBufferPartial(
 				tpl.Spec.Multigateway.Buffer,
 				fmt.Sprintf("CellTemplate '%s'", tpl.Name),
+			); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, nil
+}
+
+// validateCellTemplateConsumers dry-run-resolves every cell that references
+// the incoming CellTemplate content and validates the merged buffer config,
+// so a template edit is judged against what its consumers actually produce
+// rather than the template in isolation. Matches explicit references only,
+// like the delete-protection check.
+func (v *TemplateValidator) validateCellTemplateConsumers(
+	ctx context.Context,
+	obj runtime.Object,
+) (admission.Warnings, error) {
+	tpl, ok := obj.(*multigresv1alpha1.CellTemplate)
+	if v.Kind != "CellTemplate" || !ok {
+		return nil, nil
+	}
+
+	clusters := &multigresv1alpha1.MultigresClusterList{}
+	if err := v.Client.List(ctx, clusters,
+		client.InNamespace(tpl.Namespace),
+		client.MatchingLabels{metadata.LabelUsesCellTemplate: "true"},
+	); err != nil {
+		return nil, fmt.Errorf("failed to list clusters for validation: %w", err)
+	}
+
+	res := resolver.NewResolver(v.Client, tpl.Namespace)
+	// Resolve against the incoming template content, not the stored version.
+	res.CellTemplateCache[tpl.Name] = tpl
+
+	refName := multigresv1alpha1.TemplateRef(tpl.Name)
+	for i := range clusters.Items {
+		cluster := &clusters.Items[i]
+		for _, cell := range cluster.Spec.Cells {
+			cellCfg := cell
+			cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
+			if cellCfg.CellTemplate != refName {
+				continue
+			}
+			gateway, _, _, err := res.ResolveCell(ctx, &cellCfg)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"cannot resolve cell '%s' of MultigresCluster '%s' with updated template: %w",
+					cell.Name, cluster.Name, err,
+				)
+			}
+			if err := resolver.ValidateGatewayBuffer(
+				gateway.Buffer,
+				fmt.Sprintf("MultigresCluster '%s' cell '%s'", cluster.Name, cell.Name),
 			); err != nil {
 				return nil, err
 			}

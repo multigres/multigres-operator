@@ -965,40 +965,81 @@ func TestTemplateValidator_ShardTemplatePoolNames(t *testing.T) {
 
 func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 	t.Parallel()
-	validator := NewTemplateValidator(nil, "CellTemplate")
+	scheme := setupScheme()
 
-	bad := &multigresv1alpha1.CellTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "bad-buffer"},
-		Spec: multigresv1alpha1.CellTemplateSpec{
-			Multigateway: &multigresv1alpha1.MultigatewaySpec{
-				Buffer: &multigresv1alpha1.GatewayBufferConfig{
-					Window:              &metav1.Duration{Duration: 30 * time.Second},
-					MaxFailoverDuration: &metav1.Duration{Duration: 20 * time.Second},
+	tpl := func(buffer *multigresv1alpha1.GatewayBufferConfig) *multigresv1alpha1.CellTemplate {
+		return &multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "default"},
+			Spec: multigresv1alpha1.CellTemplateSpec{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{Buffer: buffer},
+			},
+		}
+	}
+	windowOnly := tpl(&multigresv1alpha1.GatewayBufferConfig{
+		Window: &metav1.Duration{Duration: 30 * time.Second},
+	})
+	bothInverted := tpl(&multigresv1alpha1.GatewayBufferConfig{
+		Window:              &metav1.Duration{Duration: 30 * time.Second},
+		MaxFailoverDuration: &metav1.Duration{Duration: 20 * time.Second},
+	})
+
+	consumer := func(overrides *multigresv1alpha1.CellOverrides) *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "consumer",
+				Namespace: "default",
+				Labels:    map[string]string{metadata.LabelUsesCellTemplate: "true"},
+			},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{
+					{Name: "z1", CellTemplate: "shared", Overrides: overrides},
 				},
 			},
-		},
-	}
-	if _, err := validator.ValidateUpdate(t.Context(), bad, bad); err == nil ||
-		!strings.Contains(err.Error(), "must be <= maxFailoverDuration") {
-		t.Errorf("expected buffer validation error on update, got %v", err)
-	}
-	if _, err := validator.ValidateCreate(t.Context(), bad); err == nil {
-		t.Error("expected buffer validation error on create, got nil")
+		}
 	}
 
-	good := &multigresv1alpha1.CellTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "good-buffer"},
-		Spec: multigresv1alpha1.CellTemplateSpec{
-			Multigateway: &multigresv1alpha1.MultigatewaySpec{
-				Buffer: &multigresv1alpha1.GatewayBufferConfig{
-					Window: &metav1.Duration{Duration: 5 * time.Second},
+	t.Run("create applies cross-field check only when both fields set", func(t *testing.T) {
+		t.Parallel()
+		v := NewTemplateValidator(
+			fake.NewClientBuilder().WithScheme(scheme).Build(), "CellTemplate",
+		)
+		if _, err := v.ValidateCreate(t.Context(), windowOnly); err != nil {
+			t.Errorf("window-only template must be accepted on create, got %v", err)
+		}
+		if _, err := v.ValidateCreate(t.Context(), bothInverted); err == nil ||
+			!strings.Contains(err.Error(), "must be <= maxFailoverDuration") {
+			t.Errorf("window > maxFailoverDuration within one layer must be rejected, got %v", err)
+		}
+	})
+
+	t.Run("update validates merged config of referencing clusters", func(t *testing.T) {
+		t.Parallel()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(consumer(nil)).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		// window 30s merges with no override: binary maxFailoverDuration
+		// default (20s) applies at startup, so the update must be rejected.
+		_, err := v.ValidateUpdate(t.Context(), nil, windowOnly)
+		if err == nil || !strings.Contains(err.Error(), "cell 'z1'") {
+			t.Errorf("expected merged validation error naming the cell, got %v", err)
+		}
+	})
+
+	t.Run("update accepted when consumer override completes the config", func(t *testing.T) {
+		t.Parallel()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(consumer(
+			&multigresv1alpha1.CellOverrides{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					Buffer: &multigresv1alpha1.GatewayBufferConfig{
+						MaxFailoverDuration: &metav1.Duration{Duration: 40 * time.Second},
+					},
 				},
 			},
-		},
-	}
-	if _, err := validator.ValidateCreate(t.Context(), good); err != nil {
-		t.Errorf("expected valid buffer config to be accepted, got %v", err)
-	}
+		)).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		if _, err := v.ValidateUpdate(t.Context(), nil, windowOnly); err != nil {
+			t.Errorf("override raises maxFailoverDuration, update must be accepted, got %v", err)
+		}
+	})
 }
 
 func TestChildResourceValidator(t *testing.T) {

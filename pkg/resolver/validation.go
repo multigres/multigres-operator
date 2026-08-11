@@ -782,15 +782,36 @@ const (
 	defaultBufferMaxFailoverDuration = 20 * time.Second
 )
 
-// ValidateGatewayBuffer checks a multigateway buffer configuration with the
-// same rules as the binary's Config.Validate, so bad configs are rejected at
-// admission instead of crashlooping gateway pods. Size fields are enforced by
-// CRD schema minimums; durations need Go-side checks because the schema
-// stores them as opaque strings. subject names the config source for error
-// messages (e.g. "cell 'zone-a'").
+// ValidateGatewayBuffer checks a fully resolved multigateway buffer
+// configuration with the same rules as the binary's Config.Validate, so bad
+// configs are rejected at admission instead of crashlooping gateway pods.
+// Unset fields are compared using the binary defaults, exactly as the binary
+// will at startup. Size fields are enforced by CRD schema minimums; durations
+// need Go-side checks because the schema stores them as opaque strings.
+// subject names the config source for error messages (e.g. "cell 'zone-a'").
 func ValidateGatewayBuffer(
 	buffer *multigresv1alpha1.GatewayBufferConfig,
 	subject string,
+) error {
+	return validateGatewayBuffer(buffer, subject, true)
+}
+
+// ValidateGatewayBufferPartial checks a single configuration layer (e.g. a
+// CellTemplate) that may still be merged with overrides at resolution.
+// Intra-field rules always apply, but the window/maxFailoverDuration ordering
+// is only enforced when the layer sets both fields — an unset one may be
+// supplied by a consuming cluster rather than the binary default.
+func ValidateGatewayBufferPartial(
+	buffer *multigresv1alpha1.GatewayBufferConfig,
+	subject string,
+) error {
+	return validateGatewayBuffer(buffer, subject, false)
+}
+
+func validateGatewayBuffer(
+	buffer *multigresv1alpha1.GatewayBufferConfig,
+	subject string,
+	resolved bool,
 ) error {
 	if buffer == nil {
 		return nil
@@ -826,14 +847,25 @@ func ValidateGatewayBuffer(
 			subject, buffer.MinTimeBetweenFailovers.Duration,
 		)
 	}
+	if !resolved && (buffer.Window == nil || buffer.MaxFailoverDuration == nil) {
+		return nil
+	}
 	if window > maxFailover {
+		if resolved && (buffer.Window == nil || buffer.MaxFailoverDuration == nil) {
+			return fmt.Errorf(
+				"%s: multigateway buffer window (%s) must be <= maxFailoverDuration (%s); unset fields use the multigateway defaults (window %s, maxFailoverDuration %s)",
+				subject,
+				window,
+				maxFailover,
+				defaultBufferWindow,
+				defaultBufferMaxFailoverDuration,
+			)
+		}
 		return fmt.Errorf(
-			"%s: multigateway buffer window (%s) must be <= maxFailoverDuration (%s); unset fields use the multigateway defaults (window %s, maxFailoverDuration %s)",
+			"%s: multigateway buffer window (%s) must be <= maxFailoverDuration (%s)",
 			subject,
 			window,
 			maxFailover,
-			defaultBufferWindow,
-			defaultBufferMaxFailoverDuration,
 		)
 	}
 	return nil

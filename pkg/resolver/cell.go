@@ -144,23 +144,26 @@ func mergeMultigatewaySpec(
 	if base.Buffer == nil {
 		base.Buffer = &multigresv1alpha1.GatewayBufferConfig{}
 	}
-	if override.Buffer.Enabled != nil {
-		base.Buffer.Enabled = override.Buffer.Enabled
+	// Copy so the resolved spec never shares pointers with the caller's
+	// (possibly informer-cached) object, matching the other merge helpers.
+	ovr := override.Buffer.DeepCopy()
+	if ovr.Enabled != nil {
+		base.Buffer.Enabled = ovr.Enabled
 	}
-	if override.Buffer.Window != nil {
-		base.Buffer.Window = override.Buffer.Window
+	if ovr.Window != nil {
+		base.Buffer.Window = ovr.Window
 	}
-	if override.Buffer.MaxFailoverDuration != nil {
-		base.Buffer.MaxFailoverDuration = override.Buffer.MaxFailoverDuration
+	if ovr.MaxFailoverDuration != nil {
+		base.Buffer.MaxFailoverDuration = ovr.MaxFailoverDuration
 	}
-	if override.Buffer.MinTimeBetweenFailovers != nil {
-		base.Buffer.MinTimeBetweenFailovers = override.Buffer.MinTimeBetweenFailovers
+	if ovr.MinTimeBetweenFailovers != nil {
+		base.Buffer.MinTimeBetweenFailovers = ovr.MinTimeBetweenFailovers
 	}
-	if override.Buffer.Size != nil {
-		base.Buffer.Size = override.Buffer.Size
+	if ovr.Size != nil {
+		base.Buffer.Size = ovr.Size
 	}
-	if override.Buffer.DrainConcurrency != nil {
-		base.Buffer.DrainConcurrency = override.Buffer.DrainConcurrency
+	if ovr.DrainConcurrency != nil {
+		base.Buffer.DrainConcurrency = ovr.DrainConcurrency
 	}
 }
 

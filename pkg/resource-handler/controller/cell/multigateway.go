@@ -226,8 +226,11 @@ func BuildMultigatewayDeployment(
 
 	if buf := cell.Spec.Multigateway.Buffer; buf != nil {
 		container := &deployment.Spec.Template.Spec.Containers[0]
-		// Always pass the value explicitly so an operator-level opt-out keeps
-		// working even if the binary's --buffer-enabled default ever flips.
+		// Emit the value explicitly whenever set (operator-resolved Cells
+		// always set it) so an opt-out keeps working even if the binary's
+		// --buffer-enabled default ever flips. A nil Enabled (hand-written or
+		// legacy Cell CR) intentionally emits nothing: the binary default
+		// applies.
 		if buf.Enabled != nil {
 			container.Args = append(container.Args,
 				fmt.Sprintf("--buffer-enabled=%t", *buf.Enabled))
