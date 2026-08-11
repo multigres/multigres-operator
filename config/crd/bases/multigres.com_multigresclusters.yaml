@@ -1162,12 +1162,14 @@ spec:
                                     MaxFailoverDuration is the session-level cap on how long one failover
                                     may keep requests buffered (--buffer-max-failover-duration). Must be
                                     >= window. Binary default: 20s.
+                                  pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                                   type: string
                                 minTimeBetweenFailovers:
                                   description: |-
                                     MinTimeBetweenFailovers is the minimum interval between two buffering
                                     events for the same shard (--buffer-min-time-between-failovers).
                                     Binary default: 1m.
+                                  pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                                   type: string
                                 size:
                                   description: |-
@@ -1184,6 +1186,7 @@ spec:
                                     duration averaged ~8.3s (consensus plus topology propagation) with a
                                     longer tail, so the 10s default can still evict a request or two per
                                     planned failover; 20s masked all of them.
+                                  pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                                   type: string
                               type: object
                             podAnnotations:
@@ -2483,12 +2486,14 @@ spec:
                                     MaxFailoverDuration is the session-level cap on how long one failover
                                     may keep requests buffered (--buffer-max-failover-duration). Must be
                                     >= window. Binary default: 20s.
+                                  pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                                   type: string
                                 minTimeBetweenFailovers:
                                   description: |-
                                     MinTimeBetweenFailovers is the minimum interval between two buffering
                                     events for the same shard (--buffer-min-time-between-failovers).
                                     Binary default: 1m.
+                                  pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                                   type: string
                                 size:
                                   description: |-
@@ -2505,6 +2510,7 @@ spec:
                                     duration averaged ~8.3s (consensus plus topology propagation) with a
                                     longer tail, so the 10s default can still evict a request or two per
                                     planned failover; 20s masked all of them.
+                                  pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                                   type: string
                               type: object
                             podAnnotations:

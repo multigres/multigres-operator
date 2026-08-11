@@ -310,36 +310,29 @@ func (r *Resolver) ValidateClusterLogic(
 	// ------------------------------------------------------------------
 	if cluster.Spec.GlobalTopoServer != nil &&
 		cluster.Spec.GlobalTopoServer.Etcd != nil {
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			cluster.Spec.GlobalTopoServer.Etcd.Resources, "etcd",
 		); err != nil {
 			return nil, err
 		}
 	}
 	if cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.Spec != nil {
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			cluster.Spec.Multiadmin.Spec.Resources, "multiadmin",
 		); err != nil {
 			return nil, err
 		}
 	}
 	if cluster.Spec.MultiadminWeb != nil && cluster.Spec.MultiadminWeb.Spec != nil {
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			cluster.Spec.MultiadminWeb.Spec.Resources, "multiadmin-web",
 		); err != nil {
 			return nil, err
 		}
 	}
-	for _, cell := range cluster.Spec.Cells {
-		if cell.Spec != nil {
-			if err := validateResourceRequirements(
-				cell.Spec.Multigateway.Resources,
-				fmt.Sprintf("cell '%s' multigateway", cell.Name),
-			); err != nil {
-				return nil, err
-			}
-		}
-	}
+	// Per-cell inline multigateway resources are covered by the resolved-
+	// gateway check below (0f): resources merge whole-block, so any inline
+	// violation survives into the resolved spec.
 
 	// ------------------------------------------------------------------
 	// 0f. Resolved Gateway Validation (Dry-Run Resolution)
@@ -522,7 +515,7 @@ func (r *Resolver) ValidateClusterLogic(
 				// ------------------------------------------------------------------
 				// 3b. Resource Limits Validation (Resolved Shard Components)
 				// ------------------------------------------------------------------
-				if err := validateResourceRequirements(
+				if err := ValidateResourceRequirements(
 					orch.Resources,
 					fmt.Sprintf("shard '%s' multiorch", shard.Name),
 				); err != nil {
@@ -536,13 +529,13 @@ func (r *Resolver) ValidateClusterLogic(
 					); err != nil {
 						return nil, err
 					}
-					if err := validateResourceRequirements(
+					if err := ValidateResourceRequirements(
 						pool.Postgres.Resources,
 						fmt.Sprintf("shard '%s' pool '%s' postgres", shard.Name, poolName),
 					); err != nil {
 						return nil, err
 					}
-					if err := validateResourceRequirements(
+					if err := ValidateResourceRequirements(
 						pool.Multipooler.Resources,
 						fmt.Sprintf("shard '%s' pool '%s' multipooler", shard.Name, poolName),
 					); err != nil {
@@ -789,14 +782,13 @@ func (r *Resolver) ValidateResolvedGateways(
 	for _, cell := range cluster.Spec.Cells {
 		cellCfg := cell
 		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
-		if onlyTemplate != "" {
-			effective := cellCfg.CellTemplate
-			if effective == "" {
-				effective = FallbackCellTemplate
-			}
-			if effective != onlyTemplate {
-				continue
-			}
+		if onlyTemplate != "" &&
+			EffectiveCellTemplateName(
+				cellCfg.CellTemplate,
+			) != EffectiveCellTemplateName(
+				onlyTemplate,
+			) {
+			continue
 		}
 		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
 		if err != nil {
@@ -808,7 +800,7 @@ func (r *Resolver) ValidateResolvedGateways(
 		if err := ValidateGatewayBuffer(gateway.Buffer, subject); err != nil {
 			return err
 		}
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			gateway.Resources, subject+" multigateway (resolved)",
 		); err != nil {
 			return err
@@ -906,10 +898,10 @@ func validateGatewayBuffer(
 	return nil
 }
 
-// validateResourceRequirements checks that for every resource type present in
+// ValidateResourceRequirements checks that for every resource type present in
 // both Limits and Requests, the limit is >= the request. Kubernetes enforces
 // this on Pods but NOT on CRDs, so we catch it early in the webhook.
-func validateResourceRequirements(resources corev1.ResourceRequirements, component string) error {
+func ValidateResourceRequirements(resources corev1.ResourceRequirements, component string) error {
 	for resourceName, limit := range resources.Limits {
 		if request, ok := resources.Requests[resourceName]; ok {
 			if limit.Cmp(request) < 0 {

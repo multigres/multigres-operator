@@ -1021,7 +1021,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 					}},
 				},
 			},
-			wantErr: "cell 'zone-1' multigateway: resource cpu limit (1) must be >= request (2)",
+			wantErr: "cell 'zone-1' multigateway (resolved): resource cpu limit (1) must be >= request (2)",
 		},
 		"Resource error: shard multiorch limits < requests": {
 			cluster: &multigresv1alpha1.MultigresCluster{

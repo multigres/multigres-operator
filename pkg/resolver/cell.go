@@ -45,18 +45,24 @@ func (r *Resolver) ResolveCell(
 	return gateway, placement, localTopo, nil
 }
 
+// EffectiveCellTemplateName maps a cell's template ref to the template name
+// resolution will actually use: an empty ref selects the implicit fallback.
+// Shared by ResolveCellTemplate and the webhook's consumer filter so they can
+// never disagree about which template a cell consumes.
+func EffectiveCellTemplateName(ref multigresv1alpha1.TemplateRef) multigresv1alpha1.TemplateRef {
+	if ref == "" {
+		return FallbackCellTemplate
+	}
+	return ref
+}
+
 // ResolveCellTemplate fetches and resolves a CellTemplate by name.
 func (r *Resolver) ResolveCellTemplate(
 	ctx context.Context,
 	name multigresv1alpha1.TemplateRef,
 ) (*multigresv1alpha1.CellTemplate, error) {
-	resolvedName := name
-	isImplicitFallback := false
-
-	if resolvedName == "" || resolvedName == FallbackCellTemplate {
-		resolvedName = FallbackCellTemplate
-		isImplicitFallback = true
-	}
+	resolvedName := EffectiveCellTemplateName(name)
+	isImplicitFallback := resolvedName == FallbackCellTemplate
 
 	// Check cache first
 	if cached, found := r.CellTemplateCache[string(resolvedName)]; found {

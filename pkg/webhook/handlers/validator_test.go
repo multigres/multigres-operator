@@ -11,7 +11,9 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -1066,6 +1068,93 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 			}
 		},
 	)
+
+	t.Run("template-own resource requirements validated", func(t *testing.T) {
+		t.Parallel()
+		v := NewTemplateValidator(
+			fake.NewClientBuilder().WithScheme(scheme).Build(), "CellTemplate",
+		)
+		badRes := &multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "default"},
+			Spec: multigresv1alpha1.CellTemplateSpec{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU: apiresource.MustParse("500m"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU: apiresource.MustParse("200m"),
+							},
+						},
+					},
+				},
+			},
+		}
+		if _, err := v.ValidateCreate(t.Context(), badRes); err == nil ||
+			!strings.Contains(err.Error(), "must be >= request") {
+			t.Errorf("template with requests > limits must be rejected, got %v", err)
+		}
+	})
+
+	t.Run("delete of fallback template validates implicit consumers", func(t *testing.T) {
+		t.Parallel()
+		// The cluster's inline window: 30s is valid only combined with the
+		// stored 'default' template's maxFailoverDuration: 40s; without the
+		// template the binary's 20s default applies and the config breaks.
+		dependent := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "dependent", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{{
+					Name: "z1",
+					Spec: &multigresv1alpha1.CellInlineSpec{
+						Multigateway: multigresv1alpha1.MultigatewaySpec{
+							Buffer: &multigresv1alpha1.GatewayBufferConfig{
+								Window: &metav1.Duration{Duration: 30 * time.Second},
+							},
+						},
+					},
+				}},
+			},
+		}
+		stored := &multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+			Spec: multigresv1alpha1.CellTemplateSpec{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					Buffer: &multigresv1alpha1.GatewayBufferConfig{
+						MaxFailoverDuration: &metav1.Duration{Duration: 40 * time.Second},
+					},
+				},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(dependent, stored).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		if _, err := v.ValidateDelete(t.Context(), stored); err == nil ||
+			!strings.Contains(err.Error(), "cannot delete CellTemplate 'default'") {
+			t.Errorf(
+				"deleting 'default' must be rejected while consumers depend on it, got %v",
+				err,
+			)
+		}
+	})
+
+	t.Run("delete of fallback template allowed when consumers stay valid", func(t *testing.T) {
+		t.Parallel()
+		independent := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "independent", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{{Name: "z1"}},
+			},
+		}
+		stored := &multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(independent, stored).Build()
+		v := NewTemplateValidator(c, "CellTemplate")
+		if _, err := v.ValidateDelete(t.Context(), stored); err != nil {
+			t.Errorf("deleting 'default' must be allowed when consumers stay valid, got %v", err)
+		}
+	})
 
 	t.Run("update accepted when consumer override completes the config", func(t *testing.T) {
 		t.Parallel()

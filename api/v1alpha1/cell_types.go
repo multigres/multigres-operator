@@ -71,18 +71,24 @@ type GatewayBufferConfig struct {
 	// longer tail, so the 10s default can still evict a request or two per
 	// planned failover; 20s masked all of them.
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	Window *metav1.Duration `json:"window,omitempty"`
 
 	// MaxFailoverDuration is the session-level cap on how long one failover
 	// may keep requests buffered (--buffer-max-failover-duration). Must be
 	// >= window. Binary default: 20s.
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	MaxFailoverDuration *metav1.Duration `json:"maxFailoverDuration,omitempty"`
 
 	// MinTimeBetweenFailovers is the minimum interval between two buffering
 	// events for the same shard (--buffer-min-time-between-failovers).
 	// Binary default: 1m.
 	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	MinTimeBetweenFailovers *metav1.Duration `json:"minTimeBetweenFailovers,omitempty"`
 
 	// Size is the maximum number of concurrently buffered requests

@@ -331,10 +331,10 @@ func (v *TemplateValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
-	if warnings, err := v.validateTemplateContent(obj); err != nil {
-		return warnings, err
+	if err := v.validateTemplateContent(obj); err != nil {
+		return nil, err
 	}
-	return v.validateCellTemplateConsumers(ctx, obj)
+	return nil, v.validateCellTemplateConsumers(ctx, obj)
 }
 
 // ValidateUpdate validates template content on update. For CellTemplates it
@@ -346,50 +346,55 @@ func (v *TemplateValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
-	if warnings, err := v.validateTemplateContent(newObj); err != nil {
-		return warnings, err
+	if err := v.validateTemplateContent(newObj); err != nil {
+		return nil, err
 	}
-	return v.validateCellTemplateConsumers(ctx, newObj)
+	return nil, v.validateCellTemplateConsumers(ctx, newObj)
 }
 
 // validateTemplateContent validates what a template can guarantee on its own,
 // where the CRD schema cannot express it: a ShardTemplate's pool name map
 // keys and postgresConfig parameters, and a CellTemplate's gateway buffer
-// intra-field rules. Cross-field buffer checks that depend on fields a
-// consuming cluster may supply are left to the resolved-config paths (cluster
-// dry-run and validateCellTemplateConsumers).
-func (v *TemplateValidator) validateTemplateContent(
-	obj runtime.Object,
-) (admission.Warnings, error) {
+// intra-field rules and resource requirements (resources merge whole-block,
+// so a self-inconsistent block is wrong no matter what consumers add).
+// Cross-field buffer checks that depend on fields a consuming cluster may
+// supply are left to the resolved-config paths (cluster dry-run and
+// validateCellTemplateConsumers).
+func (v *TemplateValidator) validateTemplateContent(obj runtime.Object) error {
 	switch v.Kind {
 	case "ShardTemplate":
 		tpl, ok := obj.(*multigresv1alpha1.ShardTemplate)
 		if !ok {
-			return nil, nil
+			return nil
 		}
 		for poolName := range tpl.Spec.Pools {
 			if err := resolver.ValidatePoolName(poolName); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		if err := postgresconfig.Validate(tpl.Spec.PostgresConfig); err != nil {
-			return nil, err
+			return err
 		}
 	case "CellTemplate":
 		tpl, ok := obj.(*multigresv1alpha1.CellTemplate)
 		if !ok {
-			return nil, nil
+			return nil
 		}
 		if tpl.Spec.Multigateway != nil {
+			subject := fmt.Sprintf("CellTemplate '%s'", tpl.Name)
 			if err := resolver.ValidateGatewayBufferPartial(
-				tpl.Spec.Multigateway.Buffer,
-				fmt.Sprintf("CellTemplate '%s'", tpl.Name),
+				tpl.Spec.Multigateway.Buffer, subject,
 			); err != nil {
-				return nil, err
+				return err
+			}
+			if err := resolver.ValidateResourceRequirements(
+				tpl.Spec.Multigateway.Resources, subject+" multigateway",
+			); err != nil {
+				return err
 			}
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 // validateCellTemplateConsumers dry-run-resolves every cell that consumes
@@ -402,15 +407,15 @@ func (v *TemplateValidator) validateTemplateContent(
 func (v *TemplateValidator) validateCellTemplateConsumers(
 	ctx context.Context,
 	obj runtime.Object,
-) (admission.Warnings, error) {
+) error {
 	tpl, ok := obj.(*multigresv1alpha1.CellTemplate)
 	if v.Kind != "CellTemplate" || !ok || tpl.Name == "" {
-		return nil, nil
+		return nil
 	}
 
 	clusters := &multigresv1alpha1.MultigresClusterList{}
 	if err := v.Client.List(ctx, clusters, client.InNamespace(tpl.Namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list clusters for validation: %w", err)
+		return fmt.Errorf("failed to list clusters for validation: %w", err)
 	}
 
 	res := resolver.NewResolver(v.Client, tpl.Namespace)
@@ -424,10 +429,10 @@ func (v *TemplateValidator) validateCellTemplateConsumers(
 			multigresv1alpha1.TemplateRef(tpl.Name),
 			fmt.Sprintf("MultigresCluster '%s' ", cluster.Name),
 		); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 // ValidateDelete rejects deletion of templates that are referenced by a MultigresCluster.
@@ -469,6 +474,24 @@ func (v *TemplateValidator) ValidateDelete(
 			return nil, fmt.Errorf(
 				"cannot delete %s '%s' because it is in use by MultigresCluster '%s'",
 				v.Kind, templateName, cluster.Name,
+			)
+		}
+	}
+
+	// Explicit references block deletion above, but implicit consumers of the
+	// fallback CellTemplate do not: after deletion their cells resolve against
+	// an empty template, which is allowed only if the configs they produce
+	// without it stay valid. Dry-run that post-deletion state by seeding the
+	// resolver with an empty template under this name.
+	if v.Kind == "CellTemplate" {
+		empty := &multigresv1alpha1.CellTemplate{}
+		empty.Name = templateName
+		empty.Namespace = namespace
+		if err := v.validateCellTemplateConsumers(ctx, empty); err != nil {
+			return nil, fmt.Errorf(
+				"cannot delete CellTemplate '%s': consumers would resolve an invalid config without it: %w",
+				templateName,
+				err,
 			)
 		}
 	}
