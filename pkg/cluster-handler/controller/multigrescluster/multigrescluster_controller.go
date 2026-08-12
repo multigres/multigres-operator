@@ -54,7 +54,7 @@ type MultigresClusterReconciler struct {
 func (r *MultigresClusterReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
-) (ctrl.Result, error) {
+) (result ctrl.Result, err error) {
 	start := time.Now()
 	ctx, span := monitoring.StartReconcileSpan(
 		ctx,
@@ -64,13 +64,14 @@ func (r *MultigresClusterReconciler) Reconcile(
 		"MultigresCluster",
 	)
 	defer span.End()
+	defer func() { monitoring.RecordReconcileError(err, "multigrescluster", req.Name, req.Namespace) }()
 	ctx = monitoring.EnrichLoggerWithTrace(ctx)
 
 	l := log.FromContext(ctx)
 	l.V(1).Info("reconcile started")
 
 	cluster := &multigresv1alpha1.MultigresCluster{}
-	err := r.Get(ctx, req.NamespacedName, cluster)
+	err = r.Get(ctx, req.NamespacedName, cluster)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil

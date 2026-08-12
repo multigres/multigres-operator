@@ -39,7 +39,7 @@ type TableGroupReconciler struct {
 func (r *TableGroupReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
-) (ctrl.Result, error) {
+) (result ctrl.Result, err error) {
 	start := time.Now()
 	ctx, span := monitoring.StartReconcileSpan(
 		ctx,
@@ -49,6 +49,7 @@ func (r *TableGroupReconciler) Reconcile(
 		"TableGroup",
 	)
 	defer span.End()
+	defer func() { monitoring.RecordReconcileError(err, "tablegroup", req.Name, req.Namespace) }()
 	ctx = monitoring.EnrichLoggerWithTrace(ctx)
 
 	l := log.FromContext(ctx)
