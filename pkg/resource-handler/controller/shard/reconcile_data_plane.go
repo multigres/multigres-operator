@@ -283,14 +283,6 @@ func (r *ShardReconciler) isDrainStale(
 		return false
 	}
 
-	// A drain on a DRAINED pod comes from external deletion (kubectl delete),
-	// which also sets DeletionTimestamp (handled above). If we somehow reach
-	// here with a DRAINED pod in requested state without a DeletionTimestamp,
-	// the drain should still complete — it should never be cancelled.
-	if resolvePodRole(shard, pod.Name) == "DRAINED" {
-		return false
-	}
-
 	poolName := pod.Labels[metadata.LabelMultigresPool]
 	cellName := pod.Labels[metadata.LabelMultigresCell]
 	if poolName == "" || cellName == "" {

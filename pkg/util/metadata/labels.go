@@ -123,12 +123,6 @@ const (
 	// was first requested. Used to detect failover timeouts.
 	AnnotationDrainRequestedAt = "drain.multigres.com/requested-at"
 
-	// LabelPodRole reflects the pod's topology role (e.g. "DRAINED").
-	// Set by the resource-handler when the topology store reports a notable role.
-	// Used as the durable signal for DRAINED PVC cleanup, since PodRoles may be
-	// cleared by the data-handler during drain before cleanup runs.
-	LabelPodRole = "multigres.com/role"
-
 	// LabelOrphan marks a resource as orphaned (no longer referenced by an owner)
 	// and eligible for garbage collection. Value is the UTC timestamp when the
 	// resource became orphaned, formatted as OrphanTimestampFormat.
