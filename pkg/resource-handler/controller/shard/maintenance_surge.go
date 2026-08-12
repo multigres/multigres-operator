@@ -99,9 +99,6 @@ func (r *ShardReconciler) reconcileCellMaintenanceSurge(
 				baseUnsettled = true
 				continue
 			}
-			if resolvePodRole(shard, pod.Name) == "DRAINED" {
-				continue
-			}
 			stable := isAvailablePooler(pod) &&
 				pod.Annotations[metadata.AnnotationDrainState] == ""
 			if !stable {
@@ -220,7 +217,7 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 	replicas int32,
 ) error {
 	logger := log.FromContext(ctx)
-	index := replicas + countDrainedPods(shard, existingPods)
+	index := replicas
 	podName := BuildPoolPodName(shard, poolName, cellName, int(index))
 	pvcName := BuildPoolDataPVCName(shard, poolName, cellName, int(index))
 

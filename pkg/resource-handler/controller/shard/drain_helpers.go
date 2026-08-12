@@ -13,8 +13,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
-// resolvePodRole returns the role (e.g. "PRIMARY", "REPLICA", "DRAINED") for a
-// pod by checking shard.Status.PodRoles. It checks both the exact pod name and
+// resolvePodRole returns the role (e.g. "PRIMARY", "REPLICA", "QUARANTINED") for
+// a pod by checking shard.Status.PodRoles. It checks both the exact pod name and
 // FQDN prefix (podName.subdomain...) since the data-handler may store either.
 func resolvePodRole(shard *multigresv1alpha1.Shard, podName string) string {
 	if shard.Status.PodRoles == nil {
@@ -29,17 +29,6 @@ func resolvePodRole(shard *multigresv1alpha1.Shard, podName string) string {
 		}
 	}
 	return ""
-}
-
-// countDrainedPods returns the number of pods whose topology role is DRAINED.
-func countDrainedPods(shard *multigresv1alpha1.Shard, existingPods map[string]*corev1.Pod) int32 {
-	var count int32
-	for _, pod := range existingPods {
-		if resolvePodRole(shard, pod.Name) == "DRAINED" {
-			count++
-		}
-	}
-	return count
 }
 
 // clearDrainAnnotations removes all drain annotations from a pod via merge patch,
