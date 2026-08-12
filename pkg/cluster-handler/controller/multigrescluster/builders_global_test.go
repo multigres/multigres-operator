@@ -298,6 +298,89 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		})
 	}
 
+	t.Run("Success with JWT auth", func(t *testing.T) {
+		jwtCluster := cluster.DeepCopy()
+		jwtCluster.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{
+			Auth: &multigresv1alpha1.MultiadminAuthConfig{
+				JWT: &multigresv1alpha1.MultiadminJWTAuthConfig{
+					Issuer:  "https://issuer.example.com",
+					JWKSURI: "https://issuer.example.com/.well-known/jwks.json",
+					AllowedSubjects: []string{
+						"arn:aws:iam::123456789012:role/worker",
+						"arn:aws:iam::123456789012:role/mgmt-api",
+					},
+				},
+			},
+		}
+
+		got, err := BuildMultiadminDeployment(jwtCluster, spec, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+		}
+
+		wantArgs := []string{
+			"--grpc-auth-mode=jwt",
+			"--grpc-auth-jwt-issuer=https://issuer.example.com",
+			"--grpc-auth-jwt-jwks-uri=https://issuer.example.com/.well-known/jwks.json",
+			"--grpc-auth-jwt-allowed-subs=arn:aws:iam::123456789012:role/worker",
+			"--grpc-auth-jwt-allowed-subs=arn:aws:iam::123456789012:role/mgmt-api",
+		}
+		container := got.Spec.Template.Spec.Containers[0]
+		tailArgs := container.Args[len(container.Args)-len(wantArgs):]
+		if diff := cmp.Diff(wantArgs, tailArgs); diff != "" {
+			t.Errorf("JWT auth args mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("Success with JWT auth and no allowed subjects", func(t *testing.T) {
+		jwtCluster := cluster.DeepCopy()
+		jwtCluster.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{
+			Auth: &multigresv1alpha1.MultiadminAuthConfig{
+				JWT: &multigresv1alpha1.MultiadminJWTAuthConfig{
+					Issuer:  "https://issuer.example.com",
+					JWKSURI: "https://issuer.example.com/.well-known/jwks.json",
+				},
+			},
+		}
+
+		got, err := BuildMultiadminDeployment(jwtCluster, spec, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+		}
+
+		wantArgs := []string{
+			"--grpc-auth-mode=jwt",
+			"--grpc-auth-jwt-issuer=https://issuer.example.com",
+			"--grpc-auth-jwt-jwks-uri=https://issuer.example.com/.well-known/jwks.json",
+		}
+		container := got.Spec.Template.Spec.Containers[0]
+		tailArgs := container.Args[len(container.Args)-len(wantArgs):]
+		if diff := cmp.Diff(wantArgs, tailArgs); diff != "" {
+			t.Errorf("JWT auth args mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	for name, mutateCluster := range map[string]func(*multigresv1alpha1.MultigresCluster){
+		"nil Multiadmin config": func(*multigresv1alpha1.MultigresCluster) {},
+		"Multiadmin config with no auth": func(cluster *multigresv1alpha1.MultigresCluster) {
+			cluster.Spec.Multiadmin = &multigresv1alpha1.MultiadminConfig{}
+		},
+	} {
+		t.Run("No JWT auth args when "+name, func(t *testing.T) {
+			noAuthCluster := cluster.DeepCopy()
+			mutateCluster(noAuthCluster)
+			got, err := BuildMultiadminDeployment(noAuthCluster, spec, scheme)
+			if err != nil {
+				t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+			}
+			for _, arg := range got.Spec.Template.Spec.Containers[0].Args {
+				if arg == "--grpc-auth-mode=jwt" {
+					t.Errorf("unexpected JWT auth argument %q", arg)
+				}
+			}
+		})
+	}
+
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
 		_, err := BuildMultiadminDeployment(cluster, spec, emptyScheme)

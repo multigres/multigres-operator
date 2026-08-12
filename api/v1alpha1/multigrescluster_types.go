@@ -225,6 +225,47 @@ type MultiadminConfig struct {
 	// TemplateRef refers to a CoreTemplate to load configuration from.
 	// +optional
 	TemplateRef TemplateRef `json:"templateRef,omitempty"`
+
+	// Auth configures authentication for Multiadmin's gRPC, HTTP, Connect,
+	// and REST surfaces. Unset means no authentication is enforced.
+	// +optional
+	Auth *MultiadminAuthConfig `json:"auth,omitempty"`
+}
+
+// JWTAuth returns the JWT auth config for Multiadmin, or nil if unset. Safe
+// to call on a nil receiver, since Spec.Multiadmin itself is optional.
+func (c *MultiadminConfig) JWTAuth() *MultiadminJWTAuthConfig {
+	if c == nil || c.Auth == nil {
+		return nil
+	}
+	return c.Auth.JWT
+}
+
+// MultiadminAuthConfig configures authentication for Multiadmin.
+type MultiadminAuthConfig struct {
+	// JWT configures JWT bearer-token authentication. When set, Multiadmin
+	// is started with --grpc-auth-mode=jwt and the corresponding
+	// --grpc-auth-jwt-* flags.
+	// +optional
+	JWT *MultiadminJWTAuthConfig `json:"jwt,omitempty"`
+}
+
+// MultiadminJWTAuthConfig configures --grpc-auth-mode=jwt for Multiadmin.
+type MultiadminJWTAuthConfig struct {
+	// Issuer is the expected `iss` claim of presented JWTs.
+	// +kubebuilder:validation:MinLength=1
+	Issuer string `json:"issuer"`
+
+	// JWKSURI is the URI of the issuer's JWKS endpoint, used to verify JWT
+	// signatures.
+	// +kubebuilder:validation:MinLength=1
+	JWKSURI string `json:"jwksURI"`
+
+	// AllowedSubjects restricts which `sub` claims are authorized. If empty,
+	// any subject presenting a valid token from the trusted issuer is
+	// authorized.
+	// +optional
+	AllowedSubjects []string `json:"allowedSubjects,omitempty"`
 }
 
 // MultiadminWebConfig defines the configuration for MultiadminWeb in the Cluster.

@@ -242,6 +242,19 @@ func BuildMultiadminDeployment(
 		)
 	}
 
+	if jwtAuth := cluster.Spec.Multiadmin.JWTAuth(); jwtAuth != nil {
+		podSpec := &deploy.Spec.Template.Spec
+		podSpec.Containers[0].Args = append(podSpec.Containers[0].Args,
+			"--grpc-auth-mode=jwt",
+			"--grpc-auth-jwt-issuer="+jwtAuth.Issuer,
+			"--grpc-auth-jwt-jwks-uri="+jwtAuth.JWKSURI,
+		)
+		for _, sub := range jwtAuth.AllowedSubjects {
+			podSpec.Containers[0].Args = append(podSpec.Containers[0].Args,
+				"--grpc-auth-jwt-allowed-subs="+sub)
+		}
+	}
+
 	if err := controllerutil.SetControllerReference(cluster, deploy, scheme); err != nil {
 		return nil, err
 	}
