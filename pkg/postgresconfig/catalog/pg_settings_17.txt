@@ -1,382 +1,389 @@
-allow_alter_system	bool
-allow_in_place_tablespaces	bool
-allow_system_table_mods	bool
-application_name	string
-archive_cleanup_command	string
-archive_command	string
-archive_library	string
-archive_mode	enum
-archive_timeout	integer
-array_nulls	bool
-authentication_timeout	integer
-autovacuum	bool
-autovacuum_analyze_scale_factor	real
-autovacuum_analyze_threshold	integer
-autovacuum_freeze_max_age	integer
-autovacuum_max_workers	integer
-autovacuum_multixact_freeze_max_age	integer
-autovacuum_naptime	integer
-autovacuum_vacuum_cost_delay	real
-autovacuum_vacuum_cost_limit	integer
-autovacuum_vacuum_insert_scale_factor	real
-autovacuum_vacuum_insert_threshold	integer
-autovacuum_vacuum_scale_factor	real
-autovacuum_vacuum_threshold	integer
-autovacuum_work_mem	integer
-backend_flush_after	integer
-backslash_quote	enum
-backtrace_functions	string
-bgwriter_delay	integer
-bgwriter_flush_after	integer
-bgwriter_lru_maxpages	integer
-bgwriter_lru_multiplier	real
-block_size	integer
-bonjour	bool
-bonjour_name	string
-bytea_output	enum
-check_function_bodies	bool
-checkpoint_completion_target	real
-checkpoint_flush_after	integer
-checkpoint_timeout	integer
-checkpoint_warning	integer
-client_connection_check_interval	integer
-client_encoding	string
-client_min_messages	enum
-cluster_name	string
-commit_delay	integer
-commit_siblings	integer
-commit_timestamp_buffers	integer
-compute_query_id	enum
-config_file	string
-constraint_exclusion	enum
-cpu_index_tuple_cost	real
-cpu_operator_cost	real
-cpu_tuple_cost	real
-createrole_self_grant	string
-cursor_tuple_fraction	real
-data_checksums	bool
-data_directory	string
-data_directory_mode	integer
-data_sync_retry	bool
-deadlock_timeout	integer
-debug_assertions	bool
-debug_deadlocks	bool
-debug_discard_caches	integer
-debug_io_direct	string
-debug_logical_replication_streaming	enum
-debug_parallel_query	enum
-debug_pretty_print	bool
-debug_print_parse	bool
-debug_print_plan	bool
-debug_print_rewritten	bool
-default_statistics_target	integer
-default_table_access_method	string
-default_tablespace	string
-default_text_search_config	string
-default_toast_compression	enum
-default_transaction_deferrable	bool
-default_transaction_isolation	enum
-default_transaction_read_only	bool
-default_with_oids	bool
-dynamic_library_path	string
-dynamic_shared_memory_type	enum
-effective_cache_size	integer
-enable_async_append	bool
-enable_bitmapscan	bool
-enable_gathermerge	bool
-enable_group_by_reordering	bool
-enable_hashagg	bool
-enable_hashjoin	bool
-enable_incremental_sort	bool
-enable_indexonlyscan	bool
-enable_indexscan	bool
-enable_material	bool
-enable_memoize	bool
-enable_mergejoin	bool
-enable_nestloop	bool
-enable_parallel_append	bool
-enable_parallel_hash	bool
-enable_partition_pruning	bool
-enable_partitionwise_aggregate	bool
-enable_partitionwise_join	bool
-enable_presorted_aggregate	bool
-enable_seqscan	bool
-enable_sort	bool
-enable_tidscan	bool
-escape_string_warning	bool
-event_source	string
-event_triggers	bool
-exit_on_error	bool
-external_pid_file	string
-extra_float_digits	integer
-from_collapse_limit	integer
-fsync	bool
-full_page_writes	bool
-geqo	bool
-geqo_effort	integer
-geqo_generations	integer
-geqo_pool_size	integer
-geqo_seed	real
-geqo_selection_bias	real
-geqo_threshold	integer
-gin_fuzzy_search_limit	integer
-gin_pending_list_limit	integer
-gss_accept_delegation	bool
-hash_mem_multiplier	real
-hba_file	string
-hot_standby	bool
-hot_standby_feedback	bool
-huge_page_size	integer
-huge_pages	enum
-huge_pages_status	enum
-icu_validation_level	enum
-ident_file	string
-idle_in_transaction_session_timeout	integer
-idle_session_timeout	integer
-ignore_checksum_failure	bool
-ignore_invalid_pages	bool
-ignore_system_indexes	bool
-in_hot_standby	bool
-integer_datetimes	bool
-is_superuser	bool
-jit	bool
-jit_above_cost	real
-jit_debugging_support	bool
-jit_dump_bitcode	bool
-jit_expressions	bool
-jit_inline_above_cost	real
-jit_optimize_above_cost	real
-jit_profiling_support	bool
-jit_provider	string
-jit_tuple_deforming	bool
-join_collapse_limit	integer
-krb_caseins_users	bool
-krb_server_keyfile	string
-lc_messages	string
-lc_monetary	string
-lc_numeric	string
-lc_time	string
-listen_addresses	string
-lo_compat_privileges	bool
-local_preload_libraries	string
-lock_timeout	integer
-log_autovacuum_min_duration	integer
-log_btree_build_stats	bool
-log_checkpoints	bool
-log_connections	bool
-log_destination	string
-log_directory	string
-log_disconnections	bool
-log_duration	bool
-log_error_verbosity	enum
-log_executor_stats	bool
-log_file_mode	integer
-log_filename	string
-log_hostname	bool
-log_line_prefix	string
-log_lock_waits	bool
-log_min_duration_sample	integer
-log_min_duration_statement	integer
-log_min_error_statement	enum
-log_min_messages	enum
-log_parameter_max_length	integer
-log_parameter_max_length_on_error	integer
-log_parser_stats	bool
-log_planner_stats	bool
-log_recovery_conflict_waits	bool
-log_replication_commands	bool
-log_rotation_age	integer
-log_rotation_size	integer
-log_startup_progress_interval	integer
-log_statement	enum
-log_statement_sample_rate	real
-log_statement_stats	bool
-log_temp_files	integer
-log_timezone	string
-log_transaction_sample_rate	real
-log_truncate_on_rotation	bool
-logging_collector	bool
-logical_decoding_work_mem	integer
-maintenance_work_mem	integer
-max_connections	integer
-max_files_per_process	integer
-max_function_args	integer
-max_identifier_length	integer
-max_index_keys	integer
-max_locks_per_transaction	integer
-max_notify_queue_pages	integer
-max_parallel_maintenance_workers	integer
-max_parallel_workers	integer
-max_parallel_workers_per_gather	integer
-max_pred_locks_per_page	integer
-max_pred_locks_per_relation	integer
-max_pred_locks_per_transaction	integer
-max_prepared_transactions	integer
-max_replication_slots	integer
-max_slot_wal_keep_size	integer
-max_stack_depth	integer
-max_standby_archive_delay	integer
-max_standby_streaming_delay	integer
-max_wal_senders	integer
-max_wal_size	integer
-min_dynamic_shared_memory	integer
-min_parallel_index_scan_size	integer
-min_parallel_table_scan_size	integer
-min_wal_size	integer
-multixact_member_buffers	integer
-multixact_offset_buffers	integer
-notify_buffers	integer
-parallel_leader_participation	bool
-parallel_setup_cost	real
-parallel_tuple_cost	real
-password_encryption	enum
-plan_cache_mode	enum
-port	integer
-post_auth_delay	integer
-pre_auth_delay	integer
-primary_conninfo	string
-primary_slot_name	string
-quote_all_identifiers	bool
-random_page_cost	real
-recovery_end_command	string
-recovery_init_sync_method	enum
-recovery_min_apply_delay	integer
-recovery_prefetch	enum
-recovery_target	string
-recovery_target_action	enum
-recovery_target_inclusive	bool
-recovery_target_lsn	string
-recovery_target_name	string
-recovery_target_time	string
-recovery_target_timeline	string
-recovery_target_xid	string
-recursive_worktable_factor	real
-remove_temp_files_after_crash	bool
-reserved_connections	integer
-restart_after_crash	bool
-restore_command	string
-restrict_nonsystem_relation_kind	string
-role	string
-row_security	bool
-scram_iterations	integer
-search_path	string
-seed	real
-segment_size	integer
-send_abort_for_crash	bool
-send_abort_for_kill	bool
-seq_page_cost	real
-serializable_buffers	integer
-server_encoding	string
-server_version	string
-server_version_num	integer
-session_authorization	string
-session_preload_libraries	string
-session_replication_role	enum
-shared_buffers	integer
-shared_memory_size	integer
-shared_memory_size_in_huge_pages	integer
-shared_memory_type	enum
-shared_preload_libraries	string
-ssl	bool
-ssl_ca_file	string
-ssl_cert_file	string
-ssl_ciphers	string
-ssl_crl_dir	string
-ssl_crl_file	string
-ssl_dh_params_file	string
-ssl_ecdh_curve	string
-ssl_key_file	string
-ssl_library	string
-ssl_max_protocol_version	enum
-ssl_min_protocol_version	enum
-ssl_passphrase_command	string
-ssl_passphrase_command_supports_reload	bool
-ssl_prefer_server_ciphers	bool
-ssl_renegotiation_limit	integer
-standard_conforming_strings	bool
-statement_timeout	integer
-stats_fetch_consistency	enum
-subtransaction_buffers	integer
-summarize_wal	bool
-superuser_reserved_connections	integer
-sync_replication_slots	bool
-synchronize_seqscans	bool
-synchronized_standby_slots	string
-synchronous_commit	enum
-synchronous_standby_names	string
-syslog_facility	enum
-syslog_ident	string
-syslog_sequence_numbers	bool
-syslog_split_messages	bool
-tcp_keepalives_count	integer
-tcp_keepalives_idle	integer
-tcp_keepalives_interval	integer
-tcp_user_timeout	integer
-temp_buffers	integer
-temp_file_limit	integer
-temp_tablespaces	string
-timezone_abbreviations	string
-trace_connection_negotiation	bool
-trace_lock_oidmin	integer
-trace_lock_table	integer
-trace_locks	bool
-trace_lwlocks	bool
-trace_notify	bool
-trace_sort	bool
-trace_syncscan	bool
-trace_userlocks	bool
-track_activities	bool
-track_activity_query_size	integer
-track_commit_timestamp	bool
-track_counts	bool
-track_functions	enum
-track_io_timing	bool
-track_wal_io_timing	bool
-transaction_buffers	integer
-transaction_deferrable	bool
-transaction_isolation	enum
-transaction_read_only	bool
-transaction_timeout	integer
-transform_null_equals	bool
-unix_socket_directories	string
-unix_socket_group	string
-unix_socket_permissions	integer
-update_process_title	bool
-vacuum_buffer_usage_limit	integer
-vacuum_cost_delay	real
-vacuum_cost_limit	integer
-vacuum_cost_page_dirty	integer
-vacuum_cost_page_hit	integer
-vacuum_cost_page_miss	integer
-vacuum_failsafe_age	integer
-vacuum_freeze_min_age	integer
-vacuum_freeze_table_age	integer
-vacuum_multixact_failsafe_age	integer
-vacuum_multixact_freeze_min_age	integer
-vacuum_multixact_freeze_table_age	integer
-wal_block_size	integer
-wal_buffers	integer
-wal_compression	enum
-wal_consistency_checking	string
-wal_debug	bool
-wal_decode_buffer_size	integer
-wal_init_zero	bool
-wal_keep_size	integer
-wal_level	enum
-wal_log_hints	bool
-wal_receiver_create_temp_slot	bool
-wal_receiver_status_interval	integer
-wal_receiver_timeout	integer
-wal_recycle	bool
-wal_retrieve_retry_interval	integer
-wal_segment_size	integer
-wal_sender_timeout	integer
-wal_skip_threshold	integer
-wal_summary_keep_time	integer
-wal_sync_method	enum
-wal_writer_delay	integer
-wal_writer_flush_after	integer
-work_mem	integer
-xmlbinary	enum
-xmloption	enum
-zero_damaged_pages	bool
+allow_alter_system	bool	sighup
+allow_in_place_tablespaces	bool	superuser
+allow_system_table_mods	bool	superuser
+application_name	string	user
+archive_cleanup_command	string	sighup
+archive_command	string	sighup
+archive_library	string	sighup
+archive_mode	enum	postmaster
+archive_timeout	integer	sighup
+array_nulls	bool	user
+authentication_timeout	integer	sighup
+autovacuum	bool	sighup
+autovacuum_analyze_scale_factor	real	sighup
+autovacuum_analyze_threshold	integer	sighup
+autovacuum_freeze_max_age	integer	postmaster
+autovacuum_max_workers	integer	postmaster
+autovacuum_multixact_freeze_max_age	integer	postmaster
+autovacuum_naptime	integer	sighup
+autovacuum_vacuum_cost_delay	real	sighup
+autovacuum_vacuum_cost_limit	integer	sighup
+autovacuum_vacuum_insert_scale_factor	real	sighup
+autovacuum_vacuum_insert_threshold	integer	sighup
+autovacuum_vacuum_scale_factor	real	sighup
+autovacuum_vacuum_threshold	integer	sighup
+autovacuum_work_mem	integer	sighup
+backend_flush_after	integer	user
+backslash_quote	enum	user
+backtrace_functions	string	superuser
+bgwriter_delay	integer	sighup
+bgwriter_flush_after	integer	sighup
+bgwriter_lru_maxpages	integer	sighup
+bgwriter_lru_multiplier	real	sighup
+block_size	integer	internal
+bonjour	bool	postmaster
+bonjour_name	string	postmaster
+bytea_output	enum	user
+check_function_bodies	bool	user
+checkpoint_completion_target	real	sighup
+checkpoint_flush_after	integer	sighup
+checkpoint_timeout	integer	sighup
+checkpoint_warning	integer	sighup
+client_connection_check_interval	integer	user
+client_encoding	string	user
+client_min_messages	enum	user
+cluster_name	string	postmaster
+commit_delay	integer	superuser
+commit_siblings	integer	user
+commit_timestamp_buffers	integer	postmaster
+compute_query_id	enum	superuser
+config_file	string	postmaster
+constraint_exclusion	enum	user
+cpu_index_tuple_cost	real	user
+cpu_operator_cost	real	user
+cpu_tuple_cost	real	user
+createrole_self_grant	string	user
+cursor_tuple_fraction	real	user
+data_checksums	bool	internal
+data_directory	string	postmaster
+data_directory_mode	integer	internal
+data_sync_retry	bool	postmaster
+deadlock_timeout	integer	superuser
+debug_assertions	bool	internal
+debug_deadlocks	bool	superuser
+debug_discard_caches	integer	superuser
+debug_io_direct	string	postmaster
+debug_logical_replication_streaming	enum	user
+debug_parallel_query	enum	user
+debug_pretty_print	bool	user
+debug_print_parse	bool	user
+debug_print_plan	bool	user
+debug_print_rewritten	bool	user
+default_statistics_target	integer	user
+default_table_access_method	string	user
+default_tablespace	string	user
+default_text_search_config	string	user
+default_toast_compression	enum	user
+default_transaction_deferrable	bool	user
+default_transaction_isolation	enum	user
+default_transaction_read_only	bool	user
+default_with_oids	bool	user
+dynamic_library_path	string	superuser
+dynamic_shared_memory_type	enum	postmaster
+effective_cache_size	integer	user
+effective_io_concurrency	integer	user
+enable_async_append	bool	user
+enable_bitmapscan	bool	user
+enable_gathermerge	bool	user
+enable_group_by_reordering	bool	user
+enable_hashagg	bool	user
+enable_hashjoin	bool	user
+enable_incremental_sort	bool	user
+enable_indexonlyscan	bool	user
+enable_indexscan	bool	user
+enable_material	bool	user
+enable_memoize	bool	user
+enable_mergejoin	bool	user
+enable_nestloop	bool	user
+enable_parallel_append	bool	user
+enable_parallel_hash	bool	user
+enable_partition_pruning	bool	user
+enable_partitionwise_aggregate	bool	user
+enable_partitionwise_join	bool	user
+enable_presorted_aggregate	bool	user
+enable_seqscan	bool	user
+enable_sort	bool	user
+enable_tidscan	bool	user
+escape_string_warning	bool	user
+event_source	string	postmaster
+event_triggers	bool	superuser
+exit_on_error	bool	user
+external_pid_file	string	postmaster
+extra_float_digits	integer	user
+from_collapse_limit	integer	user
+fsync	bool	sighup
+full_page_writes	bool	sighup
+geqo	bool	user
+geqo_effort	integer	user
+geqo_generations	integer	user
+geqo_pool_size	integer	user
+geqo_seed	real	user
+geqo_selection_bias	real	user
+geqo_threshold	integer	user
+gin_fuzzy_search_limit	integer	user
+gin_pending_list_limit	integer	user
+gss_accept_delegation	bool	sighup
+hash_mem_multiplier	real	user
+hba_file	string	postmaster
+hot_standby	bool	postmaster
+hot_standby_feedback	bool	sighup
+huge_page_size	integer	postmaster
+huge_pages	enum	postmaster
+huge_pages_status	enum	internal
+icu_validation_level	enum	user
+ident_file	string	postmaster
+idle_in_transaction_session_timeout	integer	user
+idle_session_timeout	integer	user
+ignore_checksum_failure	bool	superuser
+ignore_invalid_pages	bool	postmaster
+ignore_system_indexes	bool	backend
+in_hot_standby	bool	internal
+integer_datetimes	bool	internal
+io_combine_limit	integer	user
+is_superuser	bool	internal
+jit	bool	user
+jit_above_cost	real	user
+jit_debugging_support	bool	superuser-backend
+jit_dump_bitcode	bool	superuser
+jit_expressions	bool	user
+jit_inline_above_cost	real	user
+jit_optimize_above_cost	real	user
+jit_profiling_support	bool	superuser-backend
+jit_provider	string	postmaster
+jit_tuple_deforming	bool	user
+join_collapse_limit	integer	user
+krb_caseins_users	bool	sighup
+krb_server_keyfile	string	sighup
+lc_messages	string	superuser
+lc_monetary	string	user
+lc_numeric	string	user
+lc_time	string	user
+listen_addresses	string	postmaster
+lo_compat_privileges	bool	superuser
+local_preload_libraries	string	user
+lock_timeout	integer	user
+log_autovacuum_min_duration	integer	sighup
+log_btree_build_stats	bool	superuser
+log_checkpoints	bool	sighup
+log_connections	bool	superuser-backend
+log_destination	string	sighup
+log_directory	string	sighup
+log_disconnections	bool	superuser-backend
+log_duration	bool	superuser
+log_error_verbosity	enum	superuser
+log_executor_stats	bool	superuser
+log_file_mode	integer	sighup
+log_filename	string	sighup
+log_hostname	bool	sighup
+log_line_prefix	string	sighup
+log_lock_waits	bool	superuser
+log_min_duration_sample	integer	superuser
+log_min_duration_statement	integer	superuser
+log_min_error_statement	enum	superuser
+log_min_messages	enum	superuser
+log_parameter_max_length	integer	superuser
+log_parameter_max_length_on_error	integer	user
+log_parser_stats	bool	superuser
+log_planner_stats	bool	superuser
+log_recovery_conflict_waits	bool	sighup
+log_replication_commands	bool	superuser
+log_rotation_age	integer	sighup
+log_rotation_size	integer	sighup
+log_startup_progress_interval	integer	sighup
+log_statement	enum	superuser
+log_statement_sample_rate	real	superuser
+log_statement_stats	bool	superuser
+log_temp_files	integer	superuser
+log_timezone	string	sighup
+log_transaction_sample_rate	real	superuser
+log_truncate_on_rotation	bool	sighup
+logging_collector	bool	postmaster
+logical_decoding_work_mem	integer	user
+maintenance_io_concurrency	integer	user
+maintenance_work_mem	integer	user
+max_connections	integer	postmaster
+max_files_per_process	integer	postmaster
+max_function_args	integer	internal
+max_identifier_length	integer	internal
+max_index_keys	integer	internal
+max_locks_per_transaction	integer	postmaster
+max_logical_replication_workers	integer	postmaster
+max_notify_queue_pages	integer	postmaster
+max_parallel_apply_workers_per_subscription	integer	sighup
+max_parallel_maintenance_workers	integer	user
+max_parallel_workers	integer	user
+max_parallel_workers_per_gather	integer	user
+max_pred_locks_per_page	integer	sighup
+max_pred_locks_per_relation	integer	sighup
+max_pred_locks_per_transaction	integer	postmaster
+max_prepared_transactions	integer	postmaster
+max_replication_slots	integer	postmaster
+max_slot_wal_keep_size	integer	sighup
+max_stack_depth	integer	superuser
+max_standby_archive_delay	integer	sighup
+max_standby_streaming_delay	integer	sighup
+max_sync_workers_per_subscription	integer	sighup
+max_wal_senders	integer	postmaster
+max_wal_size	integer	sighup
+max_worker_processes	integer	postmaster
+min_dynamic_shared_memory	integer	postmaster
+min_parallel_index_scan_size	integer	user
+min_parallel_table_scan_size	integer	user
+min_wal_size	integer	sighup
+multixact_member_buffers	integer	postmaster
+multixact_offset_buffers	integer	postmaster
+notify_buffers	integer	postmaster
+parallel_leader_participation	bool	user
+parallel_setup_cost	real	user
+parallel_tuple_cost	real	user
+password_encryption	enum	user
+plan_cache_mode	enum	user
+port	integer	postmaster
+post_auth_delay	integer	backend
+pre_auth_delay	integer	sighup
+primary_conninfo	string	sighup
+primary_slot_name	string	sighup
+quote_all_identifiers	bool	user
+random_page_cost	real	user
+recovery_end_command	string	sighup
+recovery_init_sync_method	enum	sighup
+recovery_min_apply_delay	integer	sighup
+recovery_prefetch	enum	sighup
+recovery_target	string	postmaster
+recovery_target_action	enum	postmaster
+recovery_target_inclusive	bool	postmaster
+recovery_target_lsn	string	postmaster
+recovery_target_name	string	postmaster
+recovery_target_time	string	postmaster
+recovery_target_timeline	string	postmaster
+recovery_target_xid	string	postmaster
+recursive_worktable_factor	real	user
+remove_temp_files_after_crash	bool	sighup
+reserved_connections	integer	postmaster
+restart_after_crash	bool	sighup
+restore_command	string	sighup
+restrict_nonsystem_relation_kind	string	user
+role	string	user
+row_security	bool	user
+scram_iterations	integer	user
+search_path	string	user
+seed	real	user
+segment_size	integer	internal
+send_abort_for_crash	bool	sighup
+send_abort_for_kill	bool	sighup
+seq_page_cost	real	user
+serializable_buffers	integer	postmaster
+server_encoding	string	internal
+server_version	string	internal
+server_version_num	integer	internal
+session_authorization	string	user
+session_preload_libraries	string	superuser
+session_replication_role	enum	superuser
+shared_buffers	integer	postmaster
+shared_memory_size	integer	internal
+shared_memory_size_in_huge_pages	integer	internal
+shared_memory_type	enum	postmaster
+shared_preload_libraries	string	postmaster
+ssl	bool	sighup
+ssl_ca_file	string	sighup
+ssl_cert_file	string	sighup
+ssl_ciphers	string	sighup
+ssl_crl_dir	string	sighup
+ssl_crl_file	string	sighup
+ssl_dh_params_file	string	sighup
+ssl_ecdh_curve	string	sighup
+ssl_key_file	string	sighup
+ssl_library	string	internal
+ssl_max_protocol_version	enum	sighup
+ssl_min_protocol_version	enum	sighup
+ssl_passphrase_command	string	sighup
+ssl_passphrase_command_supports_reload	bool	sighup
+ssl_prefer_server_ciphers	bool	sighup
+ssl_renegotiation_limit	integer	user
+standard_conforming_strings	bool	user
+statement_timeout	integer	user
+stats_fetch_consistency	enum	user
+subtransaction_buffers	integer	postmaster
+summarize_wal	bool	sighup
+superuser_reserved_connections	integer	postmaster
+sync_replication_slots	bool	sighup
+synchronize_seqscans	bool	user
+synchronized_standby_slots	string	sighup
+synchronous_commit	enum	user
+synchronous_standby_names	string	sighup
+syslog_facility	enum	sighup
+syslog_ident	string	sighup
+syslog_sequence_numbers	bool	sighup
+syslog_split_messages	bool	sighup
+tcp_keepalives_count	integer	user
+tcp_keepalives_idle	integer	user
+tcp_keepalives_interval	integer	user
+tcp_user_timeout	integer	user
+temp_buffers	integer	user
+temp_file_limit	integer	superuser
+temp_tablespaces	string	user
+timezone_abbreviations	string	user
+trace_connection_negotiation	bool	postmaster
+trace_lock_oidmin	integer	superuser
+trace_lock_table	integer	superuser
+trace_locks	bool	superuser
+trace_lwlocks	bool	superuser
+trace_notify	bool	user
+trace_sort	bool	user
+trace_syncscan	bool	user
+trace_userlocks	bool	superuser
+track_activities	bool	superuser
+track_activity_query_size	integer	postmaster
+track_commit_timestamp	bool	postmaster
+track_counts	bool	superuser
+track_functions	enum	superuser
+track_io_timing	bool	superuser
+track_wal_io_timing	bool	superuser
+transaction_buffers	integer	postmaster
+transaction_deferrable	bool	user
+transaction_isolation	enum	user
+transaction_read_only	bool	user
+transaction_timeout	integer	user
+transform_null_equals	bool	user
+unix_socket_directories	string	postmaster
+unix_socket_group	string	postmaster
+unix_socket_permissions	integer	postmaster
+update_process_title	bool	superuser
+vacuum_buffer_usage_limit	integer	user
+vacuum_cost_delay	real	user
+vacuum_cost_limit	integer	user
+vacuum_cost_page_dirty	integer	user
+vacuum_cost_page_hit	integer	user
+vacuum_cost_page_miss	integer	user
+vacuum_failsafe_age	integer	user
+vacuum_freeze_min_age	integer	user
+vacuum_freeze_table_age	integer	user
+vacuum_multixact_failsafe_age	integer	user
+vacuum_multixact_freeze_min_age	integer	user
+vacuum_multixact_freeze_table_age	integer	user
+wal_block_size	integer	internal
+wal_buffers	integer	postmaster
+wal_compression	enum	superuser
+wal_consistency_checking	string	superuser
+wal_debug	bool	superuser
+wal_decode_buffer_size	integer	postmaster
+wal_init_zero	bool	superuser
+wal_keep_size	integer	sighup
+wal_level	enum	postmaster
+wal_log_hints	bool	postmaster
+wal_receiver_create_temp_slot	bool	sighup
+wal_receiver_status_interval	integer	sighup
+wal_receiver_timeout	integer	sighup
+wal_recycle	bool	superuser
+wal_retrieve_retry_interval	integer	sighup
+wal_segment_size	integer	internal
+wal_sender_timeout	integer	user
+wal_skip_threshold	integer	user
+wal_summary_keep_time	integer	sighup
+wal_sync_method	enum	sighup
+wal_writer_delay	integer	sighup
+wal_writer_flush_after	integer	sighup
+work_mem	integer	user
+xmlbinary	enum	user
+xmloption	enum	user
+zero_damaged_pages	bool	superuser

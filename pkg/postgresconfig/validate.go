@@ -9,10 +9,20 @@ import (
 	"strings"
 )
 
-// pgSettingsCatalog maps each built-in PostgreSQL parameter to its broad type.
-// It is generated from PostgreSQL's src/backend/utils/misc/guc_tables.c
-// (REL_17_5, matching the operator's default Postgres image). Regenerate for a
-// new major version by re-extracting name+type from that file.
+// pgSettingsCatalog maps each built-in PostgreSQL parameter to its broad type
+// and its GUC context (the pg_settings "context" column: postmaster, sighup,
+// user, superuser, ...). It is generated from PostgreSQL's
+// src/backend/utils/misc/guc_tables.c (REL_17_5, matching the operator's
+// default Postgres image) and currently holds the full 389-entry PG17 set.
+//
+// Regenerate for a new major version by re-extracting name+type+context: the
+// type comes from which ConfigureNames{Bool,Int,Real,String,Enum} array the
+// entry lives in, the context from the entry's GucContext field (PGC_*). NOTE:
+// a long parameter name wraps onto its own line so the PGC_* token lands on the
+// FOLLOWING line — a same-line-only regex silently drops those entries (e.g.
+// max_worker_processes, effective_io_concurrency, max_logical_replication_workers).
+// The extractor must carry the pending name forward until it sees the PGC_*.
+// Cross-check the count against a live server: SELECT count(*) FROM pg_settings.
 //
 //go:embed catalog/pg_settings_17.txt
 var pgSettingsCatalog string
@@ -27,6 +37,14 @@ const (
 	gucString  gucType = "string"
 	gucEnum    gucType = "enum"
 )
+
+// catalogEntry is the parsed catalog record for one built-in parameter: its
+// broad type (for rough value validation) and its GUC context (for the
+// reload-vs-restart classification, see RequiresRestart).
+type catalogEntry struct {
+	typ     gucType
+	context string
+}
 
 var catalog = parseCatalog(pgSettingsCatalog)
 
@@ -51,15 +69,23 @@ var managedGUCs = map[string]string{
 	"wal_level":               "managed by the operator; multigres requires wal_level=logical",
 }
 
-func parseCatalog(data string) map[string]gucType {
-	m := make(map[string]gucType)
+// parseCatalog parses the embedded catalog. Each non-empty line is
+// name<TAB>type<TAB>context; the context column is optional so an older
+// name+type-only catalog still parses (context "" then defaults to restart in
+// RequiresRestart, the conservative choice).
+func parseCatalog(data string) map[string]catalogEntry {
+	m := make(map[string]catalogEntry)
 	sc := bufio.NewScanner(strings.NewReader(data))
 	for sc.Scan() {
-		name, typ, ok := strings.Cut(strings.TrimSpace(sc.Text()), "\t")
-		if !ok {
+		fields := strings.Split(strings.TrimSpace(sc.Text()), "\t")
+		if len(fields) < 2 {
 			continue
 		}
-		m[name] = gucType(typ)
+		e := catalogEntry{typ: gucType(fields[1])}
+		if len(fields) >= 3 {
+			e.context = fields[2]
+		}
+		m[fields[0]] = e
 	}
 	return m
 }
@@ -111,12 +137,12 @@ func validateGUC(name, value string) error {
 			reason,
 		)
 	}
-	typ, ok := catalog[lower]
+	entry, ok := catalog[lower]
 	if !ok {
 		return fmt.Errorf("unknown parameter %q", name)
 	}
-	if !valueMatchesType(value, typ) {
-		return fmt.Errorf("parameter %q expects a %s value, got %q", name, typ, value)
+	if !valueMatchesType(value, entry.typ) {
+		return fmt.Errorf("parameter %q expects a %s value, got %q", name, entry.typ, value)
 	}
 	return nil
 }

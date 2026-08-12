@@ -92,6 +92,9 @@ func BuildPoolPod(
 	if h := shard.Annotations[metadata.AnnotationPostgresConfigHash]; h != "" {
 		annotations[metadata.AnnotationPostgresConfigHash] = h
 	}
+	if h := shard.Annotations[metadata.AnnotationPostgresReloadHash]; h != "" {
+		annotations[metadata.AnnotationPostgresReloadHash] = h
+	}
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

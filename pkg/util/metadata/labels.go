@@ -101,10 +101,21 @@ const (
 	// AnnotationSpecHash stores the hash of operator-managed pod spec fields.
 	AnnotationSpecHash = "multigres.com/spec-hash"
 
-	// AnnotationPostgresConfigHash stores the SHA-256 hash of the referenced
-	// postgres config ConfigMap data. Changes to the ConfigMap content produce
-	// a different hash, which changes the spec-hash and triggers a rolling update.
+	// AnnotationPostgresConfigHash stores the SHA-256 hash of the effective
+	// postgresql.conf settings that require a PostgreSQL restart to apply
+	// (postmaster/internal context). Changes to this subset produce a different
+	// hash, which changes the spec-hash and triggers a rolling update (pod
+	// recreation). Reload-safe settings are tracked separately in
+	// AnnotationPostgresReloadHash and deliberately excluded here.
 	AnnotationPostgresConfigHash = "multigres.com/postgres-config-hash"
+
+	// AnnotationPostgresReloadHash stores the SHA-256 hash of the effective
+	// postgresql.conf settings a reload (SIGHUP) applies in place (every context
+	// other than postmaster/internal). It is stamped on pods but, unlike
+	// AnnotationPostgresConfigHash, is NOT folded into the spec-hash: a change
+	// confined to reload-safe settings leaves the spec-hash untouched and is
+	// applied by reloading the running server rather than recreating the pod.
+	AnnotationPostgresReloadHash = "multigres.com/postgres-reload-hash"
 
 	// AnnotationDrainState is used to coordinate graceful scale down between
 	// the resource-handler (Kubernetes) and data-handler (etcd).
