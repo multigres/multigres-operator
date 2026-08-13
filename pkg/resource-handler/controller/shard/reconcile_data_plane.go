@@ -118,6 +118,21 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 	}
 
+	// Phase: Apply reload-safe config changes in place (SIGHUP via ReloadConfig),
+	// so a reload-only postgresql.conf change converges without recreating pods.
+	{
+		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileReloadState")
+		wait, err := r.reconcileReloadState(ctx, store, shard)
+		childSpan.End()
+		if err != nil {
+			logger.Error(err, "Failed to reconcile config reload state")
+			return ctrl.Result{}, err
+		}
+		if wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 

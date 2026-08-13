@@ -4574,7 +4574,7 @@ func TestUpdatePoolsStatus_PoolEmptyEvent(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
-	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "")
+	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
 	totalPods, readyPods := pools.totalPods, pools.readyPods
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -4779,7 +4779,7 @@ func TestUpdatePoolsStatus_TerminatingPodExcluded(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
-	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "")
+	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
 	totalPods, readyPods := pools.totalPods, pools.readyPods
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -4978,7 +4978,7 @@ func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
-	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "")
+	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
 	totalPods, readyPods := pools.totalPods, pools.readyPods
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -5241,7 +5241,7 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		pools, err := r.updatePoolsStatus(
-			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash,
+			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash, "",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -5263,7 +5263,7 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		pools, err := r.updatePoolsStatus(
-			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash,
+			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash, "",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -5968,6 +5968,95 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, "main", poolSpec, 1)
 		if err == nil || !strings.Contains(err.Error(), "failed to mark PVC") {
 			t.Fatalf("expected PVC orphan-patch error, got %v", err)
+		}
+	})
+}
+
+// TestUpdatePoolsStatus_ReloadPending verifies that config-current requires BOTH
+// the restart-hash and the reload-hash: a pod current on the restart-hash but
+// stale on the reload-hash (a reload not yet applied) keeps the config reported
+// as in progress, so status does not settle before an in-place reload lands.
+func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard-reload",
+			Namespace: "default",
+			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "db",
+			TableGroupName: "tg",
+			ShardName:      "s1",
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"primary": {
+					Cells:           []multigresv1alpha1.CellName{"zone1"},
+					ReplicasPerCell: ptr.To(int32(1)),
+				},
+			},
+		},
+	}
+
+	labels := buildPoolLabelsWithCell(shard, "primary", "zone1")
+	podName := BuildPoolPodName(shard, "primary", "zone1", 0)
+
+	const (
+		desiredRestart = "restart-desired"
+		desiredReload  = "reload-desired"
+	)
+
+	readyPod := func(restart, reload string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      podName,
+				Namespace: "default",
+				Labels:    labels,
+				Annotations: map[string]string{
+					metadata.AnnotationPostgresConfigHash: restart,
+					metadata.AnnotationPostgresReloadHash: reload,
+				},
+			},
+			Status: corev1.PodStatus{
+				Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+				},
+			},
+		}
+	}
+
+	t.Run("stale reload-hash is in progress even when restart-hash matches", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(shard, readyPod(desiredRestart, "reload-stale")).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		pools, err := r.updatePoolsStatus(
+			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredRestart, desiredReload,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !pools.configInProgress {
+			t.Error("expected configInProgress=true: reload-hash is stale (reload pending)")
+		}
+	})
+
+	t.Run("both hashes current is settled", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(shard, readyPod(desiredRestart, desiredReload)).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		pools, err := r.updatePoolsStatus(
+			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredRestart, desiredReload,
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pools.configInProgress {
+			t.Error("expected configInProgress=false: both hashes match desired")
 		}
 	})
 }

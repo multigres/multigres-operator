@@ -33,7 +33,7 @@ func (r *ShardReconciler) updateStatus(
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 
 	// Update pools status
-	pools, err := r.updatePoolsStatus(ctx, shard, cellsSet, rendered.hash)
+	pools, err := r.updatePoolsStatus(ctx, shard, cellsSet, rendered.hash, rendered.reloadHash)
 	if err != nil {
 		return err
 	}
@@ -167,19 +167,23 @@ type poolStatus struct {
 }
 
 // updatePoolsStatus aggregates status from all pool pods and tracks cells in the
-// cellsSet.
+// cellsSet. desiredConfigHash is the restart-hash (applied via pod recreation)
+// and desiredReloadHash is the reload-hash (applied in place via SIGHUP); a pod
+// is config-current only when it carries both, so status stays "in progress"
+// through a reload as well as a rolling restart.
 func (r *ShardReconciler) updatePoolsStatus(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	cellsSet map[multigresv1alpha1.CellName]bool,
 	desiredConfigHash string,
+	desiredReloadHash string,
 ) (poolStatus, error) {
 	clusterName := shard.Labels[metadata.LabelMultigresCluster]
 
 	var ps poolStatus
 
-	// Track whether every live pod carries the desired config hash, and whether
-	// a pod that already carries it is crash-looping (config that Postgres
+	// Track whether every live pod carries the desired config hashes, and whether
+	// a pod that already carries them is crash-looping (config that Postgres
 	// rejects at startup manifests exactly this way).
 	liveCount := 0
 	allConfigCurrent := true
@@ -221,9 +225,13 @@ func (r *ShardReconciler) updatePoolsStatus(
 					continue
 				}
 
-				// A live pod is config-current when it carries the desired hash.
+				// A live pod is config-current only when it carries BOTH desired
+				// hashes: the restart-hash (applied by recreating the pod) and the
+				// reload-hash (applied in place via SIGHUP). Requiring both keeps
+				// status "in progress" through a reload, not just a rolling restart.
 				liveCount++
-				podHasDesiredConfig := pod.Annotations[metadata.AnnotationPostgresConfigHash] == desiredConfigHash
+				podHasDesiredConfig := pod.Annotations[metadata.AnnotationPostgresConfigHash] == desiredConfigHash &&
+					pod.Annotations[metadata.AnnotationPostgresReloadHash] == desiredReloadHash
 				if !podHasDesiredConfig {
 					allConfigCurrent = false
 				}
@@ -278,12 +286,13 @@ func (r *ShardReconciler) updatePoolsStatus(
 		)
 	}
 
-	// Content-based drift: at least one live pod carries a config hash other than
-	// the desired render. This is the "effective != desired" signal — it covers a
-	// spec edit, a PostgresConfigRef ConfigMap edit, and an operator-baseline
-	// change on upgrade alike, none of which the shard generation captures. When
-	// reload lands, the observed side migrates from "pod recreated with the hash"
-	// to "pgctld reports the loaded version"; the comparison stays the same.
+	// Content-based drift: at least one live pod is missing a desired config hash.
+	// This is the "effective != desired" signal — it covers a spec edit, a
+	// PostgresConfigRef ConfigMap edit, and an operator-baseline change on upgrade
+	// alike, none of which the shard generation captures. The observed side is the
+	// pod's own hashes: the restart-hash lands when the pod is recreated, and the
+	// reload-hash lands when the reload reconcile confirms a SIGHUP applied it, so
+	// a reload-only change is reported in progress until it has actually reloaded.
 	configDrift := liveCount > 0 && !allConfigCurrent
 	ps.configInProgress = configDrift || configApplyFailing
 	return ps, nil

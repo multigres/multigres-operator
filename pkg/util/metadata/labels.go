@@ -115,7 +115,20 @@ const (
 	// AnnotationPostgresConfigHash, is NOT folded into the spec-hash: a change
 	// confined to reload-safe settings leaves the spec-hash untouched and is
 	// applied by reloading the running server rather than recreating the pod.
+	//
+	// It is also stamped on the operator-owned postgres ConfigMap to record the
+	// reload target the pods should converge to (paired with
+	// AnnotationPostgresReloadHashUpdatedAt), and on each pod to record the
+	// reload-hash that pod is confirmed current on.
 	AnnotationPostgresReloadHash = "multigres.com/postgres-reload-hash"
+
+	// AnnotationPostgresReloadHashUpdatedAt records, on the operator-owned
+	// postgres ConfigMap, the RFC3339 time the reload target
+	// (AnnotationPostgresReloadHash) last changed. The reload reconcile waits a
+	// kubelet-sync margin past this instant before reloading a pod, so the SIGHUP
+	// re-reads the updated postgresql.conf rather than the pre-update file the
+	// kubelet has not yet projected into the pod.
+	AnnotationPostgresReloadHashUpdatedAt = "multigres.com/postgres-reload-hash-updated-at"
 
 	// AnnotationDrainState is used to coordinate graceful scale down between
 	// the resource-handler (Kubernetes) and data-handler (etcd).

@@ -1529,7 +1529,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 
 		cellsSet := make(map[multigresv1alpha1.CellName]bool)
 		pools, err := r.updatePoolsStatus(
-			context.Background(), shard, cellsSet, "",
+			context.Background(), shard, cellsSet, "", "",
 		)
 		if err != nil {
 			t.Fatalf("updatePoolsStatus failed: %v", err)
