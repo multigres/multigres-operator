@@ -6,6 +6,7 @@ package shard_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -1200,4 +1202,284 @@ func TestReconcileDeletions(t *testing.T) {
 	if !found {
 		t.Fatalf("ConfigMap was not recreated")
 	}
+}
+
+// TestReloadVsRestartRollout drives a real reconcile against envtest and proves
+// the hash split at the pod level: a reload-safe change (work_mem, user context)
+// updates the rendered ConfigMap but leaves the pod's UID and spec-hash
+// untouched (no recreation), while a restart change (shared_buffers, postmaster
+// context) moves the spec-hash and makes the controller initiate a drain — the
+// recreation trigger.
+//
+// The reload SIGHUP itself needs a live multipooler + topology, so it is not
+// exercised here (that is the e2e suite and the reconcileReloadState unit
+// tests); this test guards the no-recreate-vs-recreate decision the split is
+// responsible for.
+func TestReloadVsRestartRollout(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
+	)
+	if err := (&shardcontroller.ShardReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("shard-controller"),
+	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}); err != nil {
+		t.Fatalf("Failed to create controller: %v", err)
+	}
+
+	ctx := t.Context()
+	k8sClient := mgr.GetClient()
+
+	const (
+		shardName   = "test-shard-reload-rollout"
+		clusterName = "test-cluster-reload-rollout"
+	)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      shardName,
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": clusterName},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      "0",
+			LogLevels: multigresv1alpha1.ComponentLogLevels{
+				Pgctld: "info", Multipooler: "info", Multiorch: "info", Multiadmin: "info", Multigateway: "info",
+			},
+			Multiorch: multigresv1alpha1.MultiorchSpec{Cells: []multigresv1alpha1.CellName{"zone1"}},
+			Images: multigresv1alpha1.ShardImages{
+				Multiorch:   "ghcr.io/multigres/multigres:main",
+				Multipooler: "ghcr.io/multigres/multigres:main",
+				Postgres:    "postgres:17",
+			},
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address: "global-topo:2379", RootPath: "/multigres/global", Implementation: "etcd",
+			},
+			PostgresConfig: map[string]string{"work_mem": "4MB"},
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"primary": {
+					Cells:           []multigresv1alpha1.CellName{"zone1"},
+					Type:            "readWrite",
+					ReplicasPerCell: ptr.To(int32(1)),
+					Storage:         multigresv1alpha1.StorageSpec{Size: "10Gi"},
+				},
+			},
+			Backup: &multigresv1alpha1.BackupConfig{
+				Type:       multigresv1alpha1.BackupTypeFilesystem,
+				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+			},
+		},
+	}
+
+	setTestPostgresPasswordSecretRef(shard)
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
+	if err := k8sClient.Create(ctx, shard); err != nil {
+		t.Fatalf("Failed to create Shard: %v", err)
+	}
+
+	// Keep pool pods Ready in the background so the controller does not block.
+	go markPoolPodsReady(ctx, k8sClient, clusterName)
+
+	poolSelector := client.MatchingLabels{
+		metadata.LabelMultigresCluster: clusterName,
+		metadata.LabelAppComponent:     shardcontroller.PoolComponentName,
+	}
+
+	// Wait for the pool pod and capture its identity + spec-hash.
+	orig := waitForPoolPod(t, ctx, k8sClient, poolSelector)
+	origUID := orig.UID
+	origSpecHash := orig.Annotations[metadata.AnnotationSpecHash]
+	if origSpecHash == "" {
+		t.Fatal("pool pod has no spec-hash annotation")
+	}
+
+	// --- Reload-only change: work_mem (user context) must NOT recreate the pod. ---
+	setInlineConfig(t, ctx, k8sClient, shardName, "work_mem", "8MB")
+	// Wait until the rendered ConfigMap reflects the change (reconcile processed it).
+	waitForConfigMapContains(t, ctx, k8sClient, shardName, "work_mem = '8MB'")
+
+	// The delivery path stamps the reload target on the ConfigMap, and it must
+	// SURVIVE the ForceOwnership SSA that re-applies the ConfigMap every reconcile
+	// (regression guard: a merge-patched annotation was stripped, resetting the
+	// reload sync-lag timer forever so reloads never fired).
+	waitForConfigMapReloadAnnotation(t, ctx, k8sClient, shardName)
+
+	got := getPoolPod(t, ctx, k8sClient, poolSelector)
+	if got.UID != origUID {
+		t.Errorf("reload-only change recreated the pod: UID %s -> %s", origUID, got.UID)
+	}
+	if ds := got.Annotations[metadata.AnnotationDrainState]; ds != "" {
+		t.Errorf("reload-only change drained the pod (drain state %q)", ds)
+	}
+	if h := got.Annotations[metadata.AnnotationSpecHash]; h != origSpecHash {
+		t.Errorf("reload-only change moved the spec-hash: %s -> %s", origSpecHash, h)
+	}
+
+	// --- Restart change: shared_buffers (postmaster context) must trigger recreation. ---
+	setInlineConfig(t, ctx, k8sClient, shardName, "shared_buffers", "256MB")
+	waitForPoolPodDraining(t, ctx, k8sClient, poolSelector)
+}
+
+// markPoolPodsReady keeps every pool pod for the cluster marked Ready so the
+// reconciler (which blocks on readiness before acting on further replicas) can
+// make progress under envtest, where no kubelet runs.
+func markPoolPodsReady(ctx context.Context, c client.Client, clusterName string) {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			list := &corev1.PodList{}
+			if err := c.List(ctx, list, client.InNamespace("default"),
+				client.MatchingLabels{metadata.LabelMultigresCluster: clusterName}); err != nil {
+				continue
+			}
+			for i := range list.Items {
+				p := &list.Items[i]
+				ready := false
+				for _, cond := range p.Status.Conditions {
+					if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
+						ready = true
+						break
+					}
+				}
+				if !ready {
+					p.Status.Phase = corev1.PodRunning
+					p.Status.Conditions = []corev1.PodCondition{
+						{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+					}
+					_ = c.Status().Update(ctx, p)
+				}
+			}
+		}
+	}
+}
+
+func waitForPoolPod(t *testing.T, ctx context.Context, c client.Client, sel client.MatchingLabels) *corev1.Pod {
+	t.Helper()
+	for range 150 {
+		list := &corev1.PodList{}
+		if err := c.List(ctx, list, client.InNamespace("default"), sel); err == nil {
+			for i := range list.Items {
+				if list.Items[i].DeletionTimestamp.IsZero() &&
+					list.Items[i].Annotations[metadata.AnnotationSpecHash] != "" {
+					return &list.Items[i]
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for pool pod with a spec-hash")
+	return nil
+}
+
+func getPoolPod(t *testing.T, ctx context.Context, c client.Client, sel client.MatchingLabels) *corev1.Pod {
+	t.Helper()
+	list := &corev1.PodList{}
+	if err := c.List(ctx, list, client.InNamespace("default"), sel); err != nil {
+		t.Fatalf("list pool pods: %v", err)
+	}
+	for i := range list.Items {
+		if list.Items[i].DeletionTimestamp.IsZero() {
+			return &list.Items[i]
+		}
+	}
+	t.Fatal("no live pool pod found")
+	return nil
+}
+
+func setInlineConfig(t *testing.T, ctx context.Context, c client.Client, shardName, key, val string) {
+	t.Helper()
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		s := &multigresv1alpha1.Shard{}
+		if err := c.Get(ctx, types.NamespacedName{Name: shardName, Namespace: "default"}, s); err != nil {
+			return err
+		}
+		if s.Spec.PostgresConfig == nil {
+			s.Spec.PostgresConfig = map[string]string{}
+		}
+		s.Spec.PostgresConfig[key] = val
+		return c.Update(ctx, s)
+	}); err != nil {
+		t.Fatalf("update shard inline config %s=%s: %v", key, val, err)
+	}
+}
+
+func waitForConfigMapContains(t *testing.T, ctx context.Context, c client.Client, shardName, want string) {
+	t.Helper()
+	name := shardcontroller.PostgresConfigMapName(shardName)
+	for range 200 {
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cm); err == nil {
+			if strings.Contains(cm.Data[shardcontroller.PostgresConfigMapKey], want) {
+				return
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for ConfigMap %s to contain %q", name, want)
+}
+
+// waitForConfigMapReloadAnnotation asserts the operator-owned ConfigMap carries
+// the reload-hash timing annotation and that it persists across several reconciles
+// (i.e. the ForceOwnership re-apply does not strip it).
+func waitForConfigMapReloadAnnotation(t *testing.T, ctx context.Context, c client.Client, shardName string) {
+	t.Helper()
+	name := shardcontroller.PostgresConfigMapName(shardName)
+	// It must be present...
+	present := false
+	for range 100 {
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cm); err == nil {
+			if cm.Annotations[metadata.AnnotationPostgresReloadHash] != "" &&
+				cm.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt] != "" {
+				present = true
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !present {
+		t.Fatal("reload-hash timing annotation never appeared on the ConfigMap")
+	}
+	// ...and must not be stripped by subsequent re-applies. Check it stays for a
+	// few seconds of ongoing reconciles.
+	for range 15 {
+		time.Sleep(200 * time.Millisecond)
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cm); err != nil {
+			continue
+		}
+		if cm.Annotations[metadata.AnnotationPostgresReloadHash] == "" {
+			t.Fatal("reload-hash annotation was stripped from the ConfigMap by a re-apply (regression)")
+		}
+	}
+}
+
+func waitForPoolPodDraining(t *testing.T, ctx context.Context, c client.Client, sel client.MatchingLabels) {
+	t.Helper()
+	for range 200 {
+		list := &corev1.PodList{}
+		if err := c.List(ctx, list, client.InNamespace("default"), sel); err == nil {
+			for i := range list.Items {
+				if list.Items[i].Annotations[metadata.AnnotationDrainState] != "" {
+					return
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for a restart change to drain-initiate the pool pod")
 }

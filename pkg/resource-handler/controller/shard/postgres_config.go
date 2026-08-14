@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -74,7 +75,7 @@ func (r *ShardReconciler) reconcilePostgresConfig(
 		return cfg.err
 	}
 
-	if err := r.applyPostgresConfigMap(ctx, shard, cfg.content); err != nil {
+	if err := r.applyPostgresConfigMap(ctx, shard, cfg.content, cfg.reloadHash); err != nil {
 		return err
 	}
 
@@ -222,16 +223,49 @@ func (r *ShardReconciler) postgresConfigRefContent(
 }
 
 // applyPostgresConfigMap server-side-applies the operator-owned ConfigMap that
-// holds the rendered postgresql.conf for a shard.
+// holds the rendered postgresql.conf for a shard. It also stamps the reload
+// target (reloadHash) and the time that target last changed as annotations on
+// the same ConfigMap, so the reload reconcile can time the kubelet-sync wait
+// against them.
+//
+// These annotations MUST live on the SSA-applied object (owned by this field
+// manager), not be merge-patched separately by the reload path: this apply runs
+// every reconcile with ForceOwnership and would strip any annotation it does not
+// itself set, resetting the sync-lag timer forever. The reload path only reads
+// them (see reloadTargetSynced).
 func (r *ShardReconciler) applyPostgresConfigMap(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	rendered string,
+	reloadHash string,
 ) error {
 	desired, err := BuildPostgresConfigMap(shard, rendered, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build postgres config ConfigMap: %w", err)
 	}
+
+	// Advance the updated-at timestamp only when the reload target actually
+	// changes, so the wait measures from the moment the content last changed.
+	// Preserve the prior timestamp when the target is unchanged. Read through the
+	// uncached APIReader: a cached read that lagged behind our own prior apply
+	// could spuriously miss the existing target and keep resetting the timer.
+	reader := client.Reader(r.APIReader)
+	if reader == nil {
+		reader = r.Client
+	}
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	existing := &corev1.ConfigMap{}
+	if getErr := reader.Get(ctx, client.ObjectKeyFromObject(desired), existing); getErr == nil &&
+		existing.Annotations[metadata.AnnotationPostgresReloadHash] == reloadHash {
+		if prev := existing.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt]; prev != "" {
+			updatedAt = prev
+		}
+	}
+	if desired.Annotations == nil {
+		desired.Annotations = map[string]string{}
+	}
+	desired.Annotations[metadata.AnnotationPostgresReloadHash] = reloadHash
+	desired.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt] = updatedAt
 
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 	if err := r.Patch(

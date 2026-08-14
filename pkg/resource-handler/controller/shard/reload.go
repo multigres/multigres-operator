@@ -68,6 +68,8 @@ func (r *ShardReconciler) reconcileReloadState(
 		return 0, err
 	}
 	if !ready {
+		logger.V(1).Info("reload: waiting for config sync before reload",
+			"reloadHash", desired, "wait", wait.String())
 		return wait, nil
 	}
 
@@ -90,21 +92,25 @@ func (r *ShardReconciler) reconcileReloadState(
 	desiredRestart := shard.Annotations[metadata.AnnotationPostgresConfigHash]
 	poolersByCell := map[string][]*topoclient.MultipoolerInfo{}
 	requeue := time.Duration(0)
+	var current, stale, reloaded, skippedRestart, poolerMissing int
 
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 
 		if pod.Annotations[metadata.AnnotationPostgresReloadHash] == desired {
+			current++
 			continue // already current
 		}
 		if !pod.DeletionTimestamp.IsZero() ||
 			pod.Annotations[metadata.AnnotationDrainState] != "" {
 			continue // terminating or draining
 		}
+		stale++
 		// A pod whose restart-hash is stale will be recreated by the rolling
 		// update with the current config, so leave it to that path rather than
 		// reloading a pod that is about to be replaced.
 		if pod.Annotations[metadata.AnnotationPostgresConfigHash] != desiredRestart {
+			skippedRestart++
 			continue
 		}
 
@@ -130,6 +136,9 @@ func (r *ShardReconciler) reconcileReloadState(
 		}
 		if pooler == nil {
 			// Pod not yet registered in topology; retry later.
+			logger.Info("reload: pod not matched to a pooler in topology, will retry",
+				"pod", pod.Name, "cell", cellName, "poolersInCell", len(poolers))
+			poolerMissing++
 			requeue = reloadRetryDelay
 			continue
 		}
@@ -157,6 +166,7 @@ func (r *ShardReconciler) reconcileReloadState(
 		if err := r.stampReloadHash(ctx, pod, desired); err != nil {
 			return 0, err
 		}
+		reloaded++
 		r.Recorder.Eventf(
 			shard,
 			"Normal",
@@ -166,14 +176,31 @@ func (r *ShardReconciler) reconcileReloadState(
 		)
 	}
 
+	if len(podList.Items) > 0 {
+		logger.V(1).Info("reload: evaluated pods",
+			"reloadHash", desired,
+			"desiredRestart", desiredRestart,
+			"totalPods", len(podList.Items),
+			"current", current,
+			"stale", stale,
+			"reloaded", reloaded,
+			"skippedRestartPending", skippedRestart,
+			"poolerMissing", poolerMissing,
+		)
+	}
+
 	return requeue, nil
 }
 
-// reloadTargetSynced tracks, on the operator-owned ConfigMap, when the desired
-// reload-hash last changed, and reports whether reloadConfigSyncCeiling has
-// since elapsed — i.e. whether the kubelet has certainly projected the new file
-// into the pods. When the target has changed it (re)stamps the marker and
-// reports not-ready with the full ceiling as the wait.
+// reloadTargetSynced reports whether the desired reload target has been present
+// on the operator-owned ConfigMap long enough (reloadConfigSyncCeiling) that the
+// kubelet has certainly projected the updated postgresql.conf into the pods.
+//
+// The delivery path (applyPostgresConfigMap) stamps the target reload-hash and
+// the time it last changed on the ConfigMap; this only reads them, so it never
+// races the ForceOwnership SSA that re-applies the ConfigMap each reconcile
+// (which would otherwise strip a separately-patched annotation and reset the
+// timer forever).
 func (r *ShardReconciler) reloadTargetSynced(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -192,47 +219,26 @@ func (r *ShardReconciler) reloadTargetSynced(
 		return false, 0, fmt.Errorf("getting postgres ConfigMap for reload timing: %w", err)
 	}
 
-	now := time.Now().UTC()
-
-	// Target changed (or first observation): stamp it and wait the full ceiling.
+	// The delivery path stamps `desired` on the ConfigMap; until it has caught up
+	// (cache lag, or a change still propagating) the target is not yet timed —
+	// wait and re-check.
 	if cm.Annotations[metadata.AnnotationPostgresReloadHash] != desired {
-		return false, reloadConfigSyncCeiling, r.stampReloadTarget(ctx, cm, desired, now)
+		return false, reloadRetryDelay, nil
 	}
 
 	updatedAt, perr := time.Parse(
-		time.RFC3339,
+		time.RFC3339Nano,
 		cm.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt],
 	)
 	if perr != nil {
-		// Missing or corrupt timestamp: re-stamp and wait the full ceiling.
-		return false, reloadConfigSyncCeiling, r.stampReloadTarget(ctx, cm, desired, now)
+		// Timestamp not yet stamped or unparseable; retry shortly.
+		return false, reloadRetryDelay, nil
 	}
 
-	if elapsed := now.Sub(updatedAt); elapsed < reloadConfigSyncCeiling {
+	if elapsed := time.Now().UTC().Sub(updatedAt); elapsed < reloadConfigSyncCeiling {
 		return false, reloadConfigSyncCeiling - elapsed, nil
 	}
 	return true, 0, nil
-}
-
-// stampReloadTarget records the current reload target and the time it was
-// observed on the ConfigMap, so subsequent reconciles can measure the sync-lag
-// wait against it.
-func (r *ShardReconciler) stampReloadTarget(
-	ctx context.Context,
-	cm *corev1.ConfigMap,
-	desired string,
-	at time.Time,
-) error {
-	base := client.MergeFrom(cm.DeepCopy())
-	if cm.Annotations == nil {
-		cm.Annotations = map[string]string{}
-	}
-	cm.Annotations[metadata.AnnotationPostgresReloadHash] = desired
-	cm.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt] = at.Format(time.RFC3339)
-	if err := r.Patch(ctx, cm, base); err != nil {
-		return fmt.Errorf("stamping reload target on ConfigMap: %w", err)
-	}
-	return nil
 }
 
 // stampReloadHash records the confirmed-applied reload-hash on a pod after a

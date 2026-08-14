@@ -563,6 +563,40 @@ func WaitForPsqlValue(t testing.TB, c *Cluster, ns, gwSvc, sql, want string) {
 // Mutation & assertion helpers
 // ---------------------------------------------------------------------------
 
+// WaitForShardConfigSettled waits until every Shard in the namespace reports its
+// postgres-config rollout settled (status.postgresConfig.inProgress == false and
+// no error, with observedGeneration current). This lets a config-change test run
+// on a stable cluster instead of racing the initial primary-last rollout still
+// converging the rendered config onto every pod.
+func WaitForShardConfigSettled(t testing.TB, c client.Client, ns string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	err := wait.PollUntilContextCancel(ctx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
+		shards := &multigresv1alpha1.ShardList{}
+		if err := c.List(ctx, shards, client.InNamespace(ns)); err != nil {
+			return false, nil
+		}
+		if len(shards.Items) == 0 {
+			return false, nil
+		}
+		for i := range shards.Items {
+			s := &shards.Items[i]
+			if s.Status.ObservedGeneration != s.Generation {
+				return false, nil
+			}
+			pc := s.Status.PostgresConfig
+			if pc == nil || pc.InProgress || pc.Error != "" {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("timed out waiting for shard config to settle in %s: %v", ns, err)
+	}
+}
+
 // WaitForPodCount waits until exactly count pods match the given labels.
 func WaitForPodCount(t testing.TB, c client.Client, ns string, labels client.MatchingLabels, count int, desc string) {
 	t.Helper()

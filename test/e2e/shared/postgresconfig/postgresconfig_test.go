@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -94,6 +95,63 @@ func TestPostgresConfigManagement(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected an operator-rendered <shard>-postgres-config ConfigMap")
+		}
+	})
+
+	// A reload-safe change (work_mem, user context) must take effect in the
+	// running server WITHOUT recreating pods — the operator applies it in place
+	// via the multipooler ReloadConfig RPC (SIGHUP) instead of a rolling restart.
+	// Requires a multipooler image that implements the ReloadConfig RPC server
+	// (merged to multigres main); an older image would leave work_mem unchanged.
+	//
+	// This runs BEFORE the restart subtest below, on a freshly-settled cluster, so
+	// the in-place reload is exercised without a concurrent rolling restart
+	// recreating the pods out from under it.
+	t.Run("reload-safe change applies without recreating pods", func(t *testing.T) {
+		// Ensure the initial config rollout has fully settled before changing
+		// work_mem, so the in-place reload runs on a stable cluster rather than
+		// racing the primary-last restart still converging the initial config.
+		framework.WaitForShardConfigSettled(t, c, ns)
+
+		poolPodUIDs := func() map[string]types.UID {
+			pods := &corev1.PodList{}
+			if err := c.List(ctx, pods, client.InNamespace(ns),
+				client.MatchingLabels{"app.kubernetes.io/component": "shard-pool"}); err != nil {
+				t.Fatalf("list pool pods: %v", err)
+			}
+			uids := map[string]types.UID{}
+			for i := range pods.Items {
+				uids[pods.Items[i].Name] = pods.Items[i].UID
+			}
+			return uids
+		}
+
+		before := poolPodUIDs()
+		if len(before) == 0 {
+			t.Fatal("no pool pods found before reload-safe change")
+		}
+
+		live := framework.GetCluster(t, c, ns, cr.Name)
+		live.Spec.Databases[0].TableGroups[0].Shards[0].Spec.PostgresConfig["work_mem"] = "32MB"
+		patch := framework.MustMarshal(map[string]any{
+			"spec": map[string]any{"databases": live.Spec.Databases},
+		})
+		framework.PatchCluster(t, c, live, patch)
+
+		// The reload lands via SIGHUP after the kubelet syncs the ConfigMap; a
+		// fresh session then reports the new value. (No restart, so no drop.)
+		framework.WaitForPsqlValue(t, cluster, ns, gw, "SHOW work_mem", "32MB")
+
+		// The pods must be the very same objects — a reload-safe change must not
+		// recreate them. Stable UIDs prove Postgres was never restarted.
+		after := poolPodUIDs()
+		if len(after) != len(before) {
+			t.Errorf("pool pod set changed across a reload-safe change: before=%v after=%v", before, after)
+		}
+		for name, uid := range before {
+			if after[name] != uid {
+				t.Errorf("pool pod %s was recreated by a reload-safe change: UID %s -> %s", name, uid, after[name])
+			}
 		}
 	})
 

@@ -248,7 +248,10 @@ func TestReloadTargetSynced(t *testing.T) {
 	shard := reloadTestShard()
 	ctx := context.Background()
 
-	t.Run("first observation stamps and waits full ceiling", func(t *testing.T) {
+	t.Run("target not yet stamped by delivery retries (read-only)", func(t *testing.T) {
+		// A ConfigMap the delivery path has not stamped yet (no reload
+		// annotations): reloadTargetSynced must NOT write to it and must ask to
+		// retry until delivery stamps the target.
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
 			Name: PostgresConfigMapName("shard0"), Namespace: "ns",
 		}}
@@ -257,16 +260,13 @@ func TestReloadTargetSynced(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ready || wait != reloadConfigSyncCeiling {
-			t.Errorf("ready=%v wait=%v, want ready=false wait=%v", ready, wait, reloadConfigSyncCeiling)
+		if ready || wait != reloadRetryDelay {
+			t.Errorf("ready=%v wait=%v, want ready=false wait=%v", ready, wait, reloadRetryDelay)
 		}
 		got := &corev1.ConfigMap{}
 		_ = r.Get(ctx, client.ObjectKey{Namespace: "ns", Name: PostgresConfigMapName("shard0")}, got)
-		if got.Annotations[metadata.AnnotationPostgresReloadHash] != reloadTestDesired {
-			t.Errorf("target not stamped on ConfigMap")
-		}
-		if got.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt] == "" {
-			t.Errorf("updated-at not stamped on ConfigMap")
+		if got.Annotations[metadata.AnnotationPostgresReloadHash] != "" {
+			t.Errorf("reloadTargetSynced must not write the ConfigMap; got annotations=%v", got.Annotations)
 		}
 	})
 
@@ -299,8 +299,10 @@ func TestReloadTargetSynced(t *testing.T) {
 		}
 	})
 
-	t.Run("target change re-stamps and waits", func(t *testing.T) {
-		// ConfigMap stamped for an OLD target long ago; desired is now different.
+	t.Run("stale target on ConfigMap is not yet ready", func(t *testing.T) {
+		// ConfigMap still stamped for an OLD target (delivery has not yet stamped
+		// the new desired): even though its timestamp is old, the target does not
+		// match desired, so it is not ready — retry until delivery catches up.
 		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
 			Name: PostgresConfigMapName("shard0"), Namespace: "ns",
 			Annotations: map[string]string{
@@ -314,8 +316,8 @@ func TestReloadTargetSynced(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ready || wait != reloadConfigSyncCeiling {
-			t.Errorf("ready=%v wait=%v, want ready=false wait=ceiling (reset on target change)", ready, wait)
+		if ready || wait != reloadRetryDelay {
+			t.Errorf("ready=%v wait=%v, want ready=false wait=%v (target mismatch)", ready, wait, reloadRetryDelay)
 		}
 	})
 
