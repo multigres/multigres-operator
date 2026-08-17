@@ -25,6 +25,7 @@ import (
 func (r *ShardReconciler) reconcileDataPlane(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
+	rendered renderedConfig,
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -122,7 +123,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 	// so a reload-only postgresql.conf change converges without recreating pods.
 	{
 		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileReloadState")
-		wait, err := r.reconcileReloadState(ctx, store, shard)
+		wait, err := r.reconcileReloadState(ctx, store, shard, rendered)
 		childSpan.End()
 		if err != nil {
 			logger.Error(err, "Failed to reconcile config reload state")

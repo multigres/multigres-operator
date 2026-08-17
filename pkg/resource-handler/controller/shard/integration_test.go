@@ -1308,12 +1308,6 @@ func TestReloadVsRestartRollout(t *testing.T) {
 	// Wait until the rendered ConfigMap reflects the change (reconcile processed it).
 	waitForConfigMapContains(t, ctx, k8sClient, shardName, "work_mem = '8MB'")
 
-	// The delivery path stamps the reload target on the ConfigMap, and it must
-	// SURVIVE the ForceOwnership SSA that re-applies the ConfigMap every reconcile
-	// (regression guard: a merge-patched annotation was stripped, resetting the
-	// reload sync-lag timer forever so reloads never fired).
-	waitForConfigMapReloadAnnotation(t, ctx, k8sClient, shardName)
-
 	got := getPoolPod(t, ctx, k8sClient, poolSelector)
 	if got.UID != origUID {
 		t.Errorf("reload-only change recreated the pod: UID %s -> %s", origUID, got.UID)
@@ -1430,42 +1424,6 @@ func waitForConfigMapContains(t *testing.T, ctx context.Context, c client.Client
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for ConfigMap %s to contain %q", name, want)
-}
-
-// waitForConfigMapReloadAnnotation asserts the operator-owned ConfigMap carries
-// the reload-hash timing annotation and that it persists across several reconciles
-// (i.e. the ForceOwnership re-apply does not strip it).
-func waitForConfigMapReloadAnnotation(t *testing.T, ctx context.Context, c client.Client, shardName string) {
-	t.Helper()
-	name := shardcontroller.PostgresConfigMapName(shardName)
-	// It must be present...
-	present := false
-	for range 100 {
-		cm := &corev1.ConfigMap{}
-		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cm); err == nil {
-			if cm.Annotations[metadata.AnnotationPostgresReloadHash] != "" &&
-				cm.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt] != "" {
-				present = true
-				break
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	if !present {
-		t.Fatal("reload-hash timing annotation never appeared on the ConfigMap")
-	}
-	// ...and must not be stripped by subsequent re-applies. Check it stays for a
-	// few seconds of ongoing reconciles.
-	for range 15 {
-		time.Sleep(200 * time.Millisecond)
-		cm := &corev1.ConfigMap{}
-		if err := c.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cm); err != nil {
-			continue
-		}
-		if cm.Annotations[metadata.AnnotationPostgresReloadHash] == "" {
-			t.Fatal("reload-hash annotation was stripped from the ConfigMap by a re-apply (regression)")
-		}
-	}
 }
 
 func waitForPoolPodDraining(t *testing.T, ctx context.Context, c client.Client, sel client.MatchingLabels) {

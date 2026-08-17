@@ -4,7 +4,6 @@ import (
 	"context"
 	"maps"
 	"testing"
-	"time"
 
 	"github.com/multigres/multigres/go/common/rpcclient"
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -49,7 +48,6 @@ func reloadTestShard() *multigresv1alpha1.Shard {
 			Namespace: "ns",
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "clu"},
 			Annotations: map[string]string{
-				metadata.AnnotationPostgresReloadHash: reloadTestDesired,
 				metadata.AnnotationPostgresConfigHash: reloadTestRestart,
 			},
 		},
@@ -58,6 +56,17 @@ func reloadTestShard() *multigresv1alpha1.Shard {
 			TableGroupName: "tg",
 			ShardName:      "0",
 		},
+	}
+}
+
+// reloadTestRendered is the once-per-reconcile render result the reload step
+// consumes: the desired reload-hash and the reload-safe settings it passes to
+// the RPC as expected_settings.
+func reloadTestRendered() renderedConfig {
+	return renderedConfig{
+		hash:           reloadTestRestart,
+		reloadHash:     reloadTestDesired,
+		reloadSettings: map[string]string{"work_mem": "32MB"},
 	}
 }
 
@@ -82,24 +91,9 @@ func reloadTestPodObj(reloadHash, restartHash string, extra map[string]string) *
 				metadata.LabelMultigresTableGroup: "tg",
 				metadata.LabelMultigresShard:      "0",
 				metadata.LabelMultigresCell:       reloadTestCell,
+				metadata.LabelAppComponent:        PoolComponentName,
 			},
 			Annotations: ann,
-		},
-	}
-}
-
-// syncedConfigMap returns the operator-owned ConfigMap already stamped with the
-// desired reload target far enough in the past that the sync-lag gate is open.
-func syncedConfigMap() *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      PostgresConfigMapName("shard0"),
-			Namespace: "ns",
-			Annotations: map[string]string{
-				metadata.AnnotationPostgresReloadHash: reloadTestDesired,
-				metadata.AnnotationPostgresReloadHashUpdatedAt: time.Now().
-					UTC().Add(-2 * reloadConfigSyncCeiling).Format(time.RFC3339),
-			},
 		},
 	}
 }
@@ -146,7 +140,18 @@ func callLogHas(log []string, method string) bool {
 	return false
 }
 
-func TestReconcileReloadStateReloadsStalePod(t *testing.T) {
+func podReloadHash(t *testing.T, r *ShardReconciler) string {
+	t.Helper()
+	got := &corev1.Pod{}
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: reloadTestPod}, got); err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	return got.Annotations[metadata.AnnotationPostgresReloadHash]
+}
+
+// TestReconcileReloadStateStampsWhenVerified: the RPC confirms the reload took
+// effect (config_load_time set), so the pod is stamped current.
+func TestReconcileReloadStateStampsWhenVerified(t *testing.T) {
 	scheme := reloadTestScheme(t)
 	shard := reloadTestShard()
 	store, poolerID := reloadTestStore(t)
@@ -158,9 +163,9 @@ func TestReconcileReloadStateReloadsStalePod(t *testing.T) {
 	}
 
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil) // stale reload-hash, current restart-hash
-	r := newReloadReconciler(scheme, rpc, shard, syncedConfigMap(), pod)
+	r := newReloadReconciler(scheme, rpc, shard, pod)
 
-	wait, err := r.reconcileReloadState(context.Background(), store, shard)
+	wait, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered())
 	if err != nil {
 		t.Fatalf("reconcileReloadState: %v", err)
 	}
@@ -170,43 +175,72 @@ func TestReconcileReloadStateReloadsStalePod(t *testing.T) {
 	if !callLogHas(rpc.GetCallLog(), "ReloadConfig") {
 		t.Errorf("ReloadConfig was not called; call log = %v", rpc.GetCallLog())
 	}
-
-	got := &corev1.Pod{}
-	if err := r.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: reloadTestPod}, got); err != nil {
-		t.Fatalf("get pod: %v", err)
-	}
-	if h := got.Annotations[metadata.AnnotationPostgresReloadHash]; h != reloadTestDesired {
-		t.Errorf("pod reload-hash = %q, want %q (stamped after reload)", h, reloadTestDesired)
+	if h := podReloadHash(t, r); h != reloadTestDesired {
+		t.Errorf("pod reload-hash = %q, want %q (stamped after verified reload)", h, reloadTestDesired)
 	}
 }
 
-func TestReconcileReloadStatePostgresNotRunning(t *testing.T) {
+// TestReconcileReloadStateNotSyncedRetries: the RPC returns no config_load_time
+// (mounted file not yet caught up, or postgres down) — the pod must NOT be
+// stamped and the step must requeue.
+func TestReconcileReloadStateNotSyncedRetries(t *testing.T) {
 	scheme := reloadTestScheme(t)
 	shard := reloadTestShard()
-	store, _ := reloadTestStore(t)
+	store, poolerID := reloadTestStore(t)
 	defer func() { _ = store.Close() }()
 
-	// No ReloadConfigResponse seeded → FakeClient returns an empty response
-	// (nil config_load_time), the "postgres not running" case.
 	rpc := rpcclient.NewFakeClient()
+	// No config_load_time, a plain mismatch (file still carries the old value).
+	rpc.ReloadConfigResponses[poolerID] = &multipoolermanagerdatapb.ReloadConfigResponse{
+		Mismatches: []*multipoolermanagerdatapb.SettingMismatch{{Name: "work_mem"}},
+	}
 
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
-	r := newReloadReconciler(scheme, rpc, shard, syncedConfigMap(), pod)
+	r := newReloadReconciler(scheme, rpc, shard, pod)
 
-	wait, err := r.reconcileReloadState(context.Background(), store, shard)
+	wait, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered())
 	if err != nil {
 		t.Fatalf("reconcileReloadState: %v", err)
 	}
 	if wait != reloadRetryDelay {
-		t.Errorf("wait = %v, want %v (retry)", wait, reloadRetryDelay)
+		t.Errorf("wait = %v, want %v (retry until file syncs)", wait, reloadRetryDelay)
 	}
-	got := &corev1.Pod{}
-	_ = r.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: reloadTestPod}, got)
-	if h := got.Annotations[metadata.AnnotationPostgresReloadHash]; h == reloadTestDesired {
-		t.Errorf("pod reload-hash was stamped despite no reload (postgres down)")
+	if h := podReloadHash(t, r); h == reloadTestDesired {
+		t.Errorf("pod reload-hash was stamped despite an unsynced file")
 	}
 }
 
+// TestReconcileReloadStateNeedsRestart: a reload-classified setting actually
+// needs a restart — surfaced (requeue), not stamped.
+func TestReconcileReloadStateNeedsRestart(t *testing.T) {
+	scheme := reloadTestScheme(t)
+	shard := reloadTestShard()
+	store, poolerID := reloadTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	rpc := rpcclient.NewFakeClient()
+	rpc.ReloadConfigResponses[poolerID] = &multipoolermanagerdatapb.ReloadConfigResponse{
+		NeedsRestart: true,
+		Mismatches:   []*multipoolermanagerdatapb.SettingMismatch{{Name: "work_mem", RequiresRestart: true}},
+	}
+
+	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
+	r := newReloadReconciler(scheme, rpc, shard, pod)
+
+	wait, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered())
+	if err != nil {
+		t.Fatalf("reconcileReloadState: %v", err)
+	}
+	if wait != reloadRetryDelay {
+		t.Errorf("wait = %v, want %v", wait, reloadRetryDelay)
+	}
+	if h := podReloadHash(t, r); h == reloadTestDesired {
+		t.Errorf("pod reload-hash was stamped despite needs_restart")
+	}
+}
+
+// TestReconcileReloadStateSkips: pods that are already current, draining, or
+// restart-pending are never sent to the RPC.
 func TestReconcileReloadStateSkips(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -231,9 +265,9 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 			}
 
 			pod := reloadTestPodObj(tc.reloadHash, tc.restart, tc.extraAnn)
-			r := newReloadReconciler(scheme, rpc, shard, syncedConfigMap(), pod)
+			r := newReloadReconciler(scheme, rpc, shard, pod)
 
-			if _, err := r.reconcileReloadState(context.Background(), store, shard); err != nil {
+			if _, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered()); err != nil {
 				t.Fatalf("reconcileReloadState: %v", err)
 			}
 			if callLogHas(rpc.GetCallLog(), "ReloadConfig") {
@@ -241,94 +275,4 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestReloadTargetSynced(t *testing.T) {
-	scheme := reloadTestScheme(t)
-	shard := reloadTestShard()
-	ctx := context.Background()
-
-	t.Run("target not yet stamped by delivery retries (read-only)", func(t *testing.T) {
-		// A ConfigMap the delivery path has not stamped yet (no reload
-		// annotations): reloadTargetSynced must NOT write to it and must ask to
-		// retry until delivery stamps the target.
-		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-			Name: PostgresConfigMapName("shard0"), Namespace: "ns",
-		}}
-		r := newReloadReconciler(scheme, nil, cm)
-		ready, wait, err := r.reloadTargetSynced(ctx, shard, reloadTestDesired)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready || wait != reloadRetryDelay {
-			t.Errorf("ready=%v wait=%v, want ready=false wait=%v", ready, wait, reloadRetryDelay)
-		}
-		got := &corev1.ConfigMap{}
-		_ = r.Get(ctx, client.ObjectKey{Namespace: "ns", Name: PostgresConfigMapName("shard0")}, got)
-		if got.Annotations[metadata.AnnotationPostgresReloadHash] != "" {
-			t.Errorf("reloadTargetSynced must not write the ConfigMap; got annotations=%v", got.Annotations)
-		}
-	})
-
-	t.Run("within ceiling reports remaining wait", func(t *testing.T) {
-		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-			Name: PostgresConfigMapName("shard0"), Namespace: "ns",
-			Annotations: map[string]string{
-				metadata.AnnotationPostgresReloadHash:          reloadTestDesired,
-				metadata.AnnotationPostgresReloadHashUpdatedAt: time.Now().UTC().Format(time.RFC3339),
-			},
-		}}
-		r := newReloadReconciler(scheme, nil, cm)
-		ready, wait, err := r.reloadTargetSynced(ctx, shard, reloadTestDesired)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready || wait <= 0 || wait > reloadConfigSyncCeiling {
-			t.Errorf("ready=%v wait=%v, want ready=false 0<wait<=ceiling", ready, wait)
-		}
-	})
-
-	t.Run("after ceiling is ready", func(t *testing.T) {
-		r := newReloadReconciler(scheme, nil, syncedConfigMap())
-		ready, wait, err := r.reloadTargetSynced(ctx, shard, reloadTestDesired)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !ready || wait != 0 {
-			t.Errorf("ready=%v wait=%v, want ready=true wait=0", ready, wait)
-		}
-	})
-
-	t.Run("stale target on ConfigMap is not yet ready", func(t *testing.T) {
-		// ConfigMap still stamped for an OLD target (delivery has not yet stamped
-		// the new desired): even though its timestamp is old, the target does not
-		// match desired, so it is not ready — retry until delivery catches up.
-		cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-			Name: PostgresConfigMapName("shard0"), Namespace: "ns",
-			Annotations: map[string]string{
-				metadata.AnnotationPostgresReloadHash: "R1",
-				metadata.AnnotationPostgresReloadHashUpdatedAt: time.Now().
-					UTC().Add(-2 * reloadConfigSyncCeiling).Format(time.RFC3339),
-			},
-		}}
-		r := newReloadReconciler(scheme, nil, cm)
-		ready, wait, err := r.reloadTargetSynced(ctx, shard, reloadTestDesired)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready || wait != reloadRetryDelay {
-			t.Errorf("ready=%v wait=%v, want ready=false wait=%v (target mismatch)", ready, wait, reloadRetryDelay)
-		}
-	})
-
-	t.Run("missing ConfigMap retries", func(t *testing.T) {
-		r := newReloadReconciler(scheme, nil) // no ConfigMap
-		ready, wait, err := r.reloadTargetSynced(ctx, shard, reloadTestDesired)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready || wait != reloadRetryDelay {
-			t.Errorf("ready=%v wait=%v, want ready=false wait=%v", ready, wait, reloadRetryDelay)
-		}
-	})
 }

@@ -387,7 +387,7 @@ func (r *ShardReconciler) Reconcile(
 	// this shard and leave observedGeneration stale.
 	dataPlaneCtx, dataPlaneCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dataPlaneCancel()
-	result, err := r.reconcileDataPlane(dataPlaneCtx, shard)
+	result, err := r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
 	if err != nil || result.RequeueAfter > 0 {
 		return result, err
 	}

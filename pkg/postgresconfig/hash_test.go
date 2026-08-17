@@ -12,10 +12,10 @@ max_wal_size = '1GB'			# sighup
 `
 
 func TestSplitHashesReloadOnlyChangeLeavesRestartHash(t *testing.T) {
-	base := SplitHashes(baseConf)
+	base := SplitConfig(baseConf)
 
 	// Change only work_mem (a reload-safe/user param).
-	changed := SplitHashes(`# rendered by test
+	changed := SplitConfig(`# rendered by test
 shared_buffers = '128MB'		# (change requires restart)
 work_mem = '8MB'
 max_wal_size = '1GB'			# sighup
@@ -30,10 +30,10 @@ max_wal_size = '1GB'			# sighup
 }
 
 func TestSplitHashesRestartChangeMovesRestartHash(t *testing.T) {
-	base := SplitHashes(baseConf)
+	base := SplitConfig(baseConf)
 
 	// Change shared_buffers (a postmaster/restart param).
-	changed := SplitHashes(`# rendered by test
+	changed := SplitConfig(`# rendered by test
 shared_buffers = '256MB'		# (change requires restart)
 work_mem = '4MB'
 max_wal_size = '1GB'			# sighup
@@ -48,11 +48,11 @@ max_wal_size = '1GB'			# sighup
 }
 
 func TestSplitHashesCosmeticEditsMoveNeither(t *testing.T) {
-	base := SplitHashes(baseConf)
+	base := SplitConfig(baseConf)
 
 	// Reordered, differently commented, extra blank lines, different inline
 	// comment text — same effective values.
-	cosmetic := SplitHashes(`
+	cosmetic := SplitConfig(`
 # a different header
 
 max_wal_size = '1GB'   # reload-safe, different comment
@@ -72,10 +72,10 @@ shared_buffers = '128MB'
 func TestSplitHashesLastWins(t *testing.T) {
 	// A later assignment is the effective value; hashing a config whose final
 	// work_mem is 8MB must equal one that sets it to 8MB once.
-	dup := SplitHashes(`work_mem = '4MB'
+	dup := SplitConfig(`work_mem = '4MB'
 work_mem = '8MB'
 `)
-	single := SplitHashes(`work_mem = '8MB'
+	single := SplitConfig(`work_mem = '8MB'
 `)
 	if dup.ReloadHash != single.ReloadHash {
 		t.Errorf("last-wins not honored: dup=%s single=%s", dup.ReloadHash, single.ReloadHash)
@@ -99,5 +99,32 @@ func TestStripInlineComment(t *testing.T) {
 		if got := stripInlineComment(tt.in); got != tt.want {
 			t.Errorf("stripInlineComment(%q) = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestReloadSettings(t *testing.T) {
+	rendered := `# rendered
+shared_buffers = '128MB'		# postmaster → restart, excluded
+work_mem = '32MB'			# user → reload
+max_wal_size = 1024MB			# sighup → reload, already unquoted
+log_line_prefix = '%h %m [%p] '		# superuser → reload, quoted with special chars
+cron.database_name = 'postgres'		# namespaced → restart, excluded
+`
+	got := SplitConfig(rendered).ReloadSettings
+
+	if got["work_mem"] != "32MB" {
+		t.Errorf("work_mem = %q, want 32MB (unquoted)", got["work_mem"])
+	}
+	if got["max_wal_size"] != "1024MB" {
+		t.Errorf("max_wal_size = %q, want 1024MB", got["max_wal_size"])
+	}
+	if got["log_line_prefix"] != "%h %m [%p] " {
+		t.Errorf("log_line_prefix = %q, want unquoted verbatim", got["log_line_prefix"])
+	}
+	if _, ok := got["shared_buffers"]; ok {
+		t.Error("shared_buffers (postmaster) must be excluded from reload settings")
+	}
+	if _, ok := got["cron.database_name"]; ok {
+		t.Error("cron.database_name (namespaced→restart) must be excluded")
 	}
 }

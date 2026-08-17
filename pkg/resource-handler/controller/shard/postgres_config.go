@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -29,7 +28,12 @@ type renderedConfig struct {
 	content    string
 	hash       string
 	reloadHash string
-	err        error
+	// reloadSettings is the effective reload-safe name->value map (values
+	// unquoted to match pg_file_settings), passed to the multipooler ReloadConfig
+	// RPC as expected_settings so it reloads only against a file that already
+	// carries them.
+	reloadSettings map[string]string
+	err            error
 }
 
 // renderEffectiveConfig renders the shard's effective postgresql.conf once per
@@ -49,12 +53,13 @@ func (r *ShardReconciler) renderEffectiveConfig(
 		}
 		refContent = content
 	}
-	rendered, hashes, err := renderPostgresConfig(shard, refContent)
+	rendered, split, err := renderPostgresConfig(shard, refContent)
 	return renderedConfig{
-		content:    rendered,
-		hash:       hashes.RestartHash,
-		reloadHash: hashes.ReloadHash,
-		err:        err,
+		content:        rendered,
+		hash:           split.RestartHash,
+		reloadHash:     split.ReloadHash,
+		reloadSettings: split.ReloadSettings,
+		err:            err,
 	}
 }
 
@@ -75,7 +80,7 @@ func (r *ShardReconciler) reconcilePostgresConfig(
 		return cfg.err
 	}
 
-	if err := r.applyPostgresConfigMap(ctx, shard, cfg.content, cfg.reloadHash); err != nil {
+	if err := r.applyPostgresConfigMap(ctx, shard, cfg.content); err != nil {
 		return err
 	}
 
@@ -99,7 +104,7 @@ func (r *ShardReconciler) reconcilePostgresConfig(
 func renderPostgresConfig(
 	shard *multigresv1alpha1.Shard,
 	refContent string,
-) (rendered string, hashes postgresconfig.ConfigHashes, err error) {
+) (rendered string, split postgresconfig.ConfigSplit, err error) {
 	cfg := postgresconfig.Defaults()
 	cfg.ClusterName = shardClusterName(shard)
 	memBytes, cpuMillicores, diskBytes := reduceShardResources(shard)
@@ -109,14 +114,14 @@ func renderPostgresConfig(
 		cpuMillicores,
 		diskBytes,
 	); err != nil {
-		return "", postgresconfig.ConfigHashes{}, err
+		return "", postgresconfig.ConfigSplit{}, err
 	}
 
 	rendered, err = postgresconfig.Render(cfg, refContent, shard.Spec.PostgresConfig)
 	if err != nil {
-		return "", postgresconfig.ConfigHashes{}, err
+		return "", postgresconfig.ConfigSplit{}, err
 	}
-	return rendered, postgresconfig.SplitHashes(rendered), nil
+	return rendered, postgresconfig.SplitConfig(rendered), nil
 }
 
 // shardClusterName builds the postgresql.conf cluster_name for a shard: a
@@ -223,49 +228,16 @@ func (r *ShardReconciler) postgresConfigRefContent(
 }
 
 // applyPostgresConfigMap server-side-applies the operator-owned ConfigMap that
-// holds the rendered postgresql.conf for a shard. It also stamps the reload
-// target (reloadHash) and the time that target last changed as annotations on
-// the same ConfigMap, so the reload reconcile can time the kubelet-sync wait
-// against them.
-//
-// These annotations MUST live on the SSA-applied object (owned by this field
-// manager), not be merge-patched separately by the reload path: this apply runs
-// every reconcile with ForceOwnership and would strip any annotation it does not
-// itself set, resetting the sync-lag timer forever. The reload path only reads
-// them (see reloadTargetSynced).
+// holds the rendered postgresql.conf for a shard.
 func (r *ShardReconciler) applyPostgresConfigMap(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	rendered string,
-	reloadHash string,
 ) error {
 	desired, err := BuildPostgresConfigMap(shard, rendered, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build postgres config ConfigMap: %w", err)
 	}
-
-	// Advance the updated-at timestamp only when the reload target actually
-	// changes, so the wait measures from the moment the content last changed.
-	// Preserve the prior timestamp when the target is unchanged. Read through the
-	// uncached APIReader: a cached read that lagged behind our own prior apply
-	// could spuriously miss the existing target and keep resetting the timer.
-	reader := client.Reader(r.APIReader)
-	if reader == nil {
-		reader = r.Client
-	}
-	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	existing := &corev1.ConfigMap{}
-	if getErr := reader.Get(ctx, client.ObjectKeyFromObject(desired), existing); getErr == nil &&
-		existing.Annotations[metadata.AnnotationPostgresReloadHash] == reloadHash {
-		if prev := existing.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt]; prev != "" {
-			updatedAt = prev
-		}
-	}
-	if desired.Annotations == nil {
-		desired.Annotations = map[string]string{}
-	}
-	desired.Annotations[metadata.AnnotationPostgresReloadHash] = reloadHash
-	desired.Annotations[metadata.AnnotationPostgresReloadHashUpdatedAt] = updatedAt
 
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
 	if err := r.Patch(
