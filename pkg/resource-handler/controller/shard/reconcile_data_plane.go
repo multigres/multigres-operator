@@ -63,6 +63,24 @@ func (r *ShardReconciler) reconcileDataPlane(
 		childSpan.End()
 	}
 
+	// Phase: Remediate quarantined (unrecoverable) poolers by replacing the pod
+	// and wiping its data PVC so it re-bootstraps from backup. Runs before the
+	// drain state machine: a quarantined node is already down, so replacing it is
+	// the priority disruptive action this cycle.
+	{
+		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileQuarantineRemediation")
+		acted, err := r.reconcileQuarantineRemediation(ctx, store, shard)
+		if err != nil {
+			monitoring.RecordSpanError(childSpan, err)
+			childSpan.End()
+			return ctrl.Result{}, err
+		}
+		childSpan.End()
+		if acted {
+			return ctrl.Result{RequeueAfter: quarantineRemediationRequeue}, nil
+		}
+	}
+
 	// Phase: Execute drain state machine for pods with drain annotations
 	{
 		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileDrainState")

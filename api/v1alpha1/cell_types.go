@@ -32,6 +32,80 @@ import (
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // ============================================================================
+// Cell Component Specs (Reusable)
+// ============================================================================
+//
+// These specs are used by CellTemplate, MultigresCluster, and the Cell child CR.
+
+// MultigatewaySpec defines the configuration specifically for Multigateway,
+// which adds gateway-only settings (failover request buffering) on top of the
+// shared stateless spec.
+type MultigatewaySpec struct {
+	StatelessSpec `json:",inline"`
+
+	// Buffer configures request buffering during planned failovers.
+	// +optional
+	Buffer *GatewayBufferConfig `json:"buffer,omitempty"`
+}
+
+// GatewayBufferConfig controls multigateway request buffering during planned
+// failovers. While a shard has no serving primary, the gateway holds incoming
+// requests and drains them once the new primary serves, masking the failover
+// from clients instead of surfacing errors.
+//
+// Fields left unset emit no flag, so the multigateway binary's own defaults
+// apply.
+type GatewayBufferConfig struct {
+	// Enabled controls failover buffering (--buffer-enabled).
+	// The resolver defaults it to true when building Cells from a
+	// MultigresCluster: the operator provisions HA clusters where transparent
+	// planned failover is expected. On a hand-written Cell CR the field stays
+	// as authored (unset emits no flag; the binary default applies).
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Window is the per-request buffering cap (--buffer-window); requests
+	// buffered longer than this fail. Binary default: 10s.
+	// Sizing note: on a 3-pooler test cluster the gateway-perceived failover
+	// duration averaged ~8.3s (consensus plus topology propagation) with a
+	// longer tail, so the 10s default can still evict a request or two per
+	// planned failover; 20s masked all of them.
+	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$`
+	Window *metav1.Duration `json:"window,omitempty"`
+
+	// MaxFailoverDuration is the session-level cap on how long one failover
+	// may keep requests buffered (--buffer-max-failover-duration). Must be
+	// >= window. Binary default: 20s.
+	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$`
+	MaxFailoverDuration *metav1.Duration `json:"maxFailoverDuration,omitempty"`
+
+	// MinTimeBetweenFailovers is the minimum interval between two buffering
+	// events for the same shard (--buffer-min-time-between-failovers).
+	// Binary default: 1m.
+	// +optional
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$`
+	MinTimeBetweenFailovers *metav1.Duration `json:"minTimeBetweenFailovers,omitempty"`
+
+	// Size is the maximum number of concurrently buffered requests
+	// (--buffer-size). Binary default: 1000.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	Size *int32 `json:"size,omitempty"`
+
+	// DrainConcurrency is the number of buffered requests drained in
+	// parallel after the failover completes (--buffer-drain-concurrency).
+	// Binary default: 1.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	DrainConcurrency *int32 `json:"drainConcurrency,omitempty"`
+}
+
+// ============================================================================
 // Cell Spec (Read-only API)
 // ============================================================================
 //
@@ -55,7 +129,7 @@ type CellSpec struct {
 	Images CellImages `json:"images"`
 
 	// Multigateway fully resolved config.
-	Multigateway StatelessSpec `json:"multigateway"`
+	Multigateway MultigatewaySpec `json:"multigateway"`
 
 	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional

@@ -6,6 +6,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -309,35 +310,38 @@ func (r *Resolver) ValidateClusterLogic(
 	// ------------------------------------------------------------------
 	if cluster.Spec.GlobalTopoServer != nil &&
 		cluster.Spec.GlobalTopoServer.Etcd != nil {
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			cluster.Spec.GlobalTopoServer.Etcd.Resources, "etcd",
 		); err != nil {
 			return nil, err
 		}
 	}
 	if cluster.Spec.Multiadmin != nil && cluster.Spec.Multiadmin.Spec != nil {
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			cluster.Spec.Multiadmin.Spec.Resources, "multiadmin",
 		); err != nil {
 			return nil, err
 		}
 	}
 	if cluster.Spec.MultiadminWeb != nil && cluster.Spec.MultiadminWeb.Spec != nil {
-		if err := validateResourceRequirements(
+		if err := ValidateResourceRequirements(
 			cluster.Spec.MultiadminWeb.Spec.Resources, "multiadmin-web",
 		); err != nil {
 			return nil, err
 		}
 	}
-	for _, cell := range cluster.Spec.Cells {
-		if cell.Spec != nil {
-			if err := validateResourceRequirements(
-				cell.Spec.Multigateway.Resources,
-				fmt.Sprintf("cell '%s' multigateway", cell.Name),
-			); err != nil {
-				return nil, err
-			}
-		}
+	// Per-cell inline multigateway resources are covered by the resolved-
+	// gateway check below (0f): resources merge whole-block, so any inline
+	// violation survives into the resolved spec.
+
+	// ------------------------------------------------------------------
+	// 0f. Resolved Gateway Validation (Dry-Run Resolution)
+	// ------------------------------------------------------------------
+	// Resolve each cell the same way the reconciler would (template +
+	// overrides + inline) so gateway misconfiguration is caught no matter
+	// which layer it comes from.
+	if err := r.ValidateResolvedGateways(ctx, cluster, "", ""); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	// Iterate through every Shard and "Simulate" Resolution
@@ -511,7 +515,7 @@ func (r *Resolver) ValidateClusterLogic(
 				// ------------------------------------------------------------------
 				// 3b. Resource Limits Validation (Resolved Shard Components)
 				// ------------------------------------------------------------------
-				if err := validateResourceRequirements(
+				if err := ValidateResourceRequirements(
 					orch.Resources,
 					fmt.Sprintf("shard '%s' multiorch", shard.Name),
 				); err != nil {
@@ -525,13 +529,13 @@ func (r *Resolver) ValidateClusterLogic(
 					); err != nil {
 						return nil, err
 					}
-					if err := validateResourceRequirements(
+					if err := ValidateResourceRequirements(
 						pool.Postgres.Resources,
 						fmt.Sprintf("shard '%s' pool '%s' postgres", shard.Name, poolName),
 					); err != nil {
 						return nil, err
 					}
-					if err := validateResourceRequirements(
+					if err := ValidateResourceRequirements(
 						pool.Multipooler.Resources,
 						fmt.Sprintf("shard '%s' pool '%s' multipooler", shard.Name, poolName),
 					); err != nil {
@@ -750,10 +754,150 @@ func validatePoolRuntimeIdentity(
 	return nil
 }
 
-// validateResourceRequirements checks that for every resource type present in
+// Defaults the multigateway binary applies to unset buffer flags (see
+// go/services/multigateway/buffer/config.go in multigres). The cross-field
+// check below must use them so admission matches binary startup validation
+// even when only one of the pair is set in the CR. A test asserts these stay
+// equal to the imported multigres module's defaults.
+const (
+	defaultBufferWindow              = 10 * time.Second
+	defaultBufferMaxFailoverDuration = 20 * time.Second
+)
+
+// ValidateResolvedGateways dry-run-resolves every cell of the cluster the
+// same way the reconciler would (template + overrides + inline) and validates
+// the resolved multigateway config: buffer rules and resource requirements.
+// It is the single implementation shared by cluster admission and the
+// CellTemplate webhook's consumer re-validation. onlyTemplate, when
+// non-empty, restricts the check to cells whose effective template resolves
+// to that name (an empty cell ref resolves to the implicit fallback
+// template). subjectPrefix is prepended to error subjects (e.g.
+// "MultigresCluster 'x' ").
+func (r *Resolver) ValidateResolvedGateways(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	onlyTemplate multigresv1alpha1.TemplateRef,
+	subjectPrefix string,
+) error {
+	for _, cell := range cluster.Spec.Cells {
+		cellCfg := cell
+		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
+		if onlyTemplate != "" &&
+			EffectiveCellTemplateName(cellCfg.CellTemplate) != onlyTemplate {
+			continue
+		}
+		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
+		if err != nil {
+			return fmt.Errorf(
+				"%scannot resolve cell '%s': %w", subjectPrefix, cell.Name, err,
+			)
+		}
+		subject := fmt.Sprintf("%scell '%s'", subjectPrefix, cell.Name)
+		if err := ValidateGatewayBuffer(gateway.Buffer, subject); err != nil {
+			return err
+		}
+		if err := ValidateResourceRequirements(
+			gateway.Resources, subject+" multigateway (resolved)",
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidateGatewayBuffer checks a fully resolved multigateway buffer
+// configuration with the same rules as the binary's Config.Validate, so bad
+// configs are rejected at admission instead of crashlooping gateway pods.
+// Unset fields are compared using the binary defaults, exactly as the binary
+// will at startup. Size fields are enforced by CRD schema minimums; durations
+// need Go-side checks because the schema stores them as opaque strings.
+// subject names the config source for error messages (e.g. "cell 'zone-a'").
+func ValidateGatewayBuffer(
+	buffer *multigresv1alpha1.GatewayBufferConfig,
+	subject string,
+) error {
+	return validateGatewayBuffer(buffer, subject, true)
+}
+
+// ValidateGatewayBufferPartial checks a single configuration layer (e.g. a
+// CellTemplate) that may still be merged with overrides at resolution.
+// Intra-field rules always apply, but the window/maxFailoverDuration ordering
+// is only enforced when the layer sets both fields — an unset one may be
+// supplied by a consuming cluster rather than the binary default.
+func ValidateGatewayBufferPartial(
+	buffer *multigresv1alpha1.GatewayBufferConfig,
+	subject string,
+) error {
+	return validateGatewayBuffer(buffer, subject, false)
+}
+
+func validateGatewayBuffer(
+	buffer *multigresv1alpha1.GatewayBufferConfig,
+	subject string,
+	resolved bool,
+) error {
+	if buffer == nil {
+		return nil
+	}
+	// The binary skips buffer validation entirely when buffering is disabled.
+	if buffer.Enabled != nil && !*buffer.Enabled {
+		return nil
+	}
+	window := defaultBufferWindow
+	if buffer.Window != nil {
+		window = buffer.Window.Duration
+		if window <= 0 {
+			return fmt.Errorf(
+				"%s: multigateway buffer window (%s) must be a positive duration",
+				subject, window,
+			)
+		}
+	}
+	maxFailover := defaultBufferMaxFailoverDuration
+	if buffer.MaxFailoverDuration != nil {
+		maxFailover = buffer.MaxFailoverDuration.Duration
+		if maxFailover <= 0 {
+			return fmt.Errorf(
+				"%s: multigateway buffer maxFailoverDuration (%s) must be a positive duration",
+				subject, maxFailover,
+			)
+		}
+	}
+	// The binary accepts 0 here (no enforced gap between failovers).
+	if buffer.MinTimeBetweenFailovers != nil && buffer.MinTimeBetweenFailovers.Duration < 0 {
+		return fmt.Errorf(
+			"%s: multigateway buffer minTimeBetweenFailovers (%s) must not be negative",
+			subject, buffer.MinTimeBetweenFailovers.Duration,
+		)
+	}
+	if !resolved && (buffer.Window == nil || buffer.MaxFailoverDuration == nil) {
+		return nil
+	}
+	if window > maxFailover {
+		if resolved && (buffer.Window == nil || buffer.MaxFailoverDuration == nil) {
+			return fmt.Errorf(
+				"%s: multigateway buffer window (%s) must be <= maxFailoverDuration (%s); unset fields use the multigateway defaults (window %s, maxFailoverDuration %s)",
+				subject,
+				window,
+				maxFailover,
+				defaultBufferWindow,
+				defaultBufferMaxFailoverDuration,
+			)
+		}
+		return fmt.Errorf(
+			"%s: multigateway buffer window (%s) must be <= maxFailoverDuration (%s)",
+			subject,
+			window,
+			maxFailover,
+		)
+	}
+	return nil
+}
+
+// ValidateResourceRequirements checks that for every resource type present in
 // both Limits and Requests, the limit is >= the request. Kubernetes enforces
 // this on Pods but NOT on CRDs, so we catch it early in the webhook.
-func validateResourceRequirements(resources corev1.ResourceRequirements, component string) error {
+func ValidateResourceRequirements(resources corev1.ResourceRequirements, component string) error {
 	for resourceName, limit := range resources.Limits {
 		if request, ok := resources.Requests[resourceName]; ok {
 			if limit.Cmp(request) < 0 {

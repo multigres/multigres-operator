@@ -861,8 +861,10 @@ func TestGetPoolerStatus(t *testing.T) {
 		if result.Roles["unknown"] != "REPLICA" {
 			t.Errorf("expected REPLICA fallback, got %s", result.Roles["unknown"])
 		}
-		if result.Roles["quarantined"] != "DRAINED" {
-			t.Errorf("expected DRAINED, got %s", result.Roles["quarantined"])
+		// Quarantined poolers get a distinct QUARANTINED role (visible in status)
+		// but are handled by quarantine remediation, not routed.
+		if result.Roles["quarantined"] != "QUARANTINED" {
+			t.Errorf("expected QUARANTINED, got %s", result.Roles["quarantined"])
 		}
 	})
 

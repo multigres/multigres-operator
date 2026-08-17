@@ -132,8 +132,10 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "custom/multigateway:v1.0.0",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(5)),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(5)),
+						},
 					},
 				},
 			},
@@ -238,8 +240,10 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone4",
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(2)),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(2)),
+						},
 					},
 				},
 			},
@@ -303,8 +307,10 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone5",
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(3)),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(3)),
+						},
 					},
 				},
 			},
@@ -366,8 +372,10 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 				Spec: multigresv1alpha1.CellSpec{
 					Name: "zone-pending",
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(1)),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(1)),
+						},
 					},
 				},
 			},

@@ -92,10 +92,10 @@ func TestCEL_MultigresCluster(t *testing.T) {
 							Name:   "invalid-cell",
 							ZoneID: "use1-az1",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+								Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 							},
 							Overrides: &multigresv1alpha1.CellOverrides{
-								Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+								Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))}},
 							},
 						},
 					},
@@ -117,7 +117,7 @@ func TestCEL_MultigresCluster(t *testing.T) {
 							ZoneID:       "use1-az1",
 							CellTemplate: "some-template",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+								Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 							},
 						},
 					},

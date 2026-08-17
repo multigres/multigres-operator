@@ -368,7 +368,7 @@ func (m *CertRotator) ensureServerCert(
 		return m.ensureServerCert(ctx, ca, depth+1)
 	}
 
-	// Check if near expiry OR if CA changed
+	// Check if near expiry OR if CA changed OR if desired DNS SANs changed
 	needsRotation := time.Until(cert.NotAfter) < RotationThreshold
 	if !needsRotation {
 		// Check if signed by current CA
@@ -376,6 +376,11 @@ func (m *CertRotator) ensureServerCert(
 			log.FromContext(ctx).Info("server cert was not signed by current CA, rotating")
 			needsRotation = true
 		}
+	}
+	if !needsRotation && !dnsNameSetsEqual(cert.DNSNames, dnsNames) {
+		log.FromContext(ctx).Info("server cert are out of date, rotating",
+			"current", cert.DNSNames, "desired", dnsNames)
+		needsRotation = true
 	}
 
 	if needsRotation {
@@ -398,6 +403,28 @@ func (m *CertRotator) ensureServerCert(
 	}
 
 	return secret.Data["tls.crt"], nil
+}
+
+// dnsNameSetsEqual reports whether a and b contain the same DNS names,
+// ignoring order and duplicates.
+func dnsNameSetsEqual(a, b []string) bool {
+	toSet := func(names []string) map[string]struct{} {
+		set := make(map[string]struct{}, len(names))
+		for _, n := range names {
+			set[n] = struct{}{}
+		}
+		return set
+	}
+	setA, setB := toSet(a), toSet(b)
+	if len(setA) != len(setB) {
+		return false
+	}
+	for n := range setA {
+		if _, ok := setB[n]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *CertRotator) waitForProjection(ctx context.Context, expectedCertPEM []byte) error {

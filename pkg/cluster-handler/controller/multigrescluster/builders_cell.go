@@ -14,7 +14,7 @@ import (
 func BuildCell(
 	cluster *multigresv1alpha1.MultigresCluster,
 	cellCfg *multigresv1alpha1.CellConfig,
-	gatewaySpec *multigresv1alpha1.StatelessSpec,
+	gatewaySpec *multigresv1alpha1.MultigatewaySpec,
 	gatewayPlacement *multigresv1alpha1.PodPlacementSpec,
 	localTopoSpec *multigresv1alpha1.LocalTopoServerSpec,
 	globalTopoRef multigresv1alpha1.GlobalTopoServerRef,

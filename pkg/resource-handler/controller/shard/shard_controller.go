@@ -78,7 +78,7 @@ type ShardReconciler struct {
 func (r *ShardReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
-) (ctrl.Result, error) {
+) (result ctrl.Result, err error) {
 	start := time.Now()
 	ctx, span := monitoring.StartReconcileSpan(
 		ctx,
@@ -88,6 +88,7 @@ func (r *ShardReconciler) Reconcile(
 		"Shard",
 	)
 	defer span.End()
+	defer func() { monitoring.RecordReconcileError(err, "shard", req.Name, req.Namespace) }()
 	ctx = monitoring.EnrichLoggerWithTrace(ctx)
 
 	logger := log.FromContext(ctx)
@@ -387,7 +388,7 @@ func (r *ShardReconciler) Reconcile(
 	// this shard and leave observedGeneration stale.
 	dataPlaneCtx, dataPlaneCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dataPlaneCancel()
-	result, err := r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
+	result, err = r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
 	if err != nil || result.RequeueAfter > 0 {
 		return result, err
 	}

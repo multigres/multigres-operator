@@ -3,6 +3,7 @@ package resolver
 import (
 	"strings"
 	"testing"
+	"time"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
@@ -200,14 +201,32 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 		Provisioner: "k8s.io/fake",
 	}
 
+	// Referenced by cells in the fixtures below; the buffer dry-run resolution
+	// requires referenced cell templates to actually exist.
+	cellTpl := &multigresv1alpha1.CellTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-cell", Namespace: "default"},
+	}
+
+	badBufferCellTpl := &multigresv1alpha1.CellTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "bad-buffer-cell", Namespace: "default"},
+		Spec: multigresv1alpha1.CellTemplateSpec{
+			Multigateway: &multigresv1alpha1.MultigatewaySpec{
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Window:              &metav1.Duration{Duration: 30 * time.Second},
+					MaxFailoverDuration: &metav1.Duration{Duration: 20 * time.Second},
+				},
+			},
+		},
+	}
+
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, defaultSC).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, defaultSC, cellTpl, badBufferCellTpl).
 		Build()
 
 	noSCClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl).
+		WithObjects(shardTpl, badPoolTpl, postgresUIDTpl, cellTpl, badBufferCellTpl).
 		Build()
 
 	nodeRegionEast := &corev1.Node{
@@ -978,13 +997,15 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 						{
 							Name: "zone-1",
 							Spec: &multigresv1alpha1.CellInlineSpec{
-								Multigateway: multigresv1alpha1.StatelessSpec{
-									Resources: corev1.ResourceRequirements{
-										Requests: corev1.ResourceList{
-											corev1.ResourceCPU: parseQty("2"),
-										},
-										Limits: corev1.ResourceList{
-											corev1.ResourceCPU: parseQty("1"),
+								Multigateway: multigresv1alpha1.MultigatewaySpec{
+									StatelessSpec: multigresv1alpha1.StatelessSpec{
+										Resources: corev1.ResourceRequirements{
+											Requests: corev1.ResourceList{
+												corev1.ResourceCPU: parseQty("2"),
+											},
+											Limits: corev1.ResourceList{
+												corev1.ResourceCPU: parseQty("1"),
+											},
 										},
 									},
 								},
@@ -1000,7 +1021,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 					}},
 				},
 			},
-			wantErr: "cell 'zone-1' multigateway: resource cpu limit (1) must be >= request (2)",
+			wantErr: "cell 'zone-1' multigateway (resolved): resource cpu limit (1) must be >= request (2)",
 		},
 		"Resource error: shard multiorch limits < requests": {
 			cluster: &multigresv1alpha1.MultigresCluster{
@@ -1209,12 +1230,19 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				},
 			},
 			clientFailures: func() *testutil.FailureConfig {
-				var calls int
+				var shardTplGets int
 				return &testutil.FailureConfig{
 					OnGet: func(key client.ObjectKey) error {
-						calls++
-						if calls == 2 { // first shard template resolve succeeds, second fails
-							return testutil.ErrInjected
+						// Key on the object being fetched, not the absolute Get
+						// ordinal, so unrelated lookups added elsewhere in the
+						// validation path don't shift the injection target. The
+						// second shard template resolve (storage-class sweep)
+						// fails.
+						if key.Name == "prod-shard" {
+							shardTplGets++
+							if shardTplGets == 2 {
+								return testutil.ErrInjected
+							}
 						}
 						return nil
 					},
@@ -1512,6 +1540,150 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				},
 			},
 			wantErr: "invalid IP address",
+		},
+		"Buffer Valid Config Accepted": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-valid", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{
+						Name: "zone-1",
+						Spec: &multigresv1alpha1.CellInlineSpec{
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								Buffer: &multigresv1alpha1.GatewayBufferConfig{
+									Window: &metav1.Duration{
+										Duration: 10 * time.Second,
+									},
+									MaxFailoverDuration: &metav1.Duration{
+										Duration: 20 * time.Second,
+									},
+								},
+							},
+						},
+					}},
+				},
+			},
+			wantNoWarnings: true,
+		},
+		"Buffer Window Exceeds MaxFailoverDuration": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-window", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{
+						Name: "zone-1",
+						Spec: &multigresv1alpha1.CellInlineSpec{
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								Buffer: &multigresv1alpha1.GatewayBufferConfig{
+									Window: &metav1.Duration{
+										Duration: 30 * time.Second,
+									},
+									MaxFailoverDuration: &metav1.Duration{
+										Duration: 20 * time.Second,
+									},
+								},
+							},
+						},
+					}},
+				},
+			},
+			wantErr: "must be <= maxFailoverDuration",
+		},
+		"Buffer Negative MinTimeBetweenFailovers Rejected": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-negative", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{
+						Name: "zone-1",
+						Spec: &multigresv1alpha1.CellInlineSpec{
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								Buffer: &multigresv1alpha1.GatewayBufferConfig{
+									MinTimeBetweenFailovers: &metav1.Duration{
+										Duration: -5 * time.Second,
+									},
+								},
+							},
+						},
+					}},
+				},
+			},
+			wantErr: "must not be negative",
+		},
+		"Buffer Zero MinTimeBetweenFailovers Accepted": {
+			// The binary accepts 0 (no enforced gap between failovers).
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-zero-gap", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{
+						Name: "zone-1",
+						Spec: &multigresv1alpha1.CellInlineSpec{
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								Buffer: &multigresv1alpha1.GatewayBufferConfig{
+									MinTimeBetweenFailovers: &metav1.Duration{Duration: 0},
+								},
+							},
+						},
+					}},
+				},
+			},
+			wantNoWarnings: true,
+		},
+		"Buffer Window Exceeds Default MaxFailoverDuration": {
+			// Only window is set; the binary's maxFailoverDuration default
+			// (20s) still applies at startup, so admission must reject this.
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-window-default", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{
+						Name: "zone-1",
+						Spec: &multigresv1alpha1.CellInlineSpec{
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								Buffer: &multigresv1alpha1.GatewayBufferConfig{
+									Window: &metav1.Duration{
+										Duration: 30 * time.Second,
+									},
+								},
+							},
+						},
+					}},
+				},
+			},
+			wantErr: "must be <= maxFailoverDuration",
+		},
+		"Buffer Disabled Skips Validation": {
+			// The binary skips buffer validation when buffering is disabled,
+			// so admission must too.
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-disabled", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{
+						Name: "zone-1",
+						Spec: &multigresv1alpha1.CellInlineSpec{
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								Buffer: &multigresv1alpha1.GatewayBufferConfig{
+									Enabled: ptr.To(false),
+									Window: &metav1.Duration{
+										Duration: 30 * time.Second,
+									},
+									MaxFailoverDuration: &metav1.Duration{
+										Duration: 20 * time.Second,
+									},
+								},
+							},
+						},
+					}},
+				},
+			},
+			wantNoWarnings: true,
+		},
+		"Buffer Invalid In Template Caught By Dry-Run": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "buf-tpl", Namespace: "default"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{
+						{Name: "zone-1", CellTemplate: "bad-buffer-cell"},
+					},
+				},
+			},
+			wantErr: "must be <= maxFailoverDuration",
 		},
 	}
 

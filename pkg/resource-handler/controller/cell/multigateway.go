@@ -224,6 +224,42 @@ func BuildMultigatewayDeployment(
 		},
 	}
 
+	if buf := cell.Spec.Multigateway.Buffer; buf != nil {
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		// Emit the value explicitly whenever set (operator-resolved Cells
+		// always set it) so an opt-out keeps working even if the binary's
+		// --buffer-enabled default ever flips. A nil Enabled (hand-written or
+		// legacy Cell CR) intentionally emits nothing: the binary default
+		// applies.
+		if buf.Enabled != nil {
+			container.Args = append(container.Args,
+				fmt.Sprintf("--buffer-enabled=%t", *buf.Enabled))
+		}
+		if buf.Window != nil {
+			container.Args = append(container.Args,
+				"--buffer-window", buf.Window.Duration.String())
+		}
+		if buf.MaxFailoverDuration != nil {
+			container.Args = append(container.Args,
+				"--buffer-max-failover-duration", buf.MaxFailoverDuration.Duration.String())
+		}
+		if buf.MinTimeBetweenFailovers != nil {
+			container.Args = append(
+				container.Args,
+				"--buffer-min-time-between-failovers",
+				buf.MinTimeBetweenFailovers.Duration.String(),
+			)
+		}
+		if buf.Size != nil {
+			container.Args = append(container.Args,
+				"--buffer-size", fmt.Sprintf("%d", *buf.Size))
+		}
+		if buf.DrainConcurrency != nil {
+			container.Args = append(container.Args,
+				"--buffer-drain-concurrency", fmt.Sprintf("%d", *buf.DrainConcurrency))
+		}
+	}
+
 	if otelVol, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		cell.Spec.Observability,
 	); otelVol != nil {
