@@ -34,6 +34,15 @@ type mockRPCClient struct {
 	rpcclient.MultipoolerClient
 
 	updateConsensusRuleCalled bool
+	lastUpdateConsensusRule   *multipoolermanagerdatapb.UpdateConsensusRuleRequest
+}
+
+func (m *mockRPCClient) Status(
+	ctx context.Context,
+	pooler *clustermetadata.Multipooler,
+	request *multipoolermanagerdatapb.StatusRequest,
+) (*multipoolermanagerdatapb.StatusResponse, error) {
+	return decidedStatusResponse(), nil
 }
 
 func (m *mockRPCClient) UpdateConsensusRule(
@@ -42,7 +51,25 @@ func (m *mockRPCClient) UpdateConsensusRule(
 	request *multipoolermanagerdatapb.UpdateConsensusRuleRequest,
 ) (*multipoolermanagerdatapb.UpdateConsensusRuleResponse, error) {
 	m.updateConsensusRuleCalled = true
+	m.lastUpdateConsensusRule = request
 	return &multipoolermanagerdatapb.UpdateConsensusRuleResponse{}, nil
+}
+
+func decidedStatusResponse() *multipoolermanagerdatapb.StatusResponse {
+	return &multipoolermanagerdatapb.StatusResponse{
+		ConsensusStatus: &clustermetadata.ConsensusStatus{
+			CurrentPosition: &clustermetadata.PoolerPosition{
+				Position: &clustermetadata.RulePosition{
+					Decision: &clustermetadata.ShardRule{
+						RuleNumber: &clustermetadata.RuleNumber{
+							CoordinatorTerm: 1,
+							LeaderSubterm:   1,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func (m *mockRPCClient) ExpireBackups(
@@ -148,6 +175,12 @@ func TestReplicaDrainFlow(t *testing.T) {
 	}
 	if !rpcMock.updateConsensusRuleCalled {
 		t.Fatalf("expected UpdateConsensusRule to be called")
+	}
+	if rpcMock.lastUpdateConsensusRule.GetExpectedOutgoingRule() == nil {
+		t.Fatalf("expected UpdateConsensusRule request to include ExpectedOutgoingRule")
+	}
+	if got := rpcMock.lastUpdateConsensusRule.GetOperation(); got != multipoolermanagerdatapb.RuleOperation_RULE_OPERATION_COHORT_REMOVE {
+		t.Fatalf("unexpected update operation: %v", got)
 	}
 
 	// Step 2: Draining -> Acknowledged

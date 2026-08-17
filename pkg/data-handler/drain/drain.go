@@ -162,14 +162,14 @@ func ExecuteDrainStateMachine(
 					)
 					return true, nil
 				} else {
-					req := &multipoolermanagerdatapb.UpdateConsensusRuleRequest{
-						Operation:  multipoolermanagerdatapb.RuleOperation_RULE_OPERATION_COHORT_REMOVE,
-						StandbyIds: []*clustermetadatapb.ID{myPooler.Id},
-					}
-					_, rpcErr := rpcClient.UpdateConsensusRule(ctx, primary, req)
-					if rpcErr != nil {
+					if err := removeStandbyFromConsensus(
+						ctx,
+						rpcClient,
+						primary,
+						myPooler.Id,
+					); err != nil {
 						logger.Error(
-							rpcErr,
+							err,
 							"Failed to remove pod from synchronous standby list",
 							"pod",
 							pod.Name,
@@ -216,14 +216,14 @@ func ExecuteDrainStateMachine(
 					)
 					return true, nil
 				} else {
-					req := &multipoolermanagerdatapb.UpdateConsensusRuleRequest{
-						Operation:  multipoolermanagerdatapb.RuleOperation_RULE_OPERATION_COHORT_REMOVE,
-						StandbyIds: []*clustermetadatapb.ID{myPooler.Id},
-					}
-					_, rpcErr := rpcClient.UpdateConsensusRule(ctx, primary, req)
-					if rpcErr != nil {
+					if err := removeStandbyFromConsensus(
+						ctx,
+						rpcClient,
+						primary,
+						myPooler.Id,
+					); err != nil {
 						logger.Error(
-							rpcErr,
+							err,
 							"Standby removal verification failed, will retry",
 							"pod",
 							pod.Name,
@@ -249,6 +249,49 @@ func ExecuteDrainStateMachine(
 	}
 
 	return false, nil
+}
+
+// removeStandbyFromConsensus removes standbyID using the primary's current
+// decided rule as a compare-and-swap guard.
+func removeStandbyFromConsensus(
+	ctx context.Context,
+	rpcClient rpcclient.MultipoolerClient,
+	primary *clustermetadatapb.Multipooler,
+	standbyID *clustermetadatapb.ID,
+) error {
+	status, err := rpcClient.Status(
+		ctx,
+		primary,
+		&multipoolermanagerdatapb.StatusRequest{},
+	)
+	if err != nil {
+		return fmt.Errorf("reading primary consensus status: %w", err)
+	}
+	if status == nil || status.GetConsensusStatus() == nil {
+		return fmt.Errorf("primary status is missing consensus status")
+	}
+
+	position := status.GetConsensusStatus().GetCurrentPosition().GetPosition()
+	decision := position.GetDecision()
+	if decision == nil || decision.GetRuleNumber() == nil {
+		return fmt.Errorf("primary consensus status is missing a decided rule")
+	}
+	proposalRule := position.GetProposal().GetRuleNumber()
+	if proposalRule.GetCoordinatorTerm() != 0 || proposalRule.GetLeaderSubterm() != 0 {
+		return fmt.Errorf("primary consensus status has an undecided proposal")
+	}
+
+	request := &multipoolermanagerdatapb.UpdateConsensusRuleRequest{
+		Operation:            multipoolermanagerdatapb.RuleOperation_RULE_OPERATION_COHORT_REMOVE,
+		StandbyIds:           []*clustermetadatapb.ID{standbyID},
+		ExpectedOutgoingRule: decision.GetRuleNumber(),
+		// CoordinatorId is intentionally omitted. The multipooler applies its
+		// documented server-side coordinator identity default.
+	}
+	if _, err := rpcClient.UpdateConsensusRule(ctx, primary, request); err != nil {
+		return fmt.Errorf("updating primary consensus rule: %w", err)
+	}
+	return nil
 }
 
 // UpdateDrainState patches a pod's drain state annotation.

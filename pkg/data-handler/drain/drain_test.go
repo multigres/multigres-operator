@@ -51,6 +51,18 @@ func (m *mockTopoStore) UnregisterMultipooler(ctx context.Context, id *clusterme
 type mockMultipoolerClient struct {
 	rpcclient.MultipoolerClient
 	UpdateConsensusRuleFunc func(ctx context.Context, pooler *clustermetadata.Multipooler, req *multipoolermanagerdata.UpdateConsensusRuleRequest) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error)
+	StatusFunc              func(ctx context.Context, pooler *clustermetadata.Multipooler, req *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error)
+}
+
+func (m *mockMultipoolerClient) Status(
+	ctx context.Context,
+	pooler *clustermetadata.Multipooler,
+	req *multipoolermanagerdata.StatusRequest,
+) (*multipoolermanagerdata.StatusResponse, error) {
+	if m.StatusFunc != nil {
+		return m.StatusFunc(ctx, pooler, req)
+	}
+	return nil, fmt.Errorf("unexpected Status call")
 }
 
 func (m *mockMultipoolerClient) UpdateConsensusRule(
@@ -61,7 +73,155 @@ func (m *mockMultipoolerClient) UpdateConsensusRule(
 	if m.UpdateConsensusRuleFunc != nil {
 		return m.UpdateConsensusRuleFunc(ctx, pooler, req)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("unexpected UpdateConsensusRule call")
+}
+
+func TestReplicaDrainConsensusStatusGuards(t *testing.T) {
+	t.Parallel()
+
+	undecided := decidedStatusResponse()
+	undecided.ConsensusStatus.CurrentPosition.Position.Proposal = &clustermetadata.ShardRule{
+		RuleNumber: &clustermetadata.RuleNumber{
+			CoordinatorTerm: 1,
+			LeaderSubterm:   2,
+		},
+	}
+
+	tests := []struct {
+		name   string
+		status func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error)
+	}{
+		{
+			name: "status RPC fails",
+			status: func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error) {
+				return nil, fmt.Errorf("status unavailable")
+			},
+		},
+		{
+			name: "nil status response",
+			status: func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error) {
+				return nil, nil
+			},
+		},
+		{
+			name: "missing consensus status",
+			status: func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error) {
+				return &multipoolermanagerdata.StatusResponse{}, nil
+			},
+		},
+		{
+			name: "missing decided rule",
+			status: func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error) {
+				return &multipoolermanagerdata.StatusResponse{
+					ConsensusStatus: &clustermetadata.ConsensusStatus{
+						CurrentPosition: &clustermetadata.PoolerPosition{
+							Position: &clustermetadata.RulePosition{},
+						},
+					},
+				}, nil
+			},
+		},
+		{
+			name: "undecided proposal",
+			status: func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.StatusRequest) (*multipoolermanagerdata.StatusResponse, error) {
+				return undecided, nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			scheme := runtime.NewScheme()
+			if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatalf("add Multigres scheme: %v", err)
+			}
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatalf("add core scheme: %v", err)
+			}
+
+			shard := &multigresv1alpha1.Shard{
+				ObjectMeta: metav1.ObjectMeta{Name: "shard", Namespace: "default"},
+				Spec: multigresv1alpha1.ShardSpec{
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"default": {Cells: []multigresv1alpha1.CellName{"cell1"}},
+					},
+				},
+			}
+			replicaPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "replica",
+					Namespace: "default",
+					Labels:    map[string]string{metadata.LabelMultigresCell: "cell1"},
+					Annotations: map[string]string{
+						metadata.AnnotationDrainState: metadata.DrainStateRequested,
+					},
+				},
+			}
+			primaryPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "primary", Namespace: "default"},
+			}
+			k8sClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(replicaPod, primaryPod).
+				Build()
+
+			replicaInfo := &topoclient.MultipoolerInfo{Multipooler: &clustermetadata.Multipooler{
+				Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
+			}}
+			primaryInfo := &topoclient.MultipoolerInfo{Multipooler: &clustermetadata.Multipooler{
+				Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary"},
+				RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
+			}}
+			store := &mockTopoStore{
+				getMultipoolersByCellFunc: func(context.Context, string, *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+					return []*topoclient.MultipoolerInfo{replicaInfo, primaryInfo}, nil
+				},
+			}
+
+			updateCalled := false
+			rpc := &mockMultipoolerClient{
+				StatusFunc: tt.status,
+				UpdateConsensusRuleFunc: func(context.Context, *clustermetadata.Multipooler, *multipoolermanagerdata.UpdateConsensusRuleRequest) (*multipoolermanagerdata.UpdateConsensusRuleResponse, error) {
+					updateCalled = true
+					return &multipoolermanagerdata.UpdateConsensusRuleResponse{}, nil
+				},
+			}
+
+			requeue, err := drain.ExecuteDrainStateMachine(
+				context.Background(),
+				k8sClient,
+				rpc,
+				nil,
+				store,
+				shard,
+				replicaPod,
+			)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !requeue {
+				t.Fatal("expected drain to requeue")
+			}
+			if updateCalled {
+				t.Fatal("UpdateConsensusRule must not be called without a decided rule")
+			}
+
+			updated := &corev1.Pod{}
+			if err := k8sClient.Get(
+				context.Background(),
+				client.ObjectKeyFromObject(replicaPod),
+				updated,
+			); err != nil {
+				t.Fatalf("read replica pod: %v", err)
+			}
+			if got := updated.Annotations[metadata.AnnotationDrainState]; got != metadata.DrainStateRequested {
+				t.Fatalf("drain advanced on invalid consensus status: %q", got)
+			}
+		})
+	}
 }
 
 func TestUpdateDrainState_NilAnnotations(t *testing.T) {
