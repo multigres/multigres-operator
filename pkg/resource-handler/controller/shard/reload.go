@@ -205,7 +205,10 @@ func mismatchNames(ms []*multipoolermanagerdatapb.SettingMismatch) []string {
 func mismatchDetail(ms []*multipoolermanagerdatapb.SettingMismatch) string {
 	parts := make([]string, 0, len(ms))
 	for _, m := range ms {
-		parts = append(parts, fmt.Sprintf("%s{err=%q,restart=%v}", m.GetName(), m.GetError(), m.GetRequiresRestart()))
+		parts = append(
+			parts,
+			fmt.Sprintf("%s{err=%q,restart=%v}", m.GetName(), m.GetError(), m.GetRequiresRestart()),
+		)
 	}
 	return strings.Join(parts, ",")
 }

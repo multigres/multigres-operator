@@ -87,6 +87,10 @@ func TestRequiresRestartMatchesCatalogContext(t *testing.T) {
 	// The majority of PG17 GUCs are reload-safe (sighup/user/superuser); if the
 	// context column were missing this would be ~0.
 	if reloadable < 200 {
-		t.Errorf("only %d/%d params classified reloadable; context column likely missing from catalog", reloadable, total)
+		t.Errorf(
+			"only %d/%d params classified reloadable; context column likely missing from catalog",
+			reloadable,
+			total,
+		)
 	}
 }

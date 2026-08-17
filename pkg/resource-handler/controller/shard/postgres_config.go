@@ -121,7 +121,11 @@ func renderPostgresConfig(
 	if err != nil {
 		return "", postgresconfig.ConfigSplit{}, err
 	}
-	return rendered, postgresconfig.SplitConfig(rendered), nil
+	// SplitConfig also stamps the config-version marker into the returned config
+	// and reload settings, so a reload-only change (including a removal) is
+	// verifiable against the kubelet-synced ConfigMap.
+	rendered, split = postgresconfig.SplitConfig(rendered)
+	return rendered, split, nil
 }
 
 // shardClusterName builds the postgresql.conf cluster_name for a shard: a

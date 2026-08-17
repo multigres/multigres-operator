@@ -6034,7 +6034,11 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		pools, err := r.updatePoolsStatus(
-			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredRestart, desiredReload,
+			t.Context(),
+			shard,
+			make(map[multigresv1alpha1.CellName]bool),
+			desiredRestart,
+			desiredReload,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -6050,7 +6054,11 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		pools, err := r.updatePoolsStatus(
-			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredRestart, desiredReload,
+			t.Context(),
+			shard,
+			make(map[multigresv1alpha1.CellName]bool),
+			desiredRestart,
+			desiredReload,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)

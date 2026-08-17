@@ -30,11 +30,21 @@ type ConfigSplit struct {
 // reload-safe settings map — so the restart/reload classification and the parse
 // happen exactly once.
 //
+// It then stamps the config-version marker (see ReloadMarkerGUC): its value is the
+// reload-hash, and it is added to BOTH the returned reload-safe settings (sent to
+// the pooler as expected_settings) and the returned postgresql.conf (so
+// pg_file_settings carries it). This is what makes a reload verifiable even when a
+// change only REMOVES a reload-safe setting. Because the marker is stamped AFTER
+// the reload-hash is computed, it never feeds back into any hash: the hashes and
+// the pod annotations stay a pure function of the real settings. SplitConfig
+// therefore returns the marker-stamped config alongside the split — feed that
+// returned string into the ConfigMap.
+//
 // Parsing to effective settings first is what makes the split robust: a value
 // that appears in several layers (template, PostgresConfigRef body, inline map)
 // is counted once at its final value, and a purely cosmetic edit (reordering,
 // comment, whitespace) that does not change any effective value moves neither
-// hash.
+// hash (and so leaves the marker untouched too).
 //
 // Values are unquoted (undoing the renderer's quote()) so ReloadSettings matches
 // PostgreSQL's raw pg_file_settings.setting token when used as expected_settings
@@ -42,11 +52,11 @@ type ConfigSplit struct {
 // expected_settings directly from the (already-unquoted) inline spec.postgresConfig
 // map instead — smaller payload, no round-trip; correct only once the ref layer no
 // longer contributes reload-safe settings the inline map would omit.
-func SplitConfig(rendered string) ConfigSplit {
+func SplitConfig(rendered string) (string, ConfigSplit) {
 	settings := parseEffectiveConfig(rendered)
 
 	restart := make(map[string]string, len(settings))
-	reload := make(map[string]string, len(settings))
+	reload := make(map[string]string, len(settings)+1)
 	for k, v := range settings {
 		v = unquoteValue(v)
 		if RequiresRestart(k) {
@@ -55,9 +65,17 @@ func SplitConfig(rendered string) ConfigSplit {
 			reload[k] = v
 		}
 	}
-	return ConfigSplit{
+
+	// Stamp the config-version marker after hashing the real reload-safe settings,
+	// so it never feeds back into the reload-hash. It goes into both the expected
+	// settings and the file.
+	reloadHash := hashSettings(reload)
+	reload[ReloadMarkerGUC] = reloadHash
+	rendered += reloadMarkerLine(reloadHash)
+
+	return rendered, ConfigSplit{
 		RestartHash:    hashSettings(restart),
-		ReloadHash:     hashSettings(reload),
+		ReloadHash:     reloadHash,
 		ReloadSettings: reload,
 	}
 }
@@ -135,7 +153,8 @@ func hashSettings(m map[string]string) string {
 
 	h := sha256.New()
 	for _, k := range keys {
-		fmt.Fprintf(h, "%s=%s\n", k, m[k])
+		// hash.Hash.Write never returns an error per its interface contract.
+		_, _ = fmt.Fprintf(h, "%s=%s\n", k, m[k])
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

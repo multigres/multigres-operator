@@ -143,7 +143,11 @@ func callLogHas(log []string, method string) bool {
 func podReloadHash(t *testing.T, r *ShardReconciler) string {
 	t.Helper()
 	got := &corev1.Pod{}
-	if err := r.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: reloadTestPod}, got); err != nil {
+	if err := r.Get(
+		context.Background(),
+		client.ObjectKey{Namespace: "ns", Name: reloadTestPod},
+		got,
+	); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	return got.Annotations[metadata.AnnotationPostgresReloadHash]
@@ -176,7 +180,11 @@ func TestReconcileReloadStateStampsWhenVerified(t *testing.T) {
 		t.Errorf("ReloadConfig was not called; call log = %v", rpc.GetCallLog())
 	}
 	if h := podReloadHash(t, r); h != reloadTestDesired {
-		t.Errorf("pod reload-hash = %q, want %q (stamped after verified reload)", h, reloadTestDesired)
+		t.Errorf(
+			"pod reload-hash = %q, want %q (stamped after verified reload)",
+			h,
+			reloadTestDesired,
+		)
 	}
 }
 
@@ -221,7 +229,9 @@ func TestReconcileReloadStateNeedsRestart(t *testing.T) {
 	rpc := rpcclient.NewFakeClient()
 	rpc.ReloadConfigResponses[poolerID] = &multipoolermanagerdatapb.ReloadConfigResponse{
 		NeedsRestart: true,
-		Mismatches:   []*multipoolermanagerdatapb.SettingMismatch{{Name: "work_mem", RequiresRestart: true}},
+		Mismatches: []*multipoolermanagerdatapb.SettingMismatch{
+			{Name: "work_mem", RequiresRestart: true},
+		},
 	}
 
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
@@ -249,7 +259,12 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 		extraAnn   map[string]string
 	}{
 		{"already current", reloadTestDesired, reloadTestRestart, nil},
-		{"draining", "R1", reloadTestRestart, map[string]string{metadata.AnnotationDrainState: metadata.DrainStateRequested}},
+		{
+			"draining",
+			"R1",
+			reloadTestRestart,
+			map[string]string{metadata.AnnotationDrainState: metadata.DrainStateRequested},
+		},
 		{"restart pending", "R1", "S0", nil}, // restart-hash stale → recreation owns it
 	}
 	for _, tc := range cases {
@@ -267,11 +282,20 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 			pod := reloadTestPodObj(tc.reloadHash, tc.restart, tc.extraAnn)
 			r := newReloadReconciler(scheme, rpc, shard, pod)
 
-			if _, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered()); err != nil {
+			if _, err := r.reconcileReloadState(
+				context.Background(),
+				store,
+				shard,
+				reloadTestRendered(),
+			); err != nil {
 				t.Fatalf("reconcileReloadState: %v", err)
 			}
 			if callLogHas(rpc.GetCallLog(), "ReloadConfig") {
-				t.Errorf("ReloadConfig should not be called for %q; call log = %v", tc.name, rpc.GetCallLog())
+				t.Errorf(
+					"ReloadConfig should not be called for %q; call log = %v",
+					tc.name,
+					rpc.GetCallLog(),
+				)
 			}
 		})
 	}

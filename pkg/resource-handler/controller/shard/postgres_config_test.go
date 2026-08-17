@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/postgresconfig"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -139,6 +140,61 @@ func TestRenderEffectiveConfig(t *testing.T) {
 			t.Error("expected error for missing ConfigMap")
 		}
 	})
+}
+
+// TestRenderEffectiveConfig_ReloadMarker proves the operator injects the
+// config-version marker (see postgresconfig.ReloadMarkerGUC) into both the
+// delivered file and the reload-safe expected settings, and that its value is the
+// reload-hash — the wiring that makes a removal-only reload-safe change verifiable
+// (see postgresconfig.TestReloadMarkerDetectsRemoval for the removal semantics).
+func TestRenderEffectiveConfig_ReloadMarker(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	render := func(cfg map[string]string) renderedConfig {
+		r := &ShardReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "s1"},
+			Spec:       multigresv1alpha1.ShardSpec{PostgresConfig: cfg},
+		}
+		rc := r.renderEffectiveConfig(context.Background(), shard)
+		if rc.err != nil {
+			t.Fatalf("renderEffectiveConfig error: %v", rc.err)
+		}
+		return rc
+	}
+
+	// A reload-safe param (log_min_duration_statement, superuser context) that the
+	// operator baseline does not set, so removing it truly drops it from the render.
+	rc := render(map[string]string{"log_min_duration_statement": "500ms"})
+
+	// The marker lands in the delivered file and in the RPC expected settings,
+	// with its value equal to the reload-hash.
+	if !strings.Contains(rc.content, postgresconfig.ReloadMarkerGUC+" = '"+rc.reloadHash+"'") {
+		t.Errorf("delivered config missing marker line for %q:\n%s",
+			postgresconfig.ReloadMarkerGUC, rc.content)
+	}
+	if got := rc.reloadSettings[postgresconfig.ReloadMarkerGUC]; got != rc.reloadHash {
+		t.Errorf("reloadSettings[%q] = %q, want reload-hash %q",
+			postgresconfig.ReloadMarkerGUC, got, rc.reloadHash)
+	}
+
+	// Removing the reload-safe param moves the reload-hash (hence the marker) but
+	// leaves the restart-hash untouched — still a reload, not a pod recreation.
+	rcRemoved := render(nil)
+	if rc.hash != rcRemoved.hash {
+		t.Errorf("restart-hash moved on a reload-only removal: %s -> %s", rc.hash, rcRemoved.hash)
+	}
+	if rc.reloadHash == rcRemoved.reloadHash {
+		t.Fatalf(
+			"reload-hash did not move when the reload-safe param was removed (still %s)",
+			rc.reloadHash,
+		)
+	}
+	if rc.reloadSettings[postgresconfig.ReloadMarkerGUC] == rcRemoved.reloadSettings[postgresconfig.ReloadMarkerGUC] {
+		t.Error("marker did not move on a reload-safe removal; a stale mount would pass the gate")
+	}
 }
 
 var errTest = errTestType("boom")
