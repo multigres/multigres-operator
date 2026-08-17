@@ -56,6 +56,17 @@ spec:
              limits:
                cpu: "200m"
                memory: "256Mi"
+           # Request buffering during planned failovers. Enabled by default
+           # (set enabled: false to opt out); the other fields fall back to
+           # the multigateway binary defaults when omitted.
+           buffer:
+             enabled: true
+             # Per-request cap. The binary default is 10s; gateways typically
+             # perceive a planned failover for ~8-9s with a longer tail, so
+             # 20s masks virtually all planned failovers.
+             window: 20s
+             # Session-level cap; must be >= window (binary default 20s).
+             maxFailoverDuration: 20s
 
   # ----------------------------------------------------------------
   # 3. Database Topology (Inline)

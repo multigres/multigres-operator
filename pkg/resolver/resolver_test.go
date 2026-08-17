@@ -45,8 +45,10 @@ func setupFixtures(t testing.TB) (
 	cellTpl := &multigresv1alpha1.CellTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: namespace},
 		Spec: multigresv1alpha1.CellTemplateSpec{
-			Multigateway: &multigresv1alpha1.StatelessSpec{
-				Replicas: ptr.To(int32(3)),
+			Multigateway: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas: ptr.To(int32(3)),
+				},
 			},
 			LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
 				Etcd: &multigresv1alpha1.EtcdSpec{Image: "local-etcd-default"},

@@ -133,7 +133,30 @@ Pools default to `replicasPerCell: 1`, except a pool that spans a single cell de
 
 ---
 
-## 6. Scenarios & Gotchas
+## 6. Gateway Failover Buffering
+
+Multigateway can buffer client requests during planned failovers instead of surfacing errors. The operator enables this by default (`--buffer-enabled=true`); tune or disable it per cell via the `buffer` block next to the other gateway fields (see `no-templates.yaml`):
+
+```yaml
+cells:
+  - name: "z1"
+    spec:
+      multigateway:
+        replicas: 2
+        buffer:
+          enabled: true              # operator default; set false to opt out
+          window: 20s                # per-request cap (binary default 10s)
+          maxFailoverDuration: 20s   # session cap, must be >= window (binary default 20s)
+          # minTimeBetweenFailovers: 1m
+          # size: 1000
+          # drainConcurrency: 1
+```
+
+Fields left out emit no flag, so the multigateway binary's own defaults apply. Sizing guidance: gateways typically perceive a planned failover for ~8-9s (consensus plus topology propagation) with a longer tail, so the binary's 10s default window can still fail a request or two per failover; 20s masked all planned failovers in our testing.
+
+---
+
+## 7. Scenarios & Gotchas
 
 ### Scenario A: Namespace Defaults (The "Happy Path")
 

@@ -1,8 +1,10 @@
 package cell
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
@@ -189,8 +191,10 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(5)),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(5)),
+						},
 					},
 				},
 			},
@@ -473,17 +477,19 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Affinity: &corev1.Affinity{
-							NodeAffinity: &corev1.NodeAffinity{
-								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-									NodeSelectorTerms: []corev1.NodeSelectorTerm{
-										{
-											MatchExpressions: []corev1.NodeSelectorRequirement{
-												{
-													Key:      "node-type",
-													Operator: corev1.NodeSelectorOpIn,
-													Values:   []string{"gateway"},
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Affinity: &corev1.Affinity{
+								NodeAffinity: &corev1.NodeAffinity{
+									RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+										NodeSelectorTerms: []corev1.NodeSelectorTerm{
+											{
+												MatchExpressions: []corev1.NodeSelectorRequirement{
+													{
+														Key:      "node-type",
+														Operator: corev1.NodeSelectorOpIn,
+														Values:   []string{"gateway"},
+													},
 												},
 											},
 										},
@@ -666,15 +672,17 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("128Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("500m"),
-								corev1.ResourceMemory: resource.MustParse("512Mi"),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("128Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
 							},
 						},
 					},
@@ -826,14 +834,16 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						PodLabels: map[string]string{
-							"custom-label":   "custom-value",
-							"team":           "platform",
-							"sidecar-inject": "true",
-						},
-						PodAnnotations: map[string]string{
-							"custom-annotation": "keep-me",
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							PodLabels: map[string]string{
+								"custom-label":   "custom-value",
+								"team":           "platform",
+								"sidecar-inject": "true",
+							},
+							PodAnnotations: map[string]string{
+								"custom-annotation": "keep-me",
+							},
 						},
 					},
 				},
@@ -981,11 +991,13 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 						Multiadmin:   "info",
 						Multigateway: "info",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						PodLabels: map[string]string{
-							"app.kubernetes.io/component": "hacked",
-							"multigres.com/cell":          "wrong-cell",
-							"safe-label":                  "safe-value",
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							PodLabels: map[string]string{
+								"app.kubernetes.io/component": "hacked",
+								"multigres.com/cell":          "wrong-cell",
+								"safe-label":                  "safe-value",
+							},
 						},
 					},
 				},
@@ -1592,12 +1604,14 @@ func TestBuildMultigatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing
 				Multiadmin:   "info",
 				Multigateway: "info",
 			},
-			Multigateway: multigresv1alpha1.StatelessSpec{
-				PodAnnotations: map[string]string{
-					metadata.AnnotationPrometheusScrape: "true",
-					metadata.AnnotationPrometheusPort:   "15100",
-					metadata.AnnotationPrometheusPath:   "/metrics",
-					"custom-annotation":                 "keep-me",
+			Multigateway: multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					PodAnnotations: map[string]string{
+						metadata.AnnotationPrometheusScrape: "true",
+						metadata.AnnotationPrometheusPort:   "15100",
+						metadata.AnnotationPrometheusPath:   "/metrics",
+						"custom-annotation":                 "keep-me",
+					},
 				},
 			},
 		},
@@ -2408,6 +2422,97 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			if _, found := internalTLSArgNames[arg]; found {
 				t.Errorf("internal TLS arg %q should not be present when InternalTLS is nil", arg)
 			}
+		}
+	})
+}
+
+func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	buildCell := func(buffer *multigresv1alpha1.GatewayBufferConfig) *multigresv1alpha1.Cell {
+		return &multigresv1alpha1.Cell{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-buffer",
+				Namespace: "default",
+				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			},
+			Spec: multigresv1alpha1.CellSpec{
+				Name: "zone-buffer",
+				Multigateway: multigresv1alpha1.MultigatewaySpec{
+					Buffer: buffer,
+				},
+			},
+		}
+	}
+
+	gatewayArgs := func(t *testing.T, cellObj *multigresv1alpha1.Cell) []string {
+		t.Helper()
+		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
+		}
+		return deploy.Spec.Template.Spec.Containers[0].Args
+	}
+
+	t.Run("default resolved cell emits --buffer-enabled only", func(t *testing.T) {
+		// A Cell resolved from a default MultigresCluster carries
+		// buffer.enabled: true and nothing else.
+		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
+			Enabled: ptr.To(true),
+		}))
+		if !slices.Contains(args, "--buffer-enabled=true") {
+			t.Errorf("expected --buffer-enabled=true in args, got %v", args)
+		}
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "--buffer-") && arg != "--buffer-enabled=true" {
+				t.Errorf("unexpected buffer flag %q for default config", arg)
+			}
+		}
+	})
+
+	t.Run("explicit values land verbatim", func(t *testing.T) {
+		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
+			Enabled:                 ptr.To(true),
+			Window:                  &metav1.Duration{Duration: 20 * time.Second},
+			MaxFailoverDuration:     &metav1.Duration{Duration: 30 * time.Second},
+			MinTimeBetweenFailovers: &metav1.Duration{Duration: 2 * time.Minute},
+			Size:                    ptr.To(int32(500)),
+			DrainConcurrency:        ptr.To(int32(4)),
+		}))
+		want := []string{
+			"--buffer-enabled=true",
+			"--buffer-window", "20s",
+			"--buffer-max-failover-duration", "30s",
+			"--buffer-min-time-between-failovers", "2m0s",
+			"--buffer-size", "500",
+			"--buffer-drain-concurrency", "4",
+		}
+		idx := slices.Index(args, "--buffer-enabled=true")
+		if idx < 0 || len(args) < idx+len(want) {
+			t.Fatalf("buffer args missing or truncated, got %v", args)
+		}
+		if diff := cmp.Diff(want, args[idx:idx+len(want)]); diff != "" {
+			t.Errorf("buffer args mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("nil buffer emits no buffer flags", func(t *testing.T) {
+		// Legacy Cell CRs written before this field existed.
+		for _, arg := range gatewayArgs(t, buildCell(nil)) {
+			if strings.HasPrefix(arg, "--buffer-") {
+				t.Errorf("unexpected buffer flag %q for nil buffer config", arg)
+			}
+		}
+	})
+
+	t.Run("disabled buffer emits explicit --buffer-enabled=false", func(t *testing.T) {
+		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
+			Enabled: ptr.To(false),
+			Window:  &metav1.Duration{Duration: 20 * time.Second},
+		}))
+		if !slices.Contains(args, "--buffer-enabled=false") {
+			t.Errorf("expected --buffer-enabled=false when disabled, got %v", args)
 		}
 	})
 }

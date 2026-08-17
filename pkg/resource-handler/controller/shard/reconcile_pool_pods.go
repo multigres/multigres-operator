@@ -333,7 +333,10 @@ func isPoolHealthy(
 		if idx, ok := resolvePodIndex(pod.Name); !ok || idx >= int(effectiveReplicas) {
 			continue
 		}
-		if resolvePodRole(shard, pod.Name) == "DRAINED" {
+		// DRAINED and QUARANTINED pods are expected to be unhealthy (the latter is
+		// being replaced by quarantine remediation); they must not block
+		// scale-down of other pods.
+		if role := resolvePodRole(shard, pod.Name); role == "DRAINED" || role == "QUARANTINED" {
 			continue
 		}
 		if !isPodReady(pod) {

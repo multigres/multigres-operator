@@ -28,7 +28,7 @@ import (
 type CellTemplateSpec struct {
 	// Multigateway configuration.
 	// +optional
-	Multigateway *StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway *MultigatewaySpec `json:"multigateway,omitempty"`
 
 	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional

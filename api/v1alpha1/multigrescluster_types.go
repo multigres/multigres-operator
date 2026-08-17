@@ -209,6 +209,16 @@ type TemplateDefaults struct {
 	ShardTemplate TemplateRef `json:"shardTemplate,omitempty"`
 }
 
+// EffectiveCellTemplate returns ref with the cluster-level TemplateDefaults
+// fallback applied (level 2 of the override chain). The reconcilers and the
+// webhook dry-run must share this rule so they resolve the same template.
+func (s *MultigresClusterSpec) EffectiveCellTemplate(ref TemplateRef) TemplateRef {
+	if ref == "" {
+		return s.TemplateDefaults.CellTemplate
+	}
+	return ref
+}
+
 // ============================================================================
 // Multiadmin Config Section Specs
 // ============================================================================
@@ -322,7 +332,7 @@ type CellConfig struct {
 type CellOverrides struct {
 	// Multigateway overrides.
 	// +optional
-	Multigateway *StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway *MultigatewaySpec `json:"multigateway,omitempty"`
 
 	// MultigatewayPlacement overrides.
 	// +optional
@@ -333,7 +343,7 @@ type CellOverrides struct {
 type CellInlineSpec struct {
 	// Multigateway configuration.
 	// +optional
-	Multigateway StatelessSpec `json:"multigateway,omitempty"`
+	Multigateway MultigatewaySpec `json:"multigateway,omitempty"`
 
 	// MultigatewayPlacement defines optional scheduling settings for multigateway pods.
 	// +optional

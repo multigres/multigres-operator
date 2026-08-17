@@ -34,8 +34,10 @@ func TestBuildCell(t *testing.T) {
 		ZoneID: "use1-az1",
 	}
 
-	gatewaySpec := &multigresv1alpha1.StatelessSpec{
-		Replicas: ptr.To(int32(2)),
+	gatewaySpec := &multigresv1alpha1.MultigatewaySpec{
+		StatelessSpec: multigresv1alpha1.StatelessSpec{
+			Replicas: ptr.To(int32(2)),
+		},
 	}
 	noGatewayPlacement := (*multigresv1alpha1.PodPlacementSpec)(nil)
 

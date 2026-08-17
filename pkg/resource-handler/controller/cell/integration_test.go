@@ -88,9 +88,9 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
-					},
+					}},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -220,9 +220,9 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(3)),
-					},
+					}},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -352,9 +352,9 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "custom/multigateway:v1.0.0",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
-					},
+					}},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -484,7 +484,7 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					Multigateway: multigresv1alpha1.StatelessSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
 						Replicas: ptr.To(int32(2)),
 						Affinity: &corev1.Affinity{
 							NodeAffinity: &corev1.NodeAffinity{
@@ -503,7 +503,7 @@ func TestCellReconciliation(t *testing.T) {
 								},
 							},
 						},
-					},
+					}},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",

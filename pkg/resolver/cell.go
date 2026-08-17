@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
@@ -15,7 +16,7 @@ import (
 func (r *Resolver) ResolveCell(
 	ctx context.Context,
 	cellSpec *multigresv1alpha1.CellConfig,
-) (*multigresv1alpha1.StatelessSpec, *multigresv1alpha1.PodPlacementSpec, *multigresv1alpha1.LocalTopoServerSpec, error) {
+) (*multigresv1alpha1.MultigatewaySpec, *multigresv1alpha1.PodPlacementSpec, *multigresv1alpha1.LocalTopoServerSpec, error) {
 	// 1. Fetch Template (Logic handles defaults)
 	templateName := cellSpec.CellTemplate
 	tpl, err := r.ResolveCellTemplate(ctx, templateName)
@@ -27,7 +28,8 @@ func (r *Resolver) ResolveCell(
 	gateway, placement, localTopo := mergeCellConfig(tpl, cellSpec.Overrides, cellSpec.Spec)
 
 	// 3. Apply Deep Defaults (Level 4)
-	defaultStatelessSpec(gateway, DefaultResourcesGateway(), 1)
+	defaultStatelessSpec(&gateway.StatelessSpec, DefaultResourcesGateway(), 1)
+	defaultGatewayBuffer(gateway)
 
 	// Note: We do NOT default LocalTopo here because it is optional.
 	if localTopo != nil {
@@ -43,18 +45,24 @@ func (r *Resolver) ResolveCell(
 	return gateway, placement, localTopo, nil
 }
 
+// EffectiveCellTemplateName maps a cell's template ref to the template name
+// resolution will actually use: an empty ref selects the implicit fallback.
+// Shared by ResolveCellTemplate and the webhook's consumer filter so they can
+// never disagree about which template a cell consumes.
+func EffectiveCellTemplateName(ref multigresv1alpha1.TemplateRef) multigresv1alpha1.TemplateRef {
+	if ref == "" {
+		return FallbackCellTemplate
+	}
+	return ref
+}
+
 // ResolveCellTemplate fetches and resolves a CellTemplate by name.
 func (r *Resolver) ResolveCellTemplate(
 	ctx context.Context,
 	name multigresv1alpha1.TemplateRef,
 ) (*multigresv1alpha1.CellTemplate, error) {
-	resolvedName := name
-	isImplicitFallback := false
-
-	if resolvedName == "" || resolvedName == FallbackCellTemplate {
-		resolvedName = FallbackCellTemplate
-		isImplicitFallback = true
-	}
+	resolvedName := EffectiveCellTemplateName(name)
+	isImplicitFallback := resolvedName == FallbackCellTemplate
 
 	// Check cache first
 	if cached, found := r.CellTemplateCache[string(resolvedName)]; found {
@@ -88,9 +96,9 @@ func mergeCellConfig(
 	template *multigresv1alpha1.CellTemplate,
 	overrides *multigresv1alpha1.CellOverrides,
 	inline *multigresv1alpha1.CellInlineSpec,
-) (*multigresv1alpha1.StatelessSpec, *multigresv1alpha1.PodPlacementSpec, *multigresv1alpha1.LocalTopoServerSpec) {
+) (*multigresv1alpha1.MultigatewaySpec, *multigresv1alpha1.PodPlacementSpec, *multigresv1alpha1.LocalTopoServerSpec) {
 	// Start with empty
-	gateway := &multigresv1alpha1.StatelessSpec{}
+	gateway := &multigresv1alpha1.MultigatewaySpec{}
 	var placement *multigresv1alpha1.PodPlacementSpec
 	var localTopo *multigresv1alpha1.LocalTopoServerSpec
 
@@ -108,7 +116,7 @@ func mergeCellConfig(
 	// 2. Apply Overrides (Explicit Template Modification)
 	if overrides != nil {
 		if overrides.Multigateway != nil {
-			mergeStatelessSpec(gateway, overrides.Multigateway)
+			mergeMultigatewaySpec(gateway, overrides.Multigateway)
 		}
 		mergePodPlacementSpec(&placement, overrides.MultigatewayPlacement)
 	}
@@ -116,7 +124,7 @@ func mergeCellConfig(
 	// 3. Apply Inline Spec (Primary Overlay)
 	// This merges the inline definition on top of the template+overrides.
 	if inline != nil {
-		mergeStatelessSpec(gateway, &inline.Multigateway)
+		mergeMultigatewaySpec(gateway, &inline.Multigateway)
 		mergePodPlacementSpec(&placement, inline.MultigatewayPlacement)
 
 		if inline.LocalTopoServer != nil {
@@ -126,4 +134,54 @@ func mergeCellConfig(
 	}
 
 	return gateway, placement, localTopo
+}
+
+// mergeMultigatewaySpec merges an override onto a base gateway spec: the shared
+// stateless fields and the buffer settings both merge per-field, so an override
+// that only sets one buffer knob keeps the rest from the base.
+func mergeMultigatewaySpec(
+	base *multigresv1alpha1.MultigatewaySpec,
+	override *multigresv1alpha1.MultigatewaySpec,
+) {
+	mergeStatelessSpec(&base.StatelessSpec, &override.StatelessSpec)
+
+	if override.Buffer == nil {
+		return
+	}
+	if base.Buffer == nil {
+		base.Buffer = &multigresv1alpha1.GatewayBufferConfig{}
+	}
+	// Copy so the resolved spec never shares pointers with the caller's
+	// (possibly informer-cached) object, matching the other merge helpers.
+	ovr := override.Buffer.DeepCopy()
+	if ovr.Enabled != nil {
+		base.Buffer.Enabled = ovr.Enabled
+	}
+	if ovr.Window != nil {
+		base.Buffer.Window = ovr.Window
+	}
+	if ovr.MaxFailoverDuration != nil {
+		base.Buffer.MaxFailoverDuration = ovr.MaxFailoverDuration
+	}
+	if ovr.MinTimeBetweenFailovers != nil {
+		base.Buffer.MinTimeBetweenFailovers = ovr.MinTimeBetweenFailovers
+	}
+	if ovr.Size != nil {
+		base.Buffer.Size = ovr.Size
+	}
+	if ovr.DrainConcurrency != nil {
+		base.Buffer.DrainConcurrency = ovr.DrainConcurrency
+	}
+}
+
+// defaultGatewayBuffer turns failover buffering on unless the user disabled it
+// explicitly. All other buffer fields stay unset so the multigateway binary's
+// own defaults apply.
+func defaultGatewayBuffer(spec *multigresv1alpha1.MultigatewaySpec) {
+	if spec.Buffer == nil {
+		spec.Buffer = &multigresv1alpha1.GatewayBufferConfig{}
+	}
+	if spec.Buffer.Enabled == nil {
+		spec.Buffer.Enabled = ptr.To(true)
+	}
 }

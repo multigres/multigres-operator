@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -11,6 +12,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,7 +29,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 	tests := map[string]struct {
 		config        *multigresv1alpha1.CellConfig
 		objects       []client.Object
-		wantGw        *multigresv1alpha1.StatelessSpec
+		wantGw        *multigresv1alpha1.MultigatewaySpec
 		wantPlacement *multigresv1alpha1.PodPlacementSpec
 		wantTopo      *multigresv1alpha1.LocalTopoServerSpec
 		wantErr       bool
@@ -37,10 +39,14 @@ func TestResolver_ResolveCell(t *testing.T) {
 				CellTemplate: "default",
 			},
 			objects: []client.Object{cellTpl},
-			wantGw: &multigresv1alpha1.StatelessSpec{
-				Replicas: ptr.To(int32(3)),
-				// Expect default resources to be applied
-				Resources: DefaultResourcesGateway(),
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas: ptr.To(int32(3)),
+					// Expect default resources to be applied
+					Resources: DefaultResourcesGateway(),
+				},
+				// Expect buffering defaulted to enabled
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
 			},
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
 				Etcd: &multigresv1alpha1.EtcdSpec{
@@ -61,17 +67,45 @@ func TestResolver_ResolveCell(t *testing.T) {
 		"Inline Overrides": {
 			config: &multigresv1alpha1.CellConfig{
 				Spec: &multigresv1alpha1.CellInlineSpec{
-					Multigateway: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(3)),
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(3)),
+						},
 					},
 				},
 			},
-			wantGw: &multigresv1alpha1.StatelessSpec{
-				Replicas: ptr.To(int32(3)),
-				// Expect default resources to be applied here too
-				Resources: DefaultResourcesGateway(),
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas: ptr.To(int32(3)),
+					// Expect default resources to be applied here too
+					Resources: DefaultResourcesGateway(),
+				},
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
 			},
 			wantTopo: nil, // Inline spec didn't provide one
+		},
+		"Inline Buffer Disabled": {
+			config: &multigresv1alpha1.CellConfig{
+				Spec: &multigresv1alpha1.CellInlineSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						Buffer: &multigresv1alpha1.GatewayBufferConfig{
+							Enabled: ptr.To(false),
+							Window:  &metav1.Duration{Duration: 5 * time.Second},
+						},
+					},
+				},
+			},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(1)),
+					Resources: DefaultResourcesGateway(),
+				},
+				// Explicit disable is preserved; defaulting must not flip it back.
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Enabled: ptr.To(false),
+					Window:  &metav1.Duration{Duration: 5 * time.Second},
+				},
+			},
 		},
 		"Inline External Topo": {
 			config: &multigresv1alpha1.CellConfig{ // Needs name for path generation
@@ -84,9 +118,12 @@ func TestResolver_ResolveCell(t *testing.T) {
 					},
 				},
 			},
-			wantGw: &multigresv1alpha1.StatelessSpec{
-				Replicas:  ptr.To(int32(1)),
-				Resources: DefaultResourcesGateway(),
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(1)),
+					Resources: DefaultResourcesGateway(),
+				},
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
 			},
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
 				External: &multigresv1alpha1.ExternalTopoServerSpec{
@@ -253,18 +290,20 @@ func TestMergeCellConfig(t *testing.T) {
 		tpl           *multigresv1alpha1.CellTemplate
 		overrides     *multigresv1alpha1.CellOverrides
 		inline        *multigresv1alpha1.CellInlineSpec
-		wantGw        *multigresv1alpha1.StatelessSpec
+		wantGw        *multigresv1alpha1.MultigatewaySpec
 		wantPlacement *multigresv1alpha1.PodPlacementSpec
 		wantTopo      *multigresv1alpha1.LocalTopoServerSpec
 	}{
 		"Full Merge With Resources and Affinity Overrides": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					Multigateway: &multigresv1alpha1.StatelessSpec{
-						Replicas:       ptr.To(int32(3)),
-						PodAnnotations: map[string]string{"foo": "bar"},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("100m")},
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas:       ptr.To(int32(3)),
+							PodAnnotations: map[string]string{"foo": "bar"},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("100m")},
+							},
 						},
 					},
 					LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
@@ -273,25 +312,29 @@ func TestMergeCellConfig(t *testing.T) {
 				},
 			},
 			overrides: &multigresv1alpha1.CellOverrides{
-				Multigateway: &multigresv1alpha1.StatelessSpec{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{
+						Replicas:       ptr.To(int32(2)),
+						PodAnnotations: map[string]string{"baz": "qux"},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("200m")},
+						},
+						Affinity: &corev1.Affinity{
+							NodeAffinity: &corev1.NodeAffinity{},
+						},
+					},
+				},
+			},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
 					Replicas:       ptr.To(int32(2)),
-					PodAnnotations: map[string]string{"baz": "qux"},
+					PodAnnotations: map[string]string{"foo": "bar", "baz": "qux"},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("200m")},
 					},
 					Affinity: &corev1.Affinity{
 						NodeAffinity: &corev1.NodeAffinity{},
 					},
-				},
-			},
-			wantGw: &multigresv1alpha1.StatelessSpec{
-				Replicas:       ptr.To(int32(2)),
-				PodAnnotations: map[string]string{"foo": "bar", "baz": "qux"},
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("200m")},
-				},
-				Affinity: &corev1.Affinity{
-					NodeAffinity: &corev1.NodeAffinity{},
 				},
 			},
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
@@ -301,74 +344,135 @@ func TestMergeCellConfig(t *testing.T) {
 		"Template Only (Nil Overrides)": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					},
 				},
 			},
 			overrides: nil,
-			wantGw:    &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+			},
 		},
 		"Preserve Base (Empty Override)": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					Multigateway: &multigresv1alpha1.StatelessSpec{
-						Replicas:       ptr.To(int32(3)),
-						PodAnnotations: map[string]string{"foo": "bar"},
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas:       ptr.To(int32(3)),
+							PodAnnotations: map[string]string{"foo": "bar"},
+						},
 					},
 				},
 			},
 			overrides: &multigresv1alpha1.CellOverrides{
-				Multigateway: &multigresv1alpha1.StatelessSpec{},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{},
+				},
 			},
-			wantGw: &multigresv1alpha1.StatelessSpec{
-				Replicas:       ptr.To(int32(3)),
-				PodAnnotations: map[string]string{"foo": "bar"},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:       ptr.To(int32(3)),
+					PodAnnotations: map[string]string{"foo": "bar"},
+				},
 			},
 		},
 		"Map Init (Nil Base)": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					},
 				},
 			},
 			overrides: &multigresv1alpha1.CellOverrides{
-				Multigateway: &multigresv1alpha1.StatelessSpec{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{
+						PodAnnotations: map[string]string{"a": "b"},
+						PodLabels:      map[string]string{"c": "d"},
+					},
+				},
+			},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:       ptr.To(int32(3)),
 					PodAnnotations: map[string]string{"a": "b"},
 					PodLabels:      map[string]string{"c": "d"},
 				},
-			},
-			wantGw: &multigresv1alpha1.StatelessSpec{
-				Replicas:       ptr.To(int32(3)),
-				PodAnnotations: map[string]string{"a": "b"},
-				PodLabels:      map[string]string{"c": "d"},
 			},
 		},
 		"Inline Priority": {
 			tpl: &multigresv1alpha1.CellTemplate{
 				Spec: multigresv1alpha1.CellTemplateSpec{
-					Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+					},
 				},
 			},
 			inline: &multigresv1alpha1.CellInlineSpec{
-				Multigateway: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(99))},
+				Multigateway: multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(99))},
+				},
 				LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
 					Etcd: &multigresv1alpha1.EtcdSpec{Image: "inline-etcd"},
 				},
 			},
-			wantGw: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(99))},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(99))},
+			},
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
 				Etcd: &multigresv1alpha1.EtcdSpec{Image: "inline-etcd"},
+			},
+		},
+		"Buffer Per-Field Merge": {
+			tpl: &multigresv1alpha1.CellTemplate{
+				Spec: multigresv1alpha1.CellTemplateSpec{
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						Buffer: &multigresv1alpha1.GatewayBufferConfig{
+							Window: &metav1.Duration{Duration: 20 * time.Second},
+							Size:   ptr.To(int32(500)),
+						},
+					},
+				},
+			},
+			overrides: &multigresv1alpha1.CellOverrides{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					Buffer: &multigresv1alpha1.GatewayBufferConfig{
+						Size: ptr.To(int32(2000)),
+					},
+				},
+			},
+			inline: &multigresv1alpha1.CellInlineSpec{
+				Multigateway: multigresv1alpha1.MultigatewaySpec{
+					Buffer: &multigresv1alpha1.GatewayBufferConfig{
+						Enabled: ptr.To(false),
+					},
+				},
+			},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{
+					Enabled: ptr.To(false),                                // from inline
+					Window:  &metav1.Duration{Duration: 20 * time.Second}, // from template
+					Size:    ptr.To(int32(2000)),                          // from overrides
+				},
 			},
 		},
 		"Nil Template (Override Only)": {
 			tpl: nil,
 			overrides: &multigresv1alpha1.CellOverrides{
-				Multigateway: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+				},
 			},
-			wantGw: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))},
+			},
 		},
 		"Nil Everything": {
-			tpl:      nil,
-			wantGw:   &multigresv1alpha1.StatelessSpec{},
+			tpl: nil,
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{},
+			},
 			wantTopo: nil,
 		},
 		"Placement Merge": {
@@ -398,7 +502,9 @@ func TestMergeCellConfig(t *testing.T) {
 					},
 				},
 			},
-			wantGw: &multigresv1alpha1.StatelessSpec{},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{},
+			},
 			wantPlacement: &multigresv1alpha1.PodPlacementSpec{
 				Tolerations: []corev1.Toleration{
 					{
@@ -428,7 +534,9 @@ func TestMergeCellConfig(t *testing.T) {
 			inline: &multigresv1alpha1.CellInlineSpec{
 				MultigatewayPlacement: &multigresv1alpha1.PodPlacementSpec{},
 			},
-			wantGw:        &multigresv1alpha1.StatelessSpec{},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{},
+			},
 			wantPlacement: &multigresv1alpha1.PodPlacementSpec{},
 		},
 	}

@@ -260,8 +260,10 @@ func setupFixtures(tb testing.TB) (
 	cellTpl := &multigresv1alpha1.CellTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "default-cell", Namespace: namespace},
 		Spec: multigresv1alpha1.CellTemplateSpec{
-			Multigateway: &multigresv1alpha1.StatelessSpec{
-				Replicas: ptr.To(int32(2)),
+			Multigateway: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas: ptr.To(int32(2)),
+				},
 			},
 		},
 	}
