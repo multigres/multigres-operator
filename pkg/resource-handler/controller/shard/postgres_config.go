@@ -20,14 +20,14 @@ import (
 // (reconcilePostgresConfig) share a single value instead of threading the
 // content, hashes, and error positionally through every signature.
 //
-// hash is the restart-hash (postmaster/internal settings) stamped on
+// restartHash covers the postmaster/internal settings, stamped on
 // AnnotationPostgresConfigHash and folded into the pod spec-hash; reloadHash is
 // the reload-safe subset stamped on AnnotationPostgresReloadHash and applied via
 // a reload instead of pod recreation.
 type renderedConfig struct {
-	content    string
-	hash       string
-	reloadHash string
+	content     string
+	restartHash string
+	reloadHash  string
 	// reloadSettings is the effective reload-safe name->value map (values
 	// unquoted to match pg_file_settings), passed to the multipooler ReloadConfig
 	// RPC as expected_settings so it reloads only against a file that already
@@ -56,7 +56,7 @@ func (r *ShardReconciler) renderEffectiveConfig(
 	rendered, split, err := renderPostgresConfig(shard, refContent)
 	return renderedConfig{
 		content:        rendered,
-		hash:           split.RestartHash,
+		restartHash:    split.RestartHash,
 		reloadHash:     split.ReloadHash,
 		reloadSettings: split.ReloadSettings,
 		err:            err,
@@ -87,7 +87,7 @@ func (r *ShardReconciler) reconcilePostgresConfig(
 	if shard.Annotations == nil {
 		shard.Annotations = make(map[string]string)
 	}
-	shard.Annotations[metadata.AnnotationPostgresConfigHash] = cfg.hash
+	shard.Annotations[metadata.AnnotationPostgresConfigHash] = cfg.restartHash
 	shard.Annotations[metadata.AnnotationPostgresReloadHash] = cfg.reloadHash
 	return nil
 }
@@ -121,10 +121,10 @@ func renderPostgresConfig(
 	if err != nil {
 		return "", postgresconfig.ConfigSplit{}, err
 	}
-	// SplitConfig also stamps the config-version marker into the returned config
+	// StampAndSplit also stamps the config-version marker into the returned config
 	// and reload settings, so a reload-only change (including a removal) is
 	// verifiable against the kubelet-synced ConfigMap.
-	rendered, split = postgresconfig.SplitConfig(rendered)
+	rendered, split = postgresconfig.StampAndSplit(rendered)
 	return rendered, split, nil
 }
 

@@ -33,7 +33,13 @@ func (r *ShardReconciler) updateStatus(
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 
 	// Update pools status
-	pools, err := r.updatePoolsStatus(ctx, shard, cellsSet, rendered.hash, rendered.reloadHash)
+	pools, err := r.updatePoolsStatus(
+		ctx,
+		shard,
+		cellsSet,
+		rendered.restartHash,
+		rendered.reloadHash,
+	)
 	if err != nil {
 		return err
 	}

@@ -5738,7 +5738,7 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme}
 
 		rc := r.renderEffectiveConfig(context.Background(), shard)
-		hash, err := rc.hash, rc.err
+		hash, err := rc.restartHash, rc.err
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -5748,7 +5748,7 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 
 		// Same content should produce the same hash.
 		rc2 := r.renderEffectiveConfig(context.Background(), shard)
-		hash2, err := rc2.hash, rc2.err
+		hash2, err := rc2.restartHash, rc2.err
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -5790,12 +5790,12 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 		}
 
 		rc1 := r.renderEffectiveConfig(context.Background(), shard1)
-		h1, err := rc1.hash, rc1.err
+		h1, err := rc1.restartHash, rc1.err
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		rc2 := r.renderEffectiveConfig(context.Background(), shard2)
-		h2, err := rc2.hash, rc2.err
+		h2, err := rc2.restartHash, rc2.err
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

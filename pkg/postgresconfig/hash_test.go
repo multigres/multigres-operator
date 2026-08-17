@@ -12,10 +12,10 @@ max_wal_size = '1GB'			# sighup
 `
 
 func TestSplitHashesReloadOnlyChangeLeavesRestartHash(t *testing.T) {
-	_, base := SplitConfig(baseConf)
+	_, base := StampAndSplit(baseConf)
 
 	// Change only work_mem (a reload-safe/user param).
-	_, changed := SplitConfig(`# rendered by test
+	_, changed := StampAndSplit(`# rendered by test
 shared_buffers = '128MB'		# (change requires restart)
 work_mem = '8MB'
 max_wal_size = '1GB'			# sighup
@@ -34,10 +34,10 @@ max_wal_size = '1GB'			# sighup
 }
 
 func TestSplitHashesRestartChangeMovesRestartHash(t *testing.T) {
-	_, base := SplitConfig(baseConf)
+	_, base := StampAndSplit(baseConf)
 
 	// Change shared_buffers (a postmaster/restart param).
-	_, changed := SplitConfig(`# rendered by test
+	_, changed := StampAndSplit(`# rendered by test
 shared_buffers = '256MB'		# (change requires restart)
 work_mem = '4MB'
 max_wal_size = '1GB'			# sighup
@@ -59,11 +59,11 @@ max_wal_size = '1GB'			# sighup
 }
 
 func TestSplitHashesCosmeticEditsMoveNeither(t *testing.T) {
-	_, base := SplitConfig(baseConf)
+	_, base := StampAndSplit(baseConf)
 
 	// Reordered, differently commented, extra blank lines, different inline
 	// comment text — same effective values.
-	_, cosmetic := SplitConfig(`
+	_, cosmetic := StampAndSplit(`
 # a different header
 
 max_wal_size = '1GB'   # reload-safe, different comment
@@ -91,10 +91,10 @@ shared_buffers = '128MB'
 func TestSplitHashesLastWins(t *testing.T) {
 	// A later assignment is the effective value; hashing a config whose final
 	// work_mem is 8MB must equal one that sets it to 8MB once.
-	_, dup := SplitConfig(`work_mem = '4MB'
+	_, dup := StampAndSplit(`work_mem = '4MB'
 work_mem = '8MB'
 `)
-	_, single := SplitConfig(`work_mem = '8MB'
+	_, single := StampAndSplit(`work_mem = '8MB'
 `)
 	if dup.ReloadHash != single.ReloadHash {
 		t.Errorf("last-wins not honored: dup=%s single=%s", dup.ReloadHash, single.ReloadHash)
@@ -129,7 +129,7 @@ max_wal_size = 1024MB			# sighup → reload, already unquoted
 log_line_prefix = '%h %m [%p] '		# superuser → reload, quoted with special chars
 cron.database_name = 'postgres'		# namespaced → restart, excluded
 `
-	_, split := SplitConfig(rendered)
+	_, split := StampAndSplit(rendered)
 	got := split.ReloadSettings
 
 	if got["work_mem"] != "32MB" {

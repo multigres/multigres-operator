@@ -2,7 +2,7 @@ package postgresconfig
 
 import "fmt"
 
-// ReloadMarkerGUC is a synthetic placeholder GUC SplitConfig stamps into every
+// ReloadMarkerGUC is a synthetic placeholder GUC StampAndSplit stamps into every
 // rendered postgresql.conf. Its value is the reload-hash, so it moves on ANY
 // reload-safe change — crucially including one that only REMOVES a setting.
 //
@@ -27,7 +27,7 @@ import "fmt"
 const ReloadMarkerGUC = "multigres.config_reload_marker"
 
 // reloadMarkerLine renders the marker's postgresql.conf line for a given
-// reload-hash. SplitConfig appends it to every rendered config.
+// reload-hash. StampAndSplit appends it to every rendered config.
 func reloadMarkerLine(reloadHash string) string {
 	return fmt.Sprintf(
 		"\n# Operator-managed config-version marker; do not edit.\n%s = '%s'\n",

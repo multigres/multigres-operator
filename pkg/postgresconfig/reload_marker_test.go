@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-func TestSplitConfigStampsMarker(t *testing.T) {
+func TestStampAndSplitStampsMarker(t *testing.T) {
 	const conf = `work_mem = '4MB'
 max_wal_size = '1GB'
 `
-	rendered, split := SplitConfig(conf)
+	rendered, split := StampAndSplit(conf)
 
 	// The marker line is appended to the returned file with value == reload-hash.
 	wantLine := ReloadMarkerGUC + " = '" + split.ReloadHash + "'"
@@ -39,10 +39,10 @@ max_wal_size = '1GB'
 	}
 }
 
-func TestSplitConfigMarkerOnAllRestartConfig(t *testing.T) {
+func TestStampAndSplitMarkerOnAllRestartConfig(t *testing.T) {
 	// A config with only restart-only settings still gets a marker, so even an
 	// all-restart render carries a version marker in its reload settings.
-	_, split := SplitConfig("shared_buffers = '128MB'\n")
+	_, split := StampAndSplit("shared_buffers = '128MB'\n")
 	if split.ReloadSettings[ReloadMarkerGUC] != split.ReloadHash {
 		t.Errorf("marker not stamped for an all-restart config: %v", split.ReloadSettings)
 	}
@@ -64,8 +64,8 @@ random_page_cost = '1.1'
 	const withoutParam = `work_mem = '4MB'
 `
 
-	_, before := SplitConfig(withParam)
-	_, after := SplitConfig(withoutParam)
+	_, before := StampAndSplit(withParam)
+	_, after := StampAndSplit(withoutParam)
 
 	// Neither config has a restart-only setting, so the restart-hash is unchanged
 	// (this stays a reload, not a pod recreation).

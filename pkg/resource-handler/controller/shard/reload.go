@@ -77,7 +77,13 @@ func (r *ShardReconciler) reconcileReloadState(
 	// annotation, which a shard re-fetch in the data-plane path may have cleared —
 	// an empty desiredRestart would wrongly mark every pod restart-pending and
 	// suppress all reloads).
-	desiredRestart := rendered.hash
+	desiredRestart := rendered.restartHash
+	// ExpectedSettings carries every reload-safe value, not just the config-version
+	// marker. The marker alone would prove the file synced (ConfigMap mounts are
+	// atomic), but sending the full set is what lets the pooler flag a parameter we
+	// misclassified as reload-safe that PostgreSQL actually needs a restart for —
+	// surfaced below as needs_restart / ConfigReloadNeedsRestart. Do not slim this
+	// to marker-only without also dropping that safety net.
 	req := &multipoolermanagerdatapb.ReloadConfigRequest{
 		ExpectedSettings: rendered.reloadSettings,
 	}

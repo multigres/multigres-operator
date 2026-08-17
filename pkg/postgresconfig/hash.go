@@ -24,7 +24,7 @@ type ConfigSplit struct {
 	ReloadSettings map[string]string
 }
 
-// SplitConfig parses a rendered postgresql.conf into its effective settings (last
+// StampAndSplit parses a rendered postgresql.conf into its effective settings (last
 // assignment wins, matching how PostgreSQL applies the file) and partitions them
 // by RequiresRestart in a single pass, returning both partition hashes and the
 // reload-safe settings map — so the restart/reload classification and the parse
@@ -36,7 +36,7 @@ type ConfigSplit struct {
 // pg_file_settings carries it). This is what makes a reload verifiable even when a
 // change only REMOVES a reload-safe setting. Because the marker is stamped AFTER
 // the reload-hash is computed, it never feeds back into any hash: the hashes and
-// the pod annotations stay a pure function of the real settings. SplitConfig
+// the pod annotations stay a pure function of the real settings. StampAndSplit
 // therefore returns the marker-stamped config alongside the split — feed that
 // returned string into the ConfigMap.
 //
@@ -52,7 +52,7 @@ type ConfigSplit struct {
 // expected_settings directly from the (already-unquoted) inline spec.postgresConfig
 // map instead — smaller payload, no round-trip; correct only once the ref layer no
 // longer contributes reload-safe settings the inline map would omit.
-func SplitConfig(rendered string) (string, ConfigSplit) {
+func StampAndSplit(rendered string) (string, ConfigSplit) {
 	settings := parseEffectiveConfig(rendered)
 
 	restart := make(map[string]string, len(settings))

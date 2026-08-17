@@ -176,16 +176,23 @@ reloading a parameter that actually needed a restart would silently fail to appl
 
 **Reloads are verified, not timed.** A reload only helps once the pod's mounted ConfigMap has
 actually caught up to the new file — and the kubelet syncs a mounted ConfigMap on its own schedule
-(up to about a minute after the operator writes it). Rather than guess that lag, the operator tells
-the pooler exactly which parameter values it expects; the pooler reads the file it would re-read and
-reloads **only if** it already carries every one of them, otherwise reporting a mismatch. The
-operator retries until the file has synced, so a pod is marked current only once the running server
-provably carries the change. Each confirmed reload emits a `ConfigReloaded` event.
+(up to about a minute after the operator writes it). Rather than guess that lag, the operator stamps
+a **config-version marker** into the rendered file — a synthetic reload-safe parameter whose value is
+a hash of all the reload-safe settings — and passes the pooler the exact values it expects, marker
+included. The pooler reads the file it would re-read and reloads **only if** it already carries every
+one of them, otherwise reporting a mismatch. Because the marker's value moves on **any** reload-safe
+change — including one that only **removes** a setting — a stale, not-yet-synced mount fails the check
+and the operator retries until the file has synced. A pod is marked current only once the running
+server provably carries the change. Each confirmed reload emits a `ConfigReloaded` event.
 
-If a parameter the operator classified reload-safe turns out to require a restart on the running
-server, the pooler reports it: the operator emits a `ConfigReloadNeedsRestart` warning event and
-leaves the pod not-current (the real fix is to correct the classification) rather than falsely
-reporting the change applied.
+**Why send every value, not just the marker?** The marker alone is enough to know the _file_ has
+synced: ConfigMap mounts update atomically, so a file carrying the current marker carries every
+current reload-safe value with it. The operator keeps sending the full set of expected values anyway,
+because that is what lets the pooler catch a parameter the operator **misclassified** as reload-safe
+that PostgreSQL actually needs a restart to apply. When the file matches but PostgreSQL reports the
+setting cannot be reloaded, the pooler flags it: the operator emits a `ConfigReloadNeedsRestart`
+warning event and leaves the pod not-current (the real fix is to correct the classification) rather
+than falsely reporting the change applied.
 
 ## Status
 

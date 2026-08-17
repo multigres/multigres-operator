@@ -64,7 +64,7 @@ func reloadTestShard() *multigresv1alpha1.Shard {
 // the RPC as expected_settings.
 func reloadTestRendered() renderedConfig {
 	return renderedConfig{
-		hash:           reloadTestRestart,
+		restartHash:    reloadTestRestart,
 		reloadHash:     reloadTestDesired,
 		reloadSettings: map[string]string{"work_mem": "32MB"},
 	}

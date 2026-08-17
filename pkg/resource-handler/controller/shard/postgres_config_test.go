@@ -123,8 +123,8 @@ func TestRenderEffectiveConfig(t *testing.T) {
 		if rc.err != nil {
 			t.Fatalf("unexpected error: %v", rc.err)
 		}
-		if len(rc.hash) != 64 {
-			t.Errorf("hash length = %d, want 64", len(rc.hash))
+		if len(rc.restartHash) != 64 {
+			t.Errorf("hash length = %d, want 64", len(rc.restartHash))
 		}
 	})
 
@@ -183,8 +183,12 @@ func TestRenderEffectiveConfig_ReloadMarker(t *testing.T) {
 	// Removing the reload-safe param moves the reload-hash (hence the marker) but
 	// leaves the restart-hash untouched — still a reload, not a pod recreation.
 	rcRemoved := render(nil)
-	if rc.hash != rcRemoved.hash {
-		t.Errorf("restart-hash moved on a reload-only removal: %s -> %s", rc.hash, rcRemoved.hash)
+	if rc.restartHash != rcRemoved.restartHash {
+		t.Errorf(
+			"restart-hash moved on a reload-only removal: %s -> %s",
+			rc.restartHash,
+			rcRemoved.restartHash,
+		)
 	}
 	if rc.reloadHash == rcRemoved.reloadHash {
 		t.Fatalf(
