@@ -62,7 +62,7 @@ For every shard, the operator renders `postgresql.conf` from these layers, each 
 3. the deprecated `postgresConfigRef` content, if set,
 4. the inline `spec.postgresConfig` map — highest precedence.
 
-The result is written to an operator-owned ConfigMap (`<shard>-postgres-config`) mounted into every pool pod; pgctld reads it via the `POSTGRES_INITDB_EXTRA_CONF` env var. Because rendering is always on, every shard has this ConfigMap. pgctld reads the file only when PostgreSQL **starts**, so a config change takes effect by rolling the pods (see [Rolling updates](#rolling-updates)).
+The result is written to an operator-owned ConfigMap (`<shard>-postgres-config`) mounted into every pool pod; pgctld reads it via the `POSTGRES_INITDB_EXTRA_CONF` env var. Because rendering is always on, every shard has this ConfigMap. How a change reaches the running server depends on which parameters you changed: reload-safe parameters are applied in place with a reload (SIGHUP), while restart-only parameters roll the pods — see [Applying a change: reload vs. restart](#applying-a-change-reload-vs-restart).
 
 ## Resource-derived sizing
 
@@ -144,12 +144,48 @@ and its replicas must have compatible settings — hot standby requires several 
 `max_connections`, `max_worker_processes`) on a replica to be at least the primary's, so a uniform
 per-shard config keeps failover predictable. Different shards are independent and can differ.
 
-## Rolling updates
+## Applying a change: reload vs. restart
 
-Changing the effective config triggers a rolling update of the shard's pods. The operator hashes the
-rendered `postgresql.conf` each reconcile and stores it as a pod annotation; when the hash changes,
-the pod's spec-hash changes and the operator recreates pods one at a time through the drain state
-machine (replicas first, primary last).
+When the effective config changes, the operator applies it the least-disruptive way the changed
+parameters allow. PostgreSQL parameters fall into two classes, and the operator acts on whichever
+class actually changed:
+
+- **Reload-safe** parameters — PostgreSQL's `sighup`, `user`, `superuser`, and `backend` contexts
+  (e.g. `work_mem`, `log_min_duration_statement`, `random_page_cost`) — take effect on a running
+  server via a configuration reload (SIGHUP). The operator applies these **in place: no pod
+  recreation, no dropped connections.**
+- **Restart-only** parameters — PostgreSQL's `postmaster` and `internal` contexts (e.g.
+  `shared_buffers`, `max_connections`, `wal_level`) — only take effect when PostgreSQL starts, so
+  the operator recreates the shard's pods one at a time through the drain state machine (replicas
+  first, primary last).
+
+The classification is **static and lives in the operator** — it is not reported by the running
+server. It is derived from each parameter's context in PostgreSQL 17's `guc_tables.c` (the same
+catalog bundled for validation). Unknown names and namespaced extension parameters (e.g. `cron.*`)
+are conservatively treated as restart-only: needlessly restarting is disruptive but correct, whereas
+reloading a parameter that actually needed a restart would silently fail to apply it.
+
+**Which path runs.** The operator hashes the two classes separately and stamps both on each pool pod:
+
+- If your change touches **any** restart-only parameter, the pods are recreated (a rolling update).
+  The restart-only hash is folded into the pod's spec-hash, so a change to it produces a new pod
+  spec. The recreated pods start from the full current config, so any reload-safe parameters changed
+  in the same edit come along for free — no separate reload.
+- If your change is confined to **reload-safe** parameters, the spec-hash is unchanged, so the pods
+  are left in place and reloaded instead. Postgres keeps running and connections are not dropped.
+
+**Reloads are verified, not timed.** A reload only helps once the pod's mounted ConfigMap has
+actually caught up to the new file — and the kubelet syncs a mounted ConfigMap on its own schedule
+(up to about a minute after the operator writes it). Rather than guess that lag, the operator tells
+the pooler exactly which parameter values it expects; the pooler reads the file it would re-read and
+reloads **only if** it already carries every one of them, otherwise reporting a mismatch. The
+operator retries until the file has synced, so a pod is marked current only once the running server
+provably carries the change. Each confirmed reload emits a `ConfigReloaded` event.
+
+If a parameter the operator classified reload-safe turns out to require a restart on the running
+server, the pooler reports it: the operator emits a `ConfigReloadNeedsRestart` warning event and
+leaves the pod not-current (the real fix is to correct the classification) rather than falsely
+reporting the change applied.
 
 ## Status
 
@@ -160,11 +196,14 @@ config change has finished rolling out without inspecting pods:
 kubectl get shard <shard> -o jsonpath='{.status.postgresConfig}'
 ```
 
-- `inProgress` — `true` while the desired rendered config has not yet landed on every pool pod
-  (a config rollout is under way). This signal is **content-based**: the operator compares the
-  hash of the config effective on the pods against the hash of the desired render, so it reflects
-  any config change — a spec edit, a `postgresConfigRef` ConfigMap edit, or a new operator baseline
-  on upgrade — none of which are captured by the shard generation alone.
+- `inProgress` — `true` while the desired rendered config has not yet fully landed on every pool
+  pod (a rolling restart or an in-place reload is under way). This signal is **content-based**: the
+  operator compares the config effective on each pod against the desired render across **both**
+  classes — the restart-only hash (folded into the pod's spec) and the reload-hash (stamped only
+  when a reload is confirmed applied) — so it stays `true` through an in-place reload just as it does
+  through a rolling restart. It reflects any config change — a spec edit, a `postgresConfigRef`
+  ConfigMap edit, or a new operator baseline on upgrade — none of which are captured by the shard
+  generation alone.
 - `lastAppliedAt` — when the rendered config last settled onto every pool pod. It is (re)stamped
   only on the transition into "settled", so it stays stable while nothing is changing and advances
   for any change.
