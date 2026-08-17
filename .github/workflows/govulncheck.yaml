@@ -5,6 +5,7 @@ on:
     - cron: '0 6 * * *' # daily at 06:00 UTC
   pull_request:
     paths:
+      - '.github/workflows/govulncheck.yaml'
       - 'go.mod'
       - 'go.sum'
   workflow_dispatch: {}
@@ -26,20 +27,60 @@ jobs:
           go-version-file: ./go.mod
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
       - name: Run govulncheck (SARIF)
         id: scan
-        continue-on-error: true
-        run: govulncheck -format sarif ./... > govulncheck.sarif
+        shell: bash
+        run: |
+          status=0
+          govulncheck -format sarif ./... \
+            > govulncheck.sarif \
+            2> govulncheck.stderr || status=$?
+
+          sarif_valid=false
+          result=error
+          if jq -e '
+            .version == "2.1.0" and
+            (.runs | type == "array") and
+            ([.runs[].results? // []] | all(type == "array"))
+          ' govulncheck.sarif > /dev/null; then
+            sarif_valid=true
+            if jq -e '
+              [.runs[].results[]? | select(.level == "error")] |
+              length > 0
+            ' govulncheck.sarif > /dev/null; then
+              result=vulnerabilities
+            elif [[ "$status" -eq 0 ]]; then
+              result=clean
+            fi
+          fi
+
+          {
+            echo "exit_code=$status"
+            echo "sarif_valid=$sarif_valid"
+            echo "result=$result"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload SARIF file
+        if: ${{ steps.scan.outputs.sarif_valid == 'true' }}
         uses: github/codeql-action/upload-sarif@38697555549f1db7851b81482ff19f1fa5c4fedc # v4.34.1
         with:
           sarif_file: govulncheck.sarif
 
-      - name: Run govulncheck (text)
-        if: ${{ steps.scan.outcome == 'failure' }}
+      - name: Report govulncheck result
+        if: ${{ always() && steps.scan.outputs.result != 'clean' }}
+        env:
+          RESULT: ${{ steps.scan.outputs.result }}
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        shell: bash
         run: |
-          echo "::error::govulncheck found vulnerabilities in Go dependencies"
-          govulncheck ./...
+          if [[ "$RESULT" == "vulnerabilities" ]]; then
+            echo "::error::govulncheck found reachable vulnerabilities in Go dependencies"
+          else
+            echo "::error::govulncheck could not complete the analysis (exit code ${EXIT_CODE:-unknown})"
+            if [[ -s govulncheck.stderr ]]; then
+              cat govulncheck.stderr >&2
+            fi
+          fi
+          exit 1
