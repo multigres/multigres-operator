@@ -158,6 +158,21 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile the postgres_exporter custom queries ConfigMap (mounted by the
+	// exporter sidecar in every pool pod).
+	if err := r.reconcilePostgresExporterQueriesConfigMap(ctx, shard); err != nil {
+		monitoring.RecordSpanError(span, err)
+		logger.Error(err, "Failed to reconcile postgres_exporter queries ConfigMap")
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"ConfigError",
+			"Failed to generate postgres_exporter queries: %v",
+			err,
+		)
+		return ctrl.Result{}, err
+	}
+
 	// Reconcile postgres password Secret (required by pgctld and multipooler)
 	if err := r.reconcilePostgresPasswordSecret(ctx, shard); err != nil {
 		monitoring.RecordSpanError(span, err)

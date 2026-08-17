@@ -1,0 +1,108 @@
+# Custom postgres_exporter queries served via --extend.query-path.
+#
+# These extend the exporter's default collectors with instance-level metrics
+# commonly needed by monitoring dashboards: database disk size, WAL disk size,
+# physical replication lag, total backends, per-role connection breakdown, and
+# the configured max_connections cap. Metric names are chosen to not collide
+# with the default collectors.
+
+# Emitted as pg_database_size_mb.
+pg_database:
+  master: true
+  cache_seconds: 60
+  query: "SELECT SUM(pg_database_size(pg_database.datname)) / (1024 * 1024) as size_mb FROM pg_database"
+  metrics:
+    - size_mb:
+        usage: "GAUGE"
+        description: "Disk space used by the database"
+
+# Emitted as pg_wal_size_mb.
+pg_wal:
+  master: true
+  cache_seconds: 60
+  query: "SELECT SUM(size)/(1024 * 1024) as size_mb FROM pg_ls_waldir();"
+  metrics:
+    - size_mb:
+        usage: "GAUGE"
+        description: "Disk space used by WAL files"
+
+# Emitted as pg_stat_database_num_backends. The default pg_stat_database
+# collector emits per-database pg_stat_database_numbackends, this is the
+# cluster-wide sum.
+pg_stat_database:
+  master: true
+  cache_seconds: 60
+  query: "SELECT sum(numbackends) as num_backends FROM pg_stat_database"
+  metrics:
+    - num_backends:
+        usage: "GAUGE"
+        description: "The number of active backends"
+
+# For checking replication lag (physical_replication_lag_seconds) we first
+# check if the replica is connected to its primary and if the last WAL
+# received is equivalent to the last WAL replayed, if so return 0, otherwise
+# calculate replication lag as per usual.
+#
+# Additionally, we always return 0 lag if pg is not in recovery. Even though
+# pg_last_xact_replay_timestamp() is supposed to be null when we're not in
+# recovery (per the docs), in practice this does not seem to be the case,
+# resulting in non-zero results for primaries (even when there are no
+# replicas present).
+physical_replication_lag:
+  master: true
+  cache_seconds: 60
+  query: |
+    select case
+               when (select count(*) from pg_stat_wal_receiver) = 1 and pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()
+                   then 0
+               when (not pg_is_in_recovery()) then 0
+               else coalesce(extract(epoch from now() - pg_last_xact_replay_timestamp()), 0)
+               end                                     as physical_replication_lag_seconds,
+           case
+               when pg_is_in_recovery()
+                   then case when pg_is_wal_replay_paused() = false then 0 else 1 end
+               else 0
+               end                                     as is_wal_replay_paused,
+           (select count(*) from pg_stat_wal_receiver) as is_connected_to_primary
+  metrics:
+    - physical_replication_lag_seconds:
+        usage: "GAUGE"
+        description: "Physical replication lag in seconds"
+    - is_wal_replay_paused:
+        usage: "GAUGE"
+        description: "Check if WAL replay has been paused"
+    - is_connected_to_primary:
+        usage: "GAUGE"
+        description: "Monitor connection to the primary database"
+
+# Emitted as connection_stats_connection_count{username=...}: client backends
+# grouped by role, so dashboards can break connections down per user.
+connection_stats:
+  master: true
+  cache_seconds: 60
+  query: |
+    SELECT usename AS username, COUNT(*) AS connection_count
+    FROM pg_stat_activity
+    WHERE backend_type = 'client backend'
+    GROUP BY usename
+  metrics:
+    - username:
+        usage: "LABEL"
+        description: "User making the connection"
+    - connection_count:
+        usage: "GAUGE"
+        description: "Number of active connections"
+
+# Emitted as max_connections_connection_count: Postgres's own configured cap,
+# distinct from the pooler-layer mg_pooler_config_max_server_connections.
+max_connections:
+  master: true
+  cache_seconds: 60
+  query: |
+    SELECT setting as connection_count
+    FROM pg_settings
+    WHERE name = 'max_connections';
+  metrics:
+    - connection_count:
+        usage: "GAUGE"
+        description: "Maximum allowed connections"

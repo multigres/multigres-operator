@@ -163,6 +163,77 @@ func TestBuildPostgresConfigMap(t *testing.T) {
 	})
 }
 
+func TestBuildPostgresExporterQueriesConfigMap(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			UID:       "test-uid",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+	}
+
+	t.Run("stores embedded queries under the queries key with an owner ref", func(t *testing.T) {
+		cm, err := BuildPostgresExporterQueriesConfigMap(shard, scheme)
+		if err != nil {
+			t.Fatalf("BuildPostgresExporterQueriesConfigMap() error = %v", err)
+		}
+		if cm.Name != PostgresExporterQueriesConfigMapName(shard.Name) {
+			t.Errorf(
+				"name = %q, want %q",
+				cm.Name,
+				PostgresExporterQueriesConfigMapName(shard.Name),
+			)
+		}
+		if cm.Namespace != shard.Namespace {
+			t.Errorf("namespace = %q, want %q", cm.Namespace, shard.Namespace)
+		}
+		if got := cm.Data[PostgresExporterQueriesConfigMapKey]; got != DefaultPostgresExporterQueries {
+			t.Errorf(
+				"Data[%q] doesn't match DefaultPostgresExporterQueries",
+				PostgresExporterQueriesConfigMapKey,
+			)
+		}
+		if len(cm.OwnerReferences) != 1 ||
+			cm.OwnerReferences[0].Name != shard.Name ||
+			cm.OwnerReferences[0].Kind != "Shard" {
+			t.Errorf("owner reference = %+v, want Shard/%s", cm.OwnerReferences, shard.Name)
+		}
+		if !ptr.Deref(cm.OwnerReferences[0].Controller, false) {
+			t.Error("expected owner reference to be controller")
+		}
+	})
+
+	t.Run("returns error on invalid scheme", func(t *testing.T) {
+		if _, err := BuildPostgresExporterQueriesConfigMap(shard, runtime.NewScheme()); err == nil {
+			t.Error("expected error with empty scheme")
+		}
+	})
+}
+
+func TestDefaultPostgresExporterQueriesEmbedded(t *testing.T) {
+	if DefaultPostgresExporterQueries == "" {
+		t.Fatal("DefaultPostgresExporterQueries is empty - go:embed may have failed")
+	}
+
+	// Each top-level key becomes the exporter's metric-name prefix.
+	for _, queryName := range []string{
+		"pg_database:",
+		"pg_wal:",
+		"pg_stat_database:",
+		"physical_replication_lag:",
+		"connection_stats:",
+		"max_connections:",
+	} {
+		if !strings.Contains(DefaultPostgresExporterQueries, "\n"+queryName) {
+			t.Errorf("DefaultPostgresExporterQueries missing query block %q", queryName)
+		}
+	}
+}
+
 func TestDefaultPgHbaTemplateEmbedded(t *testing.T) {
 	// Verify the embedded template is not empty
 	if DefaultPgHbaTemplate == "" {

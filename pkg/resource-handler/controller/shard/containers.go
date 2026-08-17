@@ -120,6 +120,22 @@ const (
 	// ShardTLSCAFile is the mounted CA certificate path from the generated Secret.
 	ShardTLSCAFile = ShardTLSMountPath + "/ca.crt"
 
+	// PostgresExporterQueriesVolumeName is the volume for the custom
+	// postgres_exporter queries ConfigMap.
+	PostgresExporterQueriesVolumeName = "postgres-exporter-queries"
+
+	// PostgresExporterQueriesMountPath is where the custom queries file is
+	// mounted in the postgres-exporter container.
+	PostgresExporterQueriesMountPath = "/etc/postgres-exporter"
+
+	// PostgresExporterQueriesConfigMapKey is the key under which the operator
+	// stores the custom queries in its per-shard ConfigMap.
+	PostgresExporterQueriesConfigMapKey = "queries.yml"
+
+	// PostgresExporterQueriesFilePath is the full path passed to the exporter
+	// via --extend.query-path.
+	PostgresExporterQueriesFilePath = PostgresExporterQueriesMountPath + "/" + PostgresExporterQueriesConfigMapKey
+
 	// DefaultMultipoolerConnPoolGlobalCapacity keeps multipooler below pgctld's
 	// small default max_connections so admin and internal connections have headroom.
 	DefaultMultipoolerConnPoolGlobalCapacity = 40
@@ -139,6 +155,13 @@ func PgHbaConfigMapName(shardName string) string {
 // shard-level and not per-pool).
 func PostgresConfigMapName(shardName string) string {
 	return shardName + "-postgres-config"
+}
+
+// PostgresExporterQueriesConfigMapName returns the per-shard ConfigMap name
+// for the custom postgres_exporter queries. Shared across all pools in the
+// shard and mounted into every pool pod's exporter sidecar.
+func PostgresExporterQueriesConfigMapName(shardName string) string {
+	return shardName + "-exporter-queries"
 }
 
 func postgresPasswordSecretRef(shard *multigresv1alpha1.Shard) (name, key string) {
@@ -384,12 +407,13 @@ func buildPostgresExporterContainer(
 		Image: multigresv1alpha1.DefaultPostgresExporterImage,
 		Args: []string{
 			"--web.listen-address=:9187",
+			"--extend.query-path=" + PostgresExporterQueriesFilePath,
 		},
 		Ports: buildPostgresExporterContainerPorts(),
 		Env: []corev1.EnvVar{
 			{
 				Name:  "DATA_SOURCE_URI",
-				Value: "localhost:5432/postgres?sslmode=disable",
+				Value: "localhost:5432/postgres?sslmode=disable&connect_timeout=5&options=-c%20statement_timeout%3D8s",
 			},
 			{
 				Name:  "DATA_SOURCE_USER",
@@ -406,6 +430,11 @@ func buildPostgresExporterContainer(
 		),
 		VolumeMounts: []corev1.VolumeMount{
 			postgresPasswordVolumeMount(),
+			{
+				Name:      PostgresExporterQueriesVolumeName,
+				MountPath: PostgresExporterQueriesMountPath,
+				ReadOnly:  true,
+			},
 		},
 	}
 }
@@ -701,6 +730,21 @@ func buildPostgresConfigVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 	}
 }
 
+// buildPostgresExporterQueriesVolume projects the operator-owned custom
+// queries ConfigMap into the pod for the postgres-exporter sidecar.
+func buildPostgresExporterQueriesVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
+	return corev1.Volume{
+		Name: PostgresExporterQueriesVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: PostgresExporterQueriesConfigMapName(shard.Name),
+				},
+			},
+		},
+	}
+}
+
 func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.Volume {
 	volumes := []corev1.Volume{
 		buildSharedBackupVolume(shard, cellName),
@@ -708,6 +752,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		buildPgHbaVolume(shard.Name),
 		buildPostgresPasswordVolume(shard),
 		buildPostgresConfigVolume(shard),
+		buildPostgresExporterQueriesVolume(shard),
 	}
 	if certVol := buildPgBackRestCertVolume(shard); certVol != nil {
 		volumes = append(volumes, *certVol)

@@ -41,6 +41,33 @@ func (r *ShardReconciler) reconcilePgHbaConfigMap(
 	return nil
 }
 
+// reconcilePostgresExporterQueriesConfigMap creates or updates the custom
+// postgres_exporter queries ConfigMap for a shard. Shared across all pools and
+// mounted into every pool pod's exporter sidecar via --extend.query-path.
+func (r *ShardReconciler) reconcilePostgresExporterQueriesConfigMap(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) error {
+	desired, err := BuildPostgresExporterQueriesConfigMap(shard, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to build postgres_exporter queries ConfigMap: %w", err)
+	}
+
+	// Server Side Apply
+	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("ConfigMap"))
+	if err := r.Patch(
+		ctx,
+		desired,
+		client.Apply,
+		client.ForceOwnership,
+		client.FieldOwner("multigres-operator"),
+	); err != nil {
+		return fmt.Errorf("failed to apply postgres_exporter queries ConfigMap: %w", err)
+	}
+
+	return nil
+}
+
 // reconcilePostgresPasswordSecret validates the referenced postgres password Secret.
 func (r *ShardReconciler) reconcilePostgresPasswordSecret(
 	ctx context.Context,

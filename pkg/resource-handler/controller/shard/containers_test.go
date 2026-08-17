@@ -394,12 +394,13 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 		Image: multigresv1alpha1.DefaultPostgresExporterImage,
 		Args: []string{
 			"--web.listen-address=:9187",
+			"--extend.query-path=" + PostgresExporterQueriesFilePath,
 		},
 		Ports: buildPostgresExporterContainerPorts(),
 		Env: []corev1.EnvVar{
 			{
 				Name:  "DATA_SOURCE_URI",
-				Value: "localhost:5432/postgres?sslmode=disable",
+				Value: "localhost:5432/postgres?sslmode=disable&connect_timeout=5&options=-c%20statement_timeout%3D8s",
 			},
 			{
 				Name:  "DATA_SOURCE_USER",
@@ -419,6 +420,11 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 			{
 				Name:      PostgresPasswordVolumeName,
 				MountPath: PostgresPasswordMountPath,
+				ReadOnly:  true,
+			},
+			{
+				Name:      PostgresExporterQueriesVolumeName,
+				MountPath: PostgresExporterQueriesMountPath,
 				ReadOnly:  true,
 			},
 		},

@@ -19,6 +19,15 @@ import (
 //go:embed templates/pg_hba_template.conf
 var DefaultPgHbaTemplate string
 
+// DefaultPostgresExporterQueries is the custom queries file served by the
+// postgres_exporter sidecar via --extend.query-path, alongside the default
+// collectors. It adds instance-level metrics commonly needed by monitoring
+// dashboards (database/WAL size, replication lag, backends, per-role
+// connections, max_connections).
+//
+//go:embed templates/postgres_exporter_queries.yml
+var DefaultPostgresExporterQueries string
+
 // BuildPgHbaConfigMap creates a ConfigMap containing the pg_hba.conf template.
 // This ConfigMap is shared across all pools in a shard and mounted into postgres containers.
 func BuildPgHbaConfigMap(
@@ -40,6 +49,36 @@ func BuildPgHbaConfigMap(
 		},
 		Data: map[string]string{
 			"pg_hba_template.conf": template,
+		},
+	}
+
+	if err := ctrl.SetControllerReference(shard, cm, scheme); err != nil {
+		return nil, fmt.Errorf("failed to set controller reference: %w", err)
+	}
+
+	return cm, nil
+}
+
+// BuildPostgresExporterQueriesConfigMap creates the operator-owned ConfigMap
+// holding the custom postgres_exporter queries for a shard. It is shared
+// across all pools in the shard and mounted into every pool pod's exporter
+// sidecar.
+func BuildPostgresExporterQueriesConfigMap(
+	shard *multigresv1alpha1.Shard,
+	scheme *runtime.Scheme,
+) (*corev1.ConfigMap, error) {
+	clusterName := shard.Labels["multigres.com/cluster"]
+	labels := metadata.BuildStandardLabels(clusterName, "postgres-exporter-queries")
+	labels = metadata.MergeLabels(labels, shard.GetObjectMeta().GetLabels())
+
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      PostgresExporterQueriesConfigMapName(shard.Name),
+			Namespace: shard.Namespace,
+			Labels:    labels,
+		},
+		Data: map[string]string{
+			PostgresExporterQueriesConfigMapKey: DefaultPostgresExporterQueries,
 		},
 	}
 
