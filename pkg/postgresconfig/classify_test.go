@@ -82,7 +82,7 @@ func TestRequiresRestartMatchesCatalogContext(t *testing.T) {
 		}
 	}
 	if total < 300 {
-		t.Fatalf("catalog has %d entries, expected the full PG17 set (389)", total)
+		t.Fatalf("catalog has %d entries, expected the full PG17 set", total)
 	}
 	// The majority of PG17 GUCs are reload-safe (sighup/user/superuser); if the
 	// context column were missing this would be ~0.

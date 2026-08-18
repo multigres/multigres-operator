@@ -108,7 +108,7 @@ func TestValidate_AggregatesAllProblems(t *testing.T) {
 func TestCatalogLoaded(t *testing.T) {
 	// The embedded catalog must be non-trivial and contain well-known params.
 	if len(catalog) < 300 {
-		t.Errorf("catalog has %d entries, expected the full PG17 set (389)", len(catalog))
+		t.Errorf("catalog has %d entries, expected the full PG17 set", len(catalog))
 	}
 	for name, want := range map[string]gucType{
 		"max_connections":  gucInteger,
