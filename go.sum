@@ -160,8 +160,8 @@ github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJ
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFdJifH4BDsTlE89Zl93FEloxaWZfGcifgq8=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
-github.com/multigres/multigres v0.0.0-20260814161026-6e4a37be3102 h1:rDrTncAGTUuHAEGaLQC/DObqOlPimm19LzI13ydTJTo=
-github.com/multigres/multigres v0.0.0-20260814161026-6e4a37be3102/go.mod h1:QV8N0aZ4DUoBJPgt1pj5d28D0Pa8JgImWjVzvXH/wLU=
+github.com/multigres/multigres v0.0.0-20260814171435-353368393f9d h1:LAaX6jFfMqX/sqs0XCJSxhZDfInHmOTvcGu6LkwobV0=
+github.com/multigres/multigres v0.0.0-20260814171435-353368393f9d/go.mod h1:QV8N0aZ4DUoBJPgt1pj5d28D0Pa8JgImWjVzvXH/wLU=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f h1:y5//uYreIhSUg3J1GEMiLbxo1LJaP8RfCpH6pymGZus=
