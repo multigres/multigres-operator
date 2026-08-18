@@ -1,0 +1,192 @@
+name: Proto sync reporting
+
+# Shared by sync creation and generated PR CI.
+
+on:
+  workflow_call:
+    inputs:
+      upstream-sha:
+        required: true
+        type: string
+      previous-sha:
+        required: false
+        type: string
+        default: ""
+      stage:
+        required: true
+        type: string
+      result:
+        required: true
+        type: string
+      run-id:
+        required: false
+        type: string
+        default: ""
+      run-url:
+        required: false
+        type: string
+        default: ""
+      trigger-source:
+        required: false
+        type: string
+        default: ""
+      pull-request-number:
+        required: false
+        type: string
+        default: ""
+      pull-request-url:
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: upstream-impact-${{ inputs.upstream-sha }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Create or update upstream-impact issue
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PREVIOUS_SHA: ${{ inputs.previous-sha }}
+          PR_NUMBER: ${{ inputs.pull-request-number }}
+          PR_URL: ${{ inputs.pull-request-url }}
+          RESULT: ${{ inputs.result }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_URL: ${{ inputs.run-url }}
+          STAGE: ${{ inputs.stage }}
+          TRIGGER_SOURCE: ${{ inputs.trigger-source }}
+          UPSTREAM_SHA: ${{ inputs.upstream-sha }}
+        with:
+          script: |
+            const upstreamSha = process.env.UPSTREAM_SHA;
+            if (!/^[0-9a-f]{40}$/.test(upstreamSha)) {
+              core.setFailed(`Invalid upstream SHA: ${upstreamSha}`);
+              return;
+            }
+
+            const marker = `<!-- upstream-impact:${upstreamSha} -->`;
+            const shortSha = upstreamSha.slice(0, 7);
+            const runId = Number(process.env.RUN_ID || context.runId);
+            if (!Number.isSafeInteger(runId)) {
+              core.setFailed(`Invalid workflow run ID: ${process.env.RUN_ID}`);
+              return;
+            }
+            const runUrl = process.env.RUN_URL ||
+              `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              per_page: 100,
+            });
+            const existing = issues.find(
+              (issue) => !issue.pull_request && issue.body?.includes(marker),
+            );
+
+            const result = process.env.RESULT;
+            const succeeded = result === 'success';
+            if (succeeded && !existing) {
+              core.info(`No existing upstream-impact issue for ${upstreamSha}.`);
+              return;
+            }
+
+            const run = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+              per_page: 100,
+            });
+            const failedJobs = run.data.jobs.filter((job) =>
+              ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure']
+                .includes(job.conclusion),
+            );
+            const diagnostics = failedJobs.flatMap((job) => {
+              const failedSteps = job.steps
+                ?.filter((step) => step.conclusion === 'failure')
+                .map((step) => step.name) ?? [];
+              const detail = failedSteps.length
+                ? ` — ${failedSteps.join(', ')}`
+                : '';
+              return [`- [${job.name}](${job.html_url})${detail}`];
+            });
+
+            const upstreamUrl = `https://github.com/multigres/multigres/commit/${upstreamSha}`;
+            const previousSha = process.env.PREVIOUS_SHA;
+            const comparison = previousSha
+              ? `https://github.com/multigres/multigres/compare/${previousSha}...${upstreamSha}`
+              : '';
+            const prNumber = process.env.PR_NUMBER;
+            const prUrl = process.env.PR_URL;
+            const stage = process.env.STAGE;
+            const stageName = stage === 'sync-creation'
+              ? 'sync PR creation'
+              : 'sync PR CI';
+            const ciRecovered = stage === 'sync-pr-ci' && succeeded;
+            const title = ciRecovered
+              ? `Upstream sync ${shortSha} recovered`
+              : succeeded
+                ? `Upstream sync ${shortSha} is awaiting CI`
+                : `Upstream sync ${shortSha} failed during ${stageName}`;
+            const status = ciRecovered
+              ? `Sync PR #${prNumber} passed CI.`
+              : succeeded
+                ? `Sync PR #${prNumber} was created and is awaiting CI.`
+                : `The automated workflow failed during ${stageName}.`;
+            const bodyLines = [
+              marker,
+              '## Upstream sync needs attention',
+              '',
+              status,
+              '',
+              `- **Upstream revision:** [\`${upstreamSha}\`](${upstreamUrl})`,
+              ...(previousSha
+                ? [`- **Upstream changes:** [compare revisions](${comparison})`]
+                : []),
+              ...(process.env.TRIGGER_SOURCE
+                ? [`- **Trigger:** ${process.env.TRIGGER_SOURCE}`]
+                : []),
+              ...(prUrl ? [`- **Sync PR:** [#${prNumber}](${prUrl})`] : []),
+              `- **Workflow run:** [view run](${runUrl})`,
+            ];
+            if (diagnostics.length) {
+              bodyLines.push('', '**Failure details**', '', ...diagnostics);
+            }
+            const body = bodyLines.join('\n');
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body,
+                state: ciRecovered ? 'closed' : 'open',
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: ciRecovered
+                  ? `Sync PR #${prNumber} passed CI: ${runUrl}`
+                  : succeeded
+                    ? `Sync PR #${prNumber} was created: ${prUrl}`
+                    : `${stageName} failed again: ${runUrl}`,
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['upstream-impact'],
+            });

@@ -2,6 +2,12 @@ name: Sync Multigres Proto
 on:
   repository_dispatch:
     types: [proto-updated]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full multigres commit SHA to sync
+        required: true
+        type: string
 
 permissions: {}
 
@@ -12,22 +18,62 @@ concurrency:
 jobs:
   update-dependency:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      upstream-sha: ${{ steps.vars.outputs.upstream_sha }}
+      previous-sha: ${{ steps.previous.outputs.sha }}
+      trigger-source: ${{ steps.vars.outputs.trigger_source }}
+      pull-request-number: ${{ steps.create-pr.outputs.pull-request-number }}
+      pull-request-url: ${{ steps.create-pr.outputs.pull-request-url }}
     steps:
-      - name: Generate GitHub App token for creating a PR
-        id: app-token
+      - name: Resolve requested SHA
+        id: vars
+        env:
+          DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_SHA: ${{ inputs.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            sha="$MANUAL_SHA"
+            trigger_source="manual workflow dispatch"
+          else
+            sha="$DISPATCH_SHA"
+            trigger_source="repository dispatch"
+          fi
+
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "bad SHA"; exit 1; }
+          {
+            echo "upstream_sha=$sha"
+            echo "short_sha=${sha:0:7}"
+            echo "trigger_source=$trigger_source"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub App token for reading upstream
+        id: upstream-token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
           private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
           owner: multigres
-          repositories: multigres,multigres-operator
+          repositories: multigres
+          permission-contents: read
+
+      - name: Generate GitHub App token for creating a PR
+        id: operator-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
+          private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
+          owner: multigres
+          repositories: multigres-operator
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Validate SHA is on main
         env:
-          SHA: ${{ github.event.client_payload.sha }}
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SHA: ${{ steps.vars.outputs.upstream_sha }}
+          GH_TOKEN: ${{ steps.upstream-token.outputs.token }}
         run: |
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad SHA"; exit 1; }
           # confirm SHA is ancestor of multigres/main
           gh api "repos/multigres/multigres/compare/main...$SHA" --jq '.status' \
             | grep -qE '^(identical|behind)$' || { echo "SHA not on main"; exit 1; }
@@ -35,7 +81,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.operator-token.outputs.token }}
           persist-credentials: false
 
       - name: Set up Go
@@ -43,58 +89,59 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Set short SHA
-        id: vars
+      - name: Read current multigres revision
+        id: previous
         env:
-          SHA: ${{ github.event.client_payload.sha }}
-        run: echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
-
-      - name: Authenticate to GHCR
-        env:
-          TOKEN: ${{ steps.app-token.outputs.token }}
-        run: echo "$TOKEN" | docker login ghcr.io -u x-access-token --password-stdin
-
-      - name: Verify upstream runtime images exist
-        env:
-          SHORT: ${{ steps.vars.outputs.short_sha }}
+          GH_TOKEN: ${{ steps.upstream-token.outputs.token }}
         run: |
-          for image in multigres pgctld; do
-            ref="ghcr.io/multigres/${image}:sha-${SHORT}"
-            echo "Checking $ref"
-            if ! docker manifest inspect "$ref" > /dev/null 2>&1; then
-              echo "::error::Image $ref does not exist in GHCR — aborting sync. The upstream image build may not have completed yet; re-dispatch once it has."
-              exit 1
-            fi
-          done
+          version="$(go list -m -f '{{.Version}}' github.com/multigres/multigres)"
+          revision="${version##*-}"
+          sha="$(gh api "repos/multigres/multigres/commits/$revision" --jq '.sha')"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Update multigres dependency
         env:
           GOPRIVATE: "github.com/multigres/*"
-          SHA: ${{ github.event.client_payload.sha }}
-          TOKEN: ${{ steps.app-token.outputs.token }}
+          SHA: ${{ steps.vars.outputs.upstream_sha }}
+          TOKEN: ${{ steps.upstream-token.outputs.token }}
         run: |
           git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
           go get github.com/multigres/multigres@"$SHA"
           go mod tidy
 
-      - name: Bump default runtime images
-        env:
-          SHORT: ${{ steps.vars.outputs.short_sha }}
-        run: |
-          sed -i -E "s#ghcr\.io/multigres/pgctld:sha-[a-f0-9]+#ghcr.io/multigres/pgctld:sha-${SHORT}#g" api/v1alpha1/image_defaults.go
-          sed -i -E "s#ghcr\.io/multigres/multigres:sha-[a-f0-9]+#ghcr.io/multigres/multigres:sha-${SHORT}#g" api/v1alpha1/image_defaults.go
-
       - name: Create pull request
+        id: create-pr
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.operator-token.outputs.token }}
           commit-message: "chore(deps): bump multigres to ${{ steps.vars.outputs.short_sha }}"
           title: "chore(deps): sync multigres proto to ${{ steps.vars.outputs.short_sha }}"
           body: |
-            Automated sync triggered by changes in multigres/multigres@${{ github.event.client_payload.sha }}.
+            Automated proto dependency sync.
 
-            - `go.mod` bumped to `${{ steps.vars.outputs.short_sha }}`
-            - Default runtime image tags in `api/v1alpha1/image_defaults.go` bumped to `sha-${{ steps.vars.outputs.short_sha }}` (verified to exist in GHCR before commit)
+            - Previous revision: [`${{ steps.previous.outputs.sha }}`](https://github.com/multigres/multigres/commit/${{ steps.previous.outputs.sha }})
+            - New revision: [`${{ steps.vars.outputs.upstream_sha }}`](https://github.com/multigres/multigres/commit/${{ steps.vars.outputs.upstream_sha }})
+            - Upstream changes: [compare revisions](https://github.com/multigres/multigres/compare/${{ steps.previous.outputs.sha }}...${{ steps.vars.outputs.upstream_sha }})
+            - Trigger: ${{ steps.vars.outputs.trigger_source }}
+
+            This PR updates the proto dependency only. Runtime image defaults remain unchanged and are promoted separately after canary validation (#586).
           branch: chore/sync-proto-${{ steps.vars.outputs.short_sha }}
           base: main
           delete-branch: true
+
+  report-proto-sync-failure:
+    name: Report proto sync failure
+    if: failure() && needs.update-dependency.outputs.upstream-sha != ''
+    needs: update-dependency
+    permissions:
+      actions: read
+      issues: write
+    uses: ./.github/workflows/proto-sync-reporting.yaml
+    with:
+      upstream-sha: ${{ needs.update-dependency.outputs.upstream-sha }}
+      previous-sha: ${{ needs.update-dependency.outputs.previous-sha }}
+      stage: sync-creation
+      result: ${{ needs.update-dependency.result }}
+      trigger-source: ${{ needs.update-dependency.outputs.trigger-source }}
+      pull-request-number: ${{ needs.update-dependency.outputs.pull-request-number }}
+      pull-request-url: ${{ needs.update-dependency.outputs.pull-request-url }}
