@@ -408,6 +408,7 @@ func buildPostgresExporterContainer(
 		Args: []string{
 			"--web.listen-address=:9187",
 			"--extend.query-path=" + PostgresExporterQueriesFilePath,
+			"--disable-settings-metrics",
 		},
 		Ports: buildPostgresExporterContainerPorts(),
 		Env: []corev1.EnvVar{
