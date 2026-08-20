@@ -38,12 +38,8 @@ pg_stat_database:
         usage: "GAUGE"
         description: "The number of active backends"
 
-# For checking replication lag (physical_replication_lag_seconds) we first
-# check if the replica is connected to its primary and if the last WAL
-# received is equivalent to the last WAL replayed, if so return 0, otherwise
-# calculate replication lag as per usual.
-#
-# Additionally, we always return 0 lag if pg is not in recovery. Even though
+
+# Always return 0 lag if pg is not in recovery. Even though
 # pg_last_xact_replay_timestamp() is supposed to be null when we're not in
 # recovery (per the docs), in practice this does not seem to be the case,
 # resulting in non-zero results for primaries (even when there are no
@@ -57,7 +53,7 @@ physical_replication_lag:
                    then 0
                when (not pg_is_in_recovery()) then 0
                else coalesce(extract(epoch from now() - pg_last_xact_replay_timestamp()), 0)
-               end                                     as physical_replication_lag_seconds,
+               end                                     as seconds,
            case
                when pg_is_in_recovery()
                    then case when pg_is_wal_replay_paused() = false then 0 else 1 end
@@ -65,7 +61,7 @@ physical_replication_lag:
                end                                     as is_wal_replay_paused,
            (select count(*) from pg_stat_wal_receiver) as is_connected_to_primary
   metrics:
-    - physical_replication_lag_seconds:
+    - seconds:
         usage: "GAUGE"
         description: "Physical replication lag in seconds"
     - is_wal_replay_paused:
