@@ -8657,6 +8657,42 @@ spec:
                 description: Multiadmin defines the configuration for the Multiadmin
                   component.
                 properties:
+                  auth:
+                    description: |-
+                      Auth configures authentication for Multiadmin's gRPC, HTTP, Connect,
+                      and REST surfaces. Unset means no authentication is enforced.
+                    properties:
+                      jwt:
+                        description: |-
+                          JWT configures JWT bearer-token authentication. When set, Multiadmin
+                          is started with --enable-auth and the corresponding --grpc-auth-jwt-*
+                          flags, requiring a valid JWT on its HTTP/Connect/REST/pprof surface.
+                          gRPC is unaffected and stays unauthenticated.
+                        properties:
+                          allowedSubjects:
+                            description: |-
+                              AllowedSubjects restricts which `sub` claims are authorized. If empty,
+                              any subject presenting a valid token from the trusted issuer is
+                              authorized.
+                            items:
+                              type: string
+                            type: array
+                          issuer:
+                            description: Issuer is the expected `iss` claim of presented
+                              JWTs.
+                            minLength: 1
+                            type: string
+                          jwksURI:
+                            description: |-
+                              JWKSURI is the URI of the issuer's JWKS endpoint, used to verify JWT
+                              signatures.
+                            minLength: 1
+                            type: string
+                        required:
+                        - issuer
+                        - jwksURI
+                        type: object
+                    type: object
                   spec:
                     description: Spec defines the inline configuration.
                     properties:
