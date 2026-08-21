@@ -224,7 +224,7 @@ func (r *Resolver) ResolveGlobalTopo(
 	}
 
 	if spec != nil {
-		mergePodPlacementSpec(&finalSpec.Placement, spec.Placement)
+		mergeTopoServerPlacementSpec(&finalSpec.Placement, spec.Placement)
 	}
 
 	return finalSpec, nil

@@ -66,6 +66,25 @@ type PodPlacementSpec struct {
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 }
 
+// TopoServerPlacementSpec defines scheduling constraints for topology-server pods.
+type TopoServerPlacementSpec struct {
+	// NodeSelector constrains pods to nodes with the specified labels.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Affinity defines pod affinity and anti-affinity constraints.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
+	// Tolerations defines the pod tolerations for scheduling onto tainted nodes.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// TopologySpreadConstraints controls how pods are spread across topology domains.
+	// +optional
+	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
+}
+
 // StorageSpec defines the storage configuration.
 type StorageSpec struct {
 	// Size of the persistent volume.

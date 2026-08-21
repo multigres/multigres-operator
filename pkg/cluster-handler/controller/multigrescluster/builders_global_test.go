@@ -62,7 +62,7 @@ func TestBuildGlobalTopoServer(t *testing.T) {
 	t.Run("Etcd Enabled with placement", func(t *testing.T) {
 		spec := &multigresv1alpha1.GlobalTopoServerSpec{
 			Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:latest"},
-			Placement: &multigresv1alpha1.PodPlacementSpec{
+			Placement: &multigresv1alpha1.TopoServerPlacementSpec{
 				Tolerations: []corev1.Toleration{
 					{
 						Key:      "workload",

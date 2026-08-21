@@ -30,6 +30,7 @@ import (
 // +kubebuilder:rbac:groups=multigres.com,resources=toposervers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=get
 
 // ============================================================================
@@ -56,7 +57,7 @@ type TopoServerSpec struct {
 
 	// Placement defines optional scheduling settings for the etcd pods.
 	// +optional
-	Placement *PodPlacementSpec `json:"placement,omitempty"`
+	Placement *TopoServerPlacementSpec `json:"placement,omitempty"`
 }
 
 // ============================================================================
@@ -156,7 +157,7 @@ type GlobalTopoServerSpec struct {
 
 	// Placement defines optional scheduling settings for the global topo server pods.
 	// +optional
-	Placement *PodPlacementSpec `json:"placement,omitempty"`
+	Placement *TopoServerPlacementSpec `json:"placement,omitempty"`
 }
 
 // ExternalTopoServerSpec defines connection details for an external system.

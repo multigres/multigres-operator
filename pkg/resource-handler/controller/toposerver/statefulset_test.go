@@ -170,7 +170,7 @@ func TestBuildStatefulSet(t *testing.T) {
 					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 				},
 				Spec: multigresv1alpha1.TopoServerSpec{
-					Placement: &multigresv1alpha1.PodPlacementSpec{
+					Placement: &multigresv1alpha1.TopoServerPlacementSpec{
 						Tolerations: []corev1.Toleration{
 							{
 								Key:      "workload",
@@ -629,5 +629,75 @@ func TestBuildStatefulSet(t *testing.T) {
 				t.Errorf("BuildStatefulSet() mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestBuildStatefulSetPlacementControls(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	selector := &metav1.LabelSelector{MatchLabels: map[string]string{"app": "etcd"}}
+	placement := &multigresv1alpha1.TopoServerPlacementSpec{
+		NodeSelector: map[string]string{"node-pool": "topology"},
+		Affinity: &corev1.Affinity{
+			PodAntiAffinity: &corev1.PodAntiAffinity{
+				RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+					{
+						LabelSelector: selector,
+						TopologyKey:   corev1.LabelHostname,
+					},
+				},
+			},
+		},
+		Tolerations: []corev1.Toleration{{Key: "workload", Value: "topology"}},
+		TopologySpreadConstraints: []corev1.TopologySpreadConstraint{
+			{
+				MaxSkew:           1,
+				TopologyKey:       corev1.LabelTopologyZone,
+				WhenUnsatisfiable: corev1.DoNotSchedule,
+				LabelSelector:     selector,
+			},
+		},
+	}
+	toposerver := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-toposerver",
+			Namespace: "default",
+			UID:       "test-uid",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.TopoServerSpec{Placement: placement},
+	}
+
+	got, err := BuildStatefulSet(toposerver, scheme)
+	if err != nil {
+		t.Fatalf("BuildStatefulSet() error = %v", err)
+	}
+
+	podSpec := got.Spec.Template.Spec
+	if diff := cmp.Diff(placement.NodeSelector, podSpec.NodeSelector); diff != "" {
+		t.Errorf("NodeSelector mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(placement.Affinity, podSpec.Affinity); diff != "" {
+		t.Errorf("Affinity mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(placement.Tolerations, podSpec.Tolerations); diff != "" {
+		t.Errorf("Tolerations mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(
+		placement.TopologySpreadConstraints,
+		podSpec.TopologySpreadConstraints,
+	); diff != "" {
+		t.Errorf("TopologySpreadConstraints mismatch (-want +got):\n%s", diff)
+	}
+
+	// The built object must not alias the source custom resource.
+	podSpec.NodeSelector["node-pool"] = "other"
+	podSpec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].TopologyKey = "other"
+	podSpec.TopologySpreadConstraints[0].TopologyKey = "other"
+	if placement.NodeSelector["node-pool"] != "topology" ||
+		placement.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution[0].TopologyKey != corev1.LabelHostname ||
+		placement.TopologySpreadConstraints[0].TopologyKey != corev1.LabelTopologyZone {
+		t.Fatal("BuildStatefulSet() aliased placement fields from the TopoServer")
 	}
 }

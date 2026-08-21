@@ -668,7 +668,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						Etcd: &multigresv1alpha1.EtcdSpec{Image: "inline"},
-						Placement: &multigresv1alpha1.PodPlacementSpec{
+						Placement: &multigresv1alpha1.TopoServerPlacementSpec{
 							Tolerations: []corev1.Toleration{
 								{
 									Key:      "workload",
@@ -689,7 +689,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
-				Placement: &multigresv1alpha1.PodPlacementSpec{
+				Placement: &multigresv1alpha1.TopoServerPlacementSpec{
 					Tolerations: []corev1.Toleration{
 						{
 							Key:      "workload",
@@ -706,7 +706,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						TemplateRef: "with-placement",
-						Placement:   &multigresv1alpha1.PodPlacementSpec{},
+						Placement:   &multigresv1alpha1.TopoServerPlacementSpec{},
 					},
 				},
 			},
@@ -716,7 +716,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 					Spec: multigresv1alpha1.CoreTemplateSpec{
 						GlobalTopoServer: &multigresv1alpha1.TopoServerSpec{
 							Etcd: &multigresv1alpha1.EtcdSpec{},
-							Placement: &multigresv1alpha1.PodPlacementSpec{
+							Placement: &multigresv1alpha1.TopoServerPlacementSpec{
 								Tolerations: []corev1.Toleration{
 									{
 										Key:      "workload",
@@ -738,7 +738,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
-				Placement: &multigresv1alpha1.PodPlacementSpec{},
+				Placement: &multigresv1alpha1.TopoServerPlacementSpec{},
 			},
 		},
 		"External Spec": {

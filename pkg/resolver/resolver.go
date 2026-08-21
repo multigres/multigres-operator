@@ -77,6 +77,16 @@ func mergePodPlacementSpec(
 	*base = override.DeepCopy()
 }
 
+func mergeTopoServerPlacementSpec(
+	base **multigresv1alpha1.TopoServerPlacementSpec,
+	override *multigresv1alpha1.TopoServerPlacementSpec,
+) {
+	if override == nil {
+		return
+	}
+	*base = override.DeepCopy()
+}
+
 // isResourcesZero checks if the resource requirements are strictly the zero value (nil maps).
 // This mimics reflect.DeepEqual(res, corev1.ResourceRequirements{}) but is safer and faster.
 // It is used for merging logic where we want to distinguish "inherit" (nil) from "empty" (set to empty).

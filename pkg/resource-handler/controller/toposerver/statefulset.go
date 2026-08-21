@@ -71,10 +71,12 @@ func BuildStatefulSet(
 		resources = toposerver.Spec.Etcd.Resources
 	}
 
-	// Defensive copy so the built StatefulSet doesn't alias the TopoServer's PodPlacementSpec.
-	var tolerations []corev1.Toleration
+	// Defensive copy so the built StatefulSet does not alias the TopoServer spec.
+	var placement *multigresv1alpha1.TopoServerPlacementSpec
 	if toposerver.Spec.Placement != nil {
-		tolerations = append([]corev1.Toleration(nil), toposerver.Spec.Placement.Tolerations...)
+		placement = toposerver.Spec.Placement.DeepCopy()
+	} else {
+		placement = &multigresv1alpha1.TopoServerPlacementSpec{}
 	}
 
 	sts := &appsv1.StatefulSet{
@@ -146,7 +148,10 @@ func BuildStatefulSet(
 							},
 						},
 					},
-					Tolerations: tolerations,
+					NodeSelector:              placement.NodeSelector,
+					Affinity:                  placement.Affinity,
+					Tolerations:               placement.Tolerations,
+					TopologySpreadConstraints: placement.TopologySpreadConstraints,
 				},
 			},
 			VolumeClaimTemplates:                 buildVolumeClaimTemplates(toposerver),
