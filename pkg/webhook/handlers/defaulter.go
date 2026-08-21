@@ -182,6 +182,7 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 		if !isUsingTemplate {
 			gatewaySpec, gatewayPlacement, localTopoSpec, err := scopedResolver.ResolveCell(
 				ctx,
+				cluster,
 				cell,
 			)
 			if err != nil {

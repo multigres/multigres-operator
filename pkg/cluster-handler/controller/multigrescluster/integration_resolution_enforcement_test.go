@@ -135,7 +135,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 					AllCells: cellNames,
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
-						RootPath:       "/multigres/global",
+						RootPath:       canonicalGlobalRoot(clusterName),
 						Implementation: "etcd",
 					},
 					TopologyReconciliation: multigresv1alpha1.TopologyReconciliation{
@@ -221,7 +221,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				AllCells: []multigresv1alpha1.CellName{"zone-a"},
 				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 					Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
-					RootPath:       "/multigres/global",
+					RootPath:       canonicalGlobalRoot(clusterName),
 					Implementation: "etcd",
 				},
 				TopologyReconciliation: multigresv1alpha1.TopologyReconciliation{
@@ -338,7 +338,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				},
 				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 					Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
-					RootPath:       "/multigres/global",
+					RootPath:       canonicalGlobalRoot(clusterName),
 					Implementation: "etcd",
 				},
 				Shards: []multigresv1alpha1.ShardResolvedSpec{
@@ -452,7 +452,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 			AllCells: []multigresv1alpha1.CellName{"zone-a"},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 				Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
-				RootPath:       "/multigres/global",
+				RootPath:       canonicalGlobalRoot(clusterName),
 				Implementation: "etcd",
 			},
 			TopologyReconciliation: multigresv1alpha1.TopologyReconciliation{
@@ -643,7 +643,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 			},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 				Address:        clusterName + "-global-topo." + testNamespace + ".svc:2379",
-				RootPath:       "/multigres/global",
+				RootPath:       canonicalGlobalRoot(clusterName),
 				Implementation: "etcd",
 			},
 			Shards: []multigresv1alpha1.ShardResolvedSpec{

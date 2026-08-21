@@ -201,6 +201,9 @@ spec:
                       minLength: 1
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                      x-kubernetes-validations:
+                      - message: cell name 'global' is reserved for the global topology
+                        rule: self != 'global'
                     overrides:
                       description: Overrides are applied on top of the template.
                       properties:
@@ -4161,6 +4164,10 @@ spec:
                                             minLength: 1
                                             pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                                             type: string
+                                            x-kubernetes-validations:
+                                            - message: cell name 'global' is reserved
+                                                for the global topology
+                                              rule: self != 'global'
                                           maxItems: 50
                                           type: array
                                           x-kubernetes-list-type: set
@@ -5310,6 +5317,10 @@ spec:
                                               minLength: 1
                                               pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                                               type: string
+                                              x-kubernetes-validations:
+                                              - message: cell name 'global' is reserved
+                                                  for the global topology
+                                                rule: self != 'global'
                                             maxItems: 10
                                             minItems: 1
                                             type: array
@@ -6648,6 +6659,10 @@ spec:
                                             minLength: 1
                                             pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                                             type: string
+                                            x-kubernetes-validations:
+                                            - message: cell name 'global' is reserved
+                                                for the global topology
+                                              rule: self != 'global'
                                           maxItems: 50
                                           type: array
                                           x-kubernetes-list-type: set
@@ -7797,6 +7812,10 @@ spec:
                                               minLength: 1
                                               pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                                               type: string
+                                              x-kubernetes-validations:
+                                              - message: cell name 'global' is reserved
+                                                  for the global topology
+                                                rule: self != 'global'
                                             maxItems: 10
                                             minItems: 1
                                             type: array

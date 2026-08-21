@@ -66,7 +66,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		cellCfgForResolution.CellTemplate = cluster.Spec.EffectiveCellTemplate(
 			cellCfgForResolution.CellTemplate,
 		)
-		_, _, localTopoSpec, err := res.ResolveCell(ctx, &cellCfgForResolution)
+		_, _, localTopoSpec, err := res.ResolveCell(ctx, cluster, &cellCfgForResolution)
 		if err != nil {
 			r.Recorder.Event(cluster, "Warning", "TemplateMissing", err.Error())
 			return ctrl.Result{}, fmt.Errorf("failed to resolve cell '%s': %w", cellCfg.Name, err)

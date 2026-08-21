@@ -347,6 +347,7 @@ type PoolName string
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=30
 // +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+// +kubebuilder:validation:XValidation:rule="self != 'global'",message="cell name 'global' is reserved for the global topology"
 type CellName string
 
 // InitdbArgs is an opaque string of extra arguments forwarded to initdb

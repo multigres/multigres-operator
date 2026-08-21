@@ -112,7 +112,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						Etcd: &multigresv1alpha1.EtcdSpec{
 							Image:     resolver.DefaultEtcdImage,
 							Replicas:  ptr.To(int32(3)),
-							RootPath:  resolver.DefaultTopoRootPath,
+							RootPath:  "/multigres/test-ns/no-template/global",
 							Resources: resolver.DefaultResourcesEtcd(),
 							Storage:   multigresv1alpha1.StorageSpec{Size: "1Gi"},
 						},
@@ -358,7 +358,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 		},
 		"PVC Policy Preservation": {
 			input: &multigresv1alpha1.MultigresCluster{
-				ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{Name: "pvc-policy", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
 					Databases: []multigresv1alpha1.DatabaseConfig{
 						{
@@ -381,7 +381,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 			validate: func(t testing.TB, cluster *multigresv1alpha1.MultigresCluster) {
 				t.Helper()
 				want := &multigresv1alpha1.MultigresCluster{
-					ObjectMeta: metav1.ObjectMeta{Namespace: "default"},
+					ObjectMeta: metav1.ObjectMeta{Name: "pvc-policy", Namespace: "default"},
 					Spec: multigresv1alpha1.MultigresClusterSpec{
 						TemplateDefaults: multigresv1alpha1.TemplateDefaults{
 							CoreTemplate:  "",
@@ -392,7 +392,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 							Etcd: &multigresv1alpha1.EtcdSpec{
 								Image:    resolver.DefaultEtcdImage,
 								Replicas: ptr.To(int32(3)),
-								RootPath: resolver.DefaultTopoRootPath,
+								RootPath: "/multigres/default/pvc-policy/global",
 								Storage: multigresv1alpha1.StorageSpec{
 									Size: resolver.DefaultEtcdStorageSize,
 								},

@@ -9,6 +9,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
 )
 
 // PopulateClusterDefaults applies static defaults to the Cluster Spec.
@@ -167,6 +168,11 @@ func (r *Resolver) ResolveGlobalTopo(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (*multigresv1alpha1.GlobalTopoServerSpec, error) {
+	roots, err := topology.NewRoots(cluster.Annotations, cluster.Namespace, cluster.Name)
+	if err != nil {
+		return nil, fmt.Errorf("deriving global topology root: %w", err)
+	}
+
 	var templateName multigresv1alpha1.TemplateRef
 	var spec *multigresv1alpha1.GlobalTopoServerSpec
 
@@ -212,10 +218,10 @@ func (r *Resolver) ResolveGlobalTopo(
 	}
 
 	if finalSpec.Etcd != nil {
-		defaultEtcdSpec(finalSpec.Etcd, DefaultTopoRootPath)
+		defaultEtcdSpec(finalSpec.Etcd, roots.Global())
 	}
 	if finalSpec.External != nil {
-		defaultExternalTopoSpec(finalSpec.External, DefaultTopoRootPath)
+		defaultExternalTopoSpec(finalSpec.External, roots.Global())
 	}
 
 	// Merge GlobalTopoServerSpec-level PVCDeletionPolicy

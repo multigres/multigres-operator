@@ -788,7 +788,7 @@ func (r *Resolver) ValidateResolvedGateways(
 			EffectiveCellTemplateName(cellCfg.CellTemplate) != onlyTemplate {
 			continue
 		}
-		gateway, _, _, err := r.ResolveCell(ctx, &cellCfg)
+		gateway, _, _, err := r.ResolveCell(ctx, cluster, &cellCfg)
 		if err != nil {
 			return fmt.Errorf(
 				"%scannot resolve cell '%s': %w", subjectPrefix, cell.Name, err,

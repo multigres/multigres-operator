@@ -96,6 +96,7 @@ func BuildMultiadminDeployment(
 	cluster *multigresv1alpha1.MultigresCluster,
 	spec *multigresv1alpha1.StatelessSpec,
 	placement *multigresv1alpha1.PodPlacementSpec,
+	globalTopo multigresv1alpha1.GlobalTopoServerRef,
 	scheme *runtime.Scheme,
 ) (*appsv1.Deployment, error) {
 	standardLabels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentMultiadmin)
@@ -138,12 +139,8 @@ func BuildMultiadminDeployment(
 							Args: []string{
 								"--http-port=18000",
 								"--grpc-port=18070",
-								fmt.Sprintf(
-									"--topo-global-server-addresses=%s-global-topo.%s.svc:2379",
-									cluster.Name,
-									cluster.Namespace,
-								),
-								"--topo-global-root=/multigres/global",
+								"--topo-global-server-addresses=" + globalTopo.Address,
+								"--topo-global-root=" + globalTopo.RootPath,
 								"--service-map=grpc-multiadmin",
 								"--pprof-http=true",
 								"--log-level=" + string(cluster.Spec.LogLevels.Multiadmin),

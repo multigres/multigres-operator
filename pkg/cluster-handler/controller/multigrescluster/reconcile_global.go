@@ -112,8 +112,12 @@ func (r *MultigresClusterReconciler) reconcileMultiadmin(
 		r.Recorder.Event(cluster, "Warning", "TemplateMissing", err.Error())
 		return fmt.Errorf("failed to resolve multiadmin: %w", err)
 	}
+	globalTopo, err := r.globalTopoRef(ctx, cluster, res)
+	if err != nil {
+		return fmt.Errorf("failed to resolve global topology for multiadmin: %w", err)
+	}
 
-	desired, err := BuildMultiadminDeployment(cluster, spec, placement, r.Scheme)
+	desired, err := BuildMultiadminDeployment(cluster, spec, placement, globalTopo, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build multiadmin deployment: %w", err)
 	}

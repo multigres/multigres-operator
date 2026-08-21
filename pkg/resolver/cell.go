@@ -9,12 +9,14 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
 )
 
 // ResolveCell determines the final configuration for a specific Cell.
 // It orchestrates: Template Lookup -> Fetch -> Merge -> Defaulting.
 func (r *Resolver) ResolveCell(
 	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
 	cellSpec *multigresv1alpha1.CellConfig,
 ) (*multigresv1alpha1.MultigatewaySpec, *multigresv1alpha1.PodPlacementSpec, *multigresv1alpha1.LocalTopoServerSpec, error) {
 	// 1. Fetch Template (Logic handles defaults)
@@ -33,7 +35,22 @@ func (r *Resolver) ResolveCell(
 
 	// Note: We do NOT default LocalTopo here because it is optional.
 	if localTopo != nil {
-		defaultRootPath := fmt.Sprintf("/multigres/%s", cellSpec.Name)
+		roots, err := topology.NewRoots(cluster.Annotations, cluster.Namespace, cluster.Name)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf(
+				"deriving topology roots for cell %q: %w",
+				cellSpec.Name,
+				err,
+			)
+		}
+		defaultRootPath, err := roots.Cell(string(cellSpec.Name))
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf(
+				"deriving topology root for cell %q: %w",
+				cellSpec.Name,
+				err,
+			)
+		}
 		if localTopo.Etcd != nil {
 			defaultEtcdSpec(localTopo.Etcd, defaultRootPath)
 		}

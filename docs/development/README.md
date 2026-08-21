@@ -24,6 +24,7 @@ Internal documentation for contributors and operators. For user-facing documenta
 | [Backup Architecture](backup-architecture.md) | Shared PVC design rationale, replica selection logic, cell isolation |
 | [Template Propagation](template-propagation.md) | Template update behavior, proposed update policy (`Auto`/`Manual`/`Window`) |
 | [Cell Topology](cell-topology.md) | Local TopoServer design, failure domains, zone/region scheduling implementation |
+| [Shared Topology Roots](shared-topology.md) | Canonical cluster-scoped global and cell topology roots for sharing one physical etcd cluster |
 | [PostgreSQL Image Strategy](postgresql-image-strategy.md) | Bundled pgctld image, future custom image support plan |
 | [Observability Internals](observability-internals.md) | Metrics registration, tracing lifecycle, traceparent bridge, log-trace correlation, alerts & dashboards |
 | [Known Behaviors](known-behaviors.md) | Documented quirks (e.g., "configured" loop with CSA + mutating webhooks) |

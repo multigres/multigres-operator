@@ -131,9 +131,13 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		PodLabels:      map[string]string{"custom": "label"},
 		PodAnnotations: map[string]string{"anno": "tation"},
 	}
+	globalTopo := multigresv1alpha1.GlobalTopoServerRef{
+		Address:  "shared-etcd.default.svc:2379",
+		RootPath: "/multigres/default/my-cluster/global",
+	}
 
 	t.Run("Success", func(t *testing.T) {
-		got, err := BuildMultiadminDeployment(cluster, spec, nil, scheme)
+		got, err := BuildMultiadminDeployment(cluster, spec, nil, globalTopo, scheme)
 		if err != nil {
 			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
@@ -150,6 +154,10 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		if got.Spec.Template.Annotations["anno"] != "tation" {
 			t.Errorf("PodAnnotations missing annotation")
 		}
+		assert.Contains(t, got.Spec.Template.Spec.Containers[0].Args,
+			"--topo-global-server-addresses=shared-etcd.default.svc:2379")
+		assert.Contains(t, got.Spec.Template.Spec.Containers[0].Args,
+			"--topo-global-root=/multigres/default/my-cluster/global")
 
 		// Verify container image from cluster spec
 		if len(got.Spec.Template.Spec.Containers) > 0 {
@@ -188,7 +196,7 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 				Key:  "sampling-config.yaml",
 			},
 		}
-		got, err := BuildMultiadminDeployment(obsCluster, spec, nil, scheme)
+		got, err := BuildMultiadminDeployment(obsCluster, spec, nil, globalTopo, scheme)
 		if err != nil {
 			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
@@ -207,7 +215,7 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 			t.Fatalf("test requires empty CertCommonName, got %q", tlsCluster.Spec.CertCommonName)
 		}
 
-		got, err := BuildMultiadminDeployment(tlsCluster, spec, nil, scheme)
+		got, err := BuildMultiadminDeployment(tlsCluster, spec, nil, globalTopo, scheme)
 		if err != nil {
 			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
@@ -287,7 +295,7 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 		t.Run("No internal mTLS when "+name, func(t *testing.T) {
 			disabledCluster := cluster.DeepCopy()
 			mutateCluster(disabledCluster)
-			got, err := BuildMultiadminDeployment(disabledCluster, spec, nil, scheme)
+			got, err := BuildMultiadminDeployment(disabledCluster, spec, nil, globalTopo, scheme)
 			if err != nil {
 				t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 			}
@@ -333,7 +341,7 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 				},
 			},
 		}
-		got, err := BuildMultiadminDeployment(cluster, spec, placement, scheme)
+		got, err := BuildMultiadminDeployment(cluster, spec, placement, globalTopo, scheme)
 		if err != nil {
 			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
@@ -343,7 +351,7 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 	})
 
 	t.Run("Success with nil placement", func(t *testing.T) {
-		got, err := BuildMultiadminDeployment(cluster, spec, nil, scheme)
+		got, err := BuildMultiadminDeployment(cluster, spec, nil, globalTopo, scheme)
 		if err != nil {
 			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
 		}
@@ -354,7 +362,7 @@ func TestBuildMultiadminDeployment(t *testing.T) {
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
-		_, err := BuildMultiadminDeployment(cluster, spec, nil, emptyScheme)
+		_, err := BuildMultiadminDeployment(cluster, spec, nil, globalTopo, emptyScheme)
 		if err == nil {
 			t.Error("Expected error due to missing scheme types, got nil")
 		}

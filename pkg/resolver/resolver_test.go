@@ -540,7 +540,7 @@ func TestSharedHelpers(t *testing.T) {
 
 	t.Run("defaultEtcdSpec", func(t *testing.T) {
 		spec := &multigresv1alpha1.EtcdSpec{}
-		defaultEtcdSpec(spec, DefaultTopoRootPath)
+		defaultEtcdSpec(spec, "/test/global")
 
 		if spec.Image != DefaultEtcdImage {
 			t.Errorf("Image: got %q, want %q", spec.Image, DefaultEtcdImage)
@@ -557,7 +557,7 @@ func TestSharedHelpers(t *testing.T) {
 
 		// Test Preservation
 		spec2 := &multigresv1alpha1.EtcdSpec{Image: "custom"}
-		defaultEtcdSpec(spec2, DefaultTopoRootPath)
+		defaultEtcdSpec(spec2, "/test/global")
 		if spec2.Image != "custom" {
 			t.Error("Should preserve existing image")
 		}

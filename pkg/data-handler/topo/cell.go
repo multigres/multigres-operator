@@ -11,6 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
 
@@ -24,12 +26,25 @@ func RegisterCell(
 	logger := log.FromContext(ctx)
 
 	cellName := string(cell.Spec.Name)
+	roots, err := topology.NewRoots(
+		cell.Annotations,
+		cell.Namespace,
+		cell.Labels[metadata.LabelMultigresCluster],
+	)
+	if err != nil {
+		return fmt.Errorf("deriving topology roots for cell %q: %w", cellName, err)
+	}
+	cellRoot, err := roots.Cell(cellName)
+	if err != nil {
+		return fmt.Errorf("deriving topology root for cell %q: %w", cellName, err)
+	}
 
 	cellMetadata := cellMetadataFromTopoRefs(
 		cellName,
 		cell.Spec.TopoServer,
 		cell.Spec.GlobalTopoServer,
 		ManagedLocalTopoServerAddress(cell.Name, cell.Namespace),
+		cellRoot,
 	)
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
@@ -65,22 +80,27 @@ func cellMetadataFromTopoRefs(
 	localTopo *multigresv1alpha1.LocalTopoServerSpec,
 	globalTopo multigresv1alpha1.GlobalTopoServerRef,
 	managedTopoAddress string,
+	defaultCellRoot string,
 ) *clustermetadata.Cell {
 	if localTopo != nil && localTopo.External != nil && len(localTopo.External.Endpoints) > 0 {
 		addresses := make([]string, 0, len(localTopo.External.Endpoints))
 		for _, endpoint := range localTopo.External.Endpoints {
 			addresses = append(addresses, string(endpoint))
 		}
+		rootPath := localTopo.External.RootPath
+		if rootPath == "" {
+			rootPath = defaultCellRoot
+		}
 		return &clustermetadata.Cell{
 			Name:            cellName,
 			ServerAddresses: addresses,
-			Root:            localTopo.External.RootPath,
+			Root:            rootPath,
 		}
 	}
 	if localTopo != nil && localTopo.Etcd != nil && managedTopoAddress != "" {
 		rootPath := localTopo.Etcd.RootPath
 		if rootPath == "" {
-			rootPath = fmt.Sprintf("/multigres/%s", cellName)
+			rootPath = defaultCellRoot
 		}
 		return &clustermetadata.Cell{
 			Name:            cellName,

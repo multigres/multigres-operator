@@ -19,7 +19,8 @@ spec:
       # TLS is optional. For this sample we use HTTP (no secrets required).
       # caSecret: "etcd-ca-secret"
       # clientCertSecret: "etcd-client-cert-secret"
-      rootPath: "/multigres/global"
+      # rootPath is optional. When omitted, the operator assigns a canonical
+      # per-cluster root so this etcd instance can safely be shared.
 
   # ----------------------------------------------------------------
   # 2. Cell Definitions (Mixed Mode)

@@ -11,9 +11,12 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/tools/observer/pkg/common"
 	"github.com/multigres/multigres-operator/tools/observer/pkg/report"
 )
@@ -43,15 +46,15 @@ func (o *Observer) checkTopology(ctx context.Context) {
 			continue
 		}
 
-		rootPath := "/multigres/global" // safe default fallback
-		if cluster.Spec.GlobalTopoServer != nil {
-			if cluster.Spec.GlobalTopoServer.Etcd != nil &&
-				cluster.Spec.GlobalTopoServer.Etcd.RootPath != "" {
-				rootPath = cluster.Spec.GlobalTopoServer.Etcd.RootPath
-			} else if cluster.Spec.GlobalTopoServer.External != nil &&
-				cluster.Spec.GlobalTopoServer.External.RootPath != "" {
-				rootPath = cluster.Spec.GlobalTopoServer.External.RootPath
-			}
+		rootPath, err := o.globalTopologyRoot(ctx, cluster)
+		if err != nil {
+			o.reporter.Report(report.Finding{
+				Severity:  report.SeverityWarn,
+				Check:     "topology",
+				Component: "cluster/" + cluster.Name,
+				Message:   "topology validation skipped: root resolution failed: " + err.Error(),
+			})
+			continue
 		}
 
 		o.checkCellRegistration(ctx, cluster, etcdAddr, rootPath)
@@ -64,6 +67,62 @@ func (o *Observer) checkTopology(ctx context.Context) {
 	if o.probes != nil {
 		o.probes.Set("topology", map[string]any{"clusters": topoData})
 	}
+}
+
+func (o *Observer) globalTopologyRoot(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) (string, error) {
+	roots, err := topology.NewRoots(cluster.Annotations, cluster.Namespace, cluster.Name)
+	if err != nil {
+		return "", err
+	}
+	rootPath := roots.Global()
+
+	var templateName multigresv1alpha1.TemplateRef
+	if spec := cluster.Spec.GlobalTopoServer; spec != nil {
+		if spec.External != nil {
+			if spec.External.RootPath != "" {
+				return spec.External.RootPath, nil
+			}
+			return rootPath, nil
+		}
+		templateName = spec.TemplateRef
+	}
+	if templateName == "" {
+		templateName = cluster.Spec.TemplateDefaults.CoreTemplate
+	}
+
+	// Match resolver.ResolveCoreTemplate: an empty reference uses the optional
+	// system "default" template, while an explicitly named missing template is
+	// an error.
+	implicitDefault := templateName == "" || templateName == "default"
+	if templateName == "" {
+		templateName = "default"
+	}
+	template := &multigresv1alpha1.CoreTemplate{}
+	err = o.client.Get(ctx, types.NamespacedName{
+		Namespace: cluster.Namespace,
+		Name:      string(templateName),
+	}, template)
+	switch {
+	case err == nil:
+		if template.Spec.GlobalTopoServer != nil &&
+			template.Spec.GlobalTopoServer.Etcd != nil &&
+			template.Spec.GlobalTopoServer.Etcd.RootPath != "" {
+			rootPath = template.Spec.GlobalTopoServer.Etcd.RootPath
+		}
+	case apierrors.IsNotFound(err) && implicitDefault:
+		// The default template is optional; canonical defaults apply when absent.
+	case err != nil:
+		return "", fmt.Errorf("resolving CoreTemplate %q: %w", templateName, err)
+	}
+
+	if spec := cluster.Spec.GlobalTopoServer; spec != nil &&
+		spec.Etcd != nil && spec.Etcd.RootPath != "" {
+		rootPath = spec.Etcd.RootPath
+	}
+	return rootPath, nil
 }
 
 func (o *Observer) findEtcdAddress(ctx context.Context, cluster *multigresv1alpha1.MultigresCluster) string {

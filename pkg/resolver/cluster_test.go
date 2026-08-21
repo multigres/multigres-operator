@@ -538,6 +538,7 @@ func TestResolver_PopulateClusterDefaults_ClientError(t *testing.T) {
 
 func TestResolver_ResolveGlobalTopo(t *testing.T) {
 	t.Parallel()
+	const canonicalTestGlobalRoot = "/multigres/default/test-cluster/global"
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -561,7 +562,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "inline",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -580,7 +581,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "core-default", // From fixture
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -634,7 +635,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "core-default",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -647,7 +648,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     DefaultEtcdImage,
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -685,7 +686,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "inline",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -734,7 +735,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     DefaultEtcdImage,
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -756,7 +757,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				External: &multigresv1alpha1.ExternalTopoServerSpec{
 					Endpoints:      []multigresv1alpha1.EndpointUrl{"https://1.2.3.4:2379"},
 					Implementation: DefaultTopoImplementation,
-					RootPath:       DefaultTopoRootPath,
+					RootPath:       canonicalTestGlobalRoot,
 				},
 				Etcd: nil, // Explicitly nilled out
 			},
@@ -783,7 +784,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "core-image",
 					Replicas:  ptr.To(DefaultEtcdReplicas), // Defaults applied
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -819,7 +820,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "new-etcd",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -859,7 +860,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "template-image",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage: multigresv1alpha1.StorageSpec{
 						Size:        "50Gi",
@@ -907,7 +908,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "base-image",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  DefaultTopoRootPath,
+					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage: multigresv1alpha1.StorageSpec{
 						Size:        "10Gi",
@@ -921,6 +922,12 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			if tc.cluster.Name == "" {
+				tc.cluster.Name = "test-cluster"
+			}
+			if tc.cluster.Namespace == "" {
+				tc.cluster.Namespace = ns
+			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build()
 			r := NewResolver(c, ns)
 
@@ -1322,6 +1329,7 @@ func TestResolveGlobalTopo_PVCDeletionPolicy(t *testing.T) {
 
 	t.Run("GlobalTopoServerSpec Level", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "default"},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 					PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -1342,6 +1350,7 @@ func TestResolveGlobalTopo_PVCDeletionPolicy(t *testing.T) {
 
 	t.Run("EtcdSpec Level Override", func(t *testing.T) {
 		cluster := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "default"},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 					Etcd: &multigresv1alpha1.EtcdSpec{

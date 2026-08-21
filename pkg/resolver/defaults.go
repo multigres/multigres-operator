@@ -29,9 +29,6 @@ const (
 	// DefaultPoolReplicasPerCell is the default number of Postgres pods to run in each selected cell.
 	DefaultPoolReplicasPerCell int32 = 1
 
-	// DefaultTopoRootPath is the default etcd key prefix for the global topology server.
-	DefaultTopoRootPath = "/multigres/global"
-
 	// DefaultTopoImplementation is the default client implementation for external topology servers.
 	DefaultTopoImplementation = "etcd"
 

@@ -25,6 +25,9 @@ func TestResolver_ResolveCell(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_, cellTpl, _, ns := setupFixtures(t)
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: ns},
+	}
 
 	tests := map[string]struct {
 		config        *multigresv1alpha1.CellConfig
@@ -36,6 +39,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 	}{
 		"Template Found": {
 			config: &multigresv1alpha1.CellConfig{
+				Name:         "cell1",
 				CellTemplate: "default",
 			},
 			objects: []client.Object{cellTpl},
@@ -52,7 +56,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "local-etcd-default",
 					Replicas:  ptr.To(DefaultEtcdReplicas),
-					RootPath:  "/multigres/",
+					RootPath:  "/multigres/default/test-cluster/cell1",
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
 				},
@@ -128,7 +132,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
 				External: &multigresv1alpha1.ExternalTopoServerSpec{
 					CASecret:       "my-secret",
-					RootPath:       "/multigres/cell1", // Expect defaulted path
+					RootPath:       "/multigres/default/test-cluster/cell1", // Expect defaulted path
 					Implementation: "etcd",
 				},
 			},
@@ -157,7 +161,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 			}
 			r := NewResolver(c, ns)
 
-			gw, placement, topo, err := r.ResolveCell(t.Context(), tc.config)
+			gw, placement, topo, err := r.ResolveCell(t.Context(), cluster, tc.config)
 			if tc.wantErr {
 				if err == nil {
 					t.Error("Expected error")

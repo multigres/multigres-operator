@@ -26,6 +26,101 @@ func newMemoryStore(t *testing.T, cells ...string) topoclient.Store {
 	return store
 }
 
+// rootedMemoryFactory models one physical topology server whose clients are
+// isolated by root, as etcdtopo is in production. memorytopo normally ignores
+// root and partitions by topo name, so map each requested root to a subtree in
+// one shared memorytopo factory.
+type rootedMemoryFactory struct {
+	*memorytopo.Factory
+}
+
+func (f rootedMemoryFactory) Create(
+	_ string,
+	root string,
+	serverAddrs []string,
+) (topoclient.Conn, error) {
+	return f.Factory.Create(root, "", serverAddrs)
+}
+
+func TestSharedTopologyRootsIsolateClusters(t *testing.T) {
+	t.Parallel()
+
+	const (
+		address     = "shared-topo:2379"
+		cellName    = "zone-a"
+		globalRootA = "/multigres/project-a/global"
+		cellRootA   = "/multigres/project-a/zone-a"
+		globalRootB = "/multigres/project-b/global"
+		cellRootB   = "/multigres/project-b/zone-a"
+	)
+
+	ctx := t.Context()
+	backingStore, factory := memorytopo.NewServerAndFactory(
+		ctx,
+		globalRootA,
+		cellRootA,
+		globalRootB,
+		cellRootB,
+	)
+	t.Cleanup(func() { _ = backingStore.Close() })
+
+	newClusterStore := func(globalRoot string) topoclient.Store {
+		store := topoclient.NewWithFactory(
+			rootedMemoryFactory{Factory: factory},
+			globalRoot,
+			[]string{address},
+			topoclient.NewDefaultTopoConfig(),
+		)
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	}
+
+	clusterA := newClusterStore(globalRootA)
+	clusterB := newClusterStore(globalRootB)
+
+	for _, cluster := range []struct {
+		store    topoclient.Store
+		cellRoot string
+		host     string
+	}{
+		{store: clusterA, cellRoot: cellRootA, host: "pooler-a"},
+		{store: clusterB, cellRoot: cellRootB, host: "pooler-b"},
+	} {
+		if err := cluster.store.CreateCell(ctx, cellName, &clustermetadatapb.Cell{
+			Name:            cellName,
+			ServerAddresses: []string{address},
+			Root:            cluster.cellRoot,
+		}); err != nil {
+			t.Fatalf("CreateCell(%s): %v", cluster.cellRoot, err)
+		}
+		if err := cluster.store.CreateMultipooler(
+			ctx,
+			topoclient.NewMultipooler("pooler", cellName, cluster.host),
+		); err != nil {
+			t.Fatalf("CreateMultipooler(%s): %v", cluster.cellRoot, err)
+		}
+	}
+
+	for _, cluster := range []struct {
+		store    topoclient.Store
+		wantHost string
+	}{
+		{store: clusterA, wantHost: "pooler-a"},
+		{store: clusterB, wantHost: "pooler-b"},
+	} {
+		poolers, err := cluster.store.GetMultipoolersByCell(ctx, cellName, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(poolers) != 1 {
+			t.Fatalf("got %d multipoolers, want 1", len(poolers))
+		}
+		if got := poolers[0].GetHostname(); got != cluster.wantHost {
+			t.Fatalf("multipooler host = %q, want %q", got, cluster.wantHost)
+		}
+	}
+}
+
 // mockTopologyStore allows mocking topo functions to trigger error branches.
 type mockTopologyStore struct {
 	topoclient.Store
@@ -555,7 +650,7 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			t.Errorf("expected global topo address fallback, got %v", cell.ServerAddresses)
 		}
 		if cell.Root != "/multigres/global" {
-			t.Errorf("expected global topo root fallback, got %s", cell.Root)
+			t.Errorf("expected global topology root fallback, got %s", cell.Root)
 		}
 	})
 

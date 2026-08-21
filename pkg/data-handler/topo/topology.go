@@ -8,11 +8,13 @@ import (
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
 )
 
 // RegisterDatabaseFromSpec registers a database in the topology using
@@ -132,7 +134,30 @@ func RegisterCellFromSpec(
 		managedAddress = managedTopoAddress[0]
 	}
 
-	cellMetadata := cellMetadataFromTopoRefs(cellName, localTopo, topoRef, managedAddress)
+	ownerMeta, err := meta.Accessor(owner)
+	if err != nil {
+		return fmt.Errorf("accessing cluster metadata for cell %q: %w", cellName, err)
+	}
+	roots, err := topology.NewRoots(
+		ownerMeta.GetAnnotations(),
+		ownerMeta.GetNamespace(),
+		ownerMeta.GetName(),
+	)
+	if err != nil {
+		return fmt.Errorf("deriving topology roots for cell %q: %w", cellName, err)
+	}
+	cellRoot, err := roots.Cell(cellName)
+	if err != nil {
+		return fmt.Errorf("deriving topology root for cell %q: %w", cellName, err)
+	}
+
+	cellMetadata := cellMetadataFromTopoRefs(
+		cellName,
+		localTopo,
+		topoRef,
+		managedAddress,
+		cellRoot,
+	)
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
 	if err != nil {
