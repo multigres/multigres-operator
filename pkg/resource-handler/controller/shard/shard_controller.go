@@ -187,6 +187,19 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
+	if err := r.reconcilePostgresInitSecretsSecret(ctx, shard); err != nil {
+		monitoring.RecordSpanError(span, err)
+		logger.Error(err, "Failed to reconcile postgres init-secrets Secret")
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"ConfigError",
+			"Failed to reconcile postgres init-secrets Secret: %v",
+			err,
+		)
+		return ctrl.Result{}, err
+	}
+
 	// Reconcile pgBackRest TLS certificates (required for inter-node backup communication)
 	if err := r.reconcilePgBackRestCerts(ctx, shard); err != nil {
 		monitoring.RecordSpanError(span, err)

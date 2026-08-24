@@ -125,6 +125,49 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("PostgresInitSecretsRef propagated when set", func(t *testing.T) {
+		c := *cluster
+		c.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
+			Name: "multigres-init-secrets",
+			Key:  "init-secrets.json",
+		}
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-init-secrets"}
+		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.PostgresInitSecretsRef == nil {
+			t.Fatal("PostgresInitSecretsRef = nil, want propagated ref")
+		}
+		if got.Spec.PostgresInitSecretsRef.Name != "multigres-init-secrets" {
+			t.Errorf(
+				"PostgresInitSecretsRef.Name = %q, want %q",
+				got.Spec.PostgresInitSecretsRef.Name,
+				"multigres-init-secrets",
+			)
+		}
+		if got.Spec.PostgresInitSecretsRef.Key != "init-secrets.json" {
+			t.Errorf(
+				"PostgresInitSecretsRef.Key = %q, want %q",
+				got.Spec.PostgresInitSecretsRef.Key,
+				"init-secrets.json",
+			)
+		}
+	})
+
+	t.Run("PostgresInitSecretsRef nil when unset", func(t *testing.T) {
+		c := *cluster
+		c.Spec.PostgresInitSecretsRef = nil
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-no-init-secrets"}
+		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.PostgresInitSecretsRef != nil {
+			t.Errorf("PostgresInitSecretsRef = %+v, want nil", got.Spec.PostgresInitSecretsRef)
+		}
+	})
+
 	t.Run("Name Truncation", func(t *testing.T) {
 		longName := strings.Repeat("a", 250) // Very long name
 		tgCfg := &multigresv1alpha1.TableGroupConfig{

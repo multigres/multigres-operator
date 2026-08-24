@@ -151,6 +151,50 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 
+	t.Run(
+		"PostgresInitSecretsRef propagates from TableGroup to Shard when set",
+		func(t *testing.T) {
+			tgWithRef := tg.DeepCopy()
+			tgWithRef.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
+				Name: "multigres-init-secrets",
+				Key:  "init-secrets.json",
+			}
+
+			got, err := BuildShard(tgWithRef, shardSpec, scheme)
+			if err != nil {
+				t.Fatalf("BuildShard() error = %v", err)
+			}
+			if got.Spec.PostgresInitSecretsRef == nil {
+				t.Fatal("Spec.PostgresInitSecretsRef = nil, want propagated ref")
+			}
+			if got.Spec.PostgresInitSecretsRef.Name != "multigres-init-secrets" {
+				t.Errorf(
+					"Spec.PostgresInitSecretsRef.Name = %v, want multigres-init-secrets",
+					got.Spec.PostgresInitSecretsRef.Name,
+				)
+			}
+			if got.Spec.PostgresInitSecretsRef.Key != "init-secrets.json" {
+				t.Errorf(
+					"Spec.PostgresInitSecretsRef.Key = %v, want init-secrets.json",
+					got.Spec.PostgresInitSecretsRef.Key,
+				)
+			}
+		},
+	)
+
+	t.Run("PostgresInitSecretsRef nil on Shard when unset on TableGroup", func(t *testing.T) {
+		tgWithoutRef := tg.DeepCopy()
+		tgWithoutRef.Spec.PostgresInitSecretsRef = nil
+
+		got, err := BuildShard(tgWithoutRef, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if got.Spec.PostgresInitSecretsRef != nil {
+			t.Errorf("Spec.PostgresInitSecretsRef = %+v, want nil", got.Spec.PostgresInitSecretsRef)
+		}
+	})
+
 	t.Run("DurabilityPolicy empty when not set on TableGroup", func(t *testing.T) {
 		got, err := BuildShard(tg, shardSpec, scheme)
 		if err != nil {

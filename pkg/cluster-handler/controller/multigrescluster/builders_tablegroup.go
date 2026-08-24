@@ -78,6 +78,7 @@ func BuildTableGroup(
 			),
 			PostgresSuperuser:         cluster.Spec.PostgresSuperuser,
 			PostgresPasswordSecretRef: cluster.Spec.PostgresPasswordSecretRef,
+			PostgresInitSecretsRef:    cluster.Spec.PostgresInitSecretsRef,
 		},
 	}
 

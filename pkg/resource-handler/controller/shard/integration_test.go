@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -83,6 +84,27 @@ func createTestPostgresPasswordSecret(
 	}
 	if err := c.Create(ctx, secret); client.IgnoreAlreadyExists(err) != nil {
 		t.Fatalf("Failed to create postgres password Secret: %v", err)
+	}
+}
+
+func createTestPostgresInitSecretsSecret(
+	t *testing.T,
+	ctx context.Context,
+	c client.Client,
+	namespace, name, key string,
+) {
+	t.Helper()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			key: []byte(`{"roles":{"app":"app-password"},"database_settings":{"testdb":{"work_mem":"64MB"}}}`),
+		},
+	}
+	if err := c.Create(ctx, secret); client.IgnoreAlreadyExists(err) != nil {
+		t.Fatalf("Failed to create postgres init-secrets Secret: %v", err)
 	}
 }
 
@@ -345,6 +367,169 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "metrics", 9187),
 						},
 						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "test-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
+						PublishNotReadyAddresses: true,
+					},
+				},
+			},
+		},
+		"shard with postgres init secrets ref": {
+			shard: &multigresv1alpha1.Shard{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "init-secrets-shard",
+					Namespace: "default",
+					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+				},
+				Spec: multigresv1alpha1.ShardSpec{
+					DatabaseName: "testdb",
+					LogLevels: multigresv1alpha1.ComponentLogLevels{
+						Pgctld:       "info",
+						Multipooler:  "info",
+						Multiorch:    "info",
+						Multiadmin:   "info",
+						Multigateway: "info",
+					},
+
+					TableGroupName: "default",
+					ShardName:      "0",
+					PostgresInitSecretsRef: &multigresv1alpha1.PostgresInitSecretsRef{
+						Name: "init-secrets-shard-init-secrets",
+						Key:  shardcontroller.PostgresInitSecretsFileName,
+					},
+					Images: multigresv1alpha1.ShardImages{
+						Multiorch:   "ghcr.io/multigres/multigres:main",
+						Multipooler: "ghcr.io/multigres/multigres:main",
+						Postgres:    "postgres:17",
+					},
+					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+						Address:        "global-topo:2379",
+						RootPath:       "/multigres/global",
+						Implementation: "etcd",
+					},
+					Multiorch: multigresv1alpha1.MultiorchSpec{
+						Cells: []multigresv1alpha1.CellName{"zone-a"},
+					},
+					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+						"primary": {
+							Cells:           []multigresv1alpha1.CellName{"zone-a"},
+							Type:            "readWrite",
+							ReplicasPerCell: ptr.To(int32(1)),
+							Storage: multigresv1alpha1.StorageSpec{
+								Size: "1Gi",
+							},
+						},
+					},
+					Backup: &multigresv1alpha1.BackupConfig{
+						Type:       multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+					},
+				},
+			},
+			wantResources: []client.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            "init-secrets-shard-multiorch-zone-a",
+						Namespace:       "default",
+						Labels:          shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						OwnerReferences: shardOwnerRefs(t, "init-secrets-shard"),
+					},
+					Spec: appsv1.DeploymentSpec{
+						Replicas: ptr.To(int32(1)),
+						Selector: &metav1.LabelSelector{
+							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a")),
+						},
+						Template: corev1.PodTemplateSpec{
+							ObjectMeta: metav1.ObjectMeta{
+								Labels: shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a"),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "test-cluster",
+								},
+							},
+							Spec: corev1.PodSpec{
+								Containers: []corev1.Container{
+									{
+										Name:  "multiorch",
+										Image: "ghcr.io/multigres/multigres:main",
+										Args: []string{
+											"multiorch",
+											"--http-port=15300",
+											"--grpc-port=15370",
+											"--topo-global-server-addresses=global-topo:2379",
+											"--topo-global-root=/multigres/global",
+											"--cell=zone-a",
+											"--watch-targets=testdb/default/0",
+											"--log-level=info",
+										},
+										Ports: []corev1.ContainerPort{
+											tcpPort(t, "http", 15300),
+											tcpPort(t, "grpc", 15370),
+										},
+										StartupProbe: &corev1.Probe{
+											ProbeHandler: corev1.ProbeHandler{
+												HTTPGet: &corev1.HTTPGetAction{
+													Path: "/ready",
+													Port: intstr.FromInt32(15300),
+												},
+											},
+											PeriodSeconds:    5,
+											FailureThreshold: 30,
+										},
+										LivenessProbe: &corev1.Probe{
+											ProbeHandler: corev1.ProbeHandler{
+												HTTPGet: &corev1.HTTPGetAction{
+													Path: "/live",
+													Port: intstr.FromInt32(15300),
+												},
+											},
+											PeriodSeconds: 10,
+										},
+										ReadinessProbe: &corev1.Probe{
+											ProbeHandler: corev1.ProbeHandler{
+												HTTPGet: &corev1.HTTPGetAction{
+													Path: "/ready",
+													Port: intstr.FromInt32(15300),
+												},
+											},
+											PeriodSeconds: 5,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				&corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            "init-secrets-shard-multiorch-zone-a",
+						Namespace:       "default",
+						Labels:          shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						OwnerReferences: shardOwnerRefs(t, "init-secrets-shard"),
+					},
+					Spec: corev1.ServiceSpec{
+						Type: corev1.ServiceTypeClusterIP,
+						Ports: []corev1.ServicePort{
+							tcpServicePort(t, "http", 15300),
+							tcpServicePort(t, "grpc", 15370),
+						},
+						Selector: metadata.GetSelectorLabels(shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a")),
+					},
+				},
+				&corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            "init-secrets-shard-pool-primary-zone-a-headless",
+						Namespace:       "default",
+						Labels:          shardLabels(t, "init-secrets-shard-pool-primary-zone-a", "shard-pool", "zone-a"),
+						OwnerReferences: shardOwnerRefs(t, "init-secrets-shard"),
+					},
+					Spec: corev1.ServiceSpec{
+						Type:      corev1.ServiceTypeClusterIP,
+						ClusterIP: corev1.ClusterIPNone,
+						Ports: []corev1.ServicePort{
+							tcpServicePort(t, "http", 15200),
+							tcpServicePort(t, "grpc", 15270),
+							tcpServicePort(t, "postgres", 5432),
+							tcpServicePort(t, "metrics", 9187),
+						},
+						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "init-secrets-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -869,6 +1054,13 @@ func TestShardReconciliation(t *testing.T) {
 
 			setTestPostgresPasswordSecretRef(tc.shard)
 			createTestPostgresPasswordSecret(t, ctx, k8sClient, tc.shard.Namespace)
+			if ref := tc.shard.Spec.PostgresInitSecretsRef; ref != nil {
+				key := ref.Key
+				if key == "" {
+					key = shardcontroller.PostgresInitSecretsFileName
+				}
+				createTestPostgresInitSecretsSecret(t, ctx, k8sClient, tc.shard.Namespace, ref.Name, key)
+			}
 			if err := k8sClient.Create(ctx, tc.shard); err != nil {
 				t.Fatalf("Failed to create the initial item, %v", err)
 			}
@@ -1201,6 +1393,121 @@ func TestReconcileDeletions(t *testing.T) {
 
 	if !found {
 		t.Fatalf("ConfigMap was not recreated")
+	}
+}
+
+func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(
+			filepath.Join("../../../../", "config", "crd", "bases"),
+		),
+	)
+
+	if err := (&shardcontroller.ShardReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("shard-controller"),
+	}).SetupWithManager(mgr, controller.Options{
+		SkipNameValidation: ptr.To(true),
+	}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	ctx := t.Context()
+	k8sClient := mgr.GetClient()
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dangling-init-secrets-shard",
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName: "testdb",
+			LogLevels: multigresv1alpha1.ComponentLogLevels{
+				Pgctld:       "info",
+				Multipooler:  "info",
+				Multiorch:    "info",
+				Multiadmin:   "info",
+				Multigateway: "info",
+			},
+			TableGroupName: "default",
+			ShardName:      "0",
+			PostgresInitSecretsRef: &multigresv1alpha1.PostgresInitSecretsRef{
+				Name: "does-not-exist-init-secrets",
+				Key:  shardcontroller.PostgresInitSecretsFileName,
+			},
+			Multiorch: multigresv1alpha1.MultiorchSpec{
+				Cells: []multigresv1alpha1.CellName{"zone1"},
+			},
+			Images: multigresv1alpha1.ShardImages{
+				Multiorch:   "ghcr.io/multigres/multigres:main",
+				Multipooler: "ghcr.io/multigres/multigres:main",
+				Postgres:    "postgres:17",
+			},
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:        "global-topo:2379",
+				RootPath:       "/multigres/global",
+				Implementation: "etcd",
+			},
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"primary": {
+					Cells:           []multigresv1alpha1.CellName{"zone1"},
+					Type:            "readWrite",
+					ReplicasPerCell: ptr.To(int32(1)),
+					Storage: multigresv1alpha1.StorageSpec{
+						Size: "1Gi",
+					},
+				},
+			},
+		},
+	}
+
+	setTestPostgresPasswordSecretRef(shard)
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
+	if err := k8sClient.Create(ctx, shard); err != nil {
+		t.Fatalf("Failed to create Shard: %v", err)
+	}
+
+	require.Eventually(t, func() bool {
+		events := &corev1.EventList{}
+		if err := k8sClient.List(ctx, events, client.InNamespace(shard.Namespace)); err != nil {
+			return false
+		}
+		for _, event := range events.Items {
+			if event.Type == corev1.EventTypeWarning &&
+				event.Reason == "ConfigError" &&
+				event.InvolvedObject.UID == shard.UID {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond,
+		"expected a ConfigError event for the dangling init-secrets reference")
+
+	podList := &corev1.PodList{}
+	if err := k8sClient.List(ctx, podList,
+		client.InNamespace(shard.Namespace),
+		client.MatchingLabels{
+			"multigres.com/cluster": "test-cluster",
+			"multigres.com/shard":   "0",
+		},
+	); err != nil {
+		t.Fatalf("Failed to list pods: %v", err)
+	}
+	if len(podList.Items) != 0 {
+		t.Errorf(
+			"expected no pool pods for shard with dangling PostgresInitSecretsRef, got %d",
+			len(podList.Items),
+		)
 	}
 }
 

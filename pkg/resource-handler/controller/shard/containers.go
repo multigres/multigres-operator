@@ -81,6 +81,20 @@ const (
 	// PostgresPasswordFilePath is consumed by pgctld and multipooler via POSTGRES_PASSWORD_FILE.
 	PostgresPasswordFilePath = PostgresPasswordMountPath + "/" + PostgresPasswordSecretKey
 
+	// PostgresInitSecretsFileName is the default Secret key and projected filename.
+	PostgresInitSecretsFileName = "init-secrets.json"
+
+	// PostgresInitSecretsVolumeName is the pgctld Secret volume name.
+	//nolint:gosec // Name only: not a credential.
+	PostgresInitSecretsVolumeName = "postgres-init-secrets"
+
+	// PostgresInitSecretsMountPath is the pgctld Secret mount path.
+	//nolint:gosec // Path only: Secret provides the payload.
+	PostgresInitSecretsMountPath = "/etc/postgres-init-secrets"
+
+	// PostgresInitSecretsFilePath is passed to pgctld as POSTGRES_INIT_SECRETS_FILE.
+	PostgresInitSecretsFilePath = PostgresInitSecretsMountPath + "/" + PostgresInitSecretsFileName
+
 	// PgBackRestCertVolumeName is the name of the volume for pgBackRest TLS certificates
 	PgBackRestCertVolumeName = "pgbackrest-certs"
 
@@ -222,6 +236,53 @@ func postgresPasswordVolumeMount() corev1.VolumeMount {
 	}
 }
 
+func initSecretsConfigured(shard *multigresv1alpha1.Shard) bool {
+	ref := shard.Spec.PostgresInitSecretsRef
+	return ref != nil && ref.Name != ""
+}
+
+func postgresInitSecretsRef(shard *multigresv1alpha1.Shard) (name, key string) {
+	ref := shard.Spec.PostgresInitSecretsRef
+	key = ref.Key
+	if key == "" {
+		key = PostgresInitSecretsFileName
+	}
+	return ref.Name, key
+}
+
+func buildPostgresInitSecretsVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
+	if !initSecretsConfigured(shard) {
+		return nil
+	}
+
+	// Keep readable when fsGroup is unset.
+	defaultMode := int32(0o444)
+	secretName, secretKey := postgresInitSecretsRef(shard)
+	return &corev1.Volume{
+		Name: PostgresInitSecretsVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{
+				SecretName:  secretName,
+				DefaultMode: &defaultMode,
+				Items: []corev1.KeyToPath{
+					{
+						Key:  secretKey,
+						Path: PostgresInitSecretsFileName,
+					},
+				},
+			},
+		},
+	}
+}
+
+func postgresInitSecretsVolumeMount() corev1.VolumeMount {
+	return corev1.VolumeMount{
+		Name:      PostgresInitSecretsVolumeName,
+		MountPath: PostgresInitSecretsMountPath,
+		ReadOnly:  true,
+	}
+}
+
 func shardTLSConfigured(shard *multigresv1alpha1.Shard) bool {
 	return shard.Spec.InternalTLS.IsEnabled()
 }
@@ -308,6 +369,9 @@ func buildPgctldSidecar(
 			Value: string(shard.Spec.InitdbArgs),
 		})
 	}
+	if initSecretsConfigured(shard) {
+		env = append(env, pgInitSecretsFileEnvVar())
+	}
 	// The operator always renders postgresql.conf (baseline + overrides), so
 	// pgctld always reads the operator-owned config file.
 	env = append(env, corev1.EnvVar{
@@ -350,6 +414,9 @@ func buildPgctldSidecar(
 			MountPath: PgBackRestCertMountPath,
 			ReadOnly:  true,
 		})
+	}
+	if initSecretsConfigured(shard) {
+		volumeMounts = append(volumeMounts, postgresInitSecretsVolumeMount())
 	}
 	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,
@@ -754,6 +821,9 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		buildPostgresConfigVolume(shard),
 		buildPostgresExporterQueriesVolume(shard),
 	}
+	if initSecretsVol := buildPostgresInitSecretsVolume(shard); initSecretsVol != nil {
+		volumes = append(volumes, *initSecretsVol)
+	}
 	if certVol := buildPgBackRestCertVolume(shard); certVol != nil {
 		volumes = append(volumes, *certVol)
 	}
@@ -909,6 +979,13 @@ func pgPasswordFileEnvVar() corev1.EnvVar {
 	return corev1.EnvVar{
 		Name:  "POSTGRES_PASSWORD_FILE",
 		Value: PostgresPasswordFilePath,
+	}
+}
+
+func pgInitSecretsFileEnvVar() corev1.EnvVar {
+	return corev1.EnvVar{
+		Name:  "POSTGRES_INIT_SECRETS_FILE",
+		Value: PostgresInitSecretsFilePath,
 	}
 }
 

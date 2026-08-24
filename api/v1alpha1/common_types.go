@@ -299,6 +299,23 @@ type PostgresPasswordSecretRef struct {
 	Key string `json:"key"`
 }
 
+// PostgresInitSecretsRef identifies a same-namespace Secret that pgctld applies after initdb. The operator does not own or delete it.
+type PostgresInitSecretsRef struct {
+	// Name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Key is the JSON data key. Defaults to "init-secrets.json".
+	// +optional
+	// +kubebuilder:default="init-secrets.json"
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
+	Key string `json:"key,omitempty"`
+}
+
 const (
 	// CertSecretName is the Secret name used by cert-manager for the
 	// multigateway TLS certificate, matching the non-HA project convention.

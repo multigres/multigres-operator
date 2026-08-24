@@ -72,6 +72,7 @@ func BuildShard(
 			DurabilityPolicy:          tg.Spec.DurabilityPolicy,
 			PostgresSuperuser:         tg.Spec.PostgresSuperuser,
 			PostgresPasswordSecretRef: tg.Spec.PostgresPasswordSecretRef,
+			PostgresInitSecretsRef:    tg.Spec.PostgresInitSecretsRef,
 			CellTopologyLabels:        tg.Spec.CellTopologyLabels,
 		},
 	}

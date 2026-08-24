@@ -152,6 +152,10 @@ type MultigresClusterSpec struct {
 	// Postgres superuser password.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
 
+	// PostgresInitSecretsRef provides optional day-0 settings inherited by TableGroups and Shards.
+	// +optional
+	PostgresInitSecretsRef *PostgresInitSecretsRef `json:"postgresInitSecretsRef,omitempty"`
+
 	// InternalTLS configures mutual TLS for communication between internal
 	// Multigres components. When omitted or enabled is false, internal mTLS is disabled.
 	// +optional

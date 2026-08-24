@@ -3,6 +3,7 @@ package shard
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -123,6 +124,78 @@ func (r *ShardReconciler) postgresPasswordSecret(
 		)
 	}
 	return secret, secretKey, data, nil
+}
+
+func (r *ShardReconciler) reconcilePostgresInitSecretsSecret(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) error {
+	if !initSecretsConfigured(shard) {
+		return nil
+	}
+
+	secretName, secretKey := postgresInitSecretsRef(shard)
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+
+	secret := &corev1.Secret{}
+	if err := reader.Get(ctx, types.NamespacedName{
+		Namespace: shard.Namespace,
+		Name:      secretName,
+	}, secret); err != nil {
+		return fmt.Errorf(
+			"failed to get postgres init-secrets Secret %q: %w",
+			secretName,
+			err,
+		)
+	}
+
+	data, ok := secret.Data[secretKey]
+	if !ok {
+		return fmt.Errorf(
+			"key %q not found in postgres init-secrets Secret %q",
+			secretKey,
+			secretName,
+		)
+	}
+	if len(data) == 0 {
+		return fmt.Errorf(
+			"key %q in postgres init-secrets Secret %q is empty",
+			secretKey,
+			secretName,
+		)
+	}
+
+	if !json.Valid(data) {
+		return fmt.Errorf(
+			"key %q in postgres init-secrets Secret %q is not valid JSON",
+			secretKey,
+			secretName,
+		)
+	}
+
+	var payload *struct {
+		Roles            map[string]string            `json:"roles"`
+		DatabaseSettings map[string]map[string]string `json:"database_settings"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf(
+			"key %q in postgres init-secrets Secret %q must be a JSON object with string values in roles and database_settings",
+			secretKey,
+			secretName,
+		)
+	}
+	if payload == nil {
+		return fmt.Errorf(
+			"key %q in postgres init-secrets Secret %q must be a JSON object, not null",
+			secretKey,
+			secretName,
+		)
+	}
+
+	return nil
 }
 
 // reconcilePgBackRestCerts ensures pgBackRest TLS certificates are available.

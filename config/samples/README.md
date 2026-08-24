@@ -5,6 +5,7 @@ This directory contains various sample configurations to help you understand how
 | File | Description |
 | :--- | :--- |
 | `postgres-password-secret.yaml` | Example Secret referenced by the cluster samples for the Postgres superuser password. |
+| `postgres-init-secrets.yaml` | Optional Secret referenced by `spec.postgresInitSecretsRef` carrying day-0 role passwords and per-database settings applied by pgctld during initdb. |
 | `minimal.yaml` | The simplest possible cluster. Relies entirely on system defaults. |
 | `templated-cluster.yaml` | Demonstrates how to use reusable `Templates` for configuration. |
 | `overrides.yaml` | Advanced usage showing how to patch/override specific fields on top of templates. |
@@ -32,6 +33,11 @@ spec:
   postgresPasswordSecretRef:
     name: multigres-admin-password
     key: password
+  # Optional day-0 settings for fresh data directories.
+  # See postgres-init-secrets.yaml and docs/postgresql-initialization.md.
+  # postgresInitSecretsRef:
+  #   name: multigres-init-secrets
+  #   key: init-secrets.json
   cells:
     - name: "zone-a"
       zoneId: "use1-az1"

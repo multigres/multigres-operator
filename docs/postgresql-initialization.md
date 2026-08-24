@@ -113,3 +113,67 @@ To apply new initdb args to existing data, you must delete the PVCs and let the 
 **No defaulting.** When `initdbArgs` is empty (the default), pgctld runs `initdb` with its standard arguments (`--data-checksums --auth-local=trust --auth-host=scram-sha-256`). There is no webhook materialization — the field stays empty unless you set it.
 
 **Validation.** The field accepts a free-form string (max 512 characters). The operator passes it through to `initdb` as-is. Invalid arguments will cause pgctld to fail at pod startup with an `initdb` error in the logs.
+
+## Init Secrets
+
+As the last step of `initdb`, pgctld can set role passwords and database settings from a JSON document. The operator supplies this document through an optional Secret-mounted file, keeping credentials out of arguments and environment variable values.
+
+### Configuration
+
+Set `postgresInitSecretsRef` at the cluster level (it is inherited by every TableGroup and Shard the cluster creates):
+
+```yaml
+apiVersion: multigres.com/v1alpha1
+kind: MultigresCluster
+metadata:
+  name: my-cluster
+spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
+  postgresInitSecretsRef:
+    name: multigres-init-secrets
+    key: init-secrets.json  # Optional: defaults to "init-secrets.json"
+  cells:
+    - name: "zone-a"
+      zoneId: "use1-az1"
+```
+
+The referenced Secret must exist in the same namespace as the cluster, and its data key must hold a JSON document of the form:
+
+```json
+{
+  "roles": {
+    "app": "some-password"
+  },
+  "database_settings": {
+    "postgres": {
+      "work_mem": "64MB"
+    }
+  }
+}
+```
+
+See `config/samples/postgres-init-secrets.yaml` for a complete example.
+
+Database setting values must be JSON strings. Quote numeric GUC values too, for example `"max_connections": "100"`.
+
+### How It Works
+
+When `postgresInitSecretsRef` is set, the operator mounts the Secret read-only into pgctld and points `POSTGRES_INIT_SECRETS_FILE` to it. pgctld reads the file after `initdb`. When the reference is unset, the operator adds no volume, mount, or environment variable.
+
+### Important Caveats
+
+**Only affects new data directories.** pgctld reads the file only during `initdb`. Adding the reference later recreates pool pods, but pods that reuse initialized PVCs do not apply the roles or settings. Configure it when creating the cluster. Applying it later requires fresh data directories, such as replacement PVCs.
+
+**Restores skip it.** Pools restored from pgBackRest do not run `initdb` and retain the roles and settings from the backup.
+
+**Secret edits do not restart pods.** The operator does not watch Secret data. Updated content affects only pools that later initialize a fresh data directory.
+
+**Retain the Secret while referenced.** The operator does not own or delete it. A missing Secret, key, or value produces a `Warning`/`ConfigError` event and blocks shard reconciliation. Recreated pods also remain in `ContainerCreating` while the volume is missing.
+
+**Every login role needs a password.** When an init-secrets file is configured, pgctld rejects initialization if its payload omits a login role's password.
+
+**Mounted on every pool pod.** Any replica may initialize a fresh PVC, so every pool pod mounts the Secret into pgctld.
+
+**The payload stays out of arguments and logs.** `POSTGRES_INIT_SECRETS_FILE` contains only the mounted file path. The payload does not appear in container arguments, pod events, or operator logs.

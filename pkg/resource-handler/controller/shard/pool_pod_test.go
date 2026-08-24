@@ -360,6 +360,91 @@ func TestBuildPoolPod_PostgresPasswordSecretRef(t *testing.T) {
 	)
 }
 
+func TestBuildPoolPod_PostgresInitSecretsRef(t *testing.T) {
+	shard := newTestShard()
+	shard.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
+		Name: "multigres-init-secrets",
+		Key:  "custom-key.json",
+	}
+
+	pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	initSecretsVolume := findVolume(pod.Spec.Volumes, PostgresInitSecretsVolumeName)
+	if initSecretsVolume == nil {
+		t.Fatalf("missing postgres init-secrets volume %q", PostgresInitSecretsVolumeName)
+	}
+	if initSecretsVolume.Secret == nil {
+		t.Fatal("postgres init-secrets volume should use Secret source")
+	}
+	if initSecretsVolume.Secret.SecretName != "multigres-init-secrets" {
+		t.Errorf(
+			"postgres init-secrets SecretName = %q, want multigres-init-secrets",
+			initSecretsVolume.Secret.SecretName,
+		)
+	}
+	if len(initSecretsVolume.Secret.Items) != 1 ||
+		initSecretsVolume.Secret.Items[0].Key != "custom-key.json" ||
+		initSecretsVolume.Secret.Items[0].Path != PostgresInitSecretsFileName {
+		t.Errorf(
+			"postgres init-secrets Secret items = %+v, want key custom-key.json projected to %q",
+			initSecretsVolume.Secret.Items,
+			PostgresInitSecretsFileName,
+		)
+	}
+
+	postgres := pod.Spec.InitContainers[0]
+	assertEnvVarValue(t, postgres.Env, "POSTGRES_INIT_SECRETS_FILE", PostgresInitSecretsFilePath)
+	assertReadOnlyVolumeMount(
+		t,
+		postgres.VolumeMounts,
+		PostgresInitSecretsVolumeName,
+		PostgresInitSecretsMountPath,
+	)
+
+	multipooler := pod.Spec.Containers[0]
+	assertNotContainsEnvVar(t, multipooler.Env, "POSTGRES_INIT_SECRETS_FILE")
+	assertNotContainsVolumeMount(t, multipooler.VolumeMounts, PostgresInitSecretsVolumeName)
+
+	exporter := pod.Spec.Containers[1]
+	assertNotContainsEnvVar(t, exporter.Env, "POSTGRES_INIT_SECRETS_FILE")
+	assertNotContainsVolumeMount(t, exporter.VolumeMounts, PostgresInitSecretsVolumeName)
+}
+
+func TestBuildPoolPod_PostgresInitSecretsRef_Absent(t *testing.T) {
+	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if v := findVolume(pod.Spec.Volumes, PostgresInitSecretsVolumeName); v != nil {
+		t.Errorf("expected no postgres init-secrets volume, got %+v", v)
+	}
+}
+
+func TestComputeSpecHash_ChangesOnPostgresInitSecretsRef(t *testing.T) {
+	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantHash := ComputeSpecHash(pod)
+
+	shardWithRef := newTestShard()
+	shardWithRef.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
+		Name: "multigres-init-secrets",
+	}
+	podWithRef, err := BuildPoolPod(shardWithRef, "main", "z1", newTestPoolSpec(), 0, testScheme())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := ComputeSpecHash(podWithRef); got == wantHash {
+		t.Error("spec hash should differ when postgres init-secrets ref is set vs unset")
+	}
+}
+
 func TestBuildPoolPod_SecurityContext(t *testing.T) {
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
 	if err != nil {

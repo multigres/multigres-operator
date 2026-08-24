@@ -2779,6 +2779,25 @@ spec:
                 - key
                 - name
                 type: object
+              postgresInitSecretsRef:
+                description: PostgresInitSecretsRef is inherited from the cluster.
+                properties:
+                  key:
+                    default: init-secrets.json
+                    description: Key is the JSON data key. Defaults to "init-secrets.json".
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[-._a-zA-Z0-9]+$
+                    type: string
+                  name:
+                    description: Name is the Secret name.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
               postgresPasswordSecretRef:
                 description: |-
                   PostgresPasswordSecretRef is the resolved Postgres superuser password

@@ -560,6 +560,144 @@ func TestPoolContainers_PostgresPasswordSecretRef(t *testing.T) {
 	t.Fatalf("expected postgres password Secret volume in pool volumes")
 }
 
+func TestPoolContainers_PostgresInitSecretsRef(t *testing.T) {
+	pool := multigresv1alpha1.PoolSpec{
+		Cells: []multigresv1alpha1.CellName{"zone1"},
+	}
+
+	findVolume := func(volumes []corev1.Volume, name string) *corev1.Volume {
+		for i := range volumes {
+			if volumes[i].Name == name {
+				return &volumes[i]
+			}
+		}
+		return nil
+	}
+
+	t.Run("ref set projects custom key to default filename", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName:   "testdb",
+				TableGroupName: "default",
+				ShardName:      "0",
+				PostgresInitSecretsRef: &multigresv1alpha1.PostgresInitSecretsRef{
+					Name: "multigres-init-secrets",
+					Key:  "custom-key.json",
+				},
+			},
+		}
+
+		volumes := buildPoolVolumes(shard, "zone1")
+		vol := findVolume(volumes, PostgresInitSecretsVolumeName)
+		if vol == nil {
+			t.Fatal("expected postgres init-secrets Secret volume in pool volumes")
+		}
+		if vol.Secret == nil {
+			t.Fatal("postgres init-secrets volume should use Secret source")
+		}
+		if vol.Secret.SecretName != "multigres-init-secrets" {
+			t.Errorf(
+				"postgres init-secrets SecretName = %q, want multigres-init-secrets",
+				vol.Secret.SecretName,
+			)
+		}
+		if len(vol.Secret.Items) != 1 ||
+			vol.Secret.Items[0].Key != "custom-key.json" ||
+			vol.Secret.Items[0].Path != PostgresInitSecretsFileName {
+			t.Errorf(
+				"postgres init-secrets Secret items = %+v, want custom key projected to %q",
+				vol.Secret.Items,
+				PostgresInitSecretsFileName,
+			)
+		}
+		if vol.Secret.DefaultMode == nil || *vol.Secret.DefaultMode != 0o444 {
+			t.Errorf("defaultMode = %v, want 0444", vol.Secret.DefaultMode)
+		}
+
+		c := buildPgctldSidecar(shard, pool)
+		assertEnvVarValue(t, c.Env, "POSTGRES_INIT_SECRETS_FILE", PostgresInitSecretsFilePath)
+		assertReadOnlyVolumeMount(
+			t,
+			c.VolumeMounts,
+			PostgresInitSecretsVolumeName,
+			PostgresInitSecretsMountPath,
+		)
+	})
+
+	t.Run("empty key falls back to default", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName:   "testdb",
+				TableGroupName: "default",
+				ShardName:      "0",
+				PostgresInitSecretsRef: &multigresv1alpha1.PostgresInitSecretsRef{
+					Name: "multigres-init-secrets",
+				},
+			},
+		}
+
+		volumes := buildPoolVolumes(shard, "zone1")
+		vol := findVolume(volumes, PostgresInitSecretsVolumeName)
+		if vol == nil {
+			t.Fatal("expected postgres init-secrets Secret volume in pool volumes")
+		}
+		if len(vol.Secret.Items) != 1 || vol.Secret.Items[0].Key != PostgresInitSecretsFileName {
+			t.Errorf(
+				"postgres init-secrets Secret items = %+v, want default key %q",
+				vol.Secret.Items,
+				PostgresInitSecretsFileName,
+			)
+		}
+	})
+
+	t.Run("ref nil produces no volume, env, or mount", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName:   "testdb",
+				TableGroupName: "default",
+				ShardName:      "0",
+			},
+		}
+
+		volumes := buildPoolVolumes(shard, "zone1")
+		if findVolume(volumes, PostgresInitSecretsVolumeName) != nil {
+			t.Error("expected no postgres init-secrets Secret volume when ref is nil")
+		}
+
+		c := buildPgctldSidecar(shard, pool)
+		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INIT_SECRETS_FILE")
+		assertNotContainsVolumeMount(t, c.VolumeMounts, PostgresInitSecretsVolumeName)
+	})
+
+	t.Run(
+		"multipooler and postgres-exporter never receive init-secrets env or mount",
+		func(t *testing.T) {
+			shard := &multigresv1alpha1.Shard{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
+				Spec: multigresv1alpha1.ShardSpec{
+					DatabaseName:   "testdb",
+					TableGroupName: "default",
+					ShardName:      "0",
+					PostgresInitSecretsRef: &multigresv1alpha1.PostgresInitSecretsRef{
+						Name: "multigres-init-secrets",
+					},
+				},
+			}
+
+			mp := buildMultipoolerContainer(shard, pool, "primary", "zone1", "p-test-id")
+			assertNotContainsEnvVar(t, mp.Env, "POSTGRES_INIT_SECRETS_FILE")
+			assertNotContainsVolumeMount(t, mp.VolumeMounts, PostgresInitSecretsVolumeName)
+
+			exporter := buildPostgresExporterContainer(shard)
+			assertNotContainsEnvVar(t, exporter.Env, "POSTGRES_INIT_SECRETS_FILE")
+			assertNotContainsVolumeMount(t, exporter.VolumeMounts, PostgresInitSecretsVolumeName)
+		},
+	)
+}
+
 func TestBuildMultiorchContainer(t *testing.T) {
 	tests := map[string]struct {
 		shard    *multigresv1alpha1.Shard

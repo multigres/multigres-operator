@@ -210,6 +210,10 @@ type ShardSpec struct {
 	// Secret.
 	PostgresPasswordSecretRef PostgresPasswordSecretRef `json:"postgresPasswordSecretRef"`
 
+	// PostgresInitSecretsRef is inherited from the cluster.
+	// +optional
+	PostgresInitSecretsRef *PostgresInitSecretsRef `json:"postgresInitSecretsRef,omitempty"`
+
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Each entry is a map like {"topology.kubernetes.io/zone": "us-east-1a"}.
 	// Propagated from the cluster's cell configs so the shard controller
