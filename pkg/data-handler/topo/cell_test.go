@@ -116,6 +116,61 @@ func TestRegisterCell(t *testing.T) {
 		}
 	})
 
+	t.Run("copies metadata verbatim into the topo record", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		recorder := record.NewFakeRecorder(10)
+		cell := newTestCell("cell2")
+		cell.Spec.Metadata = `{"zoneId":"use1-az1","custom":"value"}`
+
+		if err := topo.RegisterCell(context.Background(), store, recorder, cell); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		got, err := store.GetCell(context.Background(), "cell2")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if got.Metadata != `{"zoneId":"use1-az1","custom":"value"}` {
+			t.Errorf("expected metadata copied verbatim, got %q", got.Metadata)
+		}
+	})
+
+	t.Run("updates metadata on re-registration", func(t *testing.T) {
+		t.Parallel()
+		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
+		store := topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		)
+		defer func() { _ = store.Close() }()
+
+		recorder := record.NewFakeRecorder(10)
+		cell := newTestCell("cell1")
+		cell.Spec.Metadata = `{"zoneId":"use1-az1"}`
+
+		if err := topo.RegisterCell(context.Background(), store, recorder, cell); err != nil {
+			t.Fatalf("first registration failed: %v", err)
+		}
+
+		cell.Spec.Metadata = `{"zoneId":"use1-az2"}`
+		if err := topo.RegisterCell(context.Background(), store, recorder, cell); err != nil {
+			t.Fatalf("re-registration failed: %v", err)
+		}
+
+		got, err := store.GetCell(context.Background(), "cell1")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if got.Metadata != `{"zoneId":"use1-az2"}` {
+			t.Errorf("expected updated metadata, got %q", got.Metadata)
+		}
+	})
+
 	t.Run("returns error on failure", func(t *testing.T) {
 		t.Parallel()
 		store := &mockTopoStore{

@@ -161,3 +161,5 @@ exclude (
 	google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
 	google.golang.org/genproto v0.0.0-20200423170343-7949de9c1215
 )
+
+replace github.com/multigres/multigres => github.com/soedirgo/multigres v0.0.0-20260824135038-2da53ed109b8

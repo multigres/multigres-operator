@@ -707,6 +707,30 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 	})
+
+	t.Run("copies metadata from CellConfig into topo record", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+
+		cellCfg := multigresv1alpha1.CellConfig{
+			Name:     "cell2",
+			Metadata: `{"zoneId":"use1-az1"}`,
+		}
+		if err := topo.RegisterCellFromSpec(
+			context.Background(), store, recorder, owner, cellCfg, nil, topoRef,
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cell, err := store.GetCell(context.Background(), "cell2")
+		if err != nil {
+			t.Fatalf("cell not found: %v", err)
+		}
+		if cell.Metadata != `{"zoneId":"use1-az1"}` {
+			t.Errorf("expected metadata copied verbatim, got %q", cell.Metadata)
+		}
+	})
 }
 
 func TestPruneDatabases(t *testing.T) {

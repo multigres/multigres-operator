@@ -40,9 +40,10 @@ func BuildCell(
 			Annotations: annotations,
 		},
 		Spec: multigresv1alpha1.CellSpec{
-			Name:   cellCfg.Name,
-			ZoneID: cellCfg.ZoneID,
-			Region: cellCfg.Region,
+			Name:     cellCfg.Name,
+			ZoneID:   cellCfg.ZoneID,
+			Region:   cellCfg.Region,
+			Metadata: cellCfg.Metadata,
 			Images: multigresv1alpha1.CellImages{
 				Multigateway:     cluster.Spec.Images.Multigateway,
 				ImagePullPolicy:  cluster.Spec.Images.ImagePullPolicy,

@@ -11,19 +11,19 @@ const (
 	DefaultEtcdImage = "gcr.io/etcd-development/etcd:v3.6.7"
 
 	// DefaultMultiadminImage is the default container image for the Multiadmin component.
-	DefaultMultiadminImage = "ghcr.io/multigres/multigres:sha-66d2310"
+	DefaultMultiadminImage = "ghcr.io/soedirgo/multigres:sha-2da53ed"
 
 	// DefaultMultiadminWebImage is the default container image for the MultiadminWeb component.
 	DefaultMultiadminWebImage = "ghcr.io/multigres/multiadmin-web:sha-64da1ab"
 
 	// DefaultMultiorchImage is the default container image for the Multiorch component.
-	DefaultMultiorchImage = "ghcr.io/multigres/multigres:sha-66d2310"
+	DefaultMultiorchImage = "ghcr.io/soedirgo/multigres:sha-2da53ed"
 
 	// DefaultMultipoolerImage is the default container image for the Multipooler component.
-	DefaultMultipoolerImage = "ghcr.io/multigres/multigres:sha-66d2310"
+	DefaultMultipoolerImage = "ghcr.io/soedirgo/multigres:sha-2da53ed"
 
 	// DefaultMultigatewayImage is the default container image for the Multigateway component.
-	DefaultMultigatewayImage = "ghcr.io/multigres/multigres:sha-66d2310"
+	DefaultMultigatewayImage = "ghcr.io/soedirgo/multigres:sha-2da53ed"
 
 	// DefaultPostgresExporterImage is the default container image for postgres_exporter sidecars.
 	DefaultPostgresExporterImage = "quay.io/prometheuscommunity/postgres-exporter:v0.20.1"

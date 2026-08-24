@@ -382,6 +382,13 @@ type CellConfig struct {
 	// +optional
 	Region Region `json:"region,omitempty"`
 
+	// Metadata is an opaque document describing this cell, copied verbatim into
+	// the cell's topology record for administrative clients to read. Whoever
+	// creates the cluster owns its contents; the operator does not interpret it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=4096
+	Metadata string `json:"metadata,omitempty"`
+
 	// CellTemplate refers to a CellTemplate CR.
 	// +optional
 	CellTemplate TemplateRef `json:"cellTemplate,omitempty"`
