@@ -76,4 +76,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/multigres/multigres => github.com/soedirgo/multigres v0.0.0-20260824135038-2da53ed109b8
+replace github.com/multigres/multigres => github.com/multigres/multigres v0.0.0-20260825075252-65cd580f9c67
