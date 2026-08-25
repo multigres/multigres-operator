@@ -80,7 +80,7 @@ spec:
                       storage:
                         description: |-
                           Storage defines the PVC configuration for the backup volume.
-                          This volume is shared by all pools in the shard (per-cell).
+                          This volume is shared by all pools in the shard.
                         properties:
                           accessModes:
                             description: |-
@@ -535,7 +535,7 @@ spec:
                             storage:
                               description: |-
                                 Storage defines the PVC configuration for the backup volume.
-                                This volume is shared by all pools in the shard (per-cell).
+                                This volume is shared by all pools in the shard.
                               properties:
                                 accessModes:
                                   description: |-

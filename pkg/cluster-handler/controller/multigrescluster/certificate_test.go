@@ -38,6 +38,7 @@ func TestBuildCertificate(t *testing.T) {
 		wantDNSNames   []any
 		wantSubject    string
 		wantSecretName string
+		wantIssuerName string
 	}{
 		"standard certCommonName with db prefix": {
 			cluster: &multigresv1alpha1.MultigresCluster{
@@ -81,6 +82,28 @@ func TestBuildCertificate(t *testing.T) {
 			wantDNSNames:   []any{"custom.example.com"},
 			wantSubject:    "C=US, ST=Delware, L=New Castle,O=Supabase Inc, CN=custom.example.com",
 			wantSecretName: multigresv1alpha1.CertSecretName,
+		},
+		"custom issuerName overrides default": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "multigres.com/v1alpha1",
+					Kind:       "MultigresCluster",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cluster",
+					Namespace: "supabase",
+					UID:       "cluster-uid-3",
+				},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					CertCommonName: "custom.example.com",
+					IssuerName:     "my-custom-issuer",
+				},
+			},
+			wantName:       "custom.example.com",
+			wantDNSNames:   []any{"custom.example.com"},
+			wantSubject:    "C=US, ST=Delware, L=New Castle,O=Supabase Inc, CN=custom.example.com",
+			wantSecretName: multigresv1alpha1.CertSecretName,
+			wantIssuerName: "my-custom-issuer",
 		},
 	}
 
@@ -136,8 +159,12 @@ func TestBuildCertificate(t *testing.T) {
 			if diff := cmp.Diff(tc.wantSecretName, spec["secretName"]); diff != "" {
 				t.Errorf("secretName mismatch (-want +got):\n%s", diff)
 			}
+			wantIssuer := tc.wantIssuerName
+			if wantIssuer == "" {
+				wantIssuer = CertIssuerName
+			}
 			wantIssuerRef := map[string]any{
-				"name":  CertIssuerName,
+				"name":  wantIssuer,
 				"kind":  "ClusterIssuer",
 				"group": "cert-manager.io",
 			}

@@ -52,7 +52,8 @@ type certSpec struct {
 
 // buildCertificate constructs an unstructured cert-manager Certificate for the
 // multigateway TLS certificate. The Certificate spec matches what non-HA
-// projects use, with the supabase-issuer ClusterIssuer.
+// projects use, with the cluster's configured ClusterIssuer (defaulting to
+// supabase-issuer).
 // The owner is the MultigresCluster so there is exactly one reconciler
 // and one ownerRef — no conflict when multiple cells share the same CN.
 func buildCertificate(
@@ -136,6 +137,15 @@ func buildInternalCertificates(
 	return certs, nil
 }
 
+// issuerName returns the cluster's configured cert-manager ClusterIssuer
+// name, defaulting to CertIssuerName when unset.
+func issuerName(cluster *multigresv1alpha1.MultigresCluster) string {
+	if cluster.Spec.IssuerName != "" {
+		return cluster.Spec.IssuerName
+	}
+	return CertIssuerName
+}
+
 // maxCommonNameBytes is the X.509 upper bound for the CN attribute
 // (RFC 5280 ub-common-name). cert-manager's webhook rejects longer CNs.
 const maxCommonNameBytes = 64
@@ -175,7 +185,7 @@ func buildCertificateFromSpec(
 			truncateCommonName(spec.commonName),
 		),
 		"issuerRef": map[string]any{
-			"name":  CertIssuerName,
+			"name":  issuerName(cluster),
 			"kind":  "ClusterIssuer",
 			"group": "cert-manager.io",
 		},

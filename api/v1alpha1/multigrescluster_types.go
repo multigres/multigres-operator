@@ -165,6 +165,11 @@ type MultigresClusterSpec struct {
 	// When empty, public PostgreSQL connections use no TLS.
 	// +optional
 	CertCommonName string `json:"certCommonName,omitempty"`
+
+	// IssuerName is the cert-manager ClusterIssuer used for TLS certificates
+	// created by this cluster. When empty, defaults to the Supabase issuer.
+	// +optional
+	IssuerName string `json:"issuerName,omitempty"`
 }
 
 // ============================================================================

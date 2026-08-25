@@ -87,7 +87,7 @@ spec:
                       storage:
                         description: |-
                           Storage defines the PVC configuration for the backup volume.
-                          This volume is shared by all pools in the shard (per-cell).
+                          This volume is shared by all pools in the shard.
                         properties:
                           accessModes:
                             description: |-
@@ -2731,7 +2731,7 @@ spec:
                             storage:
                               description: |-
                                 Storage defines the PVC configuration for the backup volume.
-                                This volume is shared by all pools in the shard (per-cell).
+                                This volume is shared by all pools in the shard.
                               properties:
                                 accessModes:
                                   description: |-
@@ -2880,7 +2880,7 @@ spec:
                                   storage:
                                     description: |-
                                       Storage defines the PVC configuration for the backup volume.
-                                      This volume is shared by all pools in the shard (per-cell).
+                                      This volume is shared by all pools in the shard.
                                     properties:
                                       accessModes:
                                         description: |-
@@ -3052,7 +3052,7 @@ spec:
                                         storage:
                                           description: |-
                                             Storage defines the PVC configuration for the backup volume.
-                                            This volume is shared by all pools in the shard (per-cell).
+                                            This volume is shared by all pools in the shard.
                                           properties:
                                             accessModes:
                                               description: |-
@@ -9773,6 +9773,11 @@ spec:
                       Default: false (nil or empty means disabled).
                     type: boolean
                 type: object
+              issuerName:
+                description: |-
+                  IssuerName is the cert-manager ClusterIssuer used for TLS certificates
+                  created by this cluster. When empty, defaults to the Supabase issuer.
+                type: string
               logLevels:
                 description: |-
                   LogLevels configures the --log-level flag for each multigres data-plane component.
