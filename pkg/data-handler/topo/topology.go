@@ -158,6 +158,7 @@ func RegisterCellFromSpec(
 		managedAddress,
 		cellRoot,
 	)
+	cellMetadata.Metadata = cellConfig.Metadata
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
 	if err != nil {

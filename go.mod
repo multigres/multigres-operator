@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/go-cmp v0.7.0
-	github.com/multigres/multigres v0.0.0-20260824140524-5ddcaf2c8008
+	github.com/multigres/multigres v0.0.0-20260825075252-65cd580f9c67
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/stretchr/testify v1.11.1
@@ -161,3 +161,5 @@ exclude (
 	google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
 	google.golang.org/genproto v0.0.0-20200423170343-7949de9c1215
 )
+
+replace github.com/multigres/multigres => github.com/multigres/multigres v0.0.0-20260825075252-65cd580f9c67

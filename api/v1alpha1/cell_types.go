@@ -125,6 +125,12 @@ type CellSpec struct {
 	// +optional
 	Region Region `json:"region,omitempty"`
 
+	// Metadata is an opaque document describing this cell, copied verbatim into
+	// the cell's topology record. Set from the parent cluster's cells[].metadata.
+	// +optional
+	// +kubebuilder:validation:MaxLength=4096
+	Metadata string `json:"metadata,omitempty"`
+
 	// Images defines the container images used in this cell.
 	Images CellImages `json:"images"`
 

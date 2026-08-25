@@ -46,6 +46,7 @@ func RegisterCell(
 		ManagedLocalTopoServerAddress(cell.Name, cell.Namespace),
 		cellRoot,
 	)
+	cellMetadata.Metadata = cell.Spec.Metadata
 
 	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
 	if err != nil {
@@ -132,6 +133,7 @@ func createOrUpdateCell(
 					existing.Name = cellMetadata.Name
 					existing.ServerAddresses = cellMetadata.ServerAddresses
 					existing.Root = cellMetadata.Root
+					existing.Metadata = cellMetadata.Metadata
 					return nil
 				},
 			); err != nil {
