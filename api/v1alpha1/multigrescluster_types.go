@@ -43,6 +43,8 @@ import (
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=list;watch
 
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+
 // ============================================================================
 // MultigresClusterSpec Spec (User-editable API)
 // ============================================================================
@@ -121,6 +123,11 @@ type MultigresClusterSpec struct {
 	// When nil or enabled: false, the Service remains ClusterIP.
 	// +optional
 	ExternalAdminWeb *ExternalAdminWebConfig `json:"externalAdminWeb,omitempty"`
+
+	// NetworkPolicy restricts ingress to the cluster's admin components.
+	// When nil or disabled, no NetworkPolicies are created.
+	// +optional
+	NetworkPolicy *NetworkPolicyConfig `json:"networkPolicy,omitempty"`
 
 	// TopologyPruning controls whether stale topology entries are pruned.
 	// Default: enabled (nil means pruning is on).
@@ -690,6 +697,20 @@ type ExternalAdminWebConfig struct {
 	// +optional
 	// +kubebuilder:validation:MaxProperties=20
 	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// NetworkPolicyConfig configures ingress restrictions for admin components.
+type NetworkPolicyConfig struct {
+	// When enabled, ingress is limited to the cluster namespace and
+	// AllowedIngressNamespaces. Enforcement requires a compatible CNI.
+	Enabled bool `json:"enabled"`
+
+	// AllowedIngressNamespaces lists additional namespaces whose pods may reach
+	// the admin components. Namespaces need no extra labels.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	AllowedIngressNamespaces []string `json:"allowedIngressNamespaces,omitempty"`
 }
 
 // AdminWebStatus reports the external admin web state.

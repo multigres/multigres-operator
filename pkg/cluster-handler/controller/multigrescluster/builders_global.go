@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -578,4 +579,68 @@ func postgresSuperuserOrDefault(name string) string {
 		return "postgres"
 	}
 	return name
+}
+
+var networkPolicyComponents = []string{
+	metadata.ComponentMultiadmin,
+	metadata.ComponentMultiadminWeb,
+}
+
+// AdminNetworkPolicyName returns the policy name for an admin component.
+func AdminNetworkPolicyName(clusterName, component string) string {
+	return fmt.Sprintf("%s-%s-restrict-ingress", clusterName, component)
+}
+
+// BuildAdminNetworkPolicies builds ingress policies for admin components.
+// It returns nil when network policies are unset or disabled.
+func BuildAdminNetworkPolicies(
+	cluster *multigresv1alpha1.MultigresCluster,
+	scheme *runtime.Scheme,
+) ([]*networkingv1.NetworkPolicy, error) {
+	np := cluster.Spec.NetworkPolicy
+	if np == nil || !np.Enabled {
+		return nil, nil
+	}
+
+	peers := []networkingv1.NetworkPolicyPeer{
+		// An empty pod selector allows all pods in the policy's namespace.
+		{PodSelector: &metav1.LabelSelector{}},
+	}
+	for _, ns := range np.AllowedIngressNamespaces {
+		peers = append(peers, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{corev1.LabelMetadataName: ns},
+			},
+		})
+	}
+
+	policies := make([]*networkingv1.NetworkPolicy, 0, len(networkPolicyComponents))
+	for _, component := range networkPolicyComponents {
+		standardLabels := metadata.BuildStandardLabels(cluster.Name, component)
+		metadata.AddClusterLabel(standardLabels, cluster.Name)
+
+		policy := &networkingv1.NetworkPolicy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      AdminNetworkPolicyName(cluster.Name, component),
+				Namespace: cluster.Namespace,
+				Labels:    standardLabels,
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: metadata.GetSelectorLabels(standardLabels),
+				},
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+				Ingress: []networkingv1.NetworkPolicyIngressRule{
+					{From: peers},
+				},
+			},
+		}
+
+		if err := controllerutil.SetControllerReference(cluster, policy, scheme); err != nil {
+			return nil, err
+		}
+		policies = append(policies, policy)
+	}
+
+	return policies, nil
 }

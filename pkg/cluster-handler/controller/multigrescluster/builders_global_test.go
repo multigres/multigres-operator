@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -892,6 +893,113 @@ func TestBuildMultigatewayGlobalReplicaService(t *testing.T) {
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
 		_, err := BuildMultigatewayGlobalReplicaService(cluster, emptyScheme)
+		assert.Error(t, err)
+	})
+}
+
+func TestBuildAdminNetworkPolicies(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
+
+	baseCluster := func(np *multigresv1alpha1.NetworkPolicyConfig) *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-cluster",
+				Namespace: "default",
+				UID:       "cluster-uid",
+			},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				NetworkPolicy: np,
+			},
+		}
+	}
+
+	t.Run("NilConfig", func(t *testing.T) {
+		got, err := BuildAdminNetworkPolicies(baseCluster(nil), scheme)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("Disabled", func(t *testing.T) {
+		got, err := BuildAdminNetworkPolicies(
+			baseCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: false}),
+			scheme,
+		)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("EnabledWithAllowedNamespaces", func(t *testing.T) {
+		got, err := BuildAdminNetworkPolicies(
+			baseCluster(&multigresv1alpha1.NetworkPolicyConfig{
+				Enabled:                  true,
+				AllowedIngressNamespaces: []string{"envoy-gateway-system", "multigres-operator"},
+			}),
+			scheme,
+		)
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+
+		wantNames := []string{
+			"my-cluster-multiadmin-restrict-ingress",
+			"my-cluster-multiadmin-web-restrict-ingress",
+		}
+		wantComponents := []string{"multiadmin", "multiadmin-web"}
+
+		for i, policy := range got {
+			assert.Equal(t, wantNames[i], policy.Name)
+			assert.Equal(t, "default", policy.Namespace)
+			require.Len(t, policy.OwnerReferences, 1)
+
+			assert.Equal(t,
+				map[string]string{
+					"app.kubernetes.io/component": wantComponents[i],
+					"app.kubernetes.io/instance":  "my-cluster",
+					"multigres.com/cluster":       "my-cluster",
+				},
+				policy.Spec.PodSelector.MatchLabels,
+			)
+			assert.Equal(t,
+				[]networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+				policy.Spec.PolicyTypes,
+			)
+
+			require.Len(t, policy.Spec.Ingress, 1)
+			peers := policy.Spec.Ingress[0].From
+			require.Len(t, peers, 3)
+			// An empty pod selector without a namespace selector matches local pods.
+			assert.NotNil(t, peers[0].PodSelector)
+			assert.Nil(t, peers[0].NamespaceSelector)
+			for j, ns := range []string{"envoy-gateway-system", "multigres-operator"} {
+				peer := peers[j+1]
+				require.NotNil(t, peer.NamespaceSelector)
+				assert.Equal(t,
+					map[string]string{"kubernetes.io/metadata.name": ns},
+					peer.NamespaceSelector.MatchLabels,
+				)
+				assert.Nil(t, peer.PodSelector)
+			}
+		}
+	})
+
+	t.Run("EnabledWithoutAllowedNamespaces", func(t *testing.T) {
+		got, err := BuildAdminNetworkPolicies(
+			baseCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true}),
+			scheme,
+		)
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		require.Len(t, got[0].Spec.Ingress, 1)
+		assert.Len(t, got[0].Spec.Ingress[0].From, 1)
+	})
+
+	t.Run("ControllerRefError", func(t *testing.T) {
+		emptyScheme := runtime.NewScheme()
+		_, err := BuildAdminNetworkPolicies(
+			baseCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true}),
+			emptyScheme,
+		)
 		assert.Error(t, err)
 	})
 }

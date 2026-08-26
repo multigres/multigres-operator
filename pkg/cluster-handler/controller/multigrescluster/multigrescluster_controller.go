@@ -9,6 +9,7 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -57,6 +58,7 @@ type MultigresClusterReconciler struct {
 // +kubebuilder:rbac:groups=multigres.com,resources=shards,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 func (r *MultigresClusterReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
@@ -482,6 +484,7 @@ func (r *MultigresClusterReconciler) SetupWithManager(
 		Owns(&multigresv1alpha1.TopoServer{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(
 			&multigresv1alpha1.CoreTemplate{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueRequestsFromTemplate),

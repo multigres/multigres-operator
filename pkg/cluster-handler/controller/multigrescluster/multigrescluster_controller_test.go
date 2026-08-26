@@ -12,6 +12,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -219,6 +220,7 @@ func setupScheme() *runtime.Scheme {
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
 	// Register cert-manager Certificate so the fake client does not
 	// mutate the scheme at runtime (which panics under parallel tests).
 	registerCertManagerTypes(scheme)

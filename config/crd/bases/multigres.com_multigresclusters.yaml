@@ -195,6 +195,13 @@ spec:
                       maxLength: 63
                       minLength: 1
                       type: string
+                    metadata:
+                      description: |-
+                        Metadata is an opaque document describing this cell, copied verbatim into
+                        the cell's topology record for administrative clients to read. Whoever
+                        creates the cluster owns its contents; the operator does not interpret it.
+                      maxLength: 4096
+                      type: string
                     name:
                       description: Name is the logical name of the cell.
                       maxLength: 30
@@ -11936,6 +11943,28 @@ spec:
                   rule: has(self.spec) || has(self.templateRef)
                 - message: cannot specify both 'spec' and 'templateRef'
                   rule: '!(has(self.spec) && has(self.templateRef))'
+              networkPolicy:
+                description: |-
+                  NetworkPolicy restricts ingress to the cluster's admin components.
+                  When nil or disabled, no NetworkPolicies are created.
+                properties:
+                  allowedIngressNamespaces:
+                    description: |-
+                      AllowedIngressNamespaces lists additional namespaces whose pods may reach
+                      the admin components. Namespaces need no extra labels.
+                    items:
+                      type: string
+                    maxItems: 20
+                    type: array
+                    x-kubernetes-list-type: set
+                  enabled:
+                    description: |-
+                      When enabled, ingress is limited to the cluster namespace and
+                      AllowedIngressNamespaces. Enforcement requires a compatible CNI.
+                    type: boolean
+                required:
+                - enabled
+                type: object
               observability:
                 description: |-
                   Observability configures OpenTelemetry for data-plane components.

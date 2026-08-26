@@ -6,7 +6,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -21,6 +23,7 @@ var (
 	buildMultiadminWebService             = BuildMultiadminWebService
 	buildMultigatewayGlobalService        = BuildMultigatewayGlobalService
 	buildMultigatewayGlobalReplicaService = BuildMultigatewayGlobalReplicaService
+	buildAdminNetworkPolicies             = BuildAdminNetworkPolicies
 )
 
 func (r *MultigresClusterReconciler) reconcileGlobalComponents(
@@ -37,6 +40,52 @@ func (r *MultigresClusterReconciler) reconcileGlobalComponents(
 	if err := r.reconcileMultiadminWeb(ctx, cluster, res); err != nil {
 		return err
 	}
+	if err := r.reconcileAdminNetworkPolicies(ctx, cluster); err != nil {
+		return err
+	}
+	return nil
+}
+
+// reconcileAdminNetworkPolicies applies desired policies or removes them when disabled.
+func (r *MultigresClusterReconciler) reconcileAdminNetworkPolicies(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) error {
+	desired, err := buildAdminNetworkPolicies(cluster, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to build admin network policies: %w", err)
+	}
+
+	if desired == nil {
+		for _, component := range networkPolicyComponents {
+			stale := &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      AdminNetworkPolicyName(cluster.Name, component),
+					Namespace: cluster.Namespace,
+				},
+			}
+			if err := r.Delete(ctx, stale); err != nil && !errors.IsNotFound(err) {
+				return fmt.Errorf(
+					"failed to delete stale network policy %s: %w", stale.Name, err,
+				)
+			}
+		}
+		return nil
+	}
+
+	for _, policy := range desired {
+		policy.SetGroupVersionKind(networkingv1.SchemeGroupVersion.WithKind("NetworkPolicy"))
+		if err := r.Patch(
+			ctx,
+			policy,
+			client.Apply,
+			client.ForceOwnership,
+			client.FieldOwner("multigres-operator"),
+		); err != nil {
+			return fmt.Errorf("failed to apply network policy %s: %w", policy.Name, err)
+		}
+	}
+
 	return nil
 }
 

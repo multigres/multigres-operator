@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1084,6 +1085,110 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 			t.Error("Expected error, got nil")
 		} else if !strings.Contains(err.Error(), "failed to build global replica multigateway service") {
 			t.Errorf("Expected 'failed to build global replica multigateway service', got: %v", err)
+		}
+	})
+}
+
+func TestReconcileAdminNetworkPolicies(t *testing.T) {
+	scheme := setupScheme()
+
+	newCluster := func(np *multigresv1alpha1.NetworkPolicyConfig) *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default", UID: "uid"},
+			Spec:       multigresv1alpha1.MultigresClusterSpec{NetworkPolicy: np},
+		}
+	}
+
+	listPolicies := func(t *testing.T, c client.Client) []networkingv1.NetworkPolicy {
+		t.Helper()
+		list := &networkingv1.NetworkPolicyList{}
+		if err := c.List(context.Background(), list, client.InNamespace("default")); err != nil {
+			t.Fatalf("failed to list network policies: %v", err)
+		}
+		return list.Items
+	}
+
+	t.Run("Enabled creates policies for multiadmin and multiadmin-web", func(t *testing.T) {
+		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{
+			Enabled:                  true,
+			AllowedIngressNamespaces: []string{"envoy-gateway-system"},
+		})
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		r := &MultigresClusterReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
+			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
+		}
+
+		policies := listPolicies(t, c)
+		if len(policies) != 2 {
+			t.Fatalf("expected 2 network policies, got %d", len(policies))
+		}
+	})
+
+	t.Run("Disabled deletes previously created policies", func(t *testing.T) {
+		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true})
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		r := &MultigresClusterReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
+			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
+		}
+		if got := len(listPolicies(t, c)); got != 2 {
+			t.Fatalf("expected 2 network policies before disable, got %d", got)
+		}
+
+		cluster.Spec.NetworkPolicy = nil
+		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
+			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
+		}
+		if got := len(listPolicies(t, c)); got != 0 {
+			t.Fatalf("expected 0 network policies after disable, got %d", got)
+		}
+	})
+
+	t.Run("Disabled with nothing to delete is a no-op", func(t *testing.T) {
+		cluster := newCluster(nil)
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		r := &MultigresClusterReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
+			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
+		}
+	})
+
+	t.Run("Apply error is propagated", func(t *testing.T) {
+		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true})
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+					if _, ok := obj.(*networkingv1.NetworkPolicy); ok {
+						return errors.New("patch failed")
+					}
+					return cl.Patch(ctx, obj, patch, opts...)
+				},
+			}).Build()
+		r := &MultigresClusterReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		err := r.reconcileAdminNetworkPolicies(context.Background(), cluster)
+		if err == nil || !strings.Contains(err.Error(), "failed to apply network policy") {
+			t.Fatalf("expected apply error, got %v", err)
 		}
 	})
 }
