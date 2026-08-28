@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -13,6 +14,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
 	"github.com/multigres/multigres-operator/pkg/data-handler/drain"
+	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -48,12 +50,30 @@ func (r *ShardReconciler) reconcileDataPlane(
 		childSpan.End()
 	}
 
+	postureRequeue := false
+	if r.RPCClient != nil {
+		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcilePosture")
+		var err error
+		postureRequeue, err = r.reconcilePosture(ctx, store, shard)
+		if err != nil {
+			monitoring.RecordSpanError(childSpan, err)
+			childSpan.End()
+			return ctrl.Result{}, err
+		}
+		childSpan.End()
+
+		// Publish posture, condition, and phase in one status update.
+		if err := r.updateStatus(ctx, shard, rendered); err != nil {
+			return ctrl.Result{}, fmt.Errorf("update status after posture observation: %w", err)
+		}
+	}
+
 	// Requeue when the shard is Healthy but topology hasn't elected a primary
 	// yet. This closes a race where the reconciliation burst settles before
 	// multiorch writes the primary type to etcd.
 	if shard.Status.Phase == multigresv1alpha1.PhaseHealthy && !hasPrimary(shard.Status.PodRoles) {
 		logger.Info("No primary in podRoles, requeueing to re-read topology")
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return withPostureRequeue(ctrl.Result{RequeueAfter: 10 * time.Second}, postureRequeue), nil
 	}
 
 	// Phase: Prune stale pooler entries from topology
@@ -77,7 +97,10 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 		childSpan.End()
 		if acted {
-			return ctrl.Result{RequeueAfter: quarantineRemediationRequeue}, nil
+			return withPostureRequeue(
+				ctrl.Result{RequeueAfter: quarantineRemediationRequeue},
+				postureRequeue,
+			), nil
 		}
 	}
 
@@ -92,7 +115,10 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 		childSpan.End()
 		if requeue {
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+			return withPostureRequeue(
+				ctrl.Result{RequeueAfter: 2 * time.Second},
+				postureRequeue,
+			), nil
 		}
 	}
 
@@ -148,11 +174,11 @@ func (r *ShardReconciler) reconcileDataPlane(
 			return ctrl.Result{}, err
 		}
 		if wait > 0 {
-			return ctrl.Result{RequeueAfter: wait}, nil
+			return withPostureRequeue(ctrl.Result{RequeueAfter: wait}, postureRequeue), nil
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return withPostureRequeue(ctrl.Result{}, postureRequeue), nil
 }
 
 // reconcilePodRoles queries the topology for pooler status and updates
@@ -216,6 +242,102 @@ func (r *ShardReconciler) reconcilePodRoles(
 			logger.Error(err, "Failed to update shard pod roles")
 		}
 	}
+}
+
+const (
+	postureStrikeThreshold      = 2
+	postureDebounceRequeueDelay = 5 * time.Second
+)
+
+func (r *ShardReconciler) reconcilePosture(
+	ctx context.Context,
+	store topoclient.Store,
+	shard *multigresv1alpha1.Shard,
+) (bool, error) {
+	lbls := map[string]string{
+		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
+		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
+		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
+		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+	}
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList,
+		client.InNamespace(shard.Namespace),
+		client.MatchingLabels(lbls),
+	); err != nil {
+		return false, fmt.Errorf("list pods for posture reconciliation: %w", err)
+	}
+	podNames := make([]string, len(podList.Items))
+	for i := range podList.Items {
+		podNames[i] = podList.Items[i].Name
+	}
+
+	result, err := posture.Evaluate(ctx, store, r.RPCClient, shard, podNames)
+	if err != nil {
+		r.Recorder.Eventf(shard, "Warning", "PostureCheckFailed",
+			"Failed to check postgres posture consistency: %v", err)
+		return false, fmt.Errorf("evaluate posture consistency: %w", err)
+	}
+	if result == nil {
+		return false, nil
+	}
+
+	clusterName := shard.Labels[metadata.LabelMultigresCluster]
+	inconsistent := result.MultiplePrimaries || len(result.Mismatches) > 0
+	if inconsistent || !result.Incomplete {
+		monitoring.SetShardPostureInconsistent(
+			clusterName,
+			shard.Name,
+			shard.Namespace,
+			inconsistent,
+		)
+	}
+
+	strikes := r.recordPostureObservation(shard, inconsistent)
+
+	prevFalse := status.IsConditionFalse(shard.Status.Conditions, posture.ConditionConsistent)
+
+	if !inconsistent || strikes >= postureStrikeThreshold {
+		posture.Apply(shard, result)
+	} else {
+		shard.Status.PodPostures = result.Postures
+	}
+
+	if !prevFalse && status.IsConditionFalse(shard.Status.Conditions, posture.ConditionConsistent) {
+		reason := "RolePostureMismatch"
+		if result.MultiplePrimaries {
+			reason = "MultiplePrimariesDetected"
+		}
+		r.Recorder.Eventf(shard, "Warning", reason, result.Message)
+	}
+
+	return inconsistent && strikes < postureStrikeThreshold, nil
+}
+
+func withPostureRequeue(result ctrl.Result, pending bool) ctrl.Result {
+	if pending && (result.RequeueAfter == 0 || result.RequeueAfter > postureDebounceRequeueDelay) {
+		result.RequeueAfter = postureDebounceRequeueDelay
+	}
+	return result
+}
+
+func (r *ShardReconciler) recordPostureObservation(
+	shard *multigresv1alpha1.Shard,
+	inconsistent bool,
+) int {
+	key := fmt.Sprintf("%s/%s", shard.Namespace, shard.Name)
+
+	r.postureStrikesMu.Lock()
+	defer r.postureStrikesMu.Unlock()
+	if r.postureStrikes == nil {
+		r.postureStrikes = make(map[string]int)
+	}
+	if inconsistent {
+		r.postureStrikes[key]++
+	} else {
+		r.postureStrikes[key] = 0
+	}
+	return r.postureStrikes[key]
 }
 
 // reconcileDrainState iterates pods with drain annotations and runs the

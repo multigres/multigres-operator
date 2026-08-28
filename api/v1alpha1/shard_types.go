@@ -329,6 +329,10 @@ type ShardStatus struct {
 	// +optional
 	PodRoles map[string]string `json:"podRoles,omitempty"`
 
+	// PodPostures maps pod names to postgres states observed via Status RPC.
+	// +optional
+	PodPostures map[string]string `json:"podPostures,omitempty"`
+
 	// ReadyReplicas is the total number of ready pods across all pools in this shard.
 	// +optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`

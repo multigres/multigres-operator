@@ -30,3 +30,13 @@ func IsConditionTrue(conditions []metav1.Condition, condType string) bool {
 	}
 	return false
 }
+
+// IsConditionFalse reports whether the named condition has status False.
+func IsConditionFalse(conditions []metav1.Condition, condType string) bool {
+	for _, c := range conditions {
+		if c.Type == condType {
+			return c.Status == metav1.ConditionFalse
+		}
+	}
+	return false
+}

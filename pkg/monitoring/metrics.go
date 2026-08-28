@@ -115,6 +115,14 @@ var (
 		},
 		[]string{"controller", "name", "namespace"},
 	)
+
+	shardPostureInconsistent = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "multigres_operator_shard_posture_inconsistent",
+			Help: "Indicates if the observed postgres postures disagree with topology roles for a Shard (possible split brain).",
+		},
+		[]string{"cluster", "shard", "namespace"},
+	)
 )
 
 func init() {
@@ -132,6 +140,7 @@ func init() {
 		drainOperationsTotal,
 		rollingUpdateInProgress,
 		reconcileErrorsTotal,
+		shardPostureInconsistent,
 	)
 }
 
@@ -152,6 +161,7 @@ func Collectors() []prometheus.Collector {
 		drainOperationsTotal,
 		rollingUpdateInProgress,
 		reconcileErrorsTotal,
+		shardPostureInconsistent,
 	}
 }
 

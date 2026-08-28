@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/multigres/multigres/go/common/rpcclient"
@@ -72,6 +73,9 @@ type ShardReconciler struct {
 	APIReader       client.Reader
 	RPCClient       rpcclient.MultipoolerClient
 	CreateTopoStore func(*multigresv1alpha1.Shard) (topoclient.Store, error)
+
+	postureStrikesMu sync.Mutex
+	postureStrikes   map[string]int
 }
 
 // Reconcile manages pool pods, PVCs, services, and data-plane topology for a Shard.

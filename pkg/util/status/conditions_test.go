@@ -175,3 +175,56 @@ func TestIsConditionTrue(t *testing.T) {
 		})
 	}
 }
+
+func TestIsConditionFalse(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		conditions []metav1.Condition
+		condType   string
+		want       bool
+	}{
+		"true when present and False": {
+			conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionFalse},
+			},
+			condType: "Ready",
+			want:     true,
+		},
+		"false when present and True": {
+			conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionTrue},
+			},
+			condType: "Ready",
+			want:     false,
+		},
+		"false when present and Unknown": {
+			conditions: []metav1.Condition{
+				{Type: "Ready", Status: metav1.ConditionUnknown},
+			},
+			condType: "Ready",
+			want:     false,
+		},
+		"false when not present": {
+			conditions: []metav1.Condition{
+				{Type: "Available", Status: metav1.ConditionFalse},
+			},
+			condType: "Ready",
+			want:     false,
+		},
+		"false on empty slice": {
+			conditions: nil,
+			condType:   "Ready",
+			want:       false,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsConditionFalse(tc.conditions, tc.condType); got != tc.want {
+				t.Errorf("IsConditionFalse() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

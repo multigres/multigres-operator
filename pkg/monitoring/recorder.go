@@ -71,3 +71,12 @@ func SetRollingUpdateInProgress(cluster, shard, pool, cell, namespace string, in
 	}
 	rollingUpdateInProgress.WithLabelValues(cluster, shard, pool, cell, namespace).Set(val)
 }
+
+// SetShardPostureInconsistent records posture and topology disagreement.
+func SetShardPostureInconsistent(cluster, shard, namespace string, inconsistent bool) {
+	val := 0.0
+	if inconsistent {
+		val = 1.0
+	}
+	shardPostureInconsistent.WithLabelValues(cluster, shard, namespace).Set(val)
+}

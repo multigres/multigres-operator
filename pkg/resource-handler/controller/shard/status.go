@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
@@ -64,7 +65,17 @@ func (r *ShardReconciler) updateStatus(
 
 	// Update Phase — Degraded takes priority over Healthy so crash-looping
 	// pods are always surfaced even when the old replica is still serving.
+	postureCondition := meta.FindStatusCondition(
+		shard.Status.Conditions,
+		posture.ConditionConsistent,
+	)
 	switch {
+	case status.IsConditionFalse(shard.Status.Conditions, posture.ConditionConsistent):
+		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
+		shard.Status.Message = "Postgres posture inconsistent with topology roles (possible split brain)"
+	case postureCondition != nil && postureCondition.Status == metav1.ConditionUnknown:
+		shard.Status.Phase = multigresv1alpha1.PhaseProgressing
+		shard.Status.Message = "Postgres posture check incomplete"
 	case pools.poolDegraded || orchDegraded:
 		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
 		if pools.poolDegraded {
@@ -120,6 +131,7 @@ func (r *ShardReconciler) updateStatus(
 			LastBackupTime:     shard.Status.LastBackupTime,
 			LastBackupType:     shard.Status.LastBackupType,
 			PodRoles:           shard.Status.PodRoles,
+			PodPostures:        shard.Status.PodPostures,
 			PostgresConfig:     shard.Status.PostgresConfig,
 		},
 	}

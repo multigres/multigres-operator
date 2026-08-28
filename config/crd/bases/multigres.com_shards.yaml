@@ -3022,6 +3022,12 @@ spec:
                 - Degraded
                 - Unknown
                 type: string
+              podPostures:
+                additionalProperties:
+                  type: string
+                description: PodPostures maps pod names to postgres states observed
+                  via Status RPC.
+                type: object
               podRoles:
                 additionalProperties:
                   type: string
