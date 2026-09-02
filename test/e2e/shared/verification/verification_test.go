@@ -57,7 +57,9 @@ func testMultiCellFilesystemBackup(t *testing.T) {
 	}
 	pool := cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"]
 	pool.Cells = []multigresv1alpha1.CellName{"zone-a", "zone-b"}
-	replicas := int32(1)
+	// AT_LEAST_2 bootstrap requires a cohort that can survive one member loss.
+	// With two cells, two replicas per cell provide that failure-safety margin.
+	replicas := int32(2)
 	pool.ReplicasPerCell = &replicas
 	cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"] = pool
 
@@ -102,8 +104,8 @@ func testMultiCellFilesystemBackup(t *testing.T) {
 	); err != nil {
 		t.Fatalf("list pooler pods: %v", err)
 	}
-	if len(pods.Items) != 2 {
-		t.Fatalf("pooler pod count = %d, want 2", len(pods.Items))
+	if len(pods.Items) != 4 {
+		t.Fatalf("pooler pod count = %d, want 4", len(pods.Items))
 	}
 	for _, pod := range pods.Items {
 		var mountedClaim string
