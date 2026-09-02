@@ -72,6 +72,7 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 					"--connpool-global-capacity=40",
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
+					"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 				},
 				Ports:     buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
@@ -181,6 +182,7 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 					"--connpool-global-capacity=40",
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
+					"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 				},
 				Ports:     buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
@@ -297,6 +299,7 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 					"--connpool-global-capacity=40",
 					"--connpool-admin-capacity=5",
 					"--log-level=info",
+					"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 				},
 				Ports: buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{

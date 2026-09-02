@@ -557,6 +557,10 @@ func buildMultipoolerContainer(
 			DefaultMultipoolerConnPoolAdminCapacity,
 		),
 		"--log-level=" + string(shard.Spec.LogLevels.Multipooler),
+		// Without this flag, multipooler's default gRPC keepalive enforcement policy
+		// rejects pings sent with no active RPC stream, and tears down the connection
+		// after a few strikes
+		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 	}
 
 	if shard.Spec.Backup != nil {
