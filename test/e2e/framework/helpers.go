@@ -87,7 +87,8 @@ func CIContainerConfig() multigresv1alpha1.ContainerConfig {
 // WithCIResources applies minimal resource requests to a MultigresClusterSpec.
 // It pre-populates the default database structure (mirroring the operator's
 // resolver) so resource overrides are in place before the CR is submitted.
-// Does NOT change replica counts or deployment topology.
+// Synthetic pools use a failure-safe bootstrap cohort; existing replica counts
+// and deployment topology are preserved.
 func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 	// Etcd
 	if spec.GlobalTopoServer == nil {
@@ -144,11 +145,15 @@ func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 		}
 		for j := range spec.Databases[i].TableGroups {
 			if len(spec.Databases[i].TableGroups[j].Shards) == 0 {
+				failureSafeReplicas := int32(3)
 				spec.Databases[i].TableGroups[j].Shards = []multigresv1alpha1.ShardConfig{{
 					Name: "0-inf",
 					Spec: &multigresv1alpha1.ShardInlineSpec{
 						Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
-							"default": {Type: "readWrite"},
+							"default": {
+								Type:            "readWrite",
+								ReplicasPerCell: &failureSafeReplicas,
+							},
 						},
 					},
 				}}
@@ -170,10 +175,8 @@ func WithCIResources(spec *multigresv1alpha1.MultigresClusterSpec) {
 				for name, pool := range shard.Spec.Pools {
 					pool.Postgres = CIContainerConfig()
 					pool.Multipooler = CIContainerConfig()
-					// Note: no fsGroup or replicasPerCell overrides here on
-					// purpose. The operator defaults containers to a numeric
-					// uid and single-cell pools to 2 replicas, so e2e exercises
-					// those defaults directly and catches regressions.
+					// Existing fsGroup and replicasPerCell values are preserved.
+					// Synthetic default pools already have a failure-safe cohort.
 					shard.Spec.Pools[name] = pool
 				}
 			}
