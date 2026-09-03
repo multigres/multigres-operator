@@ -6,7 +6,7 @@ go 1.26.6
 replace github.com/multigres/multigres-operator => ../..
 
 require (
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/prometheus/client_golang v1.23.2
 	google.golang.org/grpc v1.82.1
 	k8s.io/api v0.35.0
