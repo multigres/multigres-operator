@@ -885,7 +885,7 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 // TestHandleScaleDown_ConcurrentDrainPrevention verifies that handleScaleDown
 // respects the inProgress flag: when any pod already has a drain annotation
 // (DrainStateRequested, DrainStateDraining, or DrainStateAcknowledged), no new
-// drains are initiated for either DRAINED replacement or extra-pod scale-down.
+// drains are initiated for extra-pod scale-down.
 func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -935,14 +935,13 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 	tests := map[string]struct {
 		replicas       int32
 		pods           []*corev1.Pod
-		podRoles       map[string]string
 		actionTaken    bool
 		wantAction     bool
 		wantInProgress bool
 		wantNoDrains   bool
 		wantDrainedPod string
 	}{
-		"drain in progress (DrainStateRequested) blocks DRAINED replacement": {
+		"drain in progress (DrainStateRequested) blocks a new drain": {
 			replicas: 2,
 			pods: []*corev1.Pod{
 				makePod(podName0, map[string]string{
@@ -950,14 +949,11 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				}),
 				makePod(podName1, nil),
 			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
-			},
 			wantAction:     false,
 			wantInProgress: true,
 			wantNoDrains:   true,
 		},
-		"drain in progress (DrainStateDraining) blocks DRAINED replacement": {
+		"drain in progress (DrainStateDraining) blocks a new drain": {
 			replicas: 2,
 			pods: []*corev1.Pod{
 				makePod(podName0, map[string]string{
@@ -965,23 +961,17 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				}),
 				makePod(podName1, nil),
 			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
-			},
 			wantAction:     false,
 			wantInProgress: true,
 			wantNoDrains:   true,
 		},
-		"drain in progress (DrainStateAcknowledged) blocks DRAINED replacement": {
+		"drain in progress (DrainStateAcknowledged) blocks a new drain": {
 			replicas: 2,
 			pods: []*corev1.Pod{
 				makePod(podName0, map[string]string{
 					metadata.AnnotationDrainState: metadata.DrainStateAcknowledged,
 				}),
 				makePod(podName1, nil),
-			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
 			},
 			wantAction:     false,
 			wantInProgress: true,
@@ -1011,14 +1001,11 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 			wantInProgress: true,
 			wantNoDrains:   true,
 		},
-		"no drain in progress with DRAINED pod does not auto-drain": {
+		"no drain in progress with matching replicas does not auto-drain": {
 			replicas: 2,
 			pods: []*corev1.Pod{
 				makePod(podName0, nil),
 				makePod(podName1, nil),
-			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
 			},
 			wantAction:   false,
 			wantNoDrains: true,
@@ -1033,14 +1020,11 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 			wantInProgress: false,
 			wantDrainedPod: podName1,
 		},
-		"actionTaken from earlier phase blocks DRAINED replacement": {
+		"actionTaken from earlier phase blocks a new drain": {
 			replicas: 2,
 			pods: []*corev1.Pod{
 				makePod(podName0, nil),
 				makePod(podName1, nil),
-			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
 			},
 			actionTaken:    true,
 			wantAction:     true,
@@ -1058,7 +1042,7 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 			wantInProgress: false,
 			wantNoDrains:   true,
 		},
-		"pod with DeletionTimestamp sets inProgress and blocks DRAINED replacement": {
+		"pod with DeletionTimestamp sets inProgress and blocks a new drain": {
 			replicas: 2,
 			pods: []*corev1.Pod{
 				func() *corev1.Pod {
@@ -1070,14 +1054,11 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				}(),
 				makePod(podName1, nil),
 			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
-			},
 			wantAction:     false,
 			wantInProgress: true,
 			wantNoDrains:   true,
 		},
-		"multiple DRAINED pods with drain in progress drains none": {
+		"multiple pods with drain in progress drains none": {
 			replicas: 3,
 			pods: []*corev1.Pod{
 				makePod(podName0, map[string]string{
@@ -1085,10 +1066,6 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				}),
 				makePod(podName1, nil),
 				makePod(podName2, nil),
-			},
-			podRoles: map[string]string{
-				podName1: "DRAINED",
-				podName2: "DRAINED",
 			},
 			wantAction:     false,
 			wantInProgress: true,
@@ -1113,7 +1090,6 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 	for testName, tc := range tests {
 		t.Run(testName, func(t *testing.T) {
 			shard := baseShard.DeepCopy()
-			shard.Status.PodRoles = tc.podRoles
 
 			objects := make([]client.Object, 0, len(tc.pods)+1)
 			objects = append(objects, shard)
@@ -1139,14 +1115,6 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 
 			poolSpec := multigresv1alpha1.PoolSpec{}
 
-			var drainedInTest int32
-			for _, role := range tc.podRoles {
-				if role == "DRAINED" {
-					drainedInTest++
-				}
-			}
-			effectiveReplicas := tc.replicas + drainedInTest
-
 			gotAction, gotInProgress, err := reconciler.handleScaleDown(
 				context.Background(),
 				shard,
@@ -1154,7 +1122,6 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				poolSpec,
 				existingPods,
 				tc.replicas,
-				effectiveReplicas,
 				tc.actionTaken,
 			)
 			if err != nil {
@@ -1256,9 +1223,8 @@ func TestSetupWithManager(t *testing.T) {
 }
 
 // TestOrphanByRemainingCount verifies that cleanupDrainedPod handles
-// PVC deletion correctly for DRAINED replacement pods (idx < deletion threshold),
-// scale-down pods (idx >= deletion threshold), and rolling-update pods under different
-// PVC deletion policies.
+// PVC deletion correctly for scale-down pods (idx >= replicas) and
+// rolling-update pods (idx < replicas) under different PVC deletion policies.
 func TestOrphanByRemainingCount(t *testing.T) {
 	t.Parallel()
 
@@ -1355,35 +1321,23 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 		// pvcName). orphanByRemainingCount uses this: siblingCount-1 >= threshold
 		// deletes, otherwise orphans.
 		siblingCount int
-		podRoles     map[string]string
 		policy       *multigresv1alpha1.PVCDeletionPolicy
 		wantPVC      bool
 		wantOrphan   bool
 	}{
-		"DRAINED small pool (3) -> orphan": {
+		"idx<replicas Delete policy keeps PVC (rolling update)": {
 			podName:      podName0,
 			pvcName:      pvcName0,
 			siblingCount: 3,
-			podRoles:     map[string]string{podName0: "DRAINED"},
 			policy:       deletePolicy,
 			wantPVC:      true,
-			wantOrphan:   true,
+			wantOrphan:   false,
 		},
-		"DRAINED Retain policy small pool (3) -> orphan": {
+		"idx<replicas Retain policy keeps PVC": {
 			podName:      podName1,
 			pvcName:      pvcName1,
 			siblingCount: 3,
-			podRoles:     map[string]string{podName1: "DRAINED"},
 			policy:       retainPolicy,
-			wantPVC:      true,
-			wantOrphan:   true,
-		},
-		"non-DRAINED idx<replicas Delete policy keeps PVC": {
-			podName:      podName0,
-			pvcName:      pvcName0,
-			siblingCount: 3,
-			podRoles:     map[string]string{podName0: "REPLICA"},
-			policy:       deletePolicy,
 			wantPVC:      true,
 			wantOrphan:   false,
 		},
@@ -1391,24 +1345,14 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			podName:      podName5,
 			pvcName:      pvcName5,
 			siblingCount: 3,
-			podRoles:     map[string]string{},
 			policy:       deletePolicy,
 			wantPVC:      true,
 			wantOrphan:   true,
-		},
-		"DRAINED large pool (4, scaling to 3) -> in-line delete": {
-			podName:      podName0,
-			pvcName:      pvcName0,
-			siblingCount: 4,
-			podRoles:     map[string]string{podName0: "DRAINED"},
-			policy:       deletePolicy,
-			wantPVC:      false,
 		},
 		"scale-down large pool (4, scaling to 3) -> in-line delete": {
 			podName:      podName5,
 			pvcName:      pvcName5,
 			siblingCount: 4,
-			podRoles:     map[string]string{},
 			policy:       deletePolicy,
 			wantPVC:      false,
 		},
@@ -1417,12 +1361,8 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
 			shard := baseShard.DeepCopy()
-			shard.Status.PodRoles = tc.podRoles
 
 			pod := makePod(tc.podName)
-			if tc.podRoles[tc.podName] == "DRAINED" {
-				pod.Labels[metadata.LabelPodRole] = "DRAINED"
-			}
 
 			// Create the target PVC plus filler siblings so the pool+cell has
 			// exactly siblingCount PVCs.
@@ -2272,7 +2212,7 @@ func TestCreateMissingResources(t *testing.T) {
 		desiredPod0, _ := BuildPoolPod(shard, poolName, cellName, poolSpec, 0, scheme)
 		hash0 := ComputeSpecHash(desiredPod0)
 
-		// Pod 0: not ready, has matching spec hash (not drifted, not DRAINED)
+		// Pod 0: not ready, has matching spec hash (not drifted)
 		pod0 := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      podName0,
@@ -2737,9 +2677,9 @@ func TestIsPoolHealthy(t *testing.T) {
 		}
 	})
 
-	t.Run("DRAINED pod that is not ready does not block health check", func(t *testing.T) {
-		drainedShard := shard.DeepCopy()
-		drainedShard.Status.PodRoles = map[string]string{"pod-0": "DRAINED"}
+	t.Run("QUARANTINED pod that is not ready does not block health check", func(t *testing.T) {
+		quarantinedShard := shard.DeepCopy()
+		quarantinedShard.Status.PodRoles = map[string]string{"pod-0": "QUARANTINED"}
 		pods := map[string]*corev1.Pod{
 			"pod-0": {
 				ObjectMeta: metav1.ObjectMeta{Name: "pod-0"},
@@ -2750,8 +2690,8 @@ func TestIsPoolHealthy(t *testing.T) {
 				},
 			},
 		}
-		if !isPoolHealthy(pods, 1, drainedShard) {
-			t.Error("DRAINED pod should be excluded from health check")
+		if !isPoolHealthy(pods, 1, quarantinedShard) {
+			t.Error("QUARANTINED pod should be excluded from health check")
 		}
 	})
 }
@@ -3635,7 +3575,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 		existingPods := map[string]*corev1.Pod{podName0: pod0, podName1: pod1}
 		_, _, err := r.handleScaleDown(
 			context.Background(), shard, poolName,
-			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
+			multigresv1alpha1.PoolSpec{}, existingPods, 1, false,
 		)
 		if err == nil {
 			t.Error("expected error on drain initiation failure for extra pod")
@@ -3671,7 +3611,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 		existingPods := map[string]*corev1.Pod{podName0: pod0}
 		_, _, err := r.handleScaleDown(
 			context.Background(), shard, poolName,
-			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
+			multigresv1alpha1.PoolSpec{}, existingPods, 1, false,
 		)
 		if err == nil {
 			t.Error("expected error on pod delete failure after cleanup")
@@ -3709,7 +3649,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 		existingPods := map[string]*corev1.Pod{podName1: pod1}
 		_, _, err := r.handleScaleDown(
 			context.Background(), shard, poolName,
-			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
+			multigresv1alpha1.PoolSpec{}, existingPods, 1, false,
 		)
 		if err == nil {
 			t.Error("expected error on external deletion handling failure")
@@ -4164,7 +4104,7 @@ func TestHandleScaleDown_ExternalDeletionSetsActionTaken(t *testing.T) {
 	actionTaken, _, err := r.handleScaleDown(
 		t.Context(), shard, poolName,
 		multigresv1alpha1.PoolSpec{ReplicasPerCell: ptr.To(int32(1))},
-		existingPods, 1, 1, false,
+		existingPods, 1, false,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -4829,17 +4769,6 @@ func TestIsDrainStale(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateAcknowledged)
 		if r.isDrainStale(shard, pod, metadata.DrainStateAcknowledged) {
 			t.Error("expected drain NOT to be stale (past point of no return)")
-		}
-	})
-
-	t.Run("DoesNotCancelDrainedPodDrain", func(t *testing.T) {
-		shardWithDrained := shard.DeepCopy()
-		pod := matchingPod(0, metadata.DrainStateRequested)
-		shardWithDrained.Status.PodRoles = map[string]string{
-			pod.Name: "DRAINED",
-		}
-		if r.isDrainStale(shardWithDrained, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain NOT to be stale (pod role is DRAINED)")
 		}
 	})
 
@@ -5811,43 +5740,6 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 	}
 	poolSpec := shard.Spec.Pools["main"]
 
-	t.Run("syncDrainedLabels error", func(t *testing.T) {
-		pod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      BuildPoolPodName(shard, "main", "z1", 0),
-				Namespace: "default",
-				Labels: map[string]string{
-					metadata.LabelMultigresCluster:    "test-cluster",
-					metadata.LabelMultigresDatabase:   "db",
-					metadata.LabelMultigresTableGroup: "tg",
-					metadata.LabelMultigresShard:      "test-shard",
-					metadata.LabelMultigresPool:       "main",
-					metadata.LabelMultigresCell:       "z1",
-					metadata.LabelPodRole:             "DRAINED",
-				},
-			},
-		}
-
-		baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		fails := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
-			OnPatch: testutil.FailOnObjectName(pod.Name, testutil.ErrPermissionError),
-		})
-
-		r := &ShardReconciler{Client: fails, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
-
-		// Temporarily set the topology returned role to NOT DRAINED, which causes syncDrainedLabels to try and strip the label
-		// which triggers the patch failure
-		// Wait, the test uses resolvePodRole, which defaults to whatever unless mocked.
-		// Since topo is not mocked here, resolvePodRole returns "" -> not DRAINED -> tries to patch remove DRAINED -> fails
-		existingPods := map[string]*corev1.Pod{
-			pod.Name: pod,
-		}
-		err := r.syncDrainedLabels(context.Background(), shard, existingPods)
-		if err == nil || !strings.Contains(err.Error(), "failed to remove DRAINED label") {
-			t.Fatalf("expected syncDrainedLabels error, got %v", err)
-		}
-	})
-
 	t.Run("CreatePVC error", func(t *testing.T) {
 		baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		pvcName := BuildPoolDataPVCName(shard, "main", "z1", 0)
@@ -5863,10 +5755,11 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 	})
 
 	t.Run("markPodPVCOrphan network error", func(t *testing.T) {
-		// Mock a DRAINED pod so markPodPVCOrphan is called during cleanupDrainedPod
+		// A scaled-down pod (index >= replicas) so cleanupDrainedPod orphans its
+		// PVC, exercising the markPodPVCOrphan patch-failure path.
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      BuildPoolPodName(shard, "main", "z1", 0),
+				Name:      BuildPoolPodName(shard, "main", "z1", 1),
 				Namespace: "default",
 				Labels: map[string]string{
 					metadata.LabelMultigresCluster:    "test-cluster",
@@ -5875,7 +5768,6 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 					metadata.LabelMultigresShard:      "test-shard",
 					metadata.LabelMultigresPool:       "main",
 					metadata.LabelMultigresCell:       "z1",
-					metadata.LabelPodRole:             "DRAINED",
 				},
 				Annotations: map[string]string{
 					metadata.AnnotationDrainState: metadata.DrainStateReadyForDeletion,
@@ -5883,7 +5775,7 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 			},
 		}
 
-		pvcName := BuildPoolDataPVCName(shard, "main", "z1", 0)
+		pvcName := BuildPoolDataPVCName(shard, "main", "z1", 1)
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      pvcName,

@@ -1795,7 +1795,6 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods,
 			2, // replicas: pod-2 is extra
-			2, // effectiveReplicas
 			false,
 		)
 		if err != nil {
@@ -1865,7 +1864,6 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods,
 			2, // replicas: pod-2 is extra
-			2, // effectiveReplicas
 			false,
 		)
 		if err != nil {
@@ -1926,7 +1924,6 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods,
 			2, // replicas: pod-2 is extra
-			2, // effectiveReplicas
 			false,
 		)
 		if err != nil {
@@ -2051,106 +2048,5 @@ func TestRollingUpdateOrder(t *testing.T) {
 	}
 	if drainCount != 1 {
 		t.Errorf("Expected exactly 1 pod to have drain-requested annotation, got %d", drainCount)
-	}
-}
-
-func TestDrainedPodReplacement(t *testing.T) {
-	t.Parallel()
-	scheme := runtime.NewScheme()
-	_ = multigresv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
-
-	shardObj := &multigresv1alpha1.Shard{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-shard", Namespace: "default",
-			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
-		},
-		Spec: multigresv1alpha1.ShardSpec{
-			DatabaseName:   "db",
-			TableGroupName: "tg",
-			ShardName:      "s1",
-			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
-				"primary": {
-					ReplicasPerCell: ptr.To(int32(1)),
-					Storage:         multigresv1alpha1.StorageSpec{Size: "10Gi"},
-				},
-			},
-		},
-	}
-
-	podName0 := BuildPoolPodName(shardObj, "primary", "zone1", 0)
-	shardObj.Status.PodRoles = map[string]string{
-		podName0: "DRAINED",
-	}
-
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName0,
-			Namespace: "default",
-			Labels: map[string]string{
-				"app.kubernetes.io/component":     "shard-pool",
-				"app.kubernetes.io/instance":      "test-cluster",
-				metadata.LabelMultigresCluster:    "test-cluster",
-				metadata.LabelMultigresDatabase:   "db",
-				metadata.LabelMultigresTableGroup: "tg",
-				metadata.LabelMultigresShard:      "s1",
-				metadata.LabelMultigresPool:       "primary",
-				metadata.LabelMultigresCell:       "zone1",
-				metadata.LabelPodRole:             "DRAINED",
-			},
-			Annotations: map[string]string{},
-		},
-		Status: corev1.PodStatus{
-			Conditions: []corev1.PodCondition{
-				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
-			},
-		},
-	}
-
-	// Pre-calculate hash so it doesn't get deleted as drifted
-	poolSpec := shardObj.Spec.Pools["primary"]
-	desiredPod, _ := BuildPoolPod(shardObj, "primary", "zone1", poolSpec, 0, scheme)
-	pod.Annotations[metadata.AnnotationSpecHash] = desiredPod.Annotations[metadata.AnnotationSpecHash]
-
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shardObj).Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
-
-	if err := c.Create(context.Background(), pod); err != nil {
-		t.Fatalf("failed to create pod: %v", err)
-	}
-
-	// Run reconcile loop
-	err := r.reconcilePoolPods(context.Background(), shardObj, "primary", "zone1", poolSpec)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// The DRAINED pod should NOT have a drain annotation (DRAINED pods are no longer auto-drained)
-	err = c.Get(
-		context.Background(),
-		types.NamespacedName{Name: podName0, Namespace: "default"},
-		pod,
-	)
-	if err != nil {
-		t.Fatalf("expected pod to exist, got %v", err)
-	}
-
-	if pod.Annotations[metadata.AnnotationDrainState] != "" {
-		t.Errorf(
-			"Expected DRAINED pod to have no drain annotation, got %q",
-			pod.Annotations[metadata.AnnotationDrainState],
-		)
-	}
-
-	// A stand-in pod at index 1 should be created (replicas=1, effectiveReplicas=2)
-	podName1 := BuildPoolPodName(shardObj, "primary", "zone1", 1)
-	standInPod := &corev1.Pod{}
-	err = c.Get(
-		context.Background(),
-		types.NamespacedName{Name: podName1, Namespace: "default"},
-		standInPod,
-	)
-	if err != nil {
-		t.Fatalf("expected stand-in pod at index 1 to be created, got %v", err)
 	}
 }
