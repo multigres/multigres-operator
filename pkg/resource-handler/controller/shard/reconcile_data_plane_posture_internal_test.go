@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -223,6 +224,63 @@ func TestReconcilePostureDebouncesFirstInconsistency(t *testing.T) {
 	}
 }
 
+func TestReconcilePostureDebouncesFirstIncompleteObservation(t *testing.T) {
+	shard := postureTestShard()
+	shard.Status.Conditions = []metav1.Condition{{
+		Type:               posture.ConditionConsistent,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Consistent",
+		Message:            "postures consistent with topology roles",
+		LastTransitionTime: metav1.Now(),
+	}}
+	store, poolerID := postureTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	rpc := rpcclient.NewFakeClient()
+	rpc.Errors[poolerID] = errors.New("connection error: EOF")
+	r, _ := postureTestReconciler(t, shard, rpc, postureTestPod())
+
+	pending, err := r.reconcilePosture(t.Context(), store, shard)
+	if err != nil {
+		t.Fatalf("first reconcilePosture() error = %v", err)
+	}
+	if !pending {
+		t.Error("first incomplete posture observation did not request a requeue")
+	}
+	if got := withPostureRequeue(
+		ctrl.Result{},
+		pending,
+	).RequeueAfter; got != postureDebounceRequeueDelay {
+		t.Errorf("first requeue delay = %v, want %v", got, postureDebounceRequeueDelay)
+	}
+	if !conditionIsTrue(shard.Status.Conditions, posture.ConditionConsistent) {
+		t.Errorf(
+			"conditions = %#v, want prior consistent condition preserved on first blip",
+			shard.Status.Conditions,
+		)
+	}
+
+	pending, err = r.reconcilePosture(t.Context(), store, shard)
+	if err != nil {
+		t.Fatalf("second reconcilePosture() error = %v", err)
+	}
+	if pending {
+		t.Error("second incomplete posture observation requested another debounce requeue")
+	}
+	for _, condition := range shard.Status.Conditions {
+		if condition.Type != posture.ConditionConsistent {
+			continue
+		}
+		if condition.Status != metav1.ConditionUnknown ||
+			condition.Reason != "ObservationIncomplete" {
+			t.Errorf(
+				"condition = %#v, want Unknown/ObservationIncomplete on second blip",
+				condition,
+			)
+		}
+	}
+}
+
 func TestReconcileDataPlaneRequeuesFirstPostureStrike(t *testing.T) {
 	shard := postureTestShard()
 	store, poolerID := postureTestStore(t)
@@ -274,6 +332,15 @@ func TestWithPostureRequeueKeepsEarlierRequeue(t *testing.T) {
 func conditionIsFalse(conditions []metav1.Condition, conditionType string) bool {
 	for _, condition := range conditions {
 		if condition.Type == conditionType && condition.Status == metav1.ConditionFalse {
+			return true
+		}
+	}
+	return false
+}
+
+func conditionIsTrue(conditions []metav1.Condition, conditionType string) bool {
+	for _, condition := range conditions {
+		if condition.Type == conditionType && condition.Status == metav1.ConditionTrue {
 			return true
 		}
 	}

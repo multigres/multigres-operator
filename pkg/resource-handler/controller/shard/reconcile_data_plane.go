@@ -293,11 +293,16 @@ func (r *ShardReconciler) reconcilePosture(
 		)
 	}
 
-	strikes := r.recordPostureObservation(shard, inconsistent)
+	// A single flaky RPC (dial error, EOF, stale pod) must not be enough to
+	// drop a shard out of Healthy any more than a single role mismatch is.
+	// Both inconsistent and merely-incomplete observations share the same
+	// strike counter and debounce window.
+	unsettled := inconsistent || result.Incomplete
+	strikes := r.recordPostureObservation(shard, unsettled)
 
 	prevFalse := status.IsConditionFalse(shard.Status.Conditions, posture.ConditionConsistent)
 
-	if !inconsistent || strikes >= postureStrikeThreshold {
+	if !unsettled || strikes >= postureStrikeThreshold {
 		posture.Apply(shard, result)
 	} else {
 		shard.Status.PodPostures = result.Postures
@@ -311,7 +316,7 @@ func (r *ShardReconciler) reconcilePosture(
 		r.Recorder.Eventf(shard, "Warning", reason, result.Message)
 	}
 
-	return inconsistent && strikes < postureStrikeThreshold, nil
+	return unsettled && strikes < postureStrikeThreshold, nil
 }
 
 func withPostureRequeue(result ctrl.Result, pending bool) ctrl.Result {
@@ -323,7 +328,7 @@ func withPostureRequeue(result ctrl.Result, pending bool) ctrl.Result {
 
 func (r *ShardReconciler) recordPostureObservation(
 	shard *multigresv1alpha1.Shard,
-	inconsistent bool,
+	unsettled bool,
 ) int {
 	key := fmt.Sprintf("%s/%s", shard.Namespace, shard.Name)
 
@@ -332,7 +337,7 @@ func (r *ShardReconciler) recordPostureObservation(
 	if r.postureStrikes == nil {
 		r.postureStrikes = make(map[string]int)
 	}
-	if inconsistent {
+	if unsettled {
 		r.postureStrikes[key]++
 	} else {
 		r.postureStrikes[key] = 0
