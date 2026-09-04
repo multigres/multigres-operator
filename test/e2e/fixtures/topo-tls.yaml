@@ -37,8 +37,13 @@ spec:
                   replicas: 1
                 pools:
                   default:
+                    # The cluster defaults to AT_LEAST_2 durability. Multiorch only
+                    # bootstraps a primary when the initial pooler cohort can satisfy
+                    # that policy under the failure-safe check, which needs three
+                    # poolers; fewer leaves the shard a replica and no primary is ever
+                    # elected.
                     type: readWrite
                     cells: ["zone-a"]
-                    replicasPerCell: 1
+                    replicasPerCell: 3
                     storage:
                       size: "1Gi"
