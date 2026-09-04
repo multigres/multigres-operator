@@ -188,6 +188,8 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 				Resources: corev1.ResourceRequirements{},
 				SecurityContext: &corev1.SecurityContext{
 					RunAsNonRoot: ptr.To(true),
+					RunAsUser:    ptr.To(DefaultMultipoolerUID),
+					RunAsGroup:   ptr.To(DefaultMultipoolerGID),
 				},
 				StartupProbe: &corev1.Probe{
 					ProbeHandler: corev1.ProbeHandler{
@@ -852,8 +854,11 @@ func TestBuildPgctldSidecar(t *testing.T) {
 		if c.Image != "custom/pgctld:v1" {
 			t.Errorf("Image = %q, want %q", c.Image, "custom/pgctld:v1")
 		}
-		assert.Nil(t, c.SecurityContext.RunAsUser)
-		assert.Nil(t, c.SecurityContext.RunAsGroup)
+		// The numeric identity must not depend on the image reference: pgctld
+		// declares USER postgres by name, so without it RunAsNonRoot makes the
+		// kubelet reject the container regardless of which tag is in use.
+		assert.Equal(t, ptr.To(DefaultPostgresUID), c.SecurityContext.RunAsUser)
+		assert.Equal(t, ptr.To(DefaultPostgresGID), c.SecurityContext.RunAsGroup)
 	})
 
 	t.Run("with observability", func(t *testing.T) {

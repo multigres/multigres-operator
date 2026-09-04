@@ -468,10 +468,10 @@ func TestBuildPoolPod_SecurityContext(t *testing.T) {
 }
 
 func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.T) {
-	t.Run("custom images retain their identity", func(t *testing.T) {
+	t.Run("custom images get the default identity", func(t *testing.T) {
 		shard := newTestShard()
-		shard.Spec.Images.Postgres = "example/pgctld:user-1000-group-1001"
-		shard.Spec.Images.Multipooler = "example/multipooler:user-1000-group-1001"
+		shard.Spec.Images.Postgres = "example/pgctld:custom"
+		shard.Spec.Images.Multipooler = "example/multipooler:custom"
 		pool := newTestPoolSpec()
 		pool.FSGroup = ptr.To(int64(2000))
 
@@ -480,9 +480,24 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 			t.Fatalf("unexpected error: %v", err)
 		}
 
+		// Overriding the image must not drop the numeric identity. pgctld
+		// declares USER postgres by name, so leaving RunAsUser unset pairs
+		// RunAsNonRoot with a username the kubelet cannot resolve, and every
+		// pod fails CreateContainerConfigError. An image that genuinely runs
+		// as something else sets RunAsUser explicitly — see the case below.
 		assertPoolPodFSGroup(t, pod, 2000)
-		assertContainerIdentity(t, pod.Spec.InitContainers[0], nil, nil)
-		assertContainerIdentity(t, pod.Spec.Containers[0], nil, nil)
+		assertContainerIdentity(
+			t,
+			pod.Spec.InitContainers[0],
+			ptr.To(DefaultPostgresUID),
+			ptr.To(DefaultPostgresGID),
+		)
+		assertContainerIdentity(
+			t,
+			pod.Spec.Containers[0],
+			ptr.To(DefaultMultipoolerUID),
+			ptr.To(DefaultMultipoolerGID),
+		)
 		assertContainerIdentity(
 			t,
 			pod.Spec.Containers[1],

@@ -153,8 +153,10 @@ func buildPoolPodSecurityContext(poolSpec multigresv1alpha1.PoolSpec) *corev1.Po
 
 const (
 	// DefaultPostgresUID and DefaultPostgresGID identify the postgres user in
-	// the default pgctld image. That image declares USER postgres by name, so
-	// Kubernetes needs the numeric identity to enforce RunAsNonRoot.
+	// the pgctld image. That image declares USER postgres by name, so
+	// Kubernetes needs the numeric identity to enforce RunAsNonRoot. This is a
+	// property of every pgctld build, not of any one tag, so it is applied
+	// whenever the spec leaves the identity unset — see effectivePgctldIdentity.
 	DefaultPostgresUID int64 = 999
 	DefaultPostgresGID int64 = 999
 
@@ -187,32 +189,27 @@ func buildContainerSecurityContext(runAsUser, runAsGroup *int64) *corev1.Securit
 }
 
 func buildPgctldSecurityContext(
-	image string,
 	config multigresv1alpha1.ContainerConfig,
 ) *corev1.SecurityContext {
-	runAsUser, runAsGroup := effectivePgctldIdentity(image, config)
+	runAsUser, runAsGroup := effectivePgctldIdentity(config)
 	return buildContainerSecurityContext(runAsUser, runAsGroup)
 }
 
 func effectivePgctldIdentity(
-	image string,
 	config multigresv1alpha1.ContainerConfig,
 ) (runAsUser, runAsGroup *int64) {
 	runAsUser = config.RunAsUser
 	runAsGroup = config.RunAsGroup
-	if image == multigresv1alpha1.DefaultPostgresImage {
-		if runAsUser == nil {
-			runAsUser = ptr.To(DefaultPostgresUID)
-		}
-		if runAsGroup == nil {
-			runAsGroup = ptr.To(DefaultPostgresGID)
-		}
+	if runAsUser == nil {
+		runAsUser = ptr.To(DefaultPostgresUID)
+	}
+	if runAsGroup == nil {
+		runAsGroup = ptr.To(DefaultPostgresGID)
 	}
 	return runAsUser, runAsGroup
 }
 
 func effectiveMultipoolerIdentity(
-	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
 ) (runAsUser, runAsGroup *int64) {
 	runAsUser = pool.Multipooler.RunAsUser
@@ -220,22 +217,19 @@ func effectiveMultipoolerIdentity(
 	if runAsUser == nil && pool.Postgres.RunAsUser != nil {
 		runAsUser = ptr.To(*pool.Postgres.RunAsUser)
 	}
-	if resolvedMultipoolerImage(shard) == multigresv1alpha1.DefaultMultipoolerImage {
-		if runAsUser == nil {
-			runAsUser = ptr.To(DefaultMultipoolerUID)
-		}
-		if runAsGroup == nil {
-			runAsGroup = ptr.To(DefaultMultipoolerGID)
-		}
+	if runAsUser == nil {
+		runAsUser = ptr.To(DefaultMultipoolerUID)
+	}
+	if runAsGroup == nil {
+		runAsGroup = ptr.To(DefaultMultipoolerGID)
 	}
 	return runAsUser, runAsGroup
 }
 
 func buildMultipoolerSecurityContext(
-	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
 ) *corev1.SecurityContext {
-	runAsUser, runAsGroup := effectiveMultipoolerIdentity(shard, pool)
+	runAsUser, runAsGroup := effectiveMultipoolerIdentity(pool)
 	return buildContainerSecurityContext(runAsUser, runAsGroup)
 }
 
@@ -257,13 +251,6 @@ func validatePoolRuntimeIdentity(pool multigresv1alpha1.PoolSpec) error {
 		)
 	}
 	return nil
-}
-
-func resolvedMultipoolerImage(shard *multigresv1alpha1.Shard) string {
-	if shard.Spec.Images.Multipooler != "" {
-		return string(shard.Spec.Images.Multipooler)
-	}
-	return multigresv1alpha1.DefaultMultipoolerImage
 }
 
 // buildHeadlessServiceName constructs the headless service name for DNS
