@@ -38,6 +38,12 @@ type MultigresClusterReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 
+	// APIReader is an uncached client that reads directly from the API server.
+	// The cached client only sees tenant-namespace Secrets carrying the
+	// operator's managed-by label, so cert-manager and user-provided topology
+	// Secrets have to be read through this.
+	APIReader client.Reader
+
 	// Images is the operator's default component image set and update
 	// strategy. The zero value falls back to the compiled-in defaults with
 	// the immediate strategy.

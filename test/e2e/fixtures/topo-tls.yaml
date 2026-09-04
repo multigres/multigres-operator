@@ -1,0 +1,44 @@
+apiVersion: multigres.com/v1alpha1
+kind: MultigresCluster
+metadata:
+  name: topo-tls
+  namespace: default
+spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
+  pvcDeletionPolicy:
+    whenDeleted: Delete
+    whenScaled: Delete
+  # Require TLS on the topology server. The operator issues the etcd serving
+  # certificate and the per-cluster client credential from this issuer, so etcd
+  # and every client chain to the same CA. The scenario creates this issuer.
+  topoTLS:
+    enabled: true
+    issuerName: topo-e2e-ca
+  # A single etcd member keeps this scenario light on the shared cluster while
+  # still exercising the client certificate path etcd now requires.
+  globalTopoServer:
+    etcd:
+      replicas: 1
+  cells:
+    - name: "zone-a"
+      zoneId: us-central1-a
+  databases:
+    - name: "postgres"
+      default: true
+      tablegroups:
+        - name: "default"
+          default: true
+          shards:
+            - name: "0-inf"
+              spec:
+                multiorch:
+                  replicas: 1
+                pools:
+                  default:
+                    type: readWrite
+                    cells: ["zone-a"]
+                    replicasPerCell: 1
+                    storage:
+                      size: "1Gi"

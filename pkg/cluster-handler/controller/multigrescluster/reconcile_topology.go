@@ -8,6 +8,7 @@ import (
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -85,13 +86,18 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		}
 	}
 
-	store, err := r.openTopoStore(globalTopoRef)
+	store, err := r.openTopoStore(ctx, cluster.Namespace, globalTopoRef)
 	if err != nil {
 		if topo.IsTopoUnavailable(err) {
 			return r.handleTopoUnavailable(cluster, logger)
 		}
+		// A missing or unusable client credential is a configuration error, not a
+		// transient outage, so record it in the cluster's status as well as an
+		// event. The store-open error names the Secret, so the reason a cluster
+		// stays not ready is visible without reading the operator logs.
 		r.Recorder.Eventf(cluster, "Warning", "TopoConnectFailed",
 			"Failed to connect to topology server: %v", err)
+		r.markTopologyConnectFailed(ctx, cluster, err, logger)
 		return ctrl.Result{}, fmt.Errorf("failed to open topology store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
@@ -175,7 +181,48 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		}
 	}
 
+	// Registration reached the topology server, so clear any earlier connection
+	// failure. The change is persisted by the later status update on this
+	// reconcile; steady state leaves the condition untouched.
+	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+		Type:               conditionTopologyReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "TopoConnected",
+		Message:            "Topology server reachable",
+		ObservedGeneration: cluster.Generation,
+		LastTransitionTime: metav1.Now(),
+	})
+
 	return ctrl.Result{}, nil
+}
+
+// conditionTopologyReady reports whether the operator can reach the topology
+// server with the configured credentials.
+const conditionTopologyReady = "TopologyReady"
+
+// markTopologyConnectFailed records a topology connection failure in the
+// cluster status: a Degraded phase, a message carrying the error, and a
+// TopologyReady=False condition. The status write is best effort, since the
+// reconcile already returns the error and will retry.
+func (r *MultigresClusterReconciler) markTopologyConnectFailed(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	cause error,
+	logger interface{ Error(error, string, ...any) },
+) {
+	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
+		Type:               conditionTopologyReady,
+		Status:             metav1.ConditionFalse,
+		Reason:             "TopoConnectFailed",
+		Message:            cause.Error(),
+		ObservedGeneration: cluster.Generation,
+		LastTransitionTime: metav1.Now(),
+	})
+	cluster.Status.Phase = multigresv1alpha1.PhaseDegraded
+	cluster.Status.Message = cause.Error()
+	if err := r.Status().Update(ctx, cluster); err != nil {
+		logger.Error(err, "Failed to persist topology connection failure to status")
+	}
 }
 
 func specCellNames(cluster *multigresv1alpha1.MultigresCluster) []string {
@@ -258,14 +305,20 @@ func (r *MultigresClusterReconciler) managedLocalTopoServerReady(
 }
 
 // openTopoStore opens a topology store, using the injected factory for tests
-// or the real NewStoreFromRef for production.
+// or the real NewStoreFromRef for production. The namespace is where the
+// reference's client TLS Secrets live.
 func (r *MultigresClusterReconciler) openTopoStore(
+	ctx context.Context,
+	namespace string,
 	ref multigresv1alpha1.GlobalTopoServerRef,
 ) (topoclient.Store, error) {
 	if r.CreateTopoStore != nil {
 		return r.CreateTopoStore(ref)
 	}
-	return topo.NewStoreFromRef(ref)
+	// Read the client credential with the uncached reader: the manager's cache
+	// only stores tenant-namespace Secrets carrying the operator's managed-by
+	// label, and a cert-manager or user-provided topology Secret does not.
+	return topo.NewStoreFromRef(ctx, r.APIReader, namespace, ref)
 }
 
 // isPruningEnabled returns true if topology pruning is enabled for the cluster.

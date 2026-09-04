@@ -32,7 +32,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 	logger := log.FromContext(ctx)
 
 	// Open a single topo connection for PodRoles, drain, and backup health.
-	store, err := r.topoStore(shard)
+	store, err := r.topoStore(ctx, shard)
 	if err != nil {
 		if !topo.IsTopoUnavailable(err) {
 			r.Recorder.Eventf(shard, "Warning", "TopologyError",
@@ -456,11 +456,17 @@ func (r *ShardReconciler) isDrainStale(
 }
 
 // topoStore returns a topology store, using the custom factory if set, otherwise the default.
-func (r *ShardReconciler) topoStore(shard *multigresv1alpha1.Shard) (topoclient.Store, error) {
+func (r *ShardReconciler) topoStore(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (topoclient.Store, error) {
 	if r.CreateTopoStore != nil {
 		return r.CreateTopoStore(shard)
 	}
-	return topo.NewStoreFromShard(shard)
+	// Read the client credential with the uncached reader: the manager's cache
+	// only stores tenant-namespace Secrets carrying the operator's managed-by
+	// label, and a cert-manager or user-provided topology Secret does not.
+	return topo.NewStoreFromShard(ctx, r.APIReader, shard)
 }
 
 // reconcilePoolerPrune lists active pods for the shard and marks topology

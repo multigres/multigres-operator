@@ -334,6 +334,21 @@ func BuildMultigatewayDeployment(
 		)
 	}
 
+	if multigresv1alpha1.TopoClientTLSConfigured(cell.Spec.GlobalTopoServer) {
+		podSpec.Volumes = append(
+			podSpec.Volumes,
+			multigresv1alpha1.BuildTopoClientTLSVolume(cell.Spec.GlobalTopoServer),
+		)
+		podSpec.Containers[0].VolumeMounts = append(
+			podSpec.Containers[0].VolumeMounts,
+			multigresv1alpha1.TopoClientTLSVolumeMount(),
+		)
+		podSpec.Containers[0].Args = append(
+			podSpec.Containers[0].Args,
+			multigresv1alpha1.TopoClientTLSArgs()...,
+		)
+	}
+
 	if err := ctrl.SetControllerReference(cell, deployment, scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)
 	}

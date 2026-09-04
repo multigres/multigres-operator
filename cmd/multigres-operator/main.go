@@ -450,10 +450,11 @@ func main() {
 	)
 
 	if err = (&multigresclustercontroller.MultigresClusterReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("multigrescluster-controller"),
-		Images:   imagesConfig,
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("multigrescluster-controller"),
+		Images:    imagesConfig,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MultigresCluster")
 		os.Exit(1)

@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/pkg/util/certs"
 )
@@ -171,6 +172,23 @@ func buildTopoClientCertificate(
 	})
 }
 
+// topologyIsManaged reports whether the cluster's resolved global topology is a
+// managed etcd server the operator runs and issues a serving certificate for,
+// as opposed to an external topology server the user operates.
+func (r *MultigresClusterReconciler) topologyIsManaged(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) (bool, error) {
+	res := resolver.NewResolver(r.Client, cluster.Namespace)
+	spec, err := res.ResolveGlobalTopo(ctx, cluster)
+	if err != nil {
+		return false, fmt.Errorf(
+			"failed to resolve global topology for client certificate: %w", err,
+		)
+	}
+	return spec.Etcd != nil, nil
+}
+
 // issuerName returns the cluster's configured cert-manager ClusterIssuer
 // name, defaulting to CertIssuerName when unset.
 func issuerName(cluster *multigresv1alpha1.MultigresCluster) string {
@@ -226,13 +244,24 @@ func (r *MultigresClusterReconciler) reconcileCertificate(
 		desiredCerts = append(desiredCerts, internalCerts...)
 	}
 	if cluster.Spec.TopoTLS.IsEnabled() {
-		topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme)
+		managed, err := r.topologyIsManaged(ctx, cluster)
 		if err != nil {
-			return fmt.Errorf(
-				"failed to build topology client cert-manager Certificate: %w", err,
-			)
+			return err
 		}
-		desiredCerts = append(desiredCerts, topoClientCert)
+		// An external topology server brings its own CA and client Secrets, so a
+		// credential issued from the cluster's own issuer would never be trusted
+		// and would sit unused. Only a managed etcd topology, whose serving
+		// certificate the operator issues from the same CA, gets a client
+		// credential.
+		if managed {
+			topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme)
+			if err != nil {
+				return fmt.Errorf(
+					"failed to build topology client cert-manager Certificate: %w", err,
+				)
+			}
+			desiredCerts = append(desiredCerts, topoClientCert)
+		}
 	}
 	if cluster.Spec.CertCommonName != "" {
 		publicCert, err := buildCertificate(cluster, r.Scheme)

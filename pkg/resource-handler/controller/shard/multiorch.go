@@ -91,6 +91,12 @@ func BuildMultiorchDeployment(
 				multigresv1alpha1.ComponentMultiOrchTLS,
 			))
 	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		deployment.Spec.Template.Spec.Volumes = append(
+			deployment.Spec.Template.Spec.Volumes,
+			multigresv1alpha1.BuildTopoClientTLSVolume(shard.Spec.GlobalTopoServer),
+		)
+	}
 
 	if err := ctrl.SetControllerReference(shard, deployment, scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)

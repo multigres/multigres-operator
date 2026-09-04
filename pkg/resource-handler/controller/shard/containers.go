@@ -578,6 +578,9 @@ func buildMultipoolerContainer(
 			"--grpc-server-ca", ShardTLSCAFile,
 		)
 	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		args = append(args, multigresv1alpha1.TopoClientTLSArgs()...)
+	}
 
 	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
 		args = append(args,
@@ -669,6 +672,9 @@ func buildMultipoolerContainer(
 	if shardTLSConfigured(shard) {
 		c.VolumeMounts = append(c.VolumeMounts, shardTLSVolumeMount())
 	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		c.VolumeMounts = append(c.VolumeMounts, multigresv1alpha1.TopoClientTLSVolumeMount())
+	}
 	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,
 	); otelMount != nil {
@@ -714,6 +720,9 @@ func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 			),
 			"--multipooler-grpc-require-tls",
 		)
+	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		args = append(args, multigresv1alpha1.TopoClientTLSArgs()...)
 	}
 
 	c := corev1.Container{
@@ -761,6 +770,9 @@ func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 	}
 	if shardTLSConfigured(shard) {
 		c.VolumeMounts = append(c.VolumeMounts, shardTLSVolumeMount())
+	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		c.VolumeMounts = append(c.VolumeMounts, multigresv1alpha1.TopoClientTLSVolumeMount())
 	}
 	return c
 }
@@ -839,6 +851,12 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 			shard,
 			multigresv1alpha1.ComponentMultiPoolerTLS,
 		))
+	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		volumes = append(
+			volumes,
+			multigresv1alpha1.BuildTopoClientTLSVolume(shard.Spec.GlobalTopoServer),
+		)
 	}
 	if otelVol, _ := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,

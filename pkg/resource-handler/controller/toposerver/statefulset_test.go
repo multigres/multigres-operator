@@ -99,6 +99,7 @@ func TestBuildStatefulSet(t *testing.T) {
 										"default",
 										3,
 										"test-toposerver-headless",
+										false,
 									),
 									Ports: buildContainerPorts(nil), // Default
 									VolumeMounts: []corev1.VolumeMount{
@@ -246,6 +247,7 @@ func TestBuildStatefulSet(t *testing.T) {
 										"default",
 										3,
 										"test-toposerver-headless",
+										false,
 									),
 									Ports: buildContainerPorts(nil), // Default
 									VolumeMounts: []corev1.VolumeMount{
@@ -395,6 +397,7 @@ func TestBuildStatefulSet(t *testing.T) {
 										"test",
 										5,
 										"toposerver-custom-headless",
+										false,
 									),
 									Ports: buildContainerPorts(nil),
 									VolumeMounts: []corev1.VolumeMount{
@@ -538,6 +541,7 @@ func TestBuildStatefulSet(t *testing.T) {
 										"default",
 										3,
 										"test-toposerver-headless",
+										false,
 									),
 									Ports: buildContainerPorts(nil),
 									VolumeMounts: []corev1.VolumeMount{

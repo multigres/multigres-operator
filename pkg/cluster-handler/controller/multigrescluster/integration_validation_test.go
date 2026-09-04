@@ -135,4 +135,55 @@ func TestMultigresCluster_Validation(t *testing.T) {
 			t.Fatalf("Expected cluster with topology TLS disabled to be accepted, got: %v", err)
 		}
 	})
+
+	// Enablement is fixed at creation: flipping it on a running cluster cannot be
+	// rolled out safely, so the API rejects the transition.
+	t.Run("Enabling Topology TLS After Creation (Should Fail)", func(t *testing.T) {
+		t.Parallel()
+		k8sClient, _ := setupIntegration(t)
+		cluster := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "mutate-topo-tls", Namespace: testNamespace},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				TopoTLS: &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(false)},
+			},
+		}
+		setTestPostgresPasswordSecretRef(cluster)
+		if err := k8sClient.Create(t.Context(), cluster); err != nil {
+			t.Fatalf("Expected initial cluster to be accepted, got: %v", err)
+		}
+
+		cluster.Spec.TopoTLS = &multigresv1alpha1.TopoTLSConfig{
+			Enabled:    ptr.To(true),
+			IssuerName: "multigres-infra-issuer",
+		}
+		if err := k8sClient.Update(t.Context(), cluster); err == nil {
+			t.Fatal("Expected enabling topology TLS after creation to be rejected")
+		}
+	})
+
+	// Rotating the issuer rotates the CA every certificate chains to, which the
+	// running clients cannot follow, so changing it after creation is rejected
+	// too.
+	t.Run("Changing Topology TLS Issuer After Creation (Should Fail)", func(t *testing.T) {
+		t.Parallel()
+		k8sClient, _ := setupIntegration(t)
+		cluster := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "rotate-topo-issuer", Namespace: testNamespace},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				TopoTLS: &multigresv1alpha1.TopoTLSConfig{
+					Enabled:    ptr.To(true),
+					IssuerName: "issuer-a",
+				},
+			},
+		}
+		setTestPostgresPasswordSecretRef(cluster)
+		if err := k8sClient.Create(t.Context(), cluster); err != nil {
+			t.Fatalf("Expected initial cluster to be accepted, got: %v", err)
+		}
+
+		cluster.Spec.TopoTLS.IssuerName = "issuer-b"
+		if err := k8sClient.Update(t.Context(), cluster); err == nil {
+			t.Fatal("Expected changing the topology TLS issuer after creation to be rejected")
+		}
+	})
 }

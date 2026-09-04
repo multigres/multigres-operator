@@ -224,6 +224,35 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 		}
 	})
 
+	t.Run("issues nothing when the topology server is external", func(t *testing.T) {
+		scheme := setupScheme()
+		cluster := topoTLSCluster("test-cluster", "supabase", nil)
+		// An external topology server brings its own CA and client Secrets, so
+		// the operator does not issue a credential from the cluster's issuer.
+		cluster.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
+			External: &multigresv1alpha1.ExternalTopoServerSpec{
+				Endpoints: []multigresv1alpha1.EndpointUrl{"https://etcd.example.com:2379"},
+			},
+		}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		r := &MultigresClusterReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
+
+		if err := r.reconcileCertificate(context.Background(), cluster); err != nil {
+			t.Fatalf("reconcileCertificate() error = %v", err)
+		}
+
+		got := &unstructured.Unstructured{}
+		got.SetGroupVersionKind(certGVK)
+		key := client.ObjectKey{Namespace: "supabase", Name: certName}
+		if err := c.Get(context.Background(), key, got); err == nil {
+			t.Fatal("expected no topology client Certificate for an external topology server")
+		}
+	})
+
 	t.Run("issues nothing when topology TLS is unset", func(t *testing.T) {
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)

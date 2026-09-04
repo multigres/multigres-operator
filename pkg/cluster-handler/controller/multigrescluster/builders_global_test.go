@@ -1003,3 +1003,92 @@ func TestBuildAdminNetworkPolicies(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestBuildMultiadminDeployment_TopoClientTLS(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-cluster",
+			Namespace: "default",
+			UID:       "cluster-uid",
+		},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			Images: multigresv1alpha1.ClusterImages{Multiadmin: "multiadmin:latest"},
+		},
+	}
+	spec := &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}
+
+	t.Run("presents the client certificate when the reference carries it", func(t *testing.T) {
+		secret := multigresv1alpha1.TopoClientCertSecretName("my-cluster")
+		globalTopo := multigresv1alpha1.GlobalTopoServerRef{
+			Address:          "my-cluster-global-topo.default.svc:2379",
+			RootPath:         "/multigres/global",
+			CASecret:         secret,
+			ClientCertSecret: secret,
+		}
+		got, err := BuildMultiadminDeployment(cluster, spec, nil, globalTopo, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+		}
+		c := got.Spec.Template.Spec.Containers[0]
+		if !hasArgValue(c.Args, "--topo-etcd-tls-cert", multigresv1alpha1.TopoClientTLSCertFile) {
+			t.Errorf("missing --topo-etcd-tls-cert flag: %v", c.Args)
+		}
+		if !containerMountsVolume(c, multigresv1alpha1.TopoClientTLSVolumeName) {
+			t.Error("multiadmin does not mount the topo client certificate")
+		}
+		volumes := got.Spec.Template.Spec.Volumes
+		if !podHasVolume(volumes, multigresv1alpha1.TopoClientTLSVolumeName) {
+			t.Error("topo client volume missing from pod spec")
+		}
+	})
+
+	t.Run("renders unchanged when the reference carries no credential", func(t *testing.T) {
+		globalTopo := multigresv1alpha1.GlobalTopoServerRef{
+			Address:  "my-cluster-global-topo.default.svc:2379",
+			RootPath: "/multigres/global",
+		}
+		got, err := BuildMultiadminDeployment(cluster, spec, nil, globalTopo, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultiadminDeployment() error = %v", err)
+		}
+		c := got.Spec.Template.Spec.Containers[0]
+		for _, a := range c.Args {
+			if a == "--topo-etcd-tls-cert" {
+				t.Error("topo TLS flag present with no credential on the reference")
+			}
+		}
+		if podHasVolume(got.Spec.Template.Spec.Volumes, multigresv1alpha1.TopoClientTLSVolumeName) {
+			t.Error("topo client volume present with no credential on the reference")
+		}
+	})
+}
+
+func hasArgValue(args []string, flag, value string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func containerMountsVolume(c corev1.Container, name string) bool {
+	for _, m := range c.VolumeMounts {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func podHasVolume(vols []corev1.Volume, name string) bool {
+	for _, v := range vols {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
+}

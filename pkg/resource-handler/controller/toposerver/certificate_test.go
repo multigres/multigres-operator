@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -404,37 +405,108 @@ func TestReconcileCertificate(t *testing.T) {
 	})
 }
 
-// Issuing certificates does not change what etcd runs with. Holding the
-// StatefulSet pod template and the etcd container environment identical is
-// what makes enabling topology TLS safe on a running cluster.
-func TestTopoTLSDoesNotChangeRenderedPodSpec(t *testing.T) {
+// With topology TLS off the etcd StatefulSet renders exactly as it did before
+// enforcement existed: plaintext listeners and no serving certificate mount.
+// This is the invariant that keeps the change safe to merge with the gate off.
+func TestTopoTLSOffRendersPlaintext(t *testing.T) {
 	scheme := certScheme()
 
-	without := certTestTopoServer(nil)
-	with := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{
+	sts, err := BuildStatefulSet(certTestTopoServer(nil), scheme)
+	if err != nil {
+		t.Fatalf("BuildStatefulSet() error = %v", err)
+	}
+
+	for _, vol := range sts.Spec.Template.Spec.Volumes {
+		if vol.Name == TopoServerTLSVolumeName {
+			t.Fatalf("serving certificate volume present with topology TLS off")
+		}
+	}
+	env := etcdEnvMap(t, sts)
+	if got := env["ETCD_LISTEN_CLIENT_URLS"]; got != "http://[::]:2379" {
+		t.Errorf("ETCD_LISTEN_CLIENT_URLS = %q, want plaintext", got)
+	}
+	if _, ok := env["ETCD_CLIENT_CERT_AUTH"]; ok {
+		t.Errorf("ETCD_CLIENT_CERT_AUTH set with topology TLS off")
+	}
+}
+
+// With topology TLS on, etcd serves its client and peer listeners over TLS,
+// requires a client certificate on each, and mounts the issued serving
+// certificate. The metrics listener stays plaintext so the probes keep working.
+func TestTopoTLSOnRequiresClientCerts(t *testing.T) {
+	scheme := certScheme()
+
+	sts, err := BuildStatefulSet(certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{
 		Enabled:    ptr.To(true),
 		IssuerName: "multigres-infra-issuer",
-	})
-
-	baseline, err := BuildStatefulSet(without, scheme)
-	if err != nil {
-		t.Fatalf("BuildStatefulSet() error = %v", err)
-	}
-	withTLS, err := BuildStatefulSet(with, scheme)
+	}), scheme)
 	if err != nil {
 		t.Fatalf("BuildStatefulSet() error = %v", err)
 	}
 
-	if diff := cmp.Diff(baseline.Spec.Template, withTLS.Spec.Template); diff != "" {
-		t.Errorf(
-			"pod template changed when topology TLS was enabled (-without +with):\n%s",
-			diff,
-		)
+	var servingVol *corev1.Volume
+	for i := range sts.Spec.Template.Spec.Volumes {
+		if sts.Spec.Template.Spec.Volumes[i].Name == TopoServerTLSVolumeName {
+			servingVol = &sts.Spec.Template.Spec.Volumes[i]
+		}
 	}
-	if diff := cmp.Diff(baseline.Spec, withTLS.Spec); diff != "" {
-		t.Errorf(
-			"StatefulSet spec changed when topology TLS was enabled (-without +with):\n%s",
-			diff,
-		)
+	if servingVol == nil {
+		t.Fatal("serving certificate volume missing with topology TLS on")
 	}
+	if servingVol.Secret == nil ||
+		servingVol.Secret.SecretName != multigresv1alpha1.TopoServerCertSecretName(
+			"test-cluster-global-topo",
+		) {
+		t.Errorf("serving certificate volume references the wrong Secret: %+v", servingVol.Secret)
+	}
+
+	var mounted bool
+	for _, m := range sts.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if m.Name == TopoServerTLSVolumeName {
+			mounted = true
+			if !m.ReadOnly || m.MountPath != TopoServerTLSMountPath {
+				t.Errorf(
+					"serving certificate mount = %+v, want read-only at %s",
+					m,
+					TopoServerTLSMountPath,
+				)
+			}
+		}
+	}
+	if !mounted {
+		t.Error("serving certificate is not mounted into the etcd container")
+	}
+
+	env := etcdEnvMap(t, sts)
+	wantEnv := map[string]string{
+		"ETCD_LISTEN_CLIENT_URLS":    "https://[::]:2379",
+		"ETCD_LISTEN_PEER_URLS":      "https://[::]:2380",
+		"ETCD_LISTEN_METRICS_URLS":   "http://[::]:2381",
+		"ETCD_CLIENT_CERT_AUTH":      "true",
+		"ETCD_PEER_CLIENT_CERT_AUTH": "true",
+		"ETCD_CERT_FILE":             TopoServerTLSCertFile,
+		"ETCD_KEY_FILE":              TopoServerTLSKeyFile,
+		"ETCD_TRUSTED_CA_FILE":       TopoServerTLSCAFile,
+		"ETCD_PEER_CERT_FILE":        TopoServerTLSCertFile,
+		"ETCD_PEER_KEY_FILE":         TopoServerTLSKeyFile,
+		"ETCD_PEER_TRUSTED_CA_FILE":  TopoServerTLSCAFile,
+	}
+	for k, want := range wantEnv {
+		if got := env[k]; got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+}
+
+// etcdEnvMap collects the etcd container's environment variables that carry a
+// literal value into a lookup keyed by name.
+func etcdEnvMap(t *testing.T, sts *appsv1.StatefulSet) map[string]string {
+	t.Helper()
+	env := map[string]string{}
+	for _, e := range sts.Spec.Template.Spec.Containers[0].Env {
+		if e.ValueFrom == nil {
+			env[e.Name] = e.Value
+		}
+	}
+	return env
 }

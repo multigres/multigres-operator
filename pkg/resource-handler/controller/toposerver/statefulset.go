@@ -31,6 +31,22 @@ const (
 
 	// DataMountPath is the mount path for etcd data
 	DataMountPath = "/var/lib/etcd"
+
+	// TopoServerTLSVolumeName is the volume holding etcd's serving certificate.
+	TopoServerTLSVolumeName = "topo-server-tls"
+
+	// TopoServerTLSMountPath is where the serving certificate is mounted.
+	TopoServerTLSMountPath = "/etc/etcd/tls"
+
+	// TopoServerTLSCertFile is etcd's serving certificate.
+	TopoServerTLSCertFile = TopoServerTLSMountPath + "/tls.crt"
+
+	// TopoServerTLSKeyFile is the private key for the serving certificate.
+	TopoServerTLSKeyFile = TopoServerTLSMountPath + "/tls.key"
+
+	// TopoServerTLSCAFile is the CA bundle etcd verifies client and peer
+	// certificates against.
+	TopoServerTLSCAFile = TopoServerTLSMountPath + "/ca.crt"
 )
 
 // BuildStatefulSet creates a StatefulSet for the TopoServer cluster.
@@ -69,6 +85,22 @@ func BuildStatefulSet(
 	resources := corev1.ResourceRequirements{}
 	if toposerver.Spec.Etcd != nil {
 		resources = toposerver.Spec.Etcd.Resources
+	}
+
+	tlsEnabled := toposerver.Spec.TLS.IsEnabled()
+
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      DataVolumeName,
+			MountPath: DataMountPath,
+		},
+	}
+	if tlsEnabled {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      TopoServerTLSVolumeName,
+			MountPath: TopoServerTLSMountPath,
+			ReadOnly:  true,
+		})
 	}
 
 	// Defensive copy so the built StatefulSet does not alias the TopoServer spec.
@@ -110,14 +142,10 @@ func BuildStatefulSet(
 								toposerver.Namespace,
 								replicas,
 								headlessServiceName,
+								tlsEnabled,
 							),
-							Ports: buildContainerPorts(toposerver),
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      DataVolumeName,
-									MountPath: DataMountPath,
-								},
-							},
+							Ports:        buildContainerPorts(toposerver),
+							VolumeMounts: volumeMounts,
 							StartupProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -157,6 +185,19 @@ func BuildStatefulSet(
 			VolumeClaimTemplates:                 buildVolumeClaimTemplates(toposerver),
 			PersistentVolumeClaimRetentionPolicy: pvc.BuildRetentionPolicy(stsRetentionPolicy),
 		},
+	}
+
+	if tlsEnabled {
+		defaultMode := int32(0o444)
+		sts.Spec.Template.Spec.Volumes = append(sts.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: TopoServerTLSVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  multigresv1alpha1.TopoServerCertSecretName(toposerver.Name),
+					DefaultMode: &defaultMode,
+				},
+			},
+		})
 	}
 
 	if err := ctrl.SetControllerReference(toposerver, sts, scheme); err != nil {

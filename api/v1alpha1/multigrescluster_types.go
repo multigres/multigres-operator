@@ -50,6 +50,15 @@ import (
 // ============================================================================
 
 // MultigresClusterSpec defines the desired state of MultigresCluster.
+//
+// topoTLS is immutable after creation. Enabling it switches the etcd client and
+// peer listeners to TLS, and changing the issuer rotates the CA every certificate
+// chains to. etcd cannot serve plaintext and TLS on one port, its persisted peer
+// membership is not rewritten by a restart, and the topology clients load their
+// certificate at process start, so neither the enablement nor the issuer can be
+// changed on a running cluster without a coordinated migration. Both are fixed at
+// creation.
+// +kubebuilder:validation:XValidation:rule="has(self.topoTLS) == has(oldSelf.topoTLS) && (!has(self.topoTLS) || self.topoTLS == oldSelf.topoTLS)",message="topoTLS is immutable and can only be set when the cluster is created"
 type MultigresClusterSpec struct {
 	// Images defines the container images for all components in the cluster.
 	// +optional

@@ -250,6 +250,22 @@ func BuildMultiadminDeployment(
 		)
 	}
 
+	if multigresv1alpha1.TopoClientTLSConfigured(globalTopo) {
+		podSpec := &deploy.Spec.Template.Spec
+		podSpec.Volumes = append(
+			podSpec.Volumes,
+			multigresv1alpha1.BuildTopoClientTLSVolume(globalTopo),
+		)
+		podSpec.Containers[0].VolumeMounts = append(
+			podSpec.Containers[0].VolumeMounts,
+			multigresv1alpha1.TopoClientTLSVolumeMount(),
+		)
+		podSpec.Containers[0].Args = append(
+			podSpec.Containers[0].Args,
+			multigresv1alpha1.TopoClientTLSArgs()...,
+		)
+	}
+
 	if err := controllerutil.SetControllerReference(cluster, deploy, scheme); err != nil {
 		return nil, err
 	}

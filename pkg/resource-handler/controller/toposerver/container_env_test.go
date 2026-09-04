@@ -111,7 +111,7 @@ func TestBuildEtcdConfigEnv(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := buildEtcdConfigEnv(tc.toposerverName, tc.serviceName, tc.namespace)
+			got := buildEtcdConfigEnv(tc.toposerverName, tc.serviceName, tc.namespace, false)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("buildEtcdConfigEnv() mismatch (-want +got):\n%s", diff)
 			}
@@ -178,6 +178,7 @@ func TestBuildEtcdClusterPeerList(t *testing.T) {
 				tc.serviceName,
 				tc.namespace,
 				tc.replicas,
+				"http",
 			)
 			if got != tc.want {
 				t.Errorf("buildEtcdClusterPeerList() = %v, want %v", got, tc.want)
@@ -330,7 +331,13 @@ func TestBuildContainerEnv(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := buildContainerEnv(tc.toposerverName, tc.namespace, tc.replicas, tc.serviceName)
+			got := buildContainerEnv(
+				tc.toposerverName,
+				tc.namespace,
+				tc.replicas,
+				tc.serviceName,
+				false,
+			)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("BuildContainerEnv() mismatch (-want +got):\n%s", diff)
 			}

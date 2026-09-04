@@ -2516,3 +2516,72 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildMultigatewayDeployment_TopoClientTLS(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	baseCell := func() *multigresv1alpha1.Cell {
+		return &multigresv1alpha1.Cell{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cell",
+				Namespace: "default",
+				UID:       "test-uid",
+				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			},
+			Spec: multigresv1alpha1.CellSpec{
+				Name: "zone1",
+				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+					Address:        "global-topo:2379",
+					RootPath:       "/multigres/global",
+					Implementation: "etcd",
+				},
+				LogLevels: multigresv1alpha1.ComponentLogLevels{
+					Pgctld: "info", Multipooler: "info", Multiorch: "info",
+					Multiadmin: "info", Multigateway: "info",
+				},
+			},
+		}
+	}
+
+	t.Run("presents the client certificate when the reference carries it", func(t *testing.T) {
+		cell := baseCell()
+		secret := multigresv1alpha1.TopoClientCertSecretName("test-cluster")
+		cell.Spec.GlobalTopoServer.CASecret = secret
+		cell.Spec.GlobalTopoServer.ClientCertSecret = secret
+
+		got, err := BuildMultigatewayDeployment(cell, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultigatewayDeployment() error = %v", err)
+		}
+		c := got.Spec.Template.Spec.Containers[0]
+		if !slices.Contains(c.Args, "--topo-etcd-tls-cert") {
+			t.Errorf("missing topo client TLS flags: %v", c.Args)
+		}
+		var mounted bool
+		for _, m := range c.VolumeMounts {
+			if m.Name == multigresv1alpha1.TopoClientTLSVolumeName {
+				mounted = true
+			}
+		}
+		if !mounted {
+			t.Error("multigateway does not mount the topo client certificate")
+		}
+	})
+
+	t.Run("renders unchanged when the reference carries no credential", func(t *testing.T) {
+		got, err := BuildMultigatewayDeployment(baseCell(), scheme)
+		if err != nil {
+			t.Fatalf("BuildMultigatewayDeployment() error = %v", err)
+		}
+		c := got.Spec.Template.Spec.Containers[0]
+		if slices.Contains(c.Args, "--topo-etcd-tls-cert") {
+			t.Error("topo TLS flag present with no credential on the reference")
+		}
+		for _, v := range got.Spec.Template.Spec.Volumes {
+			if v.Name == multigresv1alpha1.TopoClientTLSVolumeName {
+				t.Error("topo client volume present with no credential on the reference")
+			}
+		}
+	})
+}
