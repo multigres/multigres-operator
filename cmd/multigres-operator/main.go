@@ -54,11 +54,13 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	multigresclustercontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
 	tablegroupcontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
+	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/images"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	cellcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	shardcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/shard"
 	toposervercontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/toposerver"
+	"github.com/multigres/multigres-operator/pkg/util/certs"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	multigreswebhook "github.com/multigres/multigres-operator/pkg/webhook"
 
@@ -97,6 +99,7 @@ func main() {
 	var webhookServiceNamespace string
 	var webhookServiceAccount string
 	var webhookServiceName string
+	var internalTLSIssuerName string
 
 	defaultNS := os.Getenv("POD_NAMESPACE")
 	if defaultNS == "" {
@@ -185,6 +188,13 @@ func main() {
 		"webhook-service-name",
 		"multigres-operator-webhook-service",
 		"Name of the Kubernetes Service for the webhook",
+	)
+	flag.StringVar(
+		&internalTLSIssuerName,
+		"internal-tls-issuer-name",
+		certs.DefaultIssuerName,
+		"Fallback cert-manager ClusterIssuer for operator client certificates "+
+			"when a pre-upgrade shard has no resolved issuerName",
 	)
 
 	opts := zap.Options{Development: true}
@@ -483,6 +493,18 @@ func main() {
 	)
 	defer rpcClient.Close()
 
+	poolerClients := poolerclient.NewOperatorCertResolver(
+		mgr.GetClient(),
+		mgr.GetAPIReader(),
+		poolerclient.Options{
+			Namespace:  defaultNS,
+			IssuerName: internalTLSIssuerName,
+			Capacity:   100,
+			Insecure:   rpcClient,
+		},
+	)
+	defer poolerClients.Close()
+
 	if err = (&toposervercontroller.TopoServerReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -493,11 +515,11 @@ func main() {
 	}
 
 	if err = (&shardcontroller.ShardReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("shard-controller"),
-		APIReader: mgr.GetAPIReader(),
-		RPCClient: rpcClient,
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorderFor("shard-controller"),
+		APIReader:     mgr.GetAPIReader(),
+		PoolerClients: poolerClients,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Shard")
 		os.Exit(1)
