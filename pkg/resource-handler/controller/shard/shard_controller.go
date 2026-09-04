@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/multigres/multigres/go/common/rpcclient"
 	"github.com/multigres/multigres/go/common/topoclient"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -24,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
@@ -71,7 +71,7 @@ type ShardReconciler struct {
 	// label, so we need APIReader to validate user-provided pgBackRest TLS Secrets
 	// and external postgres password Secrets.
 	APIReader       client.Reader
-	RPCClient       rpcclient.MultipoolerClient
+	PoolerClients   poolerclient.Resolver
 	CreateTopoStore func(*multigresv1alpha1.Shard) (topoclient.Store, error)
 
 	postureStrikesMu sync.Mutex

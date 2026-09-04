@@ -124,10 +124,9 @@ func newReloadReconciler(
 ) *ShardReconciler {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	return &ShardReconciler{
-		Client:    c,
-		Scheme:    scheme,
-		Recorder:  record.NewFakeRecorder(20),
-		RPCClient: rpc,
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(20),
 	}
 }
 
@@ -169,7 +168,13 @@ func TestReconcileReloadStateStampsWhenVerified(t *testing.T) {
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil) // stale reload-hash, current restart-hash
 	r := newReloadReconciler(scheme, rpc, shard, pod)
 
-	wait, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered())
+	wait, err := r.reconcileReloadState(
+		context.Background(),
+		store,
+		shard,
+		reloadTestRendered(),
+		rpc,
+	)
 	if err != nil {
 		t.Fatalf("reconcileReloadState: %v", err)
 	}
@@ -206,7 +211,13 @@ func TestReconcileReloadStateNotSyncedRetries(t *testing.T) {
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
 	r := newReloadReconciler(scheme, rpc, shard, pod)
 
-	wait, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered())
+	wait, err := r.reconcileReloadState(
+		context.Background(),
+		store,
+		shard,
+		reloadTestRendered(),
+		rpc,
+	)
 	if err != nil {
 		t.Fatalf("reconcileReloadState: %v", err)
 	}
@@ -237,7 +248,13 @@ func TestReconcileReloadStateNeedsRestart(t *testing.T) {
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
 	r := newReloadReconciler(scheme, rpc, shard, pod)
 
-	wait, err := r.reconcileReloadState(context.Background(), store, shard, reloadTestRendered())
+	wait, err := r.reconcileReloadState(
+		context.Background(),
+		store,
+		shard,
+		reloadTestRendered(),
+		rpc,
+	)
 	if err != nil {
 		t.Fatalf("reconcileReloadState: %v", err)
 	}
@@ -287,6 +304,7 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 				store,
 				shard,
 				reloadTestRendered(),
+				rpc,
 			); err != nil {
 				t.Fatalf("reconcileReloadState: %v", err)
 			}

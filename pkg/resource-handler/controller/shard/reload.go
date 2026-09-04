@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/multigres/multigres/go/common/rpcclient"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -48,11 +49,12 @@ func (r *ShardReconciler) reconcileReloadState(
 	store topoclient.Store,
 	shard *multigresv1alpha1.Shard,
 	rendered renderedConfig,
+	rpcClient rpcclient.MultipoolerClient,
 ) (time.Duration, error) {
 	logger := log.FromContext(ctx)
 
 	desired := rendered.reloadHash
-	if desired == "" || rendered.err != nil || r.RPCClient == nil {
+	if desired == "" || rendered.err != nil || rpcClient == nil {
 		return 0, nil
 	}
 
@@ -91,7 +93,6 @@ func (r *ShardReconciler) reconcileReloadState(
 	requeue := time.Duration(0)
 	var stale, reloaded, skippedRestart, notSynced, needsRestart int
 
-	var err error
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 		podReload := pod.Annotations[metadata.AnnotationPostgresReloadHash]
@@ -116,6 +117,7 @@ func (r *ShardReconciler) reconcileReloadState(
 		cellName := pod.Labels[metadata.LabelMultigresCell]
 		poolers, ok := poolersByCell[cellName]
 		if !ok {
+			var err error
 			poolers, err = store.GetMultipoolersByCell(ctx, cellName, topo.ShardFilter(shard))
 			if err != nil {
 				if topo.IsTopoUnavailable(err) {
@@ -139,7 +141,7 @@ func (r *ShardReconciler) reconcileReloadState(
 			continue
 		}
 
-		resp, rerr := r.RPCClient.ReloadConfig(ctx, pooler.Multipooler, req)
+		resp, rerr := rpcClient.ReloadConfig(ctx, pooler.Multipooler, req)
 		if rerr != nil {
 			logger.Error(rerr, "ReloadConfig RPC failed", "pod", pod.Name)
 			requeue = reloadRetryDelay
