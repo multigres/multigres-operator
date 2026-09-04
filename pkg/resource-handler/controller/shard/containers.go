@@ -432,7 +432,7 @@ func buildPgctldSidecar(
 		Resources:       pool.Postgres.Resources,
 		RestartPolicy:   &sidecarRestartPolicy,
 		Env:             env,
-		SecurityContext: buildPgctldSecurityContext(image, pool.Postgres),
+		SecurityContext: buildPgctldSecurityContext(pool.Postgres),
 		VolumeMounts:    volumeMounts,
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -591,7 +591,7 @@ func buildMultipoolerContainer(
 		Args:            args,
 		Ports:           buildMultipoolerContainerPorts(),
 		Resources:       pool.Multipooler.Resources,
-		SecurityContext: buildMultipoolerSecurityContext(shard, pool),
+		SecurityContext: buildMultipoolerSecurityContext(pool),
 		StartupProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
