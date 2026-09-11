@@ -17,6 +17,9 @@ cover.out
 *cover.out
 cover.html
 coverage/
+# ad-hoc `go build ./cmd/multigres-operator` drops the binary at the repo root.
+# Anchored, because unanchored it also matches (and hides) cmd/multigres-operator/.
+/multigres-operator
 # kubebuilder
 bin/
 
@@ -27,7 +30,6 @@ kubeconfig.yaml
 
 # MacOS
 .DS_Store
-multigres-operator
 
 # Results of Agent runs
 agent-docs/

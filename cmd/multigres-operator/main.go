@@ -24,6 +24,9 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"runtime/debug"
+	"strconv"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -87,6 +90,7 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var pprofAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
@@ -129,6 +133,15 @@ func main() {
 		"health-probe-bind-address",
 		":8081",
 		"The address the probe endpoint binds to.",
+	)
+	flag.StringVar(
+		&pprofAddr,
+		"pprof-bind-address",
+		"",
+		"The address the pprof endpoint binds to. Empty disables it. The endpoint is "+
+			"unauthenticated, serves this process's argv, and lets any caller consume CPU "+
+			"via /debug/pprof/profile, so bind it to loopback and reach it with "+
+			"'kubectl port-forward', e.g. '127.0.0.1:6060'.",
 	)
 	flag.BoolVar(
 		&enableLeaderElection,
@@ -192,6 +205,41 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// The Go runtime derives GOMAXPROCS from the cgroup CPU quota on its own
+	// (go1.25+), but has no equivalent for memory: golang/go#75164 is still an
+	// open proposal, so GOMEMLIMIT defaults to math.MaxInt64 and a reconcile
+	// burst OOMKills instead of making the collector work harder. Derive it
+	// from the limit the downward API projects in manager.yaml.
+	rawMemLimit := os.Getenv("MEMORY_LIMIT_BYTES")
+	// Cases in precedence order. An absent MEMORY_LIMIT_BYTES is the ordinary
+	// case outside a container and needs no comment, since "resolved runtime
+	// limits" below reports the outcome either way.
+	switch memLimit, ok := goMemLimitFromEnv(rawMemLimit); {
+	case os.Getenv("GOMEMLIMIT") != "":
+		// Leave it alone. The runtime has already applied it, and whoever set it
+		// chose that headroom on purpose; the manifest supplies
+		// MEMORY_LIMIT_BYTES unconditionally, so deriving from it here would
+		// silently overwrite their choice. A malformed GOMEMLIMIT never reaches
+		// this point: the runtime treats it as fatal before main runs.
+	case ok:
+		debug.SetMemoryLimit(memLimit)
+	case rawMemLimit != "":
+		// Someone tried to set a limit and silently did not.
+		setupLog.Info(
+			"MEMORY_LIMIT_BYTES is not a positive integer; leaving GOMEMLIMIT effectively unlimited",
+			"value",
+			rawMemLimit,
+		)
+	}
+
+	// Emit the resolved values rather than the configured ones, so a profile
+	// captured later arrives with the runtime limits that produced it.
+	setupLog.Info("resolved runtime limits",
+		"GOMEMLIMIT", debug.SetMemoryLimit(-1),
+		"GOMAXPROCS", goruntime.GOMAXPROCS(0),
+		"numCPU", goruntime.NumCPU(),
+	)
 
 	if imageUpdateStrategy != string(images.UpdateImmediate) &&
 		imageUpdateStrategy != string(images.UpdateLazy) {
@@ -335,6 +383,7 @@ func main() {
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		HealthProbeBindAddress: probeAddr,
+		PprofBindAddress:       pprofAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "multigres-operator.multigres.com",
 		// RELEASE LEADER ON CANCEL: Enables faster failover during rolling upgrades
@@ -552,4 +601,24 @@ func certsExist(dir string) bool {
 	_, errCrt := os.Stat(filepath.Join(dir, "tls.crt"))
 	_, errKey := os.Stat(filepath.Join(dir, "tls.key"))
 	return !os.IsNotExist(errCrt) && !os.IsNotExist(errKey)
+}
+
+// memLimitRatio is the fraction of the container memory limit handed to the Go
+// runtime. The remainder has to cover what GOMEMLIMIT explicitly excludes,
+// dominated by the ~58MiB mapping of the binary itself, so a limit low enough
+// that 10% of it is smaller than the binary cannot be satisfied at all.
+const memLimitRatio = 0.9
+
+// goMemLimitFromEnv converts a container memory limit in bytes, as projected by
+// the downward API, into a GOMEMLIMIT value. It reports false when the value is
+// absent or unusable; that is the unlimited case, not an error, since the
+// operator must still run outside a container and under manifests predating
+// this variable. Note that a container with no memory limit gets the node's
+// allocatable memory here rather than nothing, which is the intended reading.
+func goMemLimitFromEnv(raw string) (int64, bool) {
+	limit, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || limit <= 0 {
+		return 0, false
+	}
+	return int64(float64(limit) * memLimitRatio), true
 }

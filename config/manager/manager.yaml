@@ -68,6 +68,16 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          # On by default because it cannot usefully be enabled on demand:
+          # changing args rolls the Deployment, so the process holding the heap
+          # under investigation is replaced by a fresh one. A slow leak takes
+          # days to reappear, and after an OOMKill the evidence is already gone.
+          #
+          # Loopback only: the endpoint is unauthenticated, serves this
+          # process's argv, and lets any caller burn CPU via
+          # /debug/pprof/profile. Reach it with a port-forward, which the API
+          # server authenticates and RBAC authorizes.
+          - --pprof-bind-address=127.0.0.1:6060
         env:
         - name: POD_NAMESPACE
           valueFrom:
@@ -77,6 +87,16 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.serviceAccountName
+        # Go derives GOMAXPROCS from the cgroup CPU quota by itself, but has no
+        # equivalent for memory (golang/go#75164). Project the limit so the
+        # binary can set GOMEMLIMIT from it; resourceFieldRef resolves after any
+        # kustomize patch, so this cannot drift from the limit below.
+        - name: MEMORY_LIMIT_BYTES
+          valueFrom:
+            resourceFieldRef:
+              containerName: manager
+              resource: limits.memory
+              divisor: "1"
         image: controller:latest
         name: manager
         ports: []
@@ -98,15 +118,25 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        # TODO(user): Configure the resources accordingly based on the project requirements.
-        # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+        # Provisional, pending the heap and allocation profiles that
+        # --pprof-bind-address now makes possible. These replace untouched
+        # kubebuilder scaffold values (128Mi / 500m), not measured ones.
+        #
+        # The floor on the memory limit is arithmetic rather than empirical:
+        # GOMEMLIMIT excludes the binary's own mapping, which is ~58MiB
+        # stripped, so at 128Mi the 90% the operator hands the runtime could
+        # not fit alongside it.
+        #
+        # No CPU limit on purpose. Five controllers run at
+        # MaxConcurrentReconciles 20, and throttling the collector is the wrong
+        # way to fail when GOMEMLIMIT is what keeps the process inside its
+        # memory limit. A CPU limit also sets GOMAXPROCS: 500m pinned it to 2.
         resources:
           limits:
-            cpu: 500m
-            memory: 128Mi
+            memory: 512Mi
           requests:
-            cpu: 10m
-            memory: 64Mi
+            cpu: 100m
+            memory: 256Mi
         volumeMounts:
         - mountPath: /var/run/secrets/webhook
           name: cert-dir
