@@ -97,7 +97,7 @@ func (r *ShardReconciler) validateBackupStorageClassDependency(
 		); setErr != nil {
 			return setErr
 		}
-		r.Recorder.Eventf(shard, "Warning", storageClassNotFoundReason, msg)
+		r.Recorder.Event(shard, "Warning", storageClassNotFoundReason, msg)
 		return &missingStorageClassDependencyError{className: backupClass}
 	}
 
@@ -145,7 +145,7 @@ func (r *ShardReconciler) validatePoolStorageClassDependencies(
 			); setErr != nil {
 				return setErr
 			}
-			r.Recorder.Eventf(shard, "Warning", storageClassNotFoundReason, msg)
+			r.Recorder.Event(shard, "Warning", storageClassNotFoundReason, msg)
 			return &missingStorageClassDependencyError{className: pool.Storage.Class}
 		}
 	}

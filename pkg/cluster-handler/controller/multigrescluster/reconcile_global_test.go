@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/managedfields"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1113,7 +1114,12 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 			Enabled:                  true,
 			AllowedIngressNamespaces: []string{"envoy-gateway-system"},
 		})
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		// A single deduced type converter avoids a controller-runtime fake-client
+		// bug (>=v0.25.0) where its default multi-converter chain returns
+		// mismatched schemas for server-side-apply patches of built-in types
+		// like NetworkPolicy.
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
+			WithTypeConverters(managedfields.NewDeducedTypeConverter()).Build()
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -1132,7 +1138,8 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 
 	t.Run("Disabled deletes previously created policies", func(t *testing.T) {
 		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true})
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
+			WithTypeConverters(managedfields.NewDeducedTypeConverter()).Build()
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,

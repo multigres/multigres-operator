@@ -574,6 +574,7 @@ func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(toposerver, sts).
+			WithStatusSubresource(toposerver).
 			Build()
 		r := &TopoServerReconciler{
 			Client:   fakeClient,

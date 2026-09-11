@@ -118,7 +118,7 @@ func (r *TopoServerReconciler) validateEtcdStorageClassDependency(
 		); setErr != nil {
 			return setErr
 		}
-		r.Recorder.Eventf(toposerver, "Warning", storageClassNotFoundReason, msg)
+		r.Recorder.Event(toposerver, "Warning", storageClassNotFoundReason, msg)
 		return &missingStorageClassDependencyError{className: etcdClass}
 	}
 
@@ -142,7 +142,7 @@ func (r *TopoServerReconciler) validateEtcdStorageClassDependency(
 		); setErr != nil {
 			return setErr
 		}
-		r.Recorder.Eventf(toposerver, "Warning", storageClassBindingModeReason, msg)
+		r.Recorder.Event(toposerver, "Warning", storageClassBindingModeReason, msg)
 		return &invalidStorageClassBindingModeError{className: etcdClass, mode: mode}
 	}
 

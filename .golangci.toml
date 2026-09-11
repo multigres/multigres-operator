@@ -3,5 +3,22 @@ version = "2"
 [linters]
 enable = [ "gosec" ]
 
+[linters.exclusions]
+# TODO: controller-runtime 0.25.0 deprecated these APIs in favor of
+# client.Client.Apply()/SubResource().Apply(), the generic admission.Defaulter/
+# Validator webhook interfaces, and hand-rolled scheme registration. Tracked
+# for a dedicated follow-up migration; excluded here so the dependency bump
+# that introduced the deprecations isn't blocked on an unrelated,
+# wide-reaching refactor.
+rules = [
+  { linters = [ "staticcheck" ], text = "SA1019: client.Apply is deprecated" },
+  { linters = [ "staticcheck" ], text = "SA1019: scheme.Builder is deprecated" },
+  { linters = [ "staticcheck" ], text = "SA1019: webhook.CustomDefaulter is deprecated" },
+  { linters = [ "staticcheck" ], text = "SA1019: webhook.CustomValidator is deprecated" },
+  { linters = [ "staticcheck" ], text = "WithCustomDefaulter is deprecated" },
+  { linters = [ "staticcheck" ], text = "WithCustomValidator is deprecated" },
+  { linters = [ "staticcheck" ], text = "GetEventRecorderFor is deprecated" },
+]
+
 [formatters]
 enable = [ "gofumpt", "golines" ]

@@ -219,7 +219,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 			if result.Healthy && !prevHealthy {
 				r.Recorder.Event(shard, "Normal", "BackupHealthy", result.Message)
 			} else if !result.Healthy && prevHealthy {
-				r.Recorder.Eventf(shard, "Warning", "BackupStale", result.Message)
+				r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
 			}
 
 			if err := r.Status().Patch(ctx, shard, client.MergeFrom(backupBase)); err != nil {
@@ -433,7 +433,7 @@ func (r *ShardReconciler) reconcilePosture(
 		if result.MultiplePrimaries {
 			reason = "MultiplePrimariesDetected"
 		}
-		r.Recorder.Eventf(shard, "Warning", reason, result.Message)
+		r.Recorder.Event(shard, "Warning", reason, result.Message)
 	}
 
 	if unsettled && strikes < postureStrikeThreshold {

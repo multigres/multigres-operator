@@ -469,6 +469,6 @@ func (m *CertRotator) setOwner(secret *corev1.Secret) error {
 
 func (m *CertRotator) emitEvent(object runtime.Object, eventtype, reason, message string) {
 	if m.Recorder != nil && object != nil {
-		m.Recorder.AnnotatedEventf(object, nil, eventtype, reason, message)
+		m.Recorder.AnnotatedEventf(object, nil, eventtype, reason, "%s", message)
 	}
 }

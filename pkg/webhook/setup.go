@@ -28,17 +28,15 @@ func Setup(mgr ctrl.Manager, res *resolver.Resolver, opts Options) error {
 	}
 
 	// 1. Mutating Webhook: MultigresCluster
-	if err := ctrl.NewWebhookManagedBy(mgr).
-		For(&multigresv1alpha1.MultigresCluster{}).
-		WithDefaulter(handlers.NewMultigresClusterDefaulter(res)).
+	if err := ctrl.NewWebhookManagedBy(mgr, &multigresv1alpha1.MultigresCluster{}).
+		WithCustomDefaulter(handlers.NewMultigresClusterDefaulter(res)).
 		Complete(); err != nil {
 		return fmt.Errorf("failed to register MultigresCluster defaulter: %w", err)
 	}
 
 	// 2. Validating Webhook: MultigresCluster
-	if err := ctrl.NewWebhookManagedBy(mgr).
-		For(&multigresv1alpha1.MultigresCluster{}).
-		WithValidator(handlers.NewMultigresClusterValidator(mgr.GetClient())).
+	if err := ctrl.NewWebhookManagedBy(mgr, &multigresv1alpha1.MultigresCluster{}).
+		WithCustomValidator(handlers.NewMultigresClusterValidator(mgr.GetClient())).
 		Complete(); err != nil {
 		return fmt.Errorf("failed to register MultigresCluster validator: %w", err)
 	}
@@ -51,9 +49,8 @@ func Setup(mgr ctrl.Manager, res *resolver.Resolver, opts Options) error {
 	}
 
 	for obj, kind := range templates {
-		if err := ctrl.NewWebhookManagedBy(mgr).
-			For(obj).
-			WithValidator(handlers.NewTemplateValidator(mgr.GetClient(), kind)).
+		if err := ctrl.NewWebhookManagedBy(mgr, obj).
+			WithCustomValidator(handlers.NewTemplateValidator(mgr.GetClient(), kind)).
 			Complete(); err != nil {
 			return fmt.Errorf("failed to register validator for %s: %w", kind, err)
 		}
@@ -85,9 +82,8 @@ func Setup(mgr ctrl.Manager, res *resolver.Resolver, opts Options) error {
 	}
 
 	for _, obj := range childResources {
-		if err := ctrl.NewWebhookManagedBy(mgr).
-			For(obj).
-			WithValidator(childValidator).
+		if err := ctrl.NewWebhookManagedBy(mgr, obj).
+			WithCustomValidator(childValidator).
 			Complete(); err != nil {
 			kind := obj.GetObjectKind().GroupVersionKind().Kind
 			return fmt.Errorf("failed to register validator for %s: %w", kind, err)
