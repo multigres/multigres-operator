@@ -78,11 +78,7 @@ func (r *ShardReconciler) reconcilePoolPods(
 		existingPVCs[pvc.Name] = pvc
 	}
 
-	// Phase 0: Sync DRAINED labels and reconcile temporary maintenance capacity.
-	if err := r.syncDrainedLabels(ctx, shard, existingPods); err != nil {
-		return err
-	}
-	drainedCount := countDrainedPods(shard, existingPods)
+	// Phase 0: Reconcile temporary maintenance capacity.
 	maintenanceSurges, surgeAction, err := r.reconcileCellMaintenanceSurge(
 		ctx,
 		shard,
@@ -101,9 +97,8 @@ func (r *ShardReconciler) reconcilePoolPods(
 		return nil
 	}
 
-	// DRAINED pods stay alive for investigation; stand-in replicas compensate.
 	// Active maintenance surges remain desired until the cell has settled.
-	effectiveReplicas := replicas + drainedCount + maintenanceSurges
+	effectiveReplicas := replicas + maintenanceSurges
 
 	// Phase 1: Create missing resources and handle terminal/deleted pods
 	driftedCount, actionTaken, err := r.createMissingResources(
@@ -155,7 +150,7 @@ func (r *ShardReconciler) reconcilePoolPods(
 
 // createMissingResources creates PVCs and Pods that should exist but don't.
 // It also handles terminal pods (Failed/Succeeded) and externally-deleted pods.
-// effectiveReplicas includes stand-in pods for DRAINED pods (replicas + drainedCount).
+// effectiveReplicas includes temporary maintenance-surge pods (replicas + maintenanceSurges).
 // Returns the number of drifted pods and whether an action was taken this reconcile.
 func (r *ShardReconciler) createMissingResources(
 	ctx context.Context,
@@ -370,10 +365,10 @@ func isPodReady(pod *corev1.Pod) bool {
 
 // isPoolHealthy returns true if the pool/cell has at least effectiveReplicas
 // pods, and all of them — except extras (index >= effectiveReplicas) and
-// DRAINED/QUARANTINED pods — are Ready, with none draining or terminating.
+// QUARANTINED pods — are Ready, with none draining or terminating.
 // Extra pods are excluded so an unhealthy extra pod does not block its own
-// removal. DRAINED and QUARANTINED pods are excluded because they are
-// expected to be unhealthy and should not block scale-down of stand-in pods.
+// removal. QUARANTINED pods are excluded because they are expected to be
+// unhealthy and are being replaced by quarantine remediation.
 //
 // The count check matters because a pod drained all the way to deletion
 // disappears from existingPods entirely — there is nothing left for the
@@ -393,7 +388,7 @@ func isPoolHealthy(
 		if idx, ok := resolvePodIndex(pod.Name); !ok || idx >= int(effectiveReplicas) {
 			continue
 		}
-		if role := resolvePodRole(shard, pod.Name); role == "DRAINED" || role == "QUARANTINED" {
+		if resolvePodRole(shard, pod.Name) == "QUARANTINED" {
 			continue
 		}
 		if !pod.DeletionTimestamp.IsZero() {
@@ -443,8 +438,7 @@ func (r *ShardReconciler) isShardHealthy(
 				replicas = *pool.ReplicasPerCell
 			}
 			group := podsByPoolCell[string(poolName)+"/"+string(cell)]
-			effectiveReplicas := replicas + countDrainedPods(shard, group)
-			if !isPoolHealthy(group, effectiveReplicas, shard) {
+			if !isPoolHealthy(group, replicas, shard) {
 				return false, nil
 			}
 		}
@@ -494,7 +488,7 @@ func (r *ShardReconciler) handleExternalDeletion(
 
 // handleScaleDown processes pods that need removal: ready-for-deletion cleanup
 // and draining extra pods beyond the effective replica count.
-// replicas is the user-desired count; effectiveReplicas = replicas + drainedCount.
+// replicas is the user-desired count; effectiveReplicas = replicas + maintenanceSurges.
 // Returns whether an action was taken and whether any drain is in progress.
 func (r *ShardReconciler) handleScaleDown(
 	ctx context.Context,
@@ -936,43 +930,6 @@ func (r *ShardReconciler) selectPodToDrain(
 	return bestPod
 }
 
-// syncDrainedLabels ensures pods with topology role DRAINED have the
-// multigres.com/role=DRAINED label, and pods no longer DRAINED have it removed.
-// The label is the durable signal for DRAINED PVC cleanup — PodRoles may be
-// cleared by the data-handler during drain before cleanup runs.
-func (r *ShardReconciler) syncDrainedLabels(
-	ctx context.Context,
-	shard *multigresv1alpha1.Shard,
-	existingPods map[string]*corev1.Pod,
-) error {
-	for _, pod := range existingPods {
-		role := resolvePodRole(shard, pod.Name)
-		currentLabel := pod.Labels[metadata.LabelPodRole]
-
-		if role == "DRAINED" && currentLabel != "DRAINED" {
-			patch := client.MergeFrom(pod.DeepCopy())
-			if pod.Labels == nil {
-				pod.Labels = make(map[string]string)
-			}
-			pod.Labels[metadata.LabelPodRole] = "DRAINED"
-			if err := r.Patch(ctx, pod, patch); err != nil {
-				return fmt.Errorf("failed to set DRAINED label on pod %s: %w", pod.Name, err)
-			}
-			r.Recorder.Eventf(shard, "Warning", "PodDrained",
-				"Pod %s detected as DRAINED — provisioning stand-in replica", pod.Name)
-		} else if role != "DRAINED" && currentLabel == "DRAINED" {
-			patch := client.MergeFrom(pod.DeepCopy())
-			delete(pod.Labels, metadata.LabelPodRole)
-			if err := r.Patch(ctx, pod, patch); err != nil {
-				return fmt.Errorf("failed to remove DRAINED label from pod %s: %w", pod.Name, err)
-			}
-			r.Recorder.Eventf(shard, "Normal", "PodRecovered",
-				"Pod %s is no longer DRAINED", pod.Name)
-		}
-	}
-	return nil
-}
-
 func (r *ShardReconciler) cleanupDrainedPod(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -983,27 +940,7 @@ func (r *ShardReconciler) cleanupDrainedPod(
 ) error {
 	logger := log.FromContext(ctx)
 
-	// DRAINED pods always get their PVC marked orphan — data is known-bad.
-	// The multigres-gc CronJob deletes the PVC after the retention window.
-	// We check the pod label (not PodRoles) because the data-handler clears
-	// the topology entry during drain before this cleanup point.
-	if pod.Labels[metadata.LabelPodRole] == "DRAINED" {
-		if err := r.cleanupPodPVC(
-			ctx,
-			shard,
-			pod,
-			poolName,
-			"DRAINED (data known-bad)",
-		); err != nil {
-			return err
-		}
-		logger.Info("Drained pod cleanup complete", "pod", pod.Name)
-		r.Recorder.Eventf(shard, "Normal", "DrainCompleted",
-			"Completed drain for DRAINED pod %s — PVC cleanup queued", pod.Name)
-		return nil
-	}
-
-	// For non-DRAINED pods, respect WhenScaled policy
+	// Respect the WhenScaled PVC-deletion policy.
 	mergedPolicy := multigresv1alpha1.MergePVCDeletionPolicy(
 		poolSpec.PVCDeletionPolicy,
 		shard.Spec.PVCDeletionPolicy,

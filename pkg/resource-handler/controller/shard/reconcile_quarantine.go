@@ -57,12 +57,6 @@ const (
 //
 // Returns true when it took a (destructive) action so the caller requeues and
 // skips other disruptive work this cycle.
-//
-// NOTE(review): this supersedes, for quarantined poolers, the older "stand-in
-// replica" model (GetPoolerStatus previously mapped quarantined -> DRAINED,
-// which provisioned a replacement at a new index and kept the bad pod). That
-// DRAINED machinery in reconcile_pool_pods.go is now dormant for the quarantine
-// case; a follow-up can remove it if we settle on wipe-in-place.
 func (r *ShardReconciler) reconcileQuarantineRemediation(
 	ctx context.Context,
 	store topoclient.Store,

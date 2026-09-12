@@ -57,8 +57,7 @@ func GetPoolerStatus(
 				}
 				// Quarantined poolers are unrecoverable (postgres cannot start).
 				// They are surfaced with a distinct QUARANTINED role so they are
-				// visible in Shard.Status.PodRoles, but they are not routed and do
-				// not drive the stand-in-replica path (which keyed on DRAINED).
+				// visible in Shard.Status.PodRoles, but they are not routed.
 				// The operator replaces them via quarantine remediation (delete pod
 				// + wipe data PVC + re-bootstrap from backup); GetQuarantinedPods
 				// carries the reason for that.
