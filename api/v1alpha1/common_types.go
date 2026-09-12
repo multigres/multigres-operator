@@ -199,16 +199,21 @@ type ContainerConfig struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// RunAsUser sets the UID for the container process. When unset, Kubernetes
-	// and the container runtime apply the image's default user.
-	// Images that declare USER by name may need this set to a numeric UID when
-	// RunAsNonRoot enforcement is required.
+	// RunAsUser sets the UID for the container process. For Postgres and
+	// Multipooler, leaving this unset does not fall back to the image's own
+	// user: the operator applies its own default numeric UID (shared between
+	// the two so both can reach PGDATA), because pgctld declares USER
+	// postgres by name and Kubernetes cannot enforce RunAsNonRoot without a
+	// numeric UID. A custom image that runs as a different user must set
+	// this explicitly - including when reusing a PersistentVolume whose data
+	// is already owned by another UID, since a mismatch there fails the pod
+	// at startup rather than at scheduling.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RunAsUser *int64 `json:"runAsUser,omitempty"`
 
-	// RunAsGroup sets the primary GID for the container process. When unset,
-	// Kubernetes and the container runtime apply their default group handling.
+	// RunAsGroup sets the primary GID for the container process. Same
+	// operator-supplied default and same caveats as RunAsUser.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	RunAsGroup *int64 `json:"runAsGroup,omitempty"`
