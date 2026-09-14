@@ -144,7 +144,7 @@ func (r *ShardReconciler) selectShardScaleDownPod(
 	for poolName, pool := range shard.Spec.Pools {
 		for _, cell := range pool.Cells {
 			group := groups[string(poolName)+"/"+string(cell)]
-			replicas := poolReplicas(pool) + countDrainedPods(shard, group)
+			replicas := poolReplicas(pool)
 			for _, pod := range group {
 				index, ok := resolvePodIndex(pod.Name)
 				if ok && index >= int(replicas) && !isMaintenanceSurge(pod) {
