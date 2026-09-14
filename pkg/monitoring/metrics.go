@@ -2,6 +2,7 @@ package monitoring
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -167,9 +168,11 @@ func Collectors() []prometheus.Collector {
 
 // RecordReconcileError increments the per-object reconcile error counter.
 // It is a no-op when err is nil, so callers can defer it unconditionally
-// over a named error return value.
+// over a named error return value. Conflict errors are excluded: they
+// indicate a concurrent update and are expected during normal operation,
+// not a reconcile failure.
 func RecordReconcileError(err error, controller, name, namespace string) {
-	if err == nil {
+	if err == nil || apierrors.IsConflict(err) {
 		return
 	}
 	reconcileErrorsTotal.WithLabelValues(controller, name, namespace).Inc()
