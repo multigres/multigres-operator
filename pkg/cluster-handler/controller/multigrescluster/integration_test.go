@@ -300,6 +300,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: clusterLabels(t, clusterName, "multiadmin", ""),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": clusterName,
+								},
 							},
 							Spec: corev1.PodSpec{
 								ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
@@ -393,6 +396,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: clusterLabels(t, clusterName, "multiadmin-web", ""),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": clusterName,
+								},
 							},
 							Spec: corev1.PodSpec{
 								ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
@@ -666,6 +672,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: clusterLabels(t, "minimal-cluster", "multiadmin", ""),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "minimal-cluster",
+								},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
@@ -758,6 +767,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: clusterLabels(t, "minimal-cluster", "multiadmin-web", ""),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "minimal-cluster",
+								},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
@@ -1028,6 +1040,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: clusterLabels(t, "lazy-cluster", "multiadmin", ""),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "lazy-cluster",
+								},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
@@ -1120,6 +1135,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: clusterLabels(t, "lazy-cluster", "multiadmin-web", ""),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "lazy-cluster",
+								},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{

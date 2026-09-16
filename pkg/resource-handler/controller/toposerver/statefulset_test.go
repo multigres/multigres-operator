@@ -87,6 +87,9 @@ func TestBuildStatefulSet(t *testing.T) {
 								"app.kubernetes.io/managed-by": "multigres-operator",
 								"multigres.com/cluster":        "test-cluster",
 							},
+							Annotations: map[string]string{
+								"multigres.com/project-ref": "test-cluster",
+							},
 						},
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
@@ -234,6 +237,9 @@ func TestBuildStatefulSet(t *testing.T) {
 								"app.kubernetes.io/part-of":    "multigres",
 								"app.kubernetes.io/managed-by": "multigres-operator",
 								"multigres.com/cluster":        "test-cluster",
+							},
+							Annotations: map[string]string{
+								"multigres.com/project-ref": "test-cluster",
 							},
 						},
 						Spec: corev1.PodSpec{
@@ -385,6 +391,9 @@ func TestBuildStatefulSet(t *testing.T) {
 								"app.kubernetes.io/managed-by": "multigres-operator",
 								"multigres.com/cluster":        "custom-cluster",
 							},
+							Annotations: map[string]string{
+								"multigres.com/project-ref": "custom-cluster",
+							},
 						},
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
@@ -528,6 +537,9 @@ func TestBuildStatefulSet(t *testing.T) {
 								"app.kubernetes.io/part-of":    "multigres",
 								"app.kubernetes.io/managed-by": "multigres-operator",
 								"multigres.com/cluster":        "test-cluster",
+							},
+							Annotations: map[string]string{
+								"multigres.com/project-ref": "test-cluster",
 							},
 						},
 						Spec: corev1.PodSpec{
