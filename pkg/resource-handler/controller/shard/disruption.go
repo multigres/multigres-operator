@@ -9,12 +9,21 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
-const disruptionRecoveryRequeue = 5 * time.Second
+const (
+	disruptionRecoveryRequeue = 5 * time.Second
+
+	// pvcCleanupDeferralTimeout bounds how long an excess PVC's hard delete is
+	// deferred while cohort absence cannot be confirmed. Past it the PVC is
+	// orphaned (retention-window GC).
+	pvcCleanupDeferralTimeout = 10 * time.Minute
+)
 
 // listDisruptionPods reads from the API server so a new reconcile cannot miss
 // a drain annotation that a previous reconcile just wrote through the cache.
@@ -114,6 +123,35 @@ func (r *ShardReconciler) canStartDisruption(
 		return false, nil
 	}
 	return true, nil
+}
+
+// confirmPoolerNotInCohort re-observes the committed cohort before PVC deletion.
+// Missing infrastructure or evidence blocks deletion.
+func (r *ShardReconciler) confirmPoolerNotInCohort(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	podName, cellName string,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if r.PoolerClients == nil {
+		return fmt.Errorf("no pooler client available to confirm cohort membership")
+	}
+	rpc, err := r.PoolerClients.ClientFor(ctx, shard)
+	if err != nil || rpc == nil {
+		return fmt.Errorf("no pooler client available to confirm cohort membership: %w", err)
+	}
+	store, err := r.topoStore(ctx, shard)
+	if err != nil || store == nil {
+		return fmt.Errorf("no topology store available to confirm cohort membership: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+	poolerID := &clustermetadatapb.ID{
+		Component: clustermetadatapb.ID_MULTIPOOLER,
+		Cell:      cellName,
+		Name:      BuildPoolServiceID(podName),
+	}
+	return posture.CheckCohortAbsence(ctx, store, rpc, shard, poolerID)
 }
 
 // selectShardScaleDownPod ranks removable pods across pool/cell boundaries.

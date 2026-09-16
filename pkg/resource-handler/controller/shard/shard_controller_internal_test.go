@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -28,7 +29,13 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/multigres/multigres/go/common/rpcclient"
+	"github.com/multigres/multigres/go/common/topoclient"
+	clustermetadata "github.com/multigres/multigres/go/pb/clustermetadata"
+	multipoolermanagerdata "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
+
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -1291,6 +1298,10 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
+	poolName := "primary"
+	cellName := "zone1"
+	replicas := int32(3)
+
 	baseShard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-shard",
@@ -1303,12 +1314,52 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "shard0",
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				multigresv1alpha1.PoolName(poolName): {
+					Cells: []multigresv1alpha1.CellName{multigresv1alpha1.CellName(cellName)},
+				},
+			},
 		},
 	}
 
-	poolName := "primary"
-	cellName := "zone1"
-	replicas := int32(3)
+	// Use an unrelated committed leader so hard-delete cases pass the cohort check.
+	leaderID := &clustermetadata.ID{
+		Component: clustermetadata.ID_MULTIPOOLER,
+		Cell:      cellName,
+		Name:      "p-synthetic",
+	}
+	cohortStore := &disruptionTopo{
+		poolers: []*topoclient.MultipoolerInfo{
+			{Multipooler: &clustermetadata.Multipooler{
+				Id:       leaderID,
+				Hostname: leaderID.Name,
+				RoutingState: &clustermetadata.RoutingState{
+					Role: clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+				},
+			}},
+		},
+	}
+	cohortRPC := rpcclient.NewFakeClient()
+	cohortRPC.SetStatusResponse(
+		topoclient.ComponentIDString(leaderID),
+		&multipoolermanagerdata.StatusResponse{
+			Status: &multipoolermanagerdata.Status{
+				PostgresStatus: multipoolermanagerdata.PostgresStatus_POSTGRES_STATUS_PRIMARY,
+			},
+			ConsensusStatus: &clustermetadata.ConsensusStatus{
+				Id: leaderID,
+				CurrentPosition: &clustermetadata.PoolerPosition{
+					Position: &clustermetadata.RulePosition{
+						Decision: &clustermetadata.ShardRule{
+							RuleNumber:    &clustermetadata.RuleNumber{CoordinatorTerm: 1},
+							LeaderId:      leaderID,
+							CohortMembers: []*clustermetadata.ID{leaderID},
+						},
+					},
+				},
+			},
+		},
+	)
 
 	podName0 := BuildPoolPodName(baseShard, poolName, cellName, 0)
 	pvcName0 := BuildPoolDataPVCName(baseShard, poolName, cellName, 0)
@@ -1439,18 +1490,24 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 				Build()
 
 			reconciler := &ShardReconciler{
-				Client:    fakeClient,
-				Scheme:    scheme,
-				Recorder:  record.NewFakeRecorder(100),
-				APIReader: fakeClient,
+				Client:        fakeClient,
+				Scheme:        scheme,
+				Recorder:      record.NewFakeRecorder(100),
+				APIReader:     fakeClient,
+				PoolerClients: poolerclient.Static(cohortRPC),
+				CreateTopoStore: func(*multigresv1alpha1.Shard) (topoclient.Store, error) {
+					return cohortStore, nil
+				},
 			}
 
 			poolSpec := multigresv1alpha1.PoolSpec{
 				PVCDeletionPolicy: tc.policy,
 			}
 
-			err := reconciler.cleanupDrainedPod(
-				context.Background(), shard, pod, poolName, poolSpec, replicas,
+			_, err := reconciler.cleanupDrainedPod(
+				context.Background(),
+				shard, pod, poolName, poolSpec, replicas,
+				&shardRolloutTracker{},
 			)
 			if err != nil {
 				t.Fatalf("cleanupDrainedPod() returned unexpected error: %v", err)
@@ -1489,6 +1546,305 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 				t.Fatalf("failed to get pod after cleanup: %v", err)
 			}
 		})
+	}
+}
+
+// cohortMemberFixture is a ready-for-deletion pod whose PVC sits on the
+// hard-delete path (pool+cell over the orphan threshold) while its pooler is
+// still listed in the committed cohort, so confirmPoolerNotInCohort fails.
+type cohortMemberFixture struct {
+	reconciler *ShardReconciler
+	client     client.Client
+	recorder   *record.FakeRecorder
+	shard      *multigresv1alpha1.Shard
+	pod        *corev1.Pod
+	pvcName    string
+	poolName   string
+	poolSpec   multigresv1alpha1.PoolSpec
+	tracker    *shardRolloutTracker
+}
+
+func newCohortMemberFixture(t *testing.T, mutatePod func(*corev1.Pod)) *cohortMemberFixture {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	poolName := "primary"
+	cellName := "zone1"
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      "shard0",
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				multigresv1alpha1.PoolName(poolName): {
+					Cells: []multigresv1alpha1.CellName{multigresv1alpha1.CellName(cellName)},
+				},
+			},
+		},
+	}
+
+	podName := BuildPoolPodName(shard, poolName, cellName, 5) // index >= replicas
+	pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 5)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: "default",
+			Labels:    map[string]string{metadata.LabelMultigresCell: cellName},
+			Annotations: map[string]string{
+				metadata.AnnotationDrainState: metadata.DrainStateReadyForDeletion,
+			},
+		},
+	}
+	if mutatePod != nil {
+		mutatePod(pod)
+	}
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: "default",
+			Labels:    buildPoolLabelsWithCell(shard, poolName, cellName),
+		},
+	}
+	// Filler siblings so the pool+cell is over the orphan-retention threshold,
+	// putting pvc on the in-line (hard) delete path.
+	objs := []client.Object{shard, pod, pvc}
+	for i := 0; i < 3; i++ {
+		objs = append(objs, &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("filler-pvc-%d", i),
+				Namespace: "default",
+				Labels:    buildPoolLabelsWithCell(shard, poolName, cellName),
+			},
+		})
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+
+	// The current committed rule still contains the target pooler. Shape the
+	// ID exactly as the multipooler registers it: Component set and Name equal
+	// to its --service-id (BuildPoolServiceID), not the pod name.
+	poolerID := &clustermetadata.ID{
+		Component: clustermetadata.ID_MULTIPOOLER,
+		Cell:      cellName,
+		Name:      BuildPoolServiceID(podName),
+	}
+	store := &disruptionTopo{
+		poolers: []*topoclient.MultipoolerInfo{
+			{Multipooler: &clustermetadata.Multipooler{
+				Id:       poolerID,
+				Hostname: podName,
+				RoutingState: &clustermetadata.RoutingState{
+					Role: clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+				},
+			}},
+		},
+	}
+	rpc := rpcclient.NewFakeClient()
+	rpc.SetStatusResponse(
+		topoclient.ComponentIDString(poolerID),
+		&multipoolermanagerdata.StatusResponse{
+			Status: &multipoolermanagerdata.Status{
+				PostgresStatus: multipoolermanagerdata.PostgresStatus_POSTGRES_STATUS_PRIMARY,
+			},
+			ConsensusStatus: &clustermetadata.ConsensusStatus{
+				Id: poolerID,
+				CurrentPosition: &clustermetadata.PoolerPosition{
+					Position: &clustermetadata.RulePosition{
+						Decision: &clustermetadata.ShardRule{
+							RuleNumber:    &clustermetadata.RuleNumber{CoordinatorTerm: 1},
+							LeaderId:      poolerID,
+							CohortMembers: []*clustermetadata.ID{poolerID},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	recorder := record.NewFakeRecorder(100)
+	reconciler := &ShardReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Recorder:      recorder,
+		APIReader:     fakeClient,
+		PoolerClients: poolerclient.Static(rpc),
+		CreateTopoStore: func(*multigresv1alpha1.Shard) (topoclient.Store, error) {
+			return store, nil
+		},
+	}
+
+	return &cohortMemberFixture{
+		reconciler: reconciler,
+		client:     fakeClient,
+		recorder:   recorder,
+		shard:      shard,
+		pod:        pod,
+		pvcName:    pvcName,
+		poolName:   poolName,
+		poolSpec: multigresv1alpha1.PoolSpec{
+			PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
+				WhenScaled: multigresv1alpha1.DeletePVCRetentionPolicy,
+			},
+		},
+		tracker: &shardRolloutTracker{},
+	}
+}
+
+// runScaleDown drives the fixture through handleScaleDown, the caller whose
+// contract (keep the pod while cleanup is deferred) is under test.
+func (f *cohortMemberFixture) runScaleDown(t *testing.T) {
+	t.Helper()
+	existingPods := map[string]*corev1.Pod{f.pod.Name: f.pod}
+	if _, _, err := f.reconciler.handleScaleDown(
+		context.Background(), f.shard, f.poolName, f.poolSpec, existingPods,
+		3, 3, false, f.tracker,
+	); err != nil {
+		t.Fatalf("handleScaleDown() returned unexpected error: %v", err)
+	}
+}
+
+func (f *cohortMemberFixture) getPVC(t *testing.T) (*corev1.PersistentVolumeClaim, error) {
+	t.Helper()
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := f.client.Get(
+		context.Background(),
+		client.ObjectKey{Namespace: "default", Name: f.pvcName},
+		pvc,
+	)
+	return pvc, err
+}
+
+func (f *cohortMemberFixture) getPod(t *testing.T) (*corev1.Pod, error) {
+	t.Helper()
+	pod := &corev1.Pod{}
+	err := f.client.Get(
+		context.Background(),
+		client.ObjectKey{Namespace: "default", Name: f.pod.Name},
+		pod,
+	)
+	return pod, err
+}
+
+// TestCleanupPodPVC_DefersOnCohortMembership covers the hard-delete safety check.
+func TestCleanupPodPVC_DefersOnCohortMembership(t *testing.T) {
+	f := newCohortMemberFixture(t, nil)
+	f.runScaleDown(t)
+
+	gotPVC, err := f.getPVC(t)
+	if err != nil {
+		t.Fatalf("PVC must still exist (deletion deferred), got err: %v", err)
+	}
+	if _, orphaned := gotPVC.Labels[metadata.LabelOrphan]; orphaned {
+		t.Error("PVC must not be orphaned either — it is still a cohort member, not excess")
+	}
+
+	gotPod, err := f.getPod(t)
+	if err != nil {
+		t.Fatalf(
+			"Pod must survive when its PVC cleanup is deferred, "+
+				"or no later reconcile could retry cleanup: got err: %v", err,
+		)
+	}
+	if since := gotPod.Annotations[metadata.AnnotationPVCCleanupDeferredSince]; since != "" {
+		t.Errorf("confirmed membership must not start the fallback timer, got %q", since)
+	}
+
+	if !f.tracker.waitingForRecovery {
+		t.Error("expected tracker.waitingForRecovery to be set so the reconcile requeues")
+	}
+}
+
+// TestCleanupPodPVC_FallsBackToOrphanAfterDeadline verifies the deferral is
+// bounded: once the pod has been waiting longer than pvcCleanupDeferralTimeout
+// the PVC is orphaned (retention-window GC) rather than hard-deleted, and the
+// pod is released, so a persistent failure cannot wedge scale-down.
+func TestCleanupPodPVC_FallsBackToOrphanAfterDeadline(t *testing.T) {
+	expired := time.Now().Add(-pvcCleanupDeferralTimeout - time.Minute)
+	f := newCohortMemberFixture(t, func(pod *corev1.Pod) {
+		pod.Annotations[metadata.AnnotationPVCCleanupDeferredSince] = expired.Format(time.RFC3339)
+	})
+	f.reconciler.PoolerClients = nil // Keep the failure ambiguous so fallback is allowed.
+	f.runScaleDown(t)
+
+	gotPVC, err := f.getPVC(t)
+	if err != nil {
+		t.Fatalf("PVC must still exist (orphaned, not deleted), got err: %v", err)
+	}
+	if _, orphaned := gotPVC.Labels[metadata.LabelOrphan]; !orphaned {
+		t.Error("expected PVC to be marked orphan after the deferral deadline")
+	}
+
+	if _, err := f.getPod(t); !errors.IsNotFound(err) {
+		t.Errorf("expected pod to be deleted once cleanup fell back to orphaning, got err: %v", err)
+	}
+	if f.tracker.waitingForRecovery {
+		t.Error("fallback must not keep the reconcile in a waiting state")
+	}
+
+	var sawFallback bool
+	for _, e := range drainEvents(f.recorder) {
+		if strings.Contains(e, "Warning") && strings.Contains(e, "PVCCleanupFallback") {
+			sawFallback = true
+		}
+	}
+	if !sawFallback {
+		t.Error("expected a Warning PVCCleanupFallback event")
+	}
+}
+
+func TestCleanupPodPVC_ConfirmedMemberNeverFallsBack(t *testing.T) {
+	expired := time.Now().Add(-pvcCleanupDeferralTimeout - time.Minute)
+	f := newCohortMemberFixture(t, func(pod *corev1.Pod) {
+		pod.Annotations[metadata.AnnotationPVCCleanupDeferredSince] = expired.Format(time.RFC3339)
+	})
+	f.runScaleDown(t)
+
+	gotPVC, err := f.getPVC(t)
+	if err != nil {
+		t.Fatalf("PVC must remain while its pooler is a confirmed cohort member: %v", err)
+	}
+	if _, orphaned := gotPVC.Labels[metadata.LabelOrphan]; orphaned {
+		t.Error("confirmed cohort member must not fall back to orphan cleanup")
+	}
+	gotPod, err := f.getPod(t)
+	if err != nil {
+		t.Fatalf("pod must remain while it is a confirmed cohort member: %v", err)
+	}
+	if since := gotPod.Annotations[metadata.AnnotationPVCCleanupDeferredSince]; since != "" {
+		t.Errorf("confirmed membership must clear the fallback timer, got %q", since)
+	}
+	if !f.tracker.waitingForRecovery {
+		t.Error("confirmed membership must keep reconciliation waiting")
+	}
+}
+
+func TestCleanupPodPVC_DrainedVerifiesCohortMembership(t *testing.T) {
+	expired := time.Now().Add(-pvcCleanupDeferralTimeout - time.Minute)
+	f := newCohortMemberFixture(t, func(pod *corev1.Pod) {
+		pod.Labels[metadata.LabelPodRole] = "DRAINED"
+		pod.Annotations[metadata.AnnotationPVCCleanupDeferredSince] = expired.Format(time.RFC3339)
+	})
+	f.runScaleDown(t)
+
+	gotPVC, err := f.getPVC(t)
+	if err != nil {
+		t.Fatalf("DRAINED pod's PVC must remain while it is a cohort member: %v", err)
+	}
+	if _, orphaned := gotPVC.Labels[metadata.LabelOrphan]; orphaned {
+		t.Error("DRAINED cohort member's PVC must not be orphaned")
+	}
+	if _, err := f.getPod(t); err != nil {
+		t.Fatalf("DRAINED pod must remain while it is a cohort member: %v", err)
+	}
+	if !f.tracker.waitingForRecovery {
+		t.Error("DRAINED cohort member cleanup must defer")
 	}
 }
 
@@ -3580,7 +3936,7 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3)
+		_, err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3, nil)
 		if err == nil {
 			t.Error("expected error on PVC Get failure")
 		}
@@ -3620,7 +3976,7 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3)
+		_, err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3, nil)
 		if err == nil {
 			t.Error("expected error on PVC orphan-patch failure")
 		}
@@ -3647,13 +4003,14 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		// nil PVCDeletionPolicy defaults to Delete -> orphans the PVC.
-		err := r.cleanupDrainedPod(
+		_, err := r.cleanupDrainedPod(
 			context.Background(),
 			shard,
 			pod,
 			poolName,
 			multigresv1alpha1.PoolSpec{},
 			3,
+			nil,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -6106,7 +6463,7 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 		})
 
 		r := &ShardReconciler{Client: fails, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
-		err := r.cleanupDrainedPod(context.Background(), shard, pod, "main", poolSpec, 1)
+		_, err := r.cleanupDrainedPod(context.Background(), shard, pod, "main", poolSpec, 1, nil)
 		if err == nil || !strings.Contains(err.Error(), "failed to mark PVC") {
 			t.Fatalf("expected PVC orphan-patch error, got %v", err)
 		}

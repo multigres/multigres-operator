@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
@@ -557,12 +559,24 @@ func (r *ShardReconciler) handleScaleDown(
 	// Cleanup pods ready for deletion
 	for _, pod := range readyForDeletion {
 		logger.Info("Cleaning up pod in ready-for-deletion state", "pod", pod.Name)
-		if err := r.cleanupDrainedPod(ctx, shard, pod, poolName, poolSpec, replicas); err != nil {
+		deferred, err := r.cleanupDrainedPod(
+			ctx, shard, pod, poolName, poolSpec, replicas, disruptions,
+		)
+		if err != nil {
 			return actionTaken, inProgress, fmt.Errorf(
 				"failed to cleanup drained pod %s: %w",
 				pod.Name,
 				err,
 			)
+		}
+		if deferred {
+			// Retain the pod so a later reconcile can retry PVC cleanup.
+			logger.Info(
+				"Deferring pod deletion until PVC cleanup can be confirmed safe",
+				"pod", pod.Name,
+			)
+			inProgress = true
+			continue
 		}
 		if err := r.Delete(ctx, pod); err != nil && !errors.IsNotFound(err) {
 			return actionTaken, inProgress, fmt.Errorf(
@@ -973,6 +987,7 @@ func (r *ShardReconciler) syncDrainedLabels(
 	return nil
 }
 
+// cleanupDrainedPod reports whether the caller must retain the pod and retry.
 func (r *ShardReconciler) cleanupDrainedPod(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -980,27 +995,31 @@ func (r *ShardReconciler) cleanupDrainedPod(
 	poolName string,
 	poolSpec multigresv1alpha1.PoolSpec,
 	replicas int32,
-) error {
+	tracker *shardRolloutTracker,
+) (deferred bool, err error) {
 	logger := log.FromContext(ctx)
 
-	// DRAINED pods always get their PVC marked orphan — data is known-bad.
-	// The multigres-gc CronJob deletes the PVC after the retention window.
-	// We check the pod label (not PodRoles) because the data-handler clears
-	// the topology entry during drain before this cleanup point.
+	// Use the pod label because the data-handler clears PodRoles during drain.
 	if pod.Labels[metadata.LabelPodRole] == "DRAINED" {
-		if err := r.cleanupPodPVC(
+		deferred, err := r.cleanupPodPVC(
 			ctx,
 			shard,
 			pod,
 			poolName,
 			"DRAINED (data known-bad)",
-		); err != nil {
-			return err
+			true,
+			tracker,
+		)
+		if err != nil {
+			return false, err
+		}
+		if deferred {
+			return true, nil
 		}
 		logger.Info("Drained pod cleanup complete", "pod", pod.Name)
 		r.Recorder.Eventf(shard, "Normal", "DrainCompleted",
 			"Completed drain for DRAINED pod %s — PVC cleanup queued", pod.Name)
-		return nil
+		return false, nil
 	}
 
 	// For non-DRAINED pods, respect WhenScaled policy
@@ -1020,8 +1039,14 @@ func (r *ShardReconciler) cleanupDrainedPod(
 		if !idxOK {
 			logger.Info("Skipping PVC deletion for pod with unparseable index", "pod", pod.Name)
 		} else if idx >= int(replicas) {
-			if err := r.cleanupPodPVC(ctx, shard, pod, poolName, "scaled down"); err != nil {
-				return err
+			deferred, err := r.cleanupPodPVC(
+				ctx, shard, pod, poolName, "scaled down", true, tracker,
+			)
+			if err != nil {
+				return false, err
+			}
+			if deferred {
+				return true, nil
 			}
 		} else {
 			logger.Info(
@@ -1040,27 +1065,25 @@ func (r *ShardReconciler) cleanupDrainedPod(
 	logger.Info("Drained pod cleanup complete", "pod", pod.Name)
 	r.Recorder.Eventf(shard, "Normal", "DrainCompleted", "Completed drain for pod %s", pod.Name)
 
-	return nil
+	return false, nil
 }
 
-// cleanupPodPVC removes a pod's data PVC from the operator's care. The choice
-// between orphaning (deferred deletion via multigres-gc) and in-line deletion
-// is based on how many sibling PVCs remain in the same pool+cell: if removing
-// this one still leaves >= pvcOrphanReplicasThreshold volumes, it is excess and
-// is deleted, otherwise it is orphaned so the data can be recovered. See
-// orphanByRemainingCount.
+// cleanupPodPVC deletes excess PVCs and orphans the minimum retained set.
+// A deferred result tells the caller to retain the pod and retry.
 func (r *ShardReconciler) cleanupPodPVC(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	pod *corev1.Pod,
 	poolName, reason string,
-) error {
+	verifyCohort bool,
+	tracker *shardRolloutTracker,
+) (deferred bool, err error) {
 	logger := log.FromContext(ctx)
 
 	idx, ok := resolvePodIndex(pod.Name)
 	if !ok {
 		logger.Info("Skipping PVC cleanup for pod with unparseable index", "pod", pod.Name)
-		return nil
+		return false, nil
 	}
 
 	cellName := pod.Labels[metadata.LabelMultigresCell]
@@ -1072,32 +1095,140 @@ func (r *ShardReconciler) cleanupPodPVC(
 		pvc,
 	); err != nil {
 		if errors.IsNotFound(err) {
-			return nil
+			return false, nil
 		}
 		logger.Error(err, "Failed to fetch PVC for cleanup", "pvc", pvcName)
-		return fmt.Errorf("failed to fetch PVC %s for cleanup: %w", pvcName, err)
+		return false, fmt.Errorf("failed to fetch PVC %s for cleanup: %w", pvcName, err)
 	}
 
 	liveCount, err := r.countPoolCellPVCs(ctx, shard, poolName, cellName)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if orphanByRemainingCount(liveCount) {
 		if err := pvcutil.MarkOrphan(ctx, r.Client, pvc, shard.GetUID(), time.Now()); err != nil {
 			logger.Error(err, "Failed to mark PVC orphan for "+reason+" pod", "pvc", pvcName)
-			return fmt.Errorf("failed to mark PVC %s orphan: %w", pvcName, err)
+			return false, fmt.Errorf("failed to mark PVC %s orphan: %w", pvcName, err)
 		}
 		logger.Info("Marked PVC orphan for "+reason+" pod", "pvc", pvcName, "liveCount", liveCount)
-		return nil
+		return false, nil
+	}
+
+	// Reconfirm cohort absence immediately before hard deletion.
+	if verifyCohort {
+		if err := r.confirmPoolerNotInCohort(ctx, shard, pod.Name, cellName); err != nil {
+			return r.deferOrFallbackPVCCleanup(ctx, shard, pod, pvc, err, tracker)
+		}
 	}
 
 	if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
 		logger.Error(err, "Failed to delete PVC for "+reason+" pod", "pvc", pvcName)
-		return fmt.Errorf("failed to delete PVC %s: %w", pvcName, err)
+		return false, fmt.Errorf("failed to delete PVC %s: %w", pvcName, err)
 	}
 	logger.Info("Deleted PVC for "+reason+" pod", "pvc", pvcName, "liveCount", liveCount)
-	return nil
+	return false, nil
+}
+
+// deferOrFallbackPVCCleanup handles a failed pre-delete cohort recheck. The
+// first failure stamps the pod so later reconciles can measure how long the
+// PVC has been waiting. Within pvcCleanupDeferralTimeout the cleanup is
+// deferred (pod kept, reconcile requeued). Past it the operator stops waiting
+// and orphans the PVC instead of hard-deleting it.
+func (r *ShardReconciler) deferOrFallbackPVCCleanup(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	pod *corev1.Pod,
+	pvc *corev1.PersistentVolumeClaim,
+	cause error,
+	tracker *shardRolloutTracker,
+) (deferred bool, err error) {
+	logger := log.FromContext(ctx)
+	if stderrors.Is(cause, posture.ErrConfirmedCohortMember) {
+		if _, ok := pod.Annotations[metadata.AnnotationPVCCleanupDeferredSince]; ok {
+			patch := client.MergeFrom(pod.DeepCopy())
+			delete(pod.Annotations, metadata.AnnotationPVCCleanupDeferredSince)
+			if err := r.Patch(ctx, pod, patch); err != nil {
+				return false, fmt.Errorf(
+					"failed to clear PVC cleanup deferral on pod %s: %w", pod.Name, err,
+				)
+			}
+		}
+		logger.Info(
+			"Deferring PVC deletion because the pooler remains a cohort member",
+			"pvc", pvc.Name, "reason", cause,
+		)
+		r.Recorder.Eventf(
+			shard,
+			"Normal",
+			"PVCDeletionDeferred",
+			"Deferring PVC %s deletion while its pooler remains a cohort member: %v",
+			pvc.Name,
+			cause,
+		)
+		if tracker != nil {
+			tracker.waitingForRecovery = true
+		}
+		return true, nil
+	}
+
+	now := time.Now()
+
+	since, err := time.Parse(
+		time.RFC3339,
+		pod.Annotations[metadata.AnnotationPVCCleanupDeferredSince],
+	)
+	if err != nil {
+		patch := client.MergeFrom(pod.DeepCopy())
+		if pod.Annotations == nil {
+			pod.Annotations = map[string]string{}
+		}
+		pod.Annotations[metadata.AnnotationPVCCleanupDeferredSince] = now.Format(time.RFC3339)
+		if err := r.Patch(ctx, pod, patch); err != nil {
+			return false, fmt.Errorf(
+				"failed to record PVC cleanup deferral on pod %s: %w", pod.Name, err,
+			)
+		}
+		since = now
+	}
+
+	if now.Sub(since) >= pvcCleanupDeferralTimeout {
+		if err := pvcutil.MarkOrphan(ctx, r.Client, pvc, shard.GetUID(), now); err != nil {
+			return false, fmt.Errorf("failed to mark PVC %s orphan: %w", pvc.Name, err)
+		}
+		logger.Info(
+			"Cohort absence unconfirmed past deadline; orphaned PVC instead of deleting",
+			"pvc", pvc.Name, "deferredSince", since, "reason", cause,
+		)
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"PVCCleanupFallback",
+			"Could not confirm cohort absence for PVC %s within %s; "+
+				"marked orphan for retention-window GC instead of deleting: %v",
+			pvc.Name,
+			pvcCleanupDeferralTimeout,
+			cause,
+		)
+		return false, nil
+	}
+
+	logger.Info(
+		"Deferring PVC deletion pending cohort membership confirmation",
+		"pvc", pvc.Name, "deferredSince", since, "reason", cause,
+	)
+	r.Recorder.Eventf(
+		shard,
+		"Normal",
+		"PVCDeletionDeferred",
+		"Deferring PVC %s deletion until cohort membership can be confirmed: %v",
+		pvc.Name,
+		cause,
+	)
+	if tracker != nil {
+		tracker.waitingForRecovery = true
+	}
+	return true, nil
 }
 
 // countPoolCellPVCs returns the number of PVCs currently present for the given

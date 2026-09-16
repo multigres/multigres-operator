@@ -146,6 +146,12 @@ const (
 	// was first requested. Used to detect failover timeouts.
 	AnnotationDrainRequestedAt = "drain.multigres.com/requested-at"
 
+	// AnnotationPVCCleanupDeferredSince stores the RFC3339 timestamp of when a
+	// ready-for-deletion pod's PVC hard-delete was first deferred because the
+	// pooler's absence from the committed cohort could not be confirmed. Once
+	// the deferral exceeds its deadline the PVC is orphaned instead of deleted.
+	AnnotationPVCCleanupDeferredSince = "drain.multigres.com/pvc-cleanup-deferred-since"
+
 	// AnnotationMaintenanceRequested asks the operator to provision enough
 	// same-cell capacity for this pod to be voluntarily evicted. Maintenance
 	// automation must wait for AnnotationMaintenanceReady before calling the
