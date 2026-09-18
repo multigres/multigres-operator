@@ -1,0 +1,42 @@
+# This job is advisory. It is deliberately not a required check and is not
+# referenced by any other workflow's needs. A red run here means the suite
+# caught a real problem, not that CI itself is broken: treat a failure as a
+# finding to investigate, not as noise to wave off or restart until it goes
+# green.
+name: Test suite
+
+on:
+  pull_request: {}
+  # Scoped rather than every push: with pull_request already covering branches
+  # that have a PR open, an unrestricted push trigger doubles every run. main
+  # is here to catch a bad merge, and the long-lived integration branches
+  # because they collect work for weeks before a PR exists.
+  push:
+    branches:
+      - main
+      - "graveland/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run test suite
+        run: make test-suite
