@@ -348,7 +348,12 @@ func (r *ShardReconciler) handlePendingDeletion(
 			ObservedGeneration: shard.Generation,
 			LastTransitionTime: metav1.Now(),
 		})
-		if err := r.Status().Patch(ctx, shard, client.MergeFrom(statusBase)); err != nil {
+		if err := r.Status().Patch(
+			ctx,
+			shard,
+			client.MergeFrom(statusBase),
+			client.FieldOwner("multigres-resource-handler"),
+		); err != nil {
 			return ctrl.Result{}, fmt.Errorf("setting ReadyForDeletion condition: %w", err)
 		}
 		logger.Info("Set ReadyForDeletion condition")
