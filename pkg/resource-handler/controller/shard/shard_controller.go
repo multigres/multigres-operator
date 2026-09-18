@@ -39,24 +39,29 @@ const (
 	// multigres-gc cronjob can clean them up instead of k8s cascade-GC
 	// nuking them the moment the Shard CR is deleted.
 	shardFinalizer = "multigres.com/shard-pvc-orphan"
-
-	// pvcOrphanReplicasThreshold is the number of pool pod PVCs that are
-	// kept (orphaned, deferred to the multigres-gc cronjob) rather than deleted
-	// in-line when a pod is scaled down, drained, or the shard is removed.
-	// Keeping a few volumes around lets an accidental scale-down/removal be
-	// rolled back, beyond the threshold the excess is deleted immediately.
-	pvcOrphanReplicasThreshold = 3
 )
 
-// orphanByRemainingCount decides between orphaning and in-line deletion based
-// on how many sibling PVCs currently exist.
-//
-// liveCount includes the PVC being cleaned up. After it is removed, liveCount-1
-// PVCs remain: if that is still >= pvcOrphanReplicasThreshold we have plenty of
-// volumes left, so this one is excess and is hard-deleted, otherwise we keep it
-// as an orphan so the data can be recovered.
-func orphanByRemainingCount(liveCount int) bool {
-	return liveCount-1 < pvcOrphanReplicasThreshold
+// clusterIsChurning reports whether the owning MultigresCluster is being
+// deleted. Pod/pool scale down and shard removal always orphan their PVCs so
+// an accidental change can be rolled back within the retention window, but
+// that protection is pointless once the whole cluster is being torn down, so
+// PVCs are hard deleted immediately in that case.
+func (r *ShardReconciler) clusterIsChurning(
+	ctx context.Context,
+	namespace, clusterName string,
+) (bool, error) {
+	if clusterName == "" {
+		return false, nil
+	}
+	cluster := &multigresv1alpha1.MultigresCluster{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: clusterName}, cluster)
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to get MultigresCluster %s: %w", clusterName, err)
+	}
+	return !cluster.DeletionTimestamp.IsZero(), nil
 }
 
 // ShardReconciler reconciles a Shard object.

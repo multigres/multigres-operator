@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -362,6 +363,63 @@ func TestHandleDeletion(t *testing.T) {
 			t.Error("PVC should be orphaned once all pods are gone")
 		}
 	})
+
+	t.Run(
+		"MultigresCluster being deleted hard-deletes PVC instead of orphaning",
+		func(t *testing.T) {
+			t.Parallel()
+
+			shard := baseShard.DeepCopy()
+			shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
+				WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
+			}
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "data-pvc-churn",
+					Namespace: "default",
+					Labels:    shardLabels,
+				},
+			}
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-cluster",
+					Namespace:         "default",
+					DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
+					Finalizers:        []string{multigresv1alpha1.FinalizerClusterCleanup},
+				},
+			}
+
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(shard, pvc, cluster).
+				WithStatusSubresource(&multigresv1alpha1.Shard{}).
+				Build()
+
+			r := &ShardReconciler{
+				Client:          c,
+				Scheme:          scheme,
+				Recorder:        record.NewFakeRecorder(10),
+				CreateTopoStore: newMemoryTopoFactory(),
+			}
+
+			result, err := r.handleDeletion(context.Background(), shard)
+			if err != nil {
+				t.Fatalf("handleDeletion returned error: %v", err)
+			}
+			if result.RequeueAfter != 0 {
+				t.Errorf("Expected no requeue once pods are gone, got %v", result.RequeueAfter)
+			}
+			got := &corev1.PersistentVolumeClaim{}
+			err = c.Get(context.Background(),
+				types.NamespacedName{Name: "data-pvc-churn", Namespace: "default"}, got)
+			if !apierrors.IsNotFound(err) {
+				t.Errorf(
+					"PVC should be hard-deleted while cluster is being deleted, got err=%v",
+					err,
+				)
+			}
+		},
+	)
 
 	t.Run("pod stuck terminating past timeout does not block PVC cleanup", func(t *testing.T) {
 		t.Parallel()
