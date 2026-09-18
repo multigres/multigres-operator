@@ -1154,6 +1154,10 @@ func (in *MultigresClusterStatus) DeepCopyInto(out *MultigresClusterStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.InitializedAt != nil {
+		in, out := &in.InitializedAt, &out.InitializedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Cells != nil {
 		in, out := &in.Cells, &out.Cells
 		*out = make(map[CellName]CellStatusSummary, len(*in))

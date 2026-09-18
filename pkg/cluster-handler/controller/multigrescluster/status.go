@@ -252,6 +252,12 @@ func (r *MultigresClusterReconciler) updateStatus(
 		cluster.Status.Message = "Cluster is progressing"
 	}
 
+	if cluster.Status.Phase == multigresv1alpha1.PhaseHealthy &&
+		cluster.Status.InitializedAt == nil {
+		now := metav1.Now()
+		cluster.Status.InitializedAt = &now
+	}
+
 	allCellsReady := true
 	for _, c := range cluster.Status.Cells {
 		if !c.Ready {

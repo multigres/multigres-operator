@@ -12,23 +12,23 @@ import (
 func TestSetClusterInfo(t *testing.T) {
 	t.Cleanup(func() { clusterInfo.Reset() })
 
-	SetClusterInfo("test-cluster", "default", "Healthy")
+	SetClusterInfo("test-cluster", "default", "Healthy", true)
 
-	val := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy")
+	val := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true")
 	if val != 1 {
 		t.Errorf("expected clusterInfo gauge to be 1, got %f", val)
 	}
 
-	// Phase change should clean up old label set
-	SetClusterInfo("test-cluster", "default", "Degraded")
+	// Phase change should clean up old label set, initialized stays true
+	SetClusterInfo("test-cluster", "default", "Degraded", true)
 
-	val = gaugeValue(t, clusterInfo, "test-cluster", "default", "Degraded")
+	val = gaugeValue(t, clusterInfo, "test-cluster", "default", "Degraded", "true")
 	if val != 1 {
 		t.Errorf("expected clusterInfo gauge for Degraded to be 1, got %f", val)
 	}
 
 	// Old phase must have been cleaned up (value 0)
-	oldVal := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy")
+	oldVal := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true")
 	if oldVal != 0 {
 		t.Error("old phase label set should have been cleaned up")
 	}

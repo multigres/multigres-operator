@@ -342,7 +342,12 @@ func (r *MultigresClusterReconciler) Reconcile(
 	}
 
 	// Emit cluster-level metrics
-	monitoring.SetClusterInfo(cluster.Name, cluster.Namespace, string(cluster.Status.Phase))
+	monitoring.SetClusterInfo(
+		cluster.Name,
+		cluster.Namespace,
+		string(cluster.Status.Phase),
+		cluster.Status.InitializedAt != nil,
+	)
 	var totalShards int
 	for _, db := range cluster.Status.Databases {
 		totalShards += int(db.TotalShards)

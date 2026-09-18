@@ -387,6 +387,63 @@ func TestUpdateStatus_ZeroResources(t *testing.T) {
 	}
 }
 
+func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &MultigresClusterReconciler{
+		Client:   fakeClient,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	require.NoError(t, r.updateStatus(t.Context(), cluster))
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+
+	require.Equal(t, multigresv1alpha1.PhaseHealthy, cluster.Status.Phase)
+	require.NotNil(t, cluster.Status.InitializedAt)
+	initializedAt := *cluster.Status.InitializedAt
+
+	degradedCell := &multigresv1alpha1.Cell{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cell-degraded",
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.CellSpec{Name: "cell-degraded"},
+		Status: multigresv1alpha1.CellStatus{
+			Phase: multigresv1alpha1.PhaseDegraded,
+		},
+	}
+
+	fakeClient = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, degradedCell).
+		WithStatusSubresource(cluster, degradedCell).
+		Build()
+	r.Client = fakeClient
+
+	require.NoError(t, r.updateStatus(t.Context(), cluster))
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+
+	assert.Equal(t, multigresv1alpha1.PhaseDegraded, cluster.Status.Phase)
+	require.NotNil(t, cluster.Status.InitializedAt)
+	assert.Equal(t, initializedAt, *cluster.Status.InitializedAt)
+}
+
 func TestUpdateStatus_GenerationMismatch(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)

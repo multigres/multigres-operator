@@ -17,7 +17,7 @@ var (
 			Name: "multigres_operator_cluster_info",
 			Help: "Info-style metric for MultigresCluster discovery and phase tracking. Always 1.",
 		},
-		[]string{"name", "namespace", "phase"},
+		[]string{"name", "namespace", "phase", "initialized"},
 	)
 
 	clusterCellsTotal = prometheus.NewGaugeVec(
