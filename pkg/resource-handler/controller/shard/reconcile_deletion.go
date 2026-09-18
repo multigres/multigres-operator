@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -123,10 +122,10 @@ func (r *ShardReconciler) handleDeletion(
 		return ctrl.Result{RequeueAfter: podTerminationRequeueDelay}, nil
 	}
 
-	// All pods gone. Clean up PVCs whose policy resolves to Delete. Small
-	// shards (<= pvcOrphanReplicasThreshold replicas) defer the work to
-	// multigres-gc by labelling the PVC with multigres.com/orphan-since=<now>,
-	// larger shards are deleted in-line.
+	// All pods gone. Clean up PVCs whose policy resolves to Delete. Unless the
+	// owning MultigresCluster is being torn down, this defers to multigres-gc
+	// by labelling the PVC with multigres.com/orphan-since=<now> instead of
+	// deleting in-line.
 	if err := r.cleanupShardPVCs(ctx, shard); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -149,14 +148,23 @@ func (r *ShardReconciler) handleDeletion(
 
 // cleanupShardPVCs handles per-PVC cleanup when a Shard is being deleted.
 // Only PVCs whose effective WhenDeleted policy is Delete are touched.
+//
+// If the owning MultigresCluster is confirmed still present and being
+// deleted, PVCs are deleted in line. The cluster is going away, so there is
+// nothing left to roll a scale down back to. Otherwise, either the Shard is
+// being individually removed (e.g. a shard count scale down) while the
+// cluster stays up, or the parent cluster is unexpectedly unreadable, so PVCs
+// are orphaned instead. That gives multigres gc's retention window a chance
+// to recover from an accidental removal. See clusterIsChurning.
 func (r *ShardReconciler) cleanupShardPVCs(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) error {
 	logger := log.FromContext(ctx)
 
+	clusterName := shard.Labels[metadata.LabelMultigresCluster]
 	selector := map[string]string{
-		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
+		metadata.LabelMultigresCluster:    clusterName,
 		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
 		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
 		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
@@ -172,42 +180,28 @@ func (r *ShardReconciler) cleanupShardPVCs(
 		return fmt.Errorf("failed to list PVCs for cleanup: %w", err)
 	}
 
-	// Group eligible PVCs by pool+cell so the keep-threshold decision is made
-	// per group (matching replicasPerCell semantics).
-	groups := map[string][]*corev1.PersistentVolumeClaim{}
+	churning, err := r.clusterIsChurning(ctx, shard.Namespace, clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to determine MultigresCluster deletion state: %w", err)
+	}
+
+	now := time.Now()
 	for i := range pvcList.Items {
 		pvc := &pvcList.Items[i]
 		if !shardPVCShouldBeCleaned(shard, pvc) {
 			continue
 		}
-		key := pvc.Labels[metadata.LabelMultigresPool] + "/" + pvc.Labels[metadata.LabelMultigresCell]
-		groups[key] = append(groups[key], pvc)
-	}
-
-	now := time.Now()
-	for _, group := range groups {
-		// Sort descending by name so the highest-ordinal PVCs are visited first
-		// and become the deleted excess, the lowest are kept as orphans.
-		slices.SortFunc(group, func(a, b *corev1.PersistentVolumeClaim) int {
-			return strings.Compare(b.Name, a.Name)
-		})
-		live := len(group)
-		for _, pvc := range group {
-			_, hasIndex := resolvePodIndex(pvc.Name)
-			if !hasIndex || orphanByRemainingCount(live) {
-				if err := pvcutil.MarkOrphan(ctx, r.Client, pvc, shard.GetUID(), now); err != nil {
-					return fmt.Errorf("failed to mark PVC %s orphan: %w", pvc.Name, err)
-				}
-				logger.Info("Marked PVC orphan on Shard deletion", "pvc", pvc.Name)
-				live--
-				continue
-			}
+		if churning {
 			if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
 				return fmt.Errorf("failed to delete PVC %s: %w", pvc.Name, err)
 			}
-			logger.Info("Deleted PVC on Shard deletion", "pvc", pvc.Name)
-			live--
+			logger.Info("Deleted PVC on MultigresCluster deletion", "pvc", pvc.Name)
+			continue
 		}
+		if err := pvcutil.MarkOrphan(ctx, r.Client, pvc, shard.GetUID(), now); err != nil {
+			return fmt.Errorf("failed to mark PVC %s orphan: %w", pvc.Name, err)
+		}
+		logger.Info("Marked PVC orphan on Shard deletion", "pvc", pvc.Name)
 	}
 	return nil
 }

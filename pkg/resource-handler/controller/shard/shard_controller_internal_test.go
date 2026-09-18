@@ -1257,30 +1257,65 @@ func TestSetupWithManager(t *testing.T) {
 	})
 }
 
-// TestOrphanByRemainingCount verifies that cleanupDrainedPod handles
-// PVC deletion correctly for DRAINED replacement pods (idx < deletion threshold),
-// scale-down pods (idx >= deletion threshold), and rolling-update pods under different
-// PVC deletion policies.
-func TestOrphanByRemainingCount(t *testing.T) {
+func TestClusterIsChurning(t *testing.T) {
 	t.Parallel()
 
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	deletionTimestamp := metav1.Now()
+
 	tests := map[string]struct {
-		liveCount  int
-		wantOrphan bool
+		clusterName string
+		cluster     *multigresv1alpha1.MultigresCluster
+		want        bool
 	}{
-		"scale 4->3 keeps enough -> delete":    {liveCount: 4, wantOrphan: false},
-		"exactly threshold+1 -> delete":        {liveCount: 4, wantOrphan: false},
-		"scale 3->2 below threshold -> orphan": {liveCount: 3, wantOrphan: true},
-		"single PVC -> orphan":                 {liveCount: 1, wantOrphan: true},
-		"large pool -> delete":                 {liveCount: 10, wantOrphan: false},
+		"empty cluster name": {
+			clusterName: "",
+			want:        false,
+		},
+		"cluster not found": {
+			clusterName: "missing-cluster",
+			want:        false,
+		},
+		"cluster present, not deleting": {
+			clusterName: "test-cluster",
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
+			},
+			want: false,
+		},
+		"cluster present, being deleted": {
+			clusterName: "test-cluster",
+			cluster: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "test-cluster",
+					Namespace:         "default",
+					DeletionTimestamp: &deletionTimestamp,
+					Finalizers:        []string{multigresv1alpha1.FinalizerClusterCleanup},
+				},
+			},
+			want: true,
+		},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := orphanByRemainingCount(tc.liveCount); got != tc.wantOrphan {
-				t.Errorf("orphanByRemainingCount(%d) = %v, want %v",
-					tc.liveCount, got, tc.wantOrphan)
+
+			var objs []client.Object
+			if tc.cluster != nil {
+				objs = append(objs, tc.cluster)
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+			r := &ShardReconciler{Client: fakeClient}
+
+			got, err := r.clusterIsChurning(context.Background(), "default", tc.clusterName)
+			if err != nil {
+				t.Fatalf("clusterIsChurning() returned unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("clusterIsChurning() = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -1331,8 +1366,8 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			},
 		}
 	}
-	// makePVC builds a PVC carrying the pool+cell labels so countPoolCellPVCs
-	// finds it when deciding orphan-vs-delete.
+	// makePVC builds a PVC carrying the pool+cell labels, matching what a real
+	// pool data PVC looks like.
 	makePVC := func(n string) *corev1.PersistentVolumeClaim {
 		return &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1351,11 +1386,8 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		podName string
-		pvcName string
-		// siblingCount is the number of PVCs present in the pool+cell (including
-		// pvcName). orphanByRemainingCount uses this: siblingCount-1 >= threshold
-		// deletes, otherwise orphans.
+		podName      string
+		pvcName      string
 		siblingCount int
 		podRoles     map[string]string
 		policy       *multigresv1alpha1.PVCDeletionPolicy
@@ -1398,21 +1430,23 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			wantPVC:      true,
 			wantOrphan:   true,
 		},
-		"DRAINED large pool (4, scaling to 3) -> in-line delete": {
+		"DRAINED large pool (4, scaling to 3) -> orphan": {
 			podName:      podName0,
 			pvcName:      pvcName0,
 			siblingCount: 4,
 			podRoles:     map[string]string{podName0: "DRAINED"},
 			policy:       deletePolicy,
-			wantPVC:      false,
+			wantPVC:      true,
+			wantOrphan:   true,
 		},
-		"scale-down large pool (4, scaling to 3) -> in-line delete": {
+		"scale-down large pool (4, scaling to 3) -> orphan": {
 			podName:      podName5,
 			pvcName:      pvcName5,
 			siblingCount: 4,
 			podRoles:     map[string]string{},
 			policy:       deletePolicy,
-			wantPVC:      false,
+			wantPVC:      true,
+			wantOrphan:   true,
 		},
 	}
 
