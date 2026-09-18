@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
@@ -217,6 +218,28 @@ func (r *TableGroupReconciler) SetupWithManager(
 	mgr ctrl.Manager,
 	opts ...controller.Options,
 ) error {
+	return r.SetupWithManagerReconciler(mgr, r, opts...)
+}
+
+// SetupWithManagerReconciler wires this controller's watch configuration to an
+// arbitrary reconcile.Reconciler instead of the receiver. A method-bound
+// reconciler cannot be substituted from outside its package, and rebuilding the
+// builder below in a test would duplicate its watch configuration and let that
+// copy drift from production. Production always goes through SetupWithManager,
+// which passes the receiver here unchanged; nothing outside a test harness
+// should call this directly.
+//
+// Substitution swaps the reconcile boundary and nothing else. The receiver
+// stays live on the enqueue path, since map functions and predicates are bound
+// to it when the builder runs and use its client. So the receiver has to be
+// fully constructed, and it should be the same object the supplied reconciler
+// ultimately delegates to, or the two will disagree about any state kept on
+// it.
+func (r *TableGroupReconciler) SetupWithManagerReconciler(
+	mgr ctrl.Manager,
+	reconciler reconcile.Reconciler,
+	opts ...controller.Options,
+) error {
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}
@@ -230,7 +253,7 @@ func (r *TableGroupReconciler) SetupWithManager(
 		).
 		Owns(&multigresv1alpha1.Shard{}).
 		WithOptions(controllerOpts).
-		Complete(r)
+		Complete(reconciler)
 }
 
 // projectRefOrGenerationChangedPredicate requeues when desired shard state can
