@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // quiescenceSlice is how long one pass waits on the event stream before coming
@@ -136,9 +138,102 @@ func topCounts(counts map[string]int, limit int) []string {
 	return out
 }
 
+// Unconverged returns one line per (controller, request key) in ns whose most
+// recent reconcile pass ended in an error, or nil if every key's last pass
+// succeeded.
+//
+// Unconverged is deliberately a level check rather than a rate one. A
+// controller that fails every pass is retried with exponential backoff, so
+// the gap between its failures grows without bound and any fixed window
+// eventually sees silence. Asking "what did this controller last say about
+// this object" cannot decay that way, so it holds however long the backoff
+// has stretched.
+//
+// Grouping is by controller and request key together, because two controllers
+// can be reconciling the same object and only one of them wedged, and one
+// controller can be converged on every object but one.
+func (s *Suite) Unconverged(ns string) []string {
+	type group struct {
+		controller string
+		key        client.ObjectKey
+	}
+
+	last := map[group]Reconcile{}
+	for _, r := range s.Reconciles.InNamespace(ns) {
+		// A gated request is not a pass of the code under test, and it always
+		// carries a nil error, so counting one would let the gate closing
+		// erase a wedge that is still there. No such record can exist while
+		// the test that owns ns is running, since Namespace deactivates only
+		// its own namespace and only in its own cleanup; this guards a caller
+		// outside that window instead, a failure dump or a later diagnostic,
+		// which is reachable because this is exported.
+		if r.Gated {
+			continue
+		}
+		g := group{controller: r.Controller, key: r.Request.NamespacedName}
+		// Ordered on Start rather than on Seq: Seq counts a controller's
+		// passes across every object it reconciles, so it does not order a
+		// group. Ties go to the later log entry, which for one controller and
+		// one key is the later pass, because the log is append-ordered and two
+		// passes over one key cannot overlap: client-go's workqueue never
+		// hands the same item to two workers at once, and controller-runtime's
+		// queue keeps that invariant. So a group is a sequence rather than a
+		// set, at any MaxConcurrentReconciles the consumer chooses, and this
+		// does not rest on how this suite happens to configure its
+		// controllers.
+		if prev, ok := last[g]; ok && r.Start.Before(prev.Start) {
+			continue
+		}
+		last[g] = r
+	}
+
+	var out []string
+	for g, r := range last {
+		if r.Err == nil {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s %s: %v", g.controller, g.key, r.Err))
+	}
+	// Sorted so that the report reads the same across runs, and so a test can
+	// assert on the whole slice rather than on a set.
+	sort.Strings(out)
+	return out
+}
+
+// quiescenceError renders both halves of the measurement as a single error, or
+// nil when both are clean.
+//
+// Unconverged keys come first because they name a cause, while the churn
+// histograms only describe a symptom: "the shard controller's last word on
+// this object was an error" is the diagnosis, and "nothing has happened for
+// five seconds" is the thing that made it look fine. churn is nil when the
+// window half was satisfied, and its absence from the message is how a reader
+// tells that the namespace did go quiet and was still not converged.
+func quiescenceError(ns string, unconverged []string, churn error) error {
+	if len(unconverged) == 0 {
+		return churn
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b,
+		"namespace %s has not converged: %d controller/object pair(s) "+
+			"whose most recent reconcile pass errored",
+		ns, len(unconverged))
+	for _, line := range unconverged {
+		fmt.Fprintf(&b, "\n  %-8s %s", "errored", line)
+	}
+	if churn != nil {
+		fmt.Fprintf(&b, "\n%v", churn)
+	}
+	return errors.New(b.String())
+}
+
 // RequireQuiescent fails unless the namespace goes quiet: no projected state
 // change on any watched object and no attempted write for quiet, reached within
-// timeout.
+// timeout, and no controller whose last word on an object was an error.
+//
+// That last condition is not a refinement of the other two, it is the one that
+// makes them safe to believe. Quiet is a rate measure and convergence is a
+// level one, and exponential backoff pulls them apart: see Unconverged.
 //
 // This is the assertion a conventional "did it reach Healthy?" check cannot
 // make. A controller that rewrites the same status forever still reports
@@ -149,9 +244,9 @@ func topCounts(counts map[string]int, limit int) []string {
 // failure this names the fields that kept moving and marks the writes that were
 // rejected, which is usually the diagnosis.
 //
-// Both halves are required, and dropping either one makes this weaker than the
-// poll loop it replaced. See churnMonitor for what each half can see that the
-// other cannot.
+// Both halves of the window measure are required, and dropping either one
+// makes this weaker than the poll loop it replaced. See churnMonitor for what
+// each half can see that the other cannot.
 //
 // A quiet verdict has one seam on the write path, and it is worth knowing
 // rather than trusting past. The recorder appends an op only after the API
@@ -160,6 +255,16 @@ func topCounts(counts map[string]int, limit int) []string {
 // scheduling gap rather than the length of a pass, and it is not a regression:
 // the poller this replaced could not see a no-op write at all. Closing it would
 // need a barrier between this and every writer, which the suite does not have.
+//
+// Bounding the level half just as honestly: it keys on a pass returning an
+// error and on nothing else, so a controller stuck in a nil-error requeue
+// loop is not caught by it. A pass that writes nothing and returns
+// (Result{RequeueAfter: x}, nil) forever is silent on both window halves and
+// converged on this one, and so reads as quiescent. That shape is a real way
+// for a controller to be wedged, and catching it would mean judging whether a
+// requeue is progress, which is the controller's own business rather than the
+// harness's. A test that suspects one should assert on the object's
+// conditions, or count passes via Suite.Reconciles.
 //
 // Bounding the write half honestly: it sees writes through a recorder-wrapped
 // client, which is every controller under test and is not the data plane fakes.
@@ -217,8 +322,12 @@ func (s *Suite) TryQuiescent(t *testing.T, ns string, quiet, timeout time.Durati
 			quietSince = time.Now()
 		}
 		if time.Since(quietSince) >= quiet {
-			return nil
+			// The window going quiet is necessary and not sufficient. A
+			// controller whose last pass errored is still trying, however
+			// slowly, so the namespace has not converged no matter how long
+			// the window saw nothing.
+			return quiescenceError(ns, s.Unconverged(ns), nil)
 		}
 	}
-	return m.report(ns, quiet, timeout)
+	return quiescenceError(ns, s.Unconverged(ns), m.report(ns, quiet, timeout))
 }

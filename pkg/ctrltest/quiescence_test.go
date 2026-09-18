@@ -2,9 +2,11 @@ package ctrltest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,10 +14,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// TestQuiescenceHoldsOnAQuietNamespace is the negative control for the three
-// tests below: whatever they catch has to be the loop they run and not the
+// TestQuiescenceHoldsOnAQuietNamespace is the negative control for the tests
+// below: whatever they catch has to be the thing they set up and not the
 // primitive firing at rest.
 func TestQuiescenceHoldsOnAQuietNamespace(t *testing.T) {
 	ns := shared.Namespace(t)
@@ -182,6 +185,105 @@ func TestQuiescenceFailsOnARejectedWriteLoop(t *testing.T) {
 			t.Fatalf("the report must mark the writes as rejected, "+
 				"want a line containing %q, got:\n%v", want, err)
 		}
+	}
+}
+
+// TestQuiescenceFailsOnAControllerWhoseLastPassErrored pins the level check. A
+// reconciler that always errors goes quiet by itself once controller-runtime's
+// backoff stretches past the window, so a purely rate-based quiescence check
+// passes here. That is the defect this test exists to prevent, and it is
+// exactly how the backup-PVC-shrink pin came to report a live defect as fixed.
+//
+// The wedged pass is driven straight through the interceptor rather than by
+// registering a reconciler on the shared manager, for two reasons. It makes
+// the silence exact instead of merely likely: an erroring controller only goes
+// quiet once its backoff has stretched, so a test that waits for that is
+// racing the very schedule it is asserting is unreliable. And a controller
+// registered here would stay registered for the rest of the package, since
+// nothing can unregister one from a running manager, leaving an
+// always-erroring reconciler live under every later test's namespace. What is
+// under test is what Unconverged concludes from the reconcile log, and that
+// log has the same shape either way.
+func TestQuiescenceFailsOnAControllerWhoseLastPassErrored(t *testing.T) {
+	ns := shared.Namespace(t)
+	key := client.ObjectKey{Namespace: ns, Name: "wedged-shard"}
+	wedge := errors.New("persistentvolumeclaims: spec.resources.requests.storage: forbidden")
+
+	stub := &stubReconciler{
+		fn: func(context.Context, reconcile.Request) (reconcile.Result, error) {
+			return reconcile.Result{}, wedge
+		},
+	}
+	wrapped := shared.Reconciles.Wrap("quiescence-wedged", stub)
+	if _, err := wrapped.Reconcile(
+		t.Context(), reconcile.Request{NamespacedName: key},
+	); err == nil {
+		t.Fatal("the stub must error for this test to assert anything")
+	}
+
+	// The pass wrote nothing and changed nothing, so from here the namespace is
+	// as silent as a wedge whose backoff has stretched past the window, which
+	// is the state this check has to survive.
+	err := shared.TryQuiescent(t, ns, time.Second, 10*time.Second)
+	if err == nil {
+		t.Fatal("a namespace whose last reconcile pass errored must not read as " +
+			"quiescent: passing here means quiescence is a rate check again, and a " +
+			"controller failing on a slow enough backoff reads as converged")
+	}
+
+	// Asserted rather than assumed: if the window half had fired, this test
+	// would pass for the old reason and prove nothing about the level check.
+	if strings.Contains(err.Error(), "never went quiet") {
+		t.Fatalf("the namespace was not silent, so this test did not exercise the "+
+			"level check at all, got:\n%v", err)
+	}
+
+	for _, want := range []string{"quiescence-wedged", key.String(), wedge.Error()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the report must name the controller, the key and the error, "+
+				"want a line containing %q, got:\n%v", want, err)
+		}
+	}
+}
+
+// TestQuiescenceIgnoresAControllerWhoseLastPassSucceeded pins the other
+// direction: a controller that errored and then recovered is converged, and
+// Unconverged must look at the last pass rather than at any pass.
+func TestQuiescenceIgnoresAControllerWhoseLastPassSucceeded(t *testing.T) {
+	ns := shared.Namespace(t)
+	key := client.ObjectKey{Namespace: ns, Name: "recovered-shard"}
+
+	var passes atomic.Int64
+	stub := &stubReconciler{
+		fn: func(context.Context, reconcile.Request) (reconcile.Result, error) {
+			if passes.Add(1) == 1 {
+				return reconcile.Result{}, errors.New("conflict: the object has been modified")
+			}
+			return reconcile.Result{}, nil
+		},
+	}
+	wrapped := shared.Reconciles.Wrap("quiescence-recovered", stub)
+	req := reconcile.Request{NamespacedName: key}
+
+	if _, err := wrapped.Reconcile(t.Context(), req); err == nil {
+		t.Fatal("the first pass must error, or the recovery below proves nothing")
+	}
+	// Checked here so that the nil below is the check changing its mind about
+	// this key, rather than the check never having seen it.
+	if got := shared.Unconverged(ns); len(got) != 1 {
+		t.Fatalf("Unconverged after the failing pass = %v, want exactly one line", got)
+	}
+
+	if _, err := wrapped.Reconcile(t.Context(), req); err != nil {
+		t.Fatalf("the recovering pass: %v", err)
+	}
+	if got := shared.Unconverged(ns); got != nil {
+		t.Errorf("Unconverged after the recovering pass = %v, want nil: the check "+
+			"must read the last pass, not any pass", got)
+	}
+
+	if err := shared.TryQuiescent(t, ns, time.Second, 15*time.Second); err != nil {
+		t.Errorf("a namespace whose controllers all last succeeded is quiescent:\n%v", err)
 	}
 }
 
