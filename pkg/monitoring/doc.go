@@ -9,7 +9,7 @@
 //
 // Usage in controllers:
 //
-//	monitoring.SetClusterInfo(cluster.Name, cluster.Namespace, string(cluster.Status.Phase))
+//	monitoring.SetClusterInfo(cluster.Name, cluster.Namespace, string(cluster.Status.Phase), initialized)
 //	monitoring.SetCellGatewayReplicas(cell.Name, cell.Namespace, desired, ready)
 //
 // Usage in webhooks:

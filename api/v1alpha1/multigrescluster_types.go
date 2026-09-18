@@ -770,6 +770,13 @@ type MultigresClusterStatus struct {
 	// +optional
 	Phase Phase `json:"phase,omitempty"`
 
+	// InitializedAt records when the cluster first reached PhaseHealthy. It is
+	// set once and never cleared, even if the cluster later becomes Degraded,
+	// so it can distinguish first-time bootstrap from an established cluster
+	// having a real incident.
+	// +optional
+	InitializedAt *metav1.Time `json:"initializedAt,omitempty"`
+
 	// Message provides details about the current phase (e.g. error messages).
 	// +optional
 	Message string `json:"message,omitempty"`

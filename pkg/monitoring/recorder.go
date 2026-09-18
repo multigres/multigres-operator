@@ -1,15 +1,18 @@
 package monitoring
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // SetClusterInfo sets the info-style gauge for a MultigresCluster.
-// Old phase labels are automatically cleaned up via DeletePartialMatch.
-func SetClusterInfo(name, namespace, phase string) {
+// Old phase/initialized labels are automatically cleaned up via DeletePartialMatch.
+func SetClusterInfo(name, namespace, phase string, initialized bool) {
 	clusterInfo.DeletePartialMatch(map[string]string{
 		"name":      name,
 		"namespace": namespace,
 	})
-	clusterInfo.WithLabelValues(name, namespace, phase).Set(1)
+	clusterInfo.WithLabelValues(name, namespace, phase, strconv.FormatBool(initialized)).Set(1)
 }
 
 // SetClusterTopology sets the cell and shard count gauges for a cluster.
