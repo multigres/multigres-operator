@@ -13,10 +13,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/cert"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 // reconcilePgHbaConfigMap creates or updates the pg_hba ConfigMap for a shard.
@@ -333,6 +335,22 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 	}
 	if desired == nil {
 		return nil
+	}
+
+	// A prior teardown of this shard may have left the PVC labelled orphan:
+	// cleanupShardPVCs marks the backup PVC rather than deleting it, because
+	// resolvePodIndex finds no ordinal in its name-hash suffix. The apply below
+	// will not undo that, since the payload never mentions the label and
+	// server-side apply only removes fields this manager already owns. Clear it
+	// explicitly, as the per-pool data PVC path does on reuse, so multigres-gc
+	// does not collect a volume we are putting straight back into service.
+	existing := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing); err != nil {
+		if !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to get shared backup PVC: %w", err)
+		}
+	} else if err := pvcutil.ClearOrphan(ctx, log.FromContext(ctx), r.Client, existing); err != nil {
+		return fmt.Errorf("failed to clear orphan label on shared backup PVC: %w", err)
 	}
 
 	// Server Side Apply

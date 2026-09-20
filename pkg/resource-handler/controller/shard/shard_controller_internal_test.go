@@ -3459,6 +3459,85 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 			t.Error("expected error on PVC patch failure")
 		}
 	})
+
+	// Defect 10. cleanupShardPVCs marks the shared backup PVC orphan rather
+	// than deleting it, because resolvePodIndex finds no ordinal in its
+	// name-hash suffix. The apply below does not undo that: the payload never
+	// mentions the label, and server-side apply only removes fields this
+	// manager already owns. So the reclaim path has to clear it explicitly, or
+	// multigres-gc collects a backup volume that is back in active use.
+	t.Run("reuse clears a stale orphan label", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-shard", Namespace: "default",
+				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName:   "db",
+				TableGroupName: "tg",
+				ShardName:      "s1",
+			},
+		}
+
+		stale, err := BuildSharedBackupPVC(shard, true, scheme)
+		if err != nil {
+			t.Fatalf("build shared backup PVC: %v", err)
+		}
+		stale.Labels[metadata.LabelOrphan] = "2026-09-19T00:00:00Z"
+		stale.OwnerReferences = nil
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, stale).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(context.Background(), shard); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := c.Get(
+			context.Background(),
+			types.NamespacedName{Name: stale.Name, Namespace: "default"},
+			pvc,
+		); err != nil {
+			t.Fatalf("PVC should exist: %v", err)
+		}
+		if since, ok := pvc.Labels[metadata.LabelOrphan]; ok {
+			t.Errorf(
+				"shared backup PVC %s still carries %s=%s after being reclaimed",
+				pvc.Name, metadata.LabelOrphan, since,
+			)
+		}
+	})
+
+	t.Run("error on read failure before reclaim", func(t *testing.T) {
+		shard := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-shard", Namespace: "default",
+				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName:   "db",
+				TableGroupName: "tg",
+				ShardName:      "s1",
+			},
+		}
+		pvcName := BuildSharedBackupPVCName(shard)
+
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+			OnGet: func(key client.ObjectKey) error {
+				if key.Name == pvcName {
+					return testutil.ErrNetworkTimeout
+				}
+				return nil
+			},
+		})
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(context.Background(), shard); err == nil {
+			t.Error("expected error when the existing shared backup PVC cannot be read")
+		}
+	})
 }
 
 func TestBuildSharedBackupPVC_Variants(t *testing.T) {
