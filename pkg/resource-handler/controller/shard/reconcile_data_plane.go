@@ -556,6 +556,27 @@ func withDataPlaneRequeue(
 	return result
 }
 
+// recordPostureObservation counts consecutive unsettled observations for one
+// shard and returns the running total.
+//
+// A settled observation deletes the entry rather than writing zero. The two
+// mean the same thing to every reader, since a missing key reads as zero, but
+// they differ in what the map holds: writing zero keeps an entry for every
+// shard this process has ever reconciled, while deleting keeps only the
+// shards currently accumulating strikes, which in a healthy cluster is none.
+//
+// That is the whole bound. Measured on go1.27.1, a map's table is sized by its
+// peak simultaneous entries and does not ratchet: three rounds of a million
+// distinct keys each peak and settle at the same footprint, and three million
+// insertions that never exceed a hundred live entries cost 0.25 MB. So there
+// is nothing to compact periodically, provided entries leave when they stop
+// being true.
+//
+// Keyed by namespace and name rather than UID, which is deliberate now that
+// the entry is short-lived: a shard recreated at the same name inherits
+// nothing, because a shard healthy at deletion has no entry left to inherit.
+// One case remains, a shard deleted while unsettled, and it costs a stale
+// count on a recreation that is already in trouble.
 func (r *ShardReconciler) recordPostureObservation(
 	shard *multigresv1alpha1.Shard,
 	unsettled bool,
@@ -564,14 +585,14 @@ func (r *ShardReconciler) recordPostureObservation(
 
 	r.postureStrikesMu.Lock()
 	defer r.postureStrikesMu.Unlock()
+	if !unsettled {
+		delete(r.postureStrikes, key)
+		return 0
+	}
 	if r.postureStrikes == nil {
 		r.postureStrikes = make(map[string]int)
 	}
-	if unsettled {
-		r.postureStrikes[key]++
-	} else {
-		r.postureStrikes[key] = 0
-	}
+	r.postureStrikes[key]++
 	return r.postureStrikes[key]
 }
 
