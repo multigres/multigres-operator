@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -327,6 +328,19 @@ const (
 	postureStrikeThreshold       = 2
 	postureDebounceRequeueDelay  = 5 * time.Second
 	poolerRegistrationRetryDelay = time.Minute
+
+	// An incomplete posture observation is never settled, so it is requeued
+	// on a backoff rather than accepted. Starts at the multipooler container's
+	// own readiness probe period, so the operator never polls topology more
+	// aggressively than the kubelet polls the pod, and decays to the same
+	// delay the empty-topology path uses.
+	postureIncompleteMinDelay = 5 * time.Second
+	postureIncompleteMaxDelay = time.Minute
+	// Upward jitter. controller-runtime does not jitter RequeueAfter, and a
+	// fleet that went incomplete together (topology restart, mass scale-up)
+	// would otherwise retry in lockstep against the topology server that just
+	// came back.
+	postureIncompleteJitter = 0.2
 	// poolerClientRetryDelay is the requeue delay when the multipooler RPC
 	// client cannot be built yet (e.g. operator client cert not issued).
 	poolerClientRetryDelay = 10 * time.Second
@@ -436,10 +450,62 @@ func (r *ShardReconciler) reconcilePosture(
 		r.Recorder.Event(shard, "Warning", reason, result.Message)
 	}
 
+	// A pod still awaiting its pooler is not a settled state, whatever the
+	// strike count says. The pooler that would complete it registers in the topology
+	// store, which changes no Kubernetes object, so no watch this controller
+	// holds can fire and nothing else will wake it. Accepting incompleteness
+	// after the strike threshold and returning no requeue strands the shard
+	// with a short membership list permanently, which is the defect pinned by
+	// MGO-POOL-SCALEUP-ROLE-STALE.
+	//
+	// The empty-topology branch above already reasons this way. A partially
+	// populated topology is the same case and was simply missed.
+	if awaitingPoolerRegistration(result.Readiness) {
+		return incompleteRequeueDelay(strikes), nil
+	}
 	if unsettled && strikes < postureStrikeThreshold {
 		return postureDebounceRequeueDelay, nil
 	}
 	return 0, nil
+}
+
+// awaitingPoolerRegistration reports whether any managed pod still has no
+// pooler in topology.
+//
+// Deliberately not result.Incomplete, which was the first attempt and does not
+// cover this: Incomplete means an unreachable cell, a topology entry with no
+// matching pod, or an UNKNOWN posture. All of those are topology knowing about
+// something the pod set does not. This is the reverse, and the only signal for
+// it is the seeded readiness reason surviving unoverwritten.
+func awaitingPoolerRegistration(readiness map[string]posture.Readiness) bool {
+	for _, r := range readiness {
+		if r.Reason == posture.ReasonAwaitingRegistration {
+			return true
+		}
+	}
+	return false
+}
+
+// incompleteRequeueDelay backs off from postureIncompleteMinDelay toward
+// postureIncompleteMaxDelay as strikes accumulate, with upward jitter.
+//
+// A brief gap, the expected case while a scaled-up pooler starts, is caught
+// within seconds. A shard that stays incomplete degrades to roughly one
+// reconcile a minute, which is what the empty-topology path already costs, so
+// the pathological case is no worse than the status quo.
+func incompleteRequeueDelay(strikes int) time.Duration {
+	shift := strikes - 1
+	if shift < 0 {
+		shift = 0
+	}
+	if shift > 4 {
+		shift = 4
+	}
+	d := postureIncompleteMinDelay << shift
+	if d > postureIncompleteMaxDelay {
+		d = postureIncompleteMaxDelay
+	}
+	return wait.Jitter(d, postureIncompleteJitter)
 }
 
 func setPostureUnknownUnlessFalse(

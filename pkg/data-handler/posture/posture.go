@@ -47,6 +47,16 @@ type Readiness struct {
 	Message string
 }
 
+// ReasonAwaitingRegistration is the readiness reason carried by a managed pod
+// that has no corresponding pooler in the shard topology.
+//
+// Every managed pod is seeded with it and only overwritten once a topology
+// entry matches, so its survival is the signal that topology is behind the
+// pod set. Note this is NOT what Result.Incomplete reports: that covers an
+// unreachable cell, a topology entry with no matching pod, or an UNKNOWN
+// posture, all of which are the opposite direction.
+const ReasonAwaitingRegistration = "AwaitingRegistration"
+
 // Evaluate compares each managed pooler's observed postgres state with its
 // topology role. It returns nil when topology contains no active poolers, as
 // during bootstrap.
@@ -61,7 +71,7 @@ func Evaluate(
 	readiness := make(map[string]Readiness, len(managedPodNames))
 	for _, podName := range managedPodNames {
 		readiness[podName] = Readiness{
-			Reason:  "AwaitingRegistration",
+			Reason:  ReasonAwaitingRegistration,
 			Message: "pooler has not registered in the shard topology",
 		}
 	}
