@@ -122,7 +122,31 @@ func (r *TableGroupReconciler) handlePendingDeletion(
 		return ctrl.Result{}, fmt.Errorf("failed to list shards for pending deletion: %w", err)
 	}
 
-	allReady := true
+	// Observing fewer Shards than the spec declares means this list is not yet
+	// the whole truth, and concluding anything from it would be concluding it
+	// from an absence.
+	//
+	// Without this, zero children read as "every child is ready": the loop
+	// below never runs, allReady stays true, and the TableGroup reports
+	// ReadyForDeletion having drained nothing. Every step reports success,
+	// which is what makes it dangerous, since the protocol exists to prevent
+	// data loss.
+	//
+	// Two ways to reach it, and the second needs no unusual behaviour at all.
+	// A spec edit inside the window before children are created, and cache
+	// lag, because this list comes from the cached client.
+	//
+	// Safe to block on. Nothing deletes a child Shard while the parent is
+	// still finalizing; they go by garbage collection once it is gone. So a
+	// short count means not yet, never already finished. Deadlocking a
+	// finalizer is the better failure here anyway: this protocol is the thing
+	// standing between a spec edit and deleted data.
+	allReady := len(shards.Items) >= len(tg.Spec.Shards)
+	if !allReady {
+		l.V(1).Info("Waiting for child Shards to appear before judging readiness",
+			"observed", len(shards.Items), "desired", len(tg.Spec.Shards))
+	}
+
 	for i := range shards.Items {
 		s := &shards.Items[i]
 
