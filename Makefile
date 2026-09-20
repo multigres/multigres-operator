@@ -278,22 +278,38 @@ build-installer: manifests generate kustomize ## Generate consolidated install Y
 
 ##@ Test
 
+# test/suite is the multi-controller envtest suite. It carries no build tag, so
+# every `go test ./...` call site has to exclude it by path or it lands in the
+# required check before it is ready. That is one filter per call site, which is
+# the deliberate trade against a tag that someone forgets on a new file.
+#
+# -v is load-bearing rather than cosmetic. Each KnownDefect pin logs the defect
+# it is standing on while that defect is still present, and without -v go test
+# discards the output of a passing test, so a green CI run shows none of them.
+# The suite is meant to be readable as the operator's live defect list, and -v
+# is what makes that list visible without waiting for a pin to expire.
+.PHONY: test-suite
+test-suite: manifests generate fmt vet setup-envtest ## Run the multi-controller test suite
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+		go test -v -p 1 -timeout 20m ./test/suite/...
+
 .PHONY: test
 test: manifests generate fmt vet ## Run tests (no integration testing)
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 $$(go list ./... | grep -v /e2e) -coverprofile=cover.out
+		go test -p 1 $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet setup-envtest ## Run integration tests
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e) -coverprofile=cover.out
+		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out
 
 .PHONY: test-coverage
 test-coverage: manifests generate fmt vet setup-envtest ## Generate coverage report with HTML
 	@mkdir -p coverage
 	@echo "==> Generating coverage..."
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 -tags=integration,verbose ./... -coverprofile=coverage/combined.out -covermode=atomic
+		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) \
+		-coverprofile=coverage/combined.out -covermode=atomic
 	@echo "==> Generating HTML report..."
 	@go tool cover -html=coverage/combined.out -o=coverage/combined.html
 	@echo "Generated: coverage/combined.html"
