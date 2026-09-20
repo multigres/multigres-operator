@@ -293,6 +293,33 @@ test-suite: manifests generate fmt vet setup-envtest ## Run the multi-controller
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 		go test -v -p 1 -timeout 20m ./test/suite/...
 
+# A separate target rather than a flag on the one above. Measured 2026-09-19:
+# 183s against a 166s baseline, so about 10% rather than the roughly-double a
+# CPU-bound suite would pay. This one spends most of its wall clock waiting for
+# controllers to converge, and the race detector does not slow down waiting.
+#
+# Kept separate anyway, because the cost is not the same everywhere: certificate
+# generation is the one CPU-bound step here and has been measured swinging
+# between 14 and 75 seconds under -race, which is enough to turn a wait sized
+# against the normal run into a flake. A budget that holds on both is looser
+# than the default target should carry.
+#
+# Worth having at all because this suite is the only place five controllers
+# share one manager, and the operator holds exactly one piece of state across
+# reconcile goroutines: ShardReconciler.postureStrikes, a map guarded by a
+# mutex. Nothing here exercises contention on it today, since the suite pins
+# MaxConcurrentReconciles to 1 and controller-runtime already serialises
+# reconciles per object key, so this is a standing check that the answer has
+# not changed rather than a hunt for a known race.
+#
+# The timeout is generous rather than tight: the instrumented run is only
+# slightly slower on average, but its slow tail is much fatter, and a timeout
+# that fires on the tail reads as a hang rather than as the flake it is.
+.PHONY: test-suite-race
+test-suite-race: manifests generate fmt vet setup-envtest ## Run the multi-controller test suite under the race detector
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+		go test -race -v -p 1 -timeout 40m ./test/suite/...
+
 .PHONY: test
 test: manifests generate fmt vet ## Run tests (no integration testing)
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
