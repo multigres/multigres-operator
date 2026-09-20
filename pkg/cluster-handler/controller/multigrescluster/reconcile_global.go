@@ -108,11 +108,23 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 
 	// If desired is nil, it means we don't need a managed TopoServer (e.g. external).
 	// Clean up any existing managed TopoServer that may be left over from a mode switch.
+	//
+	// Selecting on the component as well as the cluster is load-bearing, not
+	// tidiness. A cell's own local TopoServer carries the same cluster label,
+	// so a cluster-only selector matched it too and deleted it. The cell
+	// controller reapplies its local TopoServer every reconcile, so that was
+	// not a one-time cleanup on a mode switch: this branch runs on every
+	// reconcile while global topology is external, and the two controllers
+	// fought in a permanent create/delete loop over an etcd StatefulSet and
+	// its PVC. Confirmed on a live cluster.
 	if desired == nil {
 		existing := &multigresv1alpha1.TopoServerList{}
 		if err := r.List(ctx, existing,
 			client.InNamespace(cluster.Namespace),
-			client.MatchingLabels{metadata.LabelMultigresCluster: cluster.Name},
+			client.MatchingLabels{
+				metadata.LabelMultigresCluster: cluster.Name,
+				metadata.LabelAppComponent:     metadata.ComponentGlobalTopo,
+			},
 		); err != nil {
 			return fmt.Errorf("failed to list existing topo servers: %w", err)
 		}
