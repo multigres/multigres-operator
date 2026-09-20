@@ -209,6 +209,8 @@ func (r *MultigresClusterReconciler) markTopologyFailed(
 	cause error,
 	logger interface{ Error(error, string, ...any) },
 ) {
+	base := cluster.DeepCopy()
+
 	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 		Type:               conditionTopologyReady,
 		Status:             metav1.ConditionFalse,
@@ -219,7 +221,31 @@ func (r *MultigresClusterReconciler) markTopologyFailed(
 	})
 	cluster.Status.Phase = multigresv1alpha1.PhaseDegraded
 	cluster.Status.Message = cause.Error()
-	if err := r.Status().Update(ctx, cluster); err != nil {
+
+	// A merge patch under the same field owner status.go applies with, rather
+	// than a bare Update, and the two halves of that matter separately.
+	//
+	// The owner is what stops this being a second manager fighting the first.
+	// status.go server-side-applies the whole status as multigres-operator
+	// with ForceOwnership, and phase, message and conditions are exactly the
+	// fields both write, so an unowned Update made the API server attribute
+	// them to a manager derived from the User-Agent and the two took turns.
+	//
+	// The merge patch is what stops it conflicting with this controller's own
+	// earlier writes. Update sends the whole object with the resourceVersion
+	// of a possibly stale in-memory copy, so it can 409 against a status
+	// write made earlier in the same pass. A merge patch carries no
+	// resourceVersion and touches only the fields set above, which is also
+	// why this is not a server-side apply: applying a partial status as
+	// multigres-operator would delete every other field that manager owns.
+	//
+	// This path is not rare. It fires whenever topology is unreachable.
+	if err := r.Status().Patch(
+		ctx,
+		cluster,
+		client.MergeFrom(base),
+		client.FieldOwner("multigres-operator"),
+	); err != nil {
 		logger.Error(err, "Failed to persist topology failure to status")
 	}
 }
