@@ -254,25 +254,45 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
-	if err := r.validateBackupStorageClassDependency(ctx, shard); err != nil {
-		if isMissingStorageClassDependency(err) {
-			logger.Info(
-				"StorageClass dependency missing for shared backup PVC; requeueing",
-				"after",
-				storageClassDependencyRequeue,
-			)
-			return ctrl.Result{RequeueAfter: storageClassDependencyRequeue}, nil
-		}
+	// Every StorageClass the shard references is resolved here, in one pass, and
+	// the StorageClassValid condition is published once. Two call sites used to
+	// write that condition with their own message and overwrite each other on
+	// every reconcile. The gates stay where they were: this one stops before
+	// the shared backup PVC, the pool one further down stops before the
+	// workloads that consume pool storage.
+	storageClasses, err := r.validateStorageClassDependencies(ctx, shard)
+	if err != nil {
 		monitoring.RecordSpanError(span, err)
-		logger.Error(err, "Failed to validate backup StorageClass")
+		logger.Error(err, "Failed to validate StorageClass dependencies")
 		r.Recorder.Eventf(
 			shard,
 			"Warning",
 			"FailedApply",
-			"Failed to validate backup StorageClass: %v",
+			"Failed to validate StorageClass dependencies: %v",
 			err,
 		)
 		return ctrl.Result{}, err
+	}
+	if err := r.setStorageClassCondition(ctx, shard, storageClasses); err != nil {
+		monitoring.RecordSpanError(span, err)
+		logger.Error(err, "Failed to set StorageClass condition")
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"FailedApply",
+			"Failed to set StorageClass condition: %v",
+			err,
+		)
+		return ctrl.Result{}, err
+	}
+	if isMissingStorageClassDependency(storageClasses.backupDependency) {
+		r.Recorder.Event(shard, "Warning", storageClassNotFoundReason, storageClasses.message)
+		logger.Info(
+			"StorageClass dependency missing for shared backup PVC; requeueing",
+			"after",
+			storageClassDependencyRequeue,
+		)
+		return ctrl.Result{RequeueAfter: storageClassDependencyRequeue}, nil
 	}
 
 	// Reconcile Multiorch - one Deployment and Service per cell
@@ -335,25 +355,14 @@ func (r *ShardReconciler) Reconcile(
 		childSpan.End()
 	}
 
-	if err := r.validatePoolStorageClassDependencies(ctx, shard); err != nil {
-		if isMissingStorageClassDependency(err) {
-			logger.Info(
-				"StorageClass dependency missing for pool resources; requeueing",
-				"after",
-				storageClassDependencyRequeue,
-			)
-			return ctrl.Result{RequeueAfter: storageClassDependencyRequeue}, nil
-		}
-		monitoring.RecordSpanError(span, err)
-		logger.Error(err, "Failed to validate pool StorageClass dependencies")
-		r.Recorder.Eventf(
-			shard,
-			"Warning",
-			"FailedApply",
-			"Failed to validate pool StorageClass dependencies: %v",
-			err,
+	if isMissingStorageClassDependency(storageClasses.poolDependency) {
+		r.Recorder.Event(shard, "Warning", storageClassNotFoundReason, storageClasses.message)
+		logger.Info(
+			"StorageClass dependency missing for pool resources; requeueing",
+			"after",
+			storageClassDependencyRequeue,
 		)
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: storageClassDependencyRequeue}, nil
 	}
 
 	// Render the effective postgres config into the operator-owned ConfigMap and
