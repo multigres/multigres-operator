@@ -64,11 +64,19 @@ func BuildGlobalTopoServer(
 
 	finalPolicy := multigresv1alpha1.MergePVCDeletionPolicy(etcdPolicy, mergedGlobal)
 
+	var annotations map[string]string
+	if projectRef := cluster.Annotations[metadata.AnnotationProjectRef]; projectRef != "" {
+		annotations = map[string]string{
+			metadata.AnnotationProjectRef: projectRef,
+		}
+	}
+
 	ts := &multigresv1alpha1.TopoServer{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cluster.Name + "-global-topo",
-			Namespace: cluster.Namespace,
-			Labels:    labels,
+			Name:        cluster.Name + "-global-topo",
+			Namespace:   cluster.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: multigresv1alpha1.TopoServerSpec{
 			Etcd: &multigresv1alpha1.EtcdSpec{
@@ -107,6 +115,8 @@ func BuildMultiadminDeployment(
 	// Merge with user provided pod labels, but standard labels take precedence
 	podLabels := metadata.MergeLabels(standardLabels, spec.PodLabels)
 
+	podAnnotations := podAnnotationsWithProjectRef(spec.PodAnnotations, cluster)
+
 	// Defensive copy so the built Deployment doesn't alias the resolver's PodPlacementSpec.
 	var tolerations []corev1.Toleration
 	if placement != nil {
@@ -127,7 +137,7 @@ func BuildMultiadminDeployment(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      podLabels,
-					Annotations: spec.PodAnnotations,
+					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: cluster.Spec.Images.ImagePullSecrets,
@@ -326,6 +336,8 @@ func BuildMultiadminWebDeployment(
 	// Merge with user provided pod labels, but standard labels take precedence
 	podLabels := metadata.MergeLabels(standardLabels, spec.PodLabels)
 
+	podAnnotations := podAnnotationsWithProjectRef(spec.PodAnnotations, cluster)
+
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-multiadmin-web", cluster.Name),
@@ -340,7 +352,7 @@ func BuildMultiadminWebDeployment(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels:      podLabels,
-					Annotations: spec.PodAnnotations,
+					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: cluster.Spec.Images.ImagePullSecrets,
@@ -660,4 +672,19 @@ func BuildAdminNetworkPolicies(
 	}
 
 	return policies, nil
+}
+
+func podAnnotationsWithProjectRef(
+	userAnnotations map[string]string,
+	cluster *multigresv1alpha1.MultigresCluster,
+) map[string]string {
+	out := make(map[string]string, len(userAnnotations)+1)
+	for k, v := range userAnnotations {
+		out[k] = v
+	}
+	out[metadata.AnnotationProjectRef] = metadata.ResolveProjectRef(
+		cluster.Annotations,
+		cluster.Name,
+	)
+	return out
 }

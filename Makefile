@@ -23,8 +23,9 @@ OBSERVER_IMG ?= $(if $(wildcard $(IMG_TAG_FILE)),$(IMG_PREFIX)/multigres-observe
 print-img: ## Print the full operator container image reference
 	@echo $(IMG)
 
-# Images required by MultigresCluster pods (must match pkg/testutil/e2e.go MultigresImages)
-E2E_IMAGES ?= ghcr.io/multigres/multigres:main ghcr.io/multigres/pgctld:main ghcr.io/multigres/multiadmin-web:main gcr.io/etcd-development/etcd:v3.6.7
+# Match the compiled defaults used by test/e2e/framework, including the exporter.
+# MULTIGRES_IMAGES is derived from image_defaults.go below.
+E2E_IMAGES ?= $(MULTIGRES_IMAGES)
 
 .PHONY: pull-e2e-images
 pull-e2e-images: ## Pull container images needed by e2e tests

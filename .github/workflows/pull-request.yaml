@@ -33,3 +33,28 @@ jobs:
     uses: ./.github/workflows/_reusable-test-coverage.yaml
     with:
       COVERAGE_THRESHOLD: 70
+
+  promotion-tests:
+    name: Image promotion regression tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: node --test scripts/promote-runtime-images.test.js scripts/nightly-compatibility.test.js scripts/e2e-images.test.js
+      - name: Validate committed promotion record
+        if: github.head_ref == 'chore/promote-runtime-images'
+        run: node scripts/promote-runtime-images.js --check
+
+  promotion-e2e:
+    name: Promotion committed defaults
+    if: github.head_ref == 'chore/promote-runtime-images'
+    needs: promotion-tests
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      timeout-minutes: 30

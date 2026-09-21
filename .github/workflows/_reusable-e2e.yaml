@@ -171,39 +171,20 @@ jobs:
         run: make container
 
       - name: Pull e2e images
-        env:
-          POSTGRES_IMAGE: ${{ inputs.postgres-image }}
-          MULTIADMIN_IMAGE: ${{ inputs.multiadmin-image }}
-          MULTIADMIN_WEB_IMAGE: ${{ inputs.multiadmin-web-image }}
-          MULTIORCH_IMAGE: ${{ inputs.multiorch-image }}
-          MULTIPOOLER_IMAGE: ${{ inputs.multipooler-image }}
-          MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
         run: |
-          images=("gcr.io/etcd-development/etcd:v3.6.7")
+          # Source overrides have already been applied. Always pull the compiled
+          # defaults, including digest-pinned promotion images and the exporter.
+          required_images() {
+            sed -n 's/.*= "\(.*\)"$/\1/p' api/v1alpha1/image_defaults.go
 
-          # One upstream multigres image supplies all four Go components.
-          if [ -z "$MULTIADMIN_IMAGE" ] ||
-             [ -z "$MULTIORCH_IMAGE" ] ||
-             [ -z "$MULTIPOOLER_IMAGE" ] ||
-             [ -z "$MULTIGATEWAY_IMAGE" ]; then
-            images+=("ghcr.io/multigres/multigres:main")
-          fi
-          [ -n "$POSTGRES_IMAGE" ] ||
-            images+=("ghcr.io/multigres/pgctld:main")
-          [ -n "$MULTIADMIN_WEB_IMAGE" ] ||
-            images+=("ghcr.io/multigres/multiadmin-web:main")
-
-          for image in \
-            "$POSTGRES_IMAGE" \
-            "$MULTIADMIN_IMAGE" \
-            "$MULTIADMIN_WEB_IMAGE" \
-            "$MULTIORCH_IMAGE" \
-            "$MULTIPOOLER_IMAGE" \
-            "$MULTIGATEWAY_IMAGE"; do
-            [ -z "$image" ] || images+=("$image")
-          done
-
-          E2E_IMAGES="$(printf '%s\n' "${images[@]}" | sort -u | tr '\n' ' ')" \
+            # Older checked-out frameworks still load this separate image list
+            # for unset overrides. Read it from that ref, not from this workflow.
+            if grep -rq 'testutil.MultigresImages' test/e2e/framework; then
+              sed -n '/^var MultigresImages = \[\]string{/,/^}/s/^[[:space:]]*"\([^"]*\)".*/\1/p' \
+                pkg/testutil/e2e.go
+            fi
+          }
+          E2E_IMAGES="$(required_images | sort -u | tr '\n' ' ')" \
             make pull-e2e-images
 
       - name: Compute test packages

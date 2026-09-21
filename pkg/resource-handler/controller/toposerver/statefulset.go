@@ -130,6 +130,12 @@ func BuildStatefulSet(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
+					Annotations: map[string]string{
+						metadata.AnnotationProjectRef: metadata.ResolveProjectRef(
+							toposerver.Annotations,
+							clusterName,
+						),
+					},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{

@@ -4,6 +4,7 @@ package framework
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -38,7 +39,7 @@ func TestRuntimeImagesUsesOverridesAndDeduplicates(t *testing.T) {
 	if got := count(images, multigresNightly); got != 1 {
 		t.Fatalf("nightly multigres image occurs %d times in %v", got, images)
 	}
-	if slices.Contains(images, "ghcr.io/multigres/multigres:main") {
+	if slices.Contains(images, multigresv1alpha1.DefaultMultiadminImage) {
 		t.Fatalf("default multigres image retained despite complete override: %v", images)
 	}
 }
@@ -67,4 +68,45 @@ func count(values []string, target string) int {
 		}
 	}
 	return total
+}
+
+func TestRuntimeImagesUsesCommittedDefaults(t *testing.T) {
+	for _, key := range []string{
+		postgresImageEnv, multiadminImageEnv, multiadminWebImageEnv,
+		multiorchImageEnv, multipoolerImageEnv, multigatewayImageEnv,
+	} {
+		t.Setenv(key, "")
+	}
+	for _, tc := range []struct {
+		name     string
+		postgres string
+	}{
+		{name: "all committed defaults"},
+		{name: "partial override", postgres: "example.test/pgctld@sha256:" + strings.Repeat("a", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(postgresImageEnv, tc.postgres)
+			wantPostgres := multigresv1alpha1.DefaultPostgresImage
+			if tc.postgres != "" {
+				wantPostgres = tc.postgres
+			}
+			want := []string{
+				wantPostgres,
+				multigresv1alpha1.DefaultMultiadminImage,
+				multigresv1alpha1.DefaultMultiadminWebImage,
+				multigresv1alpha1.DefaultMultiorchImage,
+				multigresv1alpha1.DefaultMultipoolerImage,
+				multigresv1alpha1.DefaultMultigatewayImage,
+				multigresv1alpha1.DefaultEtcdImage,
+				multigresv1alpha1.DefaultPostgresExporterImage,
+			}
+			slices.Sort(want)
+			want = slices.Compact(want)
+			got := runtimeImages()
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Fatalf("runtimeImages() = %v, want %v", got, want)
+			}
+		})
+	}
 }

@@ -6,7 +6,6 @@ import (
 	"os"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
-	"github.com/multigres/multigres-operator/pkg/testutil"
 )
 
 const (
@@ -65,30 +64,26 @@ func applyImageOverrides(cluster *multigresv1alpha1.MultigresCluster) {
 // references are removed before loading them into Kind.
 func runtimeImages() []string {
 	overrides := imageOverridesFromEnv()
-	images := []string{testutil.MultigresImages[3]} // etcd is not overridable.
-
-	if overrides.postgres == "" {
-		images = append(images, testutil.MultigresImages[1])
-	} else {
-		images = append(images, overrides.postgres)
+	images := []string{
+		multigresv1alpha1.DefaultEtcdImage,
+		multigresv1alpha1.DefaultPostgresExporterImage,
 	}
-	if overrides.multiadminWeb == "" {
-		images = append(images, testutil.MultigresImages[2])
-	} else {
-		images = append(images, overrides.multiadminWeb)
+	components := []struct {
+		override string
+		fallback string
+	}{
+		{overrides.postgres, multigresv1alpha1.DefaultPostgresImage},
+		{overrides.multiadminWeb, multigresv1alpha1.DefaultMultiadminWebImage},
+		{overrides.multiadmin, multigresv1alpha1.DefaultMultiadminImage},
+		{overrides.multiorch, multigresv1alpha1.DefaultMultiorchImage},
+		{overrides.multipooler, multigresv1alpha1.DefaultMultipoolerImage},
+		{overrides.multigateway, multigresv1alpha1.DefaultMultigatewayImage},
 	}
-
-	goComponentOverrides := []string{
-		overrides.multiadmin,
-		overrides.multiorch,
-		overrides.multipooler,
-		overrides.multigateway,
-	}
-	for _, image := range goComponentOverrides {
-		if image == "" {
-			images = append(images, testutil.MultigresImages[0])
+	for _, component := range components {
+		if component.override == "" {
+			images = append(images, component.fallback)
 		} else {
-			images = append(images, image)
+			images = append(images, component.override)
 		}
 	}
 

@@ -3,7 +3,8 @@ name: Nightly upstream compatibility
 on:
 # Poll once after the upstream 05:00 UTC build. The run selects only a fully
 # successful nightly build; an in-progress build is never consumed. A SHA
-# already recorded green is skipped, while failures can be retried manually.
+# is skipped only after its promotion PR was successfully created or updated.
+# Manual runs remain diagnostic and never promote or checkpoint a revision.
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:
@@ -36,6 +37,9 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       short-sha: ${{ steps.resolve.outputs.short_sha }}
       operator-ref: ${{ steps.resolve.outputs.operator_ref }}
+      operator-sha: ${{ steps.resolve.outputs.operator_sha }}
+      nightly-run-id: ${{ steps.resolve.outputs.nightly_run_id }}
+      nightly-run-attempt: ${{ steps.resolve.outputs.nightly_run_attempt }}
       last-green-sha: ${{ steps.last-green.outputs.sha }}
       should-run: ${{ steps.gate.outputs.should_run }}
       multigres-image: ${{ steps.resolve.outputs.multigres_image }}
@@ -47,7 +51,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const prefix = 'nightly-compatibility-green-';
+            const prefix = 'nightly-compatibility-promoted-';
             const runs = await github.paginate(
               github.rest.actions.listWorkflowRuns,
               {
@@ -59,7 +63,8 @@ jobs:
               },
             );
             const canonicalRuns = runs
-              .filter((run) => run.event === 'schedule')
+              .filter((run) => run.event === 'schedule' && run.head_branch === 'main' &&
+                run.repository.full_name === 'multigres/multigres-operator')
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             for (const run of canonicalRuns) {
               const { data } = await github.rest.actions.listWorkflowRunArtifacts({
@@ -87,16 +92,18 @@ jobs:
           INPUT_OPERATOR_REF: ${{ inputs.operator-ref }}
         run: |
           sha="$INPUT_SHA"
+          # Resolve one completed scheduled build, keeping its identity alongside
+          # the source SHA. Manual SHA overrides still cannot enter promotion.
+          nightly='{}'
           if [ -z "$sha" ]; then
-            sha="$(
+            nightly="$(
               curl --fail --retry 3 --silent --show-error \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "https://api.github.com/repos/multigres/multigres/actions/workflows/nightly-build.yml/runs?branch=main&status=success&per_page=1" |
-                jq -r '.workflow_runs[0].head_sha // empty'
+                "https://api.github.com/repos/multigres/multigres/actions/workflows/nightly-build.yml/runs?branch=main&event=schedule&status=success&per_page=1" |
+                jq -ec '.workflow_runs[0] | select(.conclusion == "success" and .head_branch == "main" and .event == "schedule")'
             )"
-            [ -n "$sha" ] ||
-              { echo "::error::No successful upstream nightly build found"; exit 1; }
+            sha="$(jq -er '.head_sha' <<< "$nightly")"
           fi
 
           [[ "$sha" =~ ^[0-9a-f]{40}$ ]] ||
@@ -106,10 +113,25 @@ jobs:
           [[ "$operator_ref" =~ ^[A-Za-z0-9._/@+-]+$ ]] ||
             { echo "::error::Invalid operator ref '$operator_ref'"; exit 1; }
 
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            operator_sha="$GITHUB_SHA"
+          else
+            operator_sha="$(
+              curl --fail --retry 3 --silent --show-error \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$operator_ref" |
+                jq -er '.sha'
+            )"
+          fi
+          [[ "$operator_sha" =~ ^[0-9a-f]{40}$ ]] ||
+            { echo "::error::Expected a full operator SHA"; exit 1; }
+
           {
             echo "sha=$sha"
             echo "short_sha=$short_sha"
             echo "operator_ref=$operator_ref"
+            echo "operator_sha=$operator_sha"
+            echo "nightly_run_id=$(jq -r '.id // empty' <<< "$nightly")"
+            echo "nightly_run_attempt=$(jq -r '.run_attempt // empty' <<< "$nightly")"
             echo "multigres_image=ghcr.io/multigres/multigres:nightly-sha-$sha"
             echo "pgctld_image=ghcr.io/multigres/pgctld:nightly-sha-$sha"
             echo "multiadmin_web_image=ghcr.io/multigres/multiadmin-web:nightly-sha-$sha"
@@ -197,15 +219,32 @@ jobs:
               docker buildx imagetools inspect "$image" \
                 --format '{{json .Manifest}}' |
                 jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))'
-            )"
+            )" || return 1
             echo "${image%:*}@$digest"
           }
 
+          multigres_image="$(resolve_digest "$MULTIGRES_IMAGE")"
+          pgctld_image="$(resolve_digest "$PGCTLD_IMAGE")"
+          multiadmin_web_image="$(resolve_digest "$MULTIADMIN_WEB_IMAGE")"
           {
-            echo "multigres_image=$(resolve_digest "$MULTIGRES_IMAGE")"
-            echo "pgctld_image=$(resolve_digest "$PGCTLD_IMAGE")"
-            echo "multiadmin_web_image=$(resolve_digest "$MULTIADMIN_WEB_IMAGE")"
+            echo "multigres_image=$multigres_image"
+            echo "pgctld_image=$pgctld_image"
+            echo "multiadmin_web_image=$multiadmin_web_image"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Verify both supported architectures
+        env:
+          MULTIGRES_IMAGE: ${{ steps.images.outputs.multigres_image }}
+          PGCTLD_IMAGE: ${{ steps.images.outputs.pgctld_image }}
+          MULTIADMIN_WEB_IMAGE: ${{ steps.images.outputs.multiadmin_web_image }}
+        run: |
+          for image in "$MULTIGRES_IMAGE" "$PGCTLD_IMAGE" "$MULTIADMIN_WEB_IMAGE"; do
+            docker buildx imagetools inspect "$image" --raw |
+              jq -e '
+                [.manifests[] | select(.platform.os == "linux") | .platform.architecture] |
+                (index("amd64") != null) and (index("arm64") != null)
+              ' > /dev/null
+          done
 
       - name: Verify nightly image provenance
         env:
@@ -257,7 +296,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/_reusable-e2e.yaml
     with:
-      ref: ${{ needs.resolve.outputs.operator-ref }}
+      ref: ${{ needs.resolve.outputs.operator-sha }}
       timeout-minutes: 30
       postgres-image: ${{ needs.preflight.outputs.pgctld-image }}
       multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
@@ -303,7 +342,10 @@ jobs:
               process.env.E2E_RESULT === 'success';
             const canonicalRun =
               process.env.OPERATOR_REF === 'main' &&
-              process.env.EVENT_NAME === 'schedule';
+              process.env.EVENT_NAME === 'schedule' &&
+              context.ref === 'refs/heads/main' &&
+              context.repo.owner === 'multigres' &&
+              context.repo.repo === 'multigres-operator';
             const failureStage =
               process.env.RESOLVE_RESULT !== 'success' ? 'SHA resolution/validation' :
               process.env.PREFLIGHT_RESULT !== 'success' ? 'nightly image preflight' :
@@ -422,32 +464,6 @@ jobs:
               });
             }
 
-      - name: Write green state
-        if: >-
-          needs.resolve.result == 'success' &&
-          needs.preflight.result == 'success' &&
-          needs.e2e.result == 'success' &&
-          needs.resolve.outputs.operator-ref == 'main' &&
-          github.event_name == 'schedule'
-        env:
-          SHA: ${{ needs.resolve.outputs.sha }}
-        run: |
-          mkdir -p /tmp/nightly-compatibility
-          echo "$SHA" > /tmp/nightly-compatibility/upstream-sha
-
-      - name: Preserve green state
-        if: >-
-          needs.resolve.result == 'success' &&
-          needs.preflight.result == 'success' &&
-          needs.e2e.result == 'success' &&
-          needs.resolve.outputs.operator-ref == 'main' &&
-          github.event_name == 'schedule'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: nightly-compatibility-green-${{ needs.resolve.outputs.sha }}
-          path: /tmp/nightly-compatibility/upstream-sha
-          retention-days: 90
-
       - name: Fail when canary failed
         if: >-
           always() &&
@@ -461,3 +477,77 @@ jobs:
         run: |
           echo "::error::Canary results: resolve=$RESOLVE_RESULT preflight=$PREFLIGHT_RESULT e2e=$E2E_RESULT"
           exit 1
+
+  promote:
+    name: Promote verified runtime defaults
+    needs: [resolve, preflight, e2e]
+    if: >-
+      github.repository == 'multigres/multigres-operator' &&
+      github.event_name == 'schedule' &&
+      github.ref == 'refs/heads/main' &&
+      needs.resolve.outputs.operator-ref == 'main' &&
+      needs.resolve.outputs.should-run == 'true' &&
+      needs.preflight.result == 'success' &&
+      needs.e2e.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out tested operator revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.operator-sha }}
+          persist-credentials: false
+
+      # An App token triggers PR checks; PRs authored with GITHUB_TOKEN do not.
+      - name: Generate promotion App token
+        id: token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
+          private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
+          owner: multigres
+          repositories: multigres-operator
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create or update promotion PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+          OPERATOR_SHA: ${{ needs.resolve.outputs.operator-sha }}
+          NIGHTLY_RUN_ID: ${{ needs.resolve.outputs.nightly-run-id }}
+          NIGHTLY_RUN_ATTEMPT: ${{ needs.resolve.outputs.nightly-run-attempt }}
+          MULTIGRES_IMAGE: ${{ needs.preflight.outputs.multigres-image }}
+          PGCTLD_IMAGE: ${{ needs.preflight.outputs.pgctld-image }}
+          MULTIADMIN_WEB_IMAGE: ${{ needs.preflight.outputs.multiadmin-web-image }}
+        with:
+          github-token: ${{ steps.token.outputs.token }}
+          script: |
+            const { promote, recordFromEnv } = require('./scripts/promote-runtime-images.js');
+            const result = await promote({
+              github,
+              context: { ...context, repo: context.repo, runAttempt: process.env.GITHUB_RUN_ATTEMPT },
+              record: recordFromEnv(process.env),
+            });
+            core.info(JSON.stringify(result));
+
+      # Only successful PR publication (including a verified duplicate) makes a
+      # revision handled. A failed promotion stays red and is retried next time.
+      - name: Write promoted state
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          mkdir -p /tmp/nightly-compatibility
+          echo "$SHA" > /tmp/nightly-compatibility/upstream-sha
+
+      - name: Preserve promoted state
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-compatibility-promoted-${{ needs.resolve.outputs.sha }}
+          path: /tmp/nightly-compatibility/upstream-sha
+          retention-days: 90
+          overwrite: true # A rerun may replace this run's existing checkpoint.
+          if-no-files-found: error

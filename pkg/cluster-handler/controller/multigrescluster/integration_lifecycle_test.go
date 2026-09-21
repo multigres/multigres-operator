@@ -131,8 +131,11 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels:      clusterLabels(t, "short-annot-bomb", "multiadmin", ""),
-						Annotations: map[string]string{"heavy-annotation": longAnnotation},
+						Labels: clusterLabels(t, "short-annot-bomb", "multiadmin", ""),
+						Annotations: map[string]string{
+							"heavy-annotation":          longAnnotation,
+							"multigres.com/project-ref": "short-annot-bomb",
+						},
 					},
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
@@ -245,6 +248,9 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: clusterLabels(t, "mut-test", "multiadmin", ""),
+						Annotations: map[string]string{
+							"multigres.com/project-ref": "mut-test",
+						},
 					},
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{
@@ -348,6 +354,9 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Labels: clusterLabels(t, "mut-test", "multiadmin", ""),
+						Annotations: map[string]string{
+							"multigres.com/project-ref": "mut-test",
+						},
 					},
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{{

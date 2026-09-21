@@ -102,6 +102,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: toposerverLabels(t, "test-cluster"),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "test-cluster",
+								},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
@@ -281,6 +284,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
 								Labels: toposerverLabels(t, "test-cluster"),
+								Annotations: map[string]string{
+									"multigres.com/project-ref": "test-cluster",
+								},
 							},
 							Spec: corev1.PodSpec{
 								Containers: []corev1.Container{
