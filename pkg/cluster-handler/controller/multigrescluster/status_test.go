@@ -348,6 +348,22 @@ func TestUpdateStatus_ZeroResources(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: "default",
 		},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{"http://topo:2379"},
+				},
+			},
+			Cells: []multigresv1alpha1.CellConfig{{Name: "cell-1", Region: "us-east-1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name:    "postgres",
+				Default: true,
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name:    "default",
+					Default: true,
+				}},
+			}},
+		},
 	}
 
 	fakeClient := fake.NewClientBuilder().
@@ -374,9 +390,8 @@ func TestUpdateStatus_ZeroResources(t *testing.T) {
 		t.Fatalf("Failed to refresh cluster: %v", err)
 	}
 
-	if cluster.Status.Phase != multigresv1alpha1.PhaseHealthy {
-		t.Errorf("Expected PhaseHealthy (vacuously true), got %s", cluster.Status.Phase)
-	}
+	assert.Equal(t, multigresv1alpha1.PhaseProgressing, cluster.Status.Phase)
+	assert.Nil(t, cluster.Status.InitializedAt)
 
 	cond := meta.FindStatusCondition(cluster.Status.Conditions, "Available")
 	if cond == nil {
@@ -384,6 +399,156 @@ func TestUpdateStatus_ZeroResources(t *testing.T) {
 	}
 	if cond.Status != metav1.ConditionFalse {
 		t.Errorf("Expected Available=False (no cells), got %s", cond.Status)
+	}
+}
+
+func TestUpdateStatus_ExpectedChildren(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
+
+	externalTopo := &multigresv1alpha1.GlobalTopoServerSpec{
+		External: &multigresv1alpha1.ExternalTopoServerSpec{
+			Endpoints: []multigresv1alpha1.EndpointUrl{"http://topo:2379"},
+		},
+	}
+	clusterWithExpectedChildren := func(globalTopo *multigresv1alpha1.GlobalTopoServerSpec) *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				GlobalTopoServer: globalTopo,
+				Cells: []multigresv1alpha1.CellConfig{
+					{Name: "cell-1", Region: "us-east-1"},
+				},
+				Databases: []multigresv1alpha1.DatabaseConfig{{
+					Name:    "postgres",
+					Default: true,
+					TableGroups: []multigresv1alpha1.TableGroupConfig{{
+						Name:    "default",
+						Default: true,
+					}},
+				}},
+			},
+		}
+	}
+	healthyCell := func(name multigresv1alpha1.CellName) *multigresv1alpha1.Cell {
+		return &multigresv1alpha1.Cell{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      string(name),
+				Namespace: "default",
+				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			},
+			Spec: multigresv1alpha1.CellSpec{Name: name},
+			Status: multigresv1alpha1.CellStatus{
+				Phase: multigresv1alpha1.PhaseHealthy,
+			},
+		}
+	}
+	healthyTableGroup := func(
+		database multigresv1alpha1.DatabaseName,
+		tableGroup multigresv1alpha1.TableGroupName,
+	) *multigresv1alpha1.TableGroup {
+		return &multigresv1alpha1.TableGroup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      string(tableGroup),
+				Namespace: "default",
+				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			},
+			Spec: multigresv1alpha1.TableGroupSpec{
+				DatabaseName:   database,
+				TableGroupName: tableGroup,
+			},
+			Status: multigresv1alpha1.TableGroupStatus{
+				Phase: multigresv1alpha1.PhaseHealthy,
+			},
+		}
+	}
+	healthyGlobalTopo := func(name string) *multigresv1alpha1.TopoServer {
+		return &multigresv1alpha1.TopoServer{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "default",
+				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			},
+			Status: multigresv1alpha1.TopoServerStatus{
+				Phase: multigresv1alpha1.PhaseHealthy,
+			},
+		}
+	}
+
+	tests := map[string]struct {
+		cluster     *multigresv1alpha1.MultigresCluster
+		children    []client.Object
+		wantPhase   multigresv1alpha1.Phase
+		initialized bool
+	}{
+		"missing expected cell is progressing": {
+			cluster: clusterWithExpectedChildren(externalTopo),
+			children: []client.Object{
+				healthyCell("other-cell"),
+				healthyTableGroup("postgres", "default"),
+			},
+			wantPhase: multigresv1alpha1.PhaseProgressing,
+		},
+		"missing expected table group is progressing": {
+			cluster: clusterWithExpectedChildren(externalTopo),
+			children: []client.Object{
+				healthyCell("cell-1"),
+				healthyTableGroup("postgres", "other-tg"),
+			},
+			wantPhase: multigresv1alpha1.PhaseProgressing,
+		},
+		"missing managed global topo is progressing": {
+			cluster: clusterWithExpectedChildren(nil),
+			children: []client.Object{
+				healthyCell("cell-1"),
+				healthyTableGroup("postgres", "default"),
+				healthyGlobalTopo("other-topo"),
+			},
+			wantPhase: multigresv1alpha1.PhaseProgressing,
+		},
+		"external global topo does not require a topo server": {
+			cluster: clusterWithExpectedChildren(externalTopo),
+			children: []client.Object{
+				healthyCell("cell-1"),
+				healthyTableGroup("postgres", "default"),
+			},
+			wantPhase:   multigresv1alpha1.PhaseHealthy,
+			initialized: true,
+		},
+		"all managed children healthy initializes cluster": {
+			cluster: clusterWithExpectedChildren(nil),
+			children: []client.Object{
+				healthyCell("cell-1"),
+				healthyTableGroup("postgres", "default"),
+				healthyGlobalTopo("test-cluster-global-topo"),
+			},
+			wantPhase:   multigresv1alpha1.PhaseHealthy,
+			initialized: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			objects := append([]client.Object{tt.cluster}, tt.children...)
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(objects...).
+				WithStatusSubresource(objects...).
+				Build()
+			r := &MultigresClusterReconciler{
+				Client:   fakeClient,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
+
+			require.NoError(t, r.updateStatus(t.Context(), tt.cluster))
+			require.NoError(
+				t,
+				fakeClient.Get(t.Context(), client.ObjectKeyFromObject(tt.cluster), tt.cluster),
+			)
+			assert.Equal(t, tt.wantPhase, tt.cluster.Status.Phase)
+			assert.Equal(t, tt.initialized, tt.cluster.Status.InitializedAt != nil)
+		})
 	}
 }
 
@@ -396,12 +561,53 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 			Name:      "test-cluster",
 			Namespace: "default",
 		},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{"http://topo:2379"},
+				},
+			},
+			Cells: []multigresv1alpha1.CellConfig{{Name: "cell-1", Region: "us-east-1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name:    "postgres",
+				Default: true,
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name:    "default",
+					Default: true,
+				}},
+			}},
+		},
+	}
+	cell := &multigresv1alpha1.Cell{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cell-1",
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.CellSpec{Name: "cell-1"},
+		Status: multigresv1alpha1.CellStatus{
+			Phase: multigresv1alpha1.PhaseHealthy,
+		},
+	}
+	tableGroup := &multigresv1alpha1.TableGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster-postgres-default",
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.TableGroupSpec{
+			DatabaseName:   "postgres",
+			TableGroupName: "default",
+		},
+		Status: multigresv1alpha1.TableGroupStatus{
+			Phase: multigresv1alpha1.PhaseHealthy,
+		},
 	}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(cluster).
-		WithStatusSubresource(cluster).
+		WithObjects(cluster, cell, tableGroup).
+		WithStatusSubresource(cluster, cell, tableGroup).
 		Build()
 
 	r := &MultigresClusterReconciler{
@@ -419,11 +625,11 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 
 	degradedCell := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cell-degraded",
+			Name:      "cell-1",
 			Namespace: "default",
 			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 		},
-		Spec: multigresv1alpha1.CellSpec{Name: "cell-degraded"},
+		Spec: multigresv1alpha1.CellSpec{Name: "cell-1"},
 		Status: multigresv1alpha1.CellStatus{
 			Phase: multigresv1alpha1.PhaseDegraded,
 		},
@@ -431,8 +637,8 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 
 	fakeClient = fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(cluster, degradedCell).
-		WithStatusSubresource(cluster, degradedCell).
+		WithObjects(cluster, degradedCell, tableGroup).
+		WithStatusSubresource(cluster, degradedCell, tableGroup).
 		Build()
 	r.Client = fakeClient
 
@@ -453,6 +659,20 @@ func TestUpdateStatus_GenerationMismatch(t *testing.T) {
 			Name:       "test-cluster",
 			Namespace:  "default",
 			Generation: 2,
+		},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{"http://topo:2379"},
+				},
+			},
+			Cells: []multigresv1alpha1.CellConfig{{Name: "cell-1", Region: "us-east-1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name: "db1",
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name: "tg-1",
+				}},
+			}},
 		},
 	}
 
@@ -477,7 +697,10 @@ func TestUpdateStatus_GenerationMismatch(t *testing.T) {
 			Labels:     map[string]string{"multigres.com/cluster": "test-cluster"},
 			Generation: 2,
 		},
-		Spec: multigresv1alpha1.TableGroupSpec{DatabaseName: "db1"},
+		Spec: multigresv1alpha1.TableGroupSpec{
+			DatabaseName:   "db1",
+			TableGroupName: "tg-1",
+		},
 		Status: multigresv1alpha1.TableGroupStatus{
 			ObservedGeneration: 1,
 			Phase:              multigresv1alpha1.PhaseHealthy,
@@ -514,6 +737,84 @@ func TestUpdateStatus_GenerationMismatch(t *testing.T) {
 			cluster.Status.Phase,
 		)
 	}
+}
+
+func TestUpdateStatus_UsesAPIReaderForChildHealth(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cluster",
+			Namespace: "default",
+		},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{"http://topo:2379"},
+				},
+			},
+			Cells: []multigresv1alpha1.CellConfig{{Name: "cell-1", Region: "us-east-1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name: "db1",
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name: "tg-1",
+				}},
+			}},
+		},
+	}
+	staleCell := &multigresv1alpha1.Cell{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "cell-1",
+			Namespace:  "default",
+			Labels:     map[string]string{"multigres.com/cluster": "test-cluster"},
+			Generation: 1,
+		},
+		Spec: multigresv1alpha1.CellSpec{Name: "cell-1"},
+		Status: multigresv1alpha1.CellStatus{
+			ObservedGeneration: 1,
+			Phase:              multigresv1alpha1.PhaseHealthy,
+		},
+	}
+	liveCell := staleCell.DeepCopy()
+	liveCell.Generation = 2
+	tableGroup := &multigresv1alpha1.TableGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "tg-1",
+			Namespace:  "default",
+			Labels:     map[string]string{"multigres.com/cluster": "test-cluster"},
+			Generation: 1,
+		},
+		Spec: multigresv1alpha1.TableGroupSpec{
+			DatabaseName:   "db1",
+			TableGroupName: "tg-1",
+		},
+		Status: multigresv1alpha1.TableGroupStatus{
+			ObservedGeneration: 1,
+			Phase:              multigresv1alpha1.PhaseHealthy,
+		},
+	}
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster, staleCell, tableGroup).
+		WithStatusSubresource(cluster, staleCell, tableGroup).
+		Build()
+	liveReader := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveCell, tableGroup.DeepCopy()).
+		Build()
+	r := &MultigresClusterReconciler{
+		Client:    cachedClient,
+		APIReader: liveReader,
+		Scheme:    scheme,
+		Recorder:  record.NewFakeRecorder(10),
+	}
+
+	require.NoError(t, r.updateStatus(t.Context(), cluster))
+	require.NoError(t, cachedClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+	assert.Equal(t, multigresv1alpha1.PhaseProgressing, cluster.Status.Phase)
+	assert.Nil(t, cluster.Status.InitializedAt)
 }
 
 func TestExtractExternalEndpoint(t *testing.T) {

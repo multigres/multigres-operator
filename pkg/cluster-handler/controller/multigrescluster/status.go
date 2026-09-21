@@ -13,7 +13,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/resolver"
 )
+
+type tableGroupStatusIdentity struct {
+	database   multigresv1alpha1.DatabaseName
+	tableGroup multigresv1alpha1.TableGroupName
+}
+
+func (r *MultigresClusterReconciler) childStatusReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
 
 // extractExternalEndpoint resolves the externally reachable endpoint for the
 // global multigateway Service. It prefers explicitly assigned Service
@@ -114,6 +127,13 @@ func (r *MultigresClusterReconciler) updateStatus(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) error {
+	globalTopoSpec, err := resolver.NewResolver(r.Client, cluster.Namespace).
+		ResolveGlobalTopo(ctx, cluster)
+	if err != nil {
+		return fmt.Errorf("failed to resolve global topo for status: %w", err)
+	}
+	childReader := r.childStatusReader()
+
 	oldPhase := cluster.Status.Phase
 	cluster.Status.ObservedGeneration = cluster.Generation
 	cluster.Status.Cells = make(map[multigresv1alpha1.CellName]multigresv1alpha1.CellStatusSummary)
@@ -122,7 +142,7 @@ func (r *MultigresClusterReconciler) updateStatus(
 	)
 
 	cells := &multigresv1alpha1.CellList{}
-	if err := r.List(
+	if err := childReader.List(
 		ctx,
 		cells,
 		client.InNamespace(cluster.Namespace),
@@ -147,7 +167,7 @@ func (r *MultigresClusterReconciler) updateStatus(
 	}
 
 	tgs := &multigresv1alpha1.TableGroupList{}
-	if err := r.List(
+	if err := childReader.List(
 		ctx,
 		tgs,
 		client.InNamespace(cluster.Namespace),
@@ -187,8 +207,23 @@ func (r *MultigresClusterReconciler) updateStatus(
 		anyDegraded bool
 		allHealthy  = true
 	)
+	expectedCells := make(map[multigresv1alpha1.CellName]struct{}, len(cluster.Spec.Cells))
+	for _, cell := range cluster.Spec.Cells {
+		expectedCells[cell.Name] = struct{}{}
+	}
+	expectedTableGroups := make(map[tableGroupStatusIdentity]struct{})
+	for _, database := range cluster.Spec.Databases {
+		for _, tableGroup := range database.TableGroups {
+			expectedTableGroups[tableGroupStatusIdentity{
+				database:   database.Name,
+				tableGroup: tableGroup.Name,
+			}] = struct{}{}
+		}
+	}
+	expectsGlobalTopoServer := globalTopoSpec.Etcd != nil
 
 	for _, c := range cells.Items {
+		delete(expectedCells, c.Spec.Name)
 		switch {
 		case c.Status.ObservedGeneration != c.Generation:
 			allHealthy = false
@@ -203,6 +238,10 @@ func (r *MultigresClusterReconciler) updateStatus(
 	}
 
 	for _, tg := range tgs.Items {
+		delete(expectedTableGroups, tableGroupStatusIdentity{
+			database:   tg.Spec.DatabaseName,
+			tableGroup: tg.Spec.TableGroupName,
+		})
 		switch {
 		case tg.Status.ObservedGeneration != tg.Generation:
 			allHealthy = false
@@ -217,7 +256,7 @@ func (r *MultigresClusterReconciler) updateStatus(
 	}
 
 	topoServers := &multigresv1alpha1.TopoServerList{}
-	if err := r.List(
+	if err := childReader.List(
 		ctx,
 		topoServers,
 		client.InNamespace(cluster.Namespace),
@@ -227,6 +266,9 @@ func (r *MultigresClusterReconciler) updateStatus(
 	}
 
 	for _, ts := range topoServers.Items {
+		if expectsGlobalTopoServer && ts.Name == cluster.Name+"-global-topo" {
+			expectsGlobalTopoServer = false
+		}
 		switch {
 		case ts.Status.ObservedGeneration != ts.Generation:
 			allHealthy = false
@@ -238,6 +280,10 @@ func (r *MultigresClusterReconciler) updateStatus(
 		default:
 			allHealthy = false
 		}
+	}
+
+	if len(expectedCells) > 0 || len(expectedTableGroups) > 0 || expectsGlobalTopoServer {
+		allHealthy = false
 	}
 
 	switch {
