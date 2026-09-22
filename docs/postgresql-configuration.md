@@ -93,15 +93,18 @@ An input that is unset leaves its parameters at the baseline.
 | `work_mem`                                                                | memory | `(mem − shared_buffers) / (max_connections × 3) / parallel_workers`, min 64kB |
 | `max_worker_processes`                                                    | CPU    | `max(cores, 6)`                                                               |
 | `max_parallel_workers`                                                    | CPU    | `max(cores, 2)`                                                               |
+| `max_connections`                                                         | memory | memory-binned curve, `60` at 1GiB up to `1000` at ≥768GiB                     |
+| `max_wal_senders`, `max_replication_slots`                                | memory | `5` at <2GiB, `10` at 2–15GiB, `24` at 16–31GiB, `80` at ≥32GiB               |
 | `max_parallel_workers_per_gather`                                         | CPU    | `ceil(cores / 2)`                                                             |
 | `max_parallel_maintenance_workers`                                        | CPU    | `min(ceil(cores / 2), 4)`                                                     |
 | `min_wal_size`, `max_wal_size`, `wal_keep_size`, `max_slot_wal_keep_size` | disk   | scaled down from the volume size                                              |
 
 Notes:
 
-- **`max_connections` is not resource-derived.** It stays at the baseline so it remains above the
-  connection pooler's capacity. Raise it explicitly with `postgresConfig` if you need more (and size
-  the pooler to match).
+- **`max_connections` scales with memory.** The curve is hand-tuned rather than a smooth formula: it
+  plateaus at 500 between 128–256GiB before rising for very-large-memory instance families. Override
+  with `postgresConfig` when your workload's pooling strategy calls for different values, and
+  remember that `work_mem` divides by this value.
 - **`effective_io_concurrency` defaults to `200`.** Matches PgTune's SSD profile.
 - These are pgtune-style heuristics; override any of them with `postgresConfig` when your workload
   needs something different.

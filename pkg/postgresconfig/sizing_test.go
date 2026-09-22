@@ -22,6 +22,13 @@ func TestApplyResourceSizing_Memory(t *testing.T) {
 		"WorkMem":            cfg.WorkMem,
 		"WalBuffers":         cfg.WalBuffers,
 	}
+	if cfg.MaxConnections != 60 {
+		t.Errorf("MaxConnections = %d, want 60 (below 2GiB)", cfg.MaxConnections)
+	}
+	if cfg.MaxWalSenders != 5 || cfg.MaxReplicationSlots != 5 {
+		t.Errorf("MaxWalSenders/Slots = %d/%d, want 5/5",
+			cfg.MaxWalSenders, cfg.MaxReplicationSlots)
+	}
 	for k, want := range checks {
 		if got[k] != want {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
@@ -181,6 +188,84 @@ func TestDeriveWalSettings_Errors(t *testing.T) {
 	// A WAL segment large enough that its floor exceeds the max_wal_size cap.
 	if _, err := deriveWalSettings(1*uint64(gib), 2048*megabyte); err == nil {
 		t.Error("expected error when segment size forces max_wal_size above the cap")
+	}
+}
+
+func TestApplyResourceSizing_MaxConnections(t *testing.T) {
+	// Anchor points mirroring v2's serverRecommendations table, keyed by the
+	// memory the operator would see on the corresponding compute size.
+	tests := map[string]struct {
+		memBytes int64
+		want     int
+	}{
+		"1GiB (pico/nano/micro)": {1 * gib, 60},
+		"2GiB (small)":           {2 * gib, 90},
+		"4GiB (medium)":          {4 * gib, 120},
+		"8GiB (large)":           {8 * gib, 160},
+		"16GiB (xlarge)":         {16 * gib, 240},
+		"32GiB (2xlarge)":        {32 * gib, 380},
+		"64GiB (4xlarge)":        {64 * gib, 480},
+		"128GiB (8xlarge)":       {128 * gib, 490},
+		"192GiB (12xlarge)":      {192 * gib, 500},
+		"256GiB (16xlarge)":      {256 * gib, 500},
+		"384GiB (m8g.24xl)":      {384 * gib, 750},
+		"768GiB (m8g.48xl)":      {768 * gib, 1000},
+		"3072GiB (x8g.48xl)":     {3072 * gib, 1000},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := Defaults()
+			if err := ApplyResourceSizing(&cfg, tc.memBytes, 0, 0); err != nil {
+				t.Fatalf("ApplyResourceSizing() error = %v", err)
+			}
+			if cfg.MaxConnections != tc.want {
+				t.Errorf("MaxConnections = %d, want %d", cfg.MaxConnections, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyResourceSizing_MaxWalSenders(t *testing.T) {
+	tests := map[string]struct {
+		memBytes int64
+		want     int
+	}{
+		"1GiB":   {1 * gib, 5},
+		"2GiB":   {2 * gib, 10},
+		"8GiB":   {8 * gib, 10},
+		"16GiB":  {16 * gib, 24},
+		"32GiB":  {32 * gib, 80},
+		"256GiB": {256 * gib, 80},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := Defaults()
+			if err := ApplyResourceSizing(&cfg, tc.memBytes, 0, 0); err != nil {
+				t.Fatalf("ApplyResourceSizing() error = %v", err)
+			}
+			if cfg.MaxWalSenders != tc.want {
+				t.Errorf("MaxWalSenders = %d, want %d", cfg.MaxWalSenders, tc.want)
+			}
+			if cfg.MaxReplicationSlots != tc.want {
+				t.Errorf("MaxReplicationSlots = %d, want %d", cfg.MaxReplicationSlots, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyResourceSizing_MaxConnectionsFeedsWorkMem(t *testing.T) {
+	// work_mem = (mem - shared) / (conns * 3) / parallel. With the derived
+	// MaxConnections=160 at 8GiB, work_mem must be ~1/2.66× what it would be
+	// under the old hardcoded 60. Two different memory anchors sanity-check
+	// that the divisor tracks the derived value rather than the baseline.
+	cfg8 := Defaults()
+	_ = ApplyResourceSizing(&cfg8, 8*gib, 0, 0)
+	if cfg8.MaxConnections != 160 {
+		t.Fatalf("precondition: MaxConnections at 8GiB = %d, want 160", cfg8.MaxConnections)
+	}
+	// (8*gib - 2*gib) / (160*3) = 6GiB/480 = 12.8 MiB, formatted to kB.
+	if cfg8.WorkMem != "13107kB" {
+		t.Errorf("WorkMem at 8GiB, 160 conns = %q, want 13107kB", cfg8.WorkMem)
 	}
 }
 

@@ -32,6 +32,11 @@ func ApplyResourceSizing(cfg *Config, memBytes, cpuMillicores, diskBytes int64) 
 	}
 
 	if memBytes > 0 {
+		// Derive MaxConnections before WorkMem: WorkMem divides by conns.
+		cfg.MaxConnections = deriveMaxConnections(memBytes)
+		cfg.MaxWalSenders = deriveWalSenders(memBytes)
+		cfg.MaxReplicationSlots = cfg.MaxWalSenders
+
 		shared := memBytes / 4
 		cfg.SharedBuffers = formatBytes(shared)
 		cfg.EffectiveCacheSize = formatBytes(memBytes * 3 / 4)
@@ -76,6 +81,48 @@ func formatBytes(b int64) string {
 
 func clampInt64(v, lo, hi int64) int64 {
 	return min(max(v, lo), hi)
+}
+
+func deriveMaxConnections(memBytes int64) int {
+	memGiB := memBytes / gib
+	switch {
+	case memGiB < 2:
+		return 60
+	case memGiB < 4:
+		return 90
+	case memGiB < 8:
+		return 120
+	case memGiB < 16:
+		return 160
+	case memGiB < 32:
+		return 240
+	case memGiB < 64:
+		return 380
+	case memGiB < 128:
+		return 480
+	case memGiB < 192:
+		return 490
+	case memGiB < 384:
+		return 500
+	case memGiB < 768:
+		return 750
+	default:
+		return 1000
+	}
+}
+
+func deriveWalSenders(memBytes int64) int {
+	memGiB := memBytes / gib
+	switch {
+	case memGiB < 2:
+		return 5
+	case memGiB < 16:
+		return 10
+	case memGiB < 32:
+		return 24
+	default:
+		return 80
+	}
 }
 
 // ---------------------------------------------------------------------------
