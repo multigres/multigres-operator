@@ -55,7 +55,7 @@ func TestApplyResourceSizing_CPU(t *testing.T) {
 		},
 		"4 cores": {
 			millicores: 4000,
-			wantWorker: 4,
+			wantWorker: 6,
 			wantGather: 2,
 			wantMaint:  2,
 		},

@@ -7,11 +7,6 @@ const (
 	mib = int64(1) << 20
 	gib = int64(1) << 30
 
-	// parallelWorkerCPUThreshold is the minimum core count before the parallel-
-	// worker knobs are tuned. Below it the small-instance defaults are kept so
-	// tiny pods are not starved of worker slots.
-	parallelWorkerCPUThreshold = 4
-
 	// maintenanceWorkMemCapBytes caps maintenance_work_mem at 2GB.
 	maintenanceWorkMemCapBytes = 2 * gib
 )
@@ -30,12 +25,10 @@ func ApplyResourceSizing(cfg *Config, memBytes, cpuMillicores, diskBytes int64) 
 	// CPU first: it sets MaxParallelWorkersPerGather, which work_mem divides by.
 	if cpuMillicores > 0 {
 		cores := int(cpuMillicores / 1000)
-		if cores >= parallelWorkerCPUThreshold {
-			cfg.MaxWorkerProcesses = cores
-			cfg.MaxParallelWorkers = cores
-			cfg.MaxParallelWorkersPerGather = cores / 2
-			cfg.MaxParallelMaintenanceWorkers = min(cores/2, 4)
-		}
+		cfg.MaxWorkerProcesses = max(cores, cfg.MaxWorkerProcesses)
+		cfg.MaxParallelWorkers = max(cores, cfg.MaxParallelWorkers)
+		cfg.MaxParallelWorkersPerGather = max(cores/2, cfg.MaxParallelWorkersPerGather)
+		cfg.MaxParallelMaintenanceWorkers = min(max(cores/2, cfg.MaxParallelMaintenanceWorkers), 4)
 	}
 
 	if memBytes > 0 {

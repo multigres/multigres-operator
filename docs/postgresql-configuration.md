@@ -91,15 +91,14 @@ An input that is unset leaves its parameters at the baseline.
 | `maintenance_work_mem`                                                    | memory | `min(mem / 16, 2GB)`                                                          |
 | `wal_buffers`                                                             | memory | `clamp(shared_buffers × 3%, 32kB, 16MB)`                                      |
 | `work_mem`                                                                | memory | `(mem − shared_buffers) / (max_connections × 3) / parallel_workers`, min 64kB |
-| `max_worker_processes`, `max_parallel_workers`                            | CPU    | `= cores`                                                                     |
-| `max_parallel_workers_per_gather`                                         | CPU    | `= cores / 2`                                                                 |
-| `max_parallel_maintenance_workers`                                        | CPU    | `= min(cores / 2, 4)`                                                         |
+| `max_worker_processes`                                                    | CPU    | `max(cores, 6)`                                                               |
+| `max_parallel_workers`                                                    | CPU    | `max(cores, 2)`                                                               |
+| `max_parallel_workers_per_gather`                                         | CPU    | `ceil(cores / 2)`                                                             |
+| `max_parallel_maintenance_workers`                                        | CPU    | `min(ceil(cores / 2), 4)`                                                     |
 | `min_wal_size`, `max_wal_size`, `wal_keep_size`, `max_slot_wal_keep_size` | disk   | scaled down from the volume size                                              |
 
 Notes:
 
-- **Parallel-worker settings are tuned only at ≥ 4 CPU cores.** Below that the baseline is kept, so
-  small pods aren't starved of worker slots.
 - **`max_connections` is not resource-derived.** It stays at the baseline so it remains above the
   connection pooler's capacity. Raise it explicitly with `postgresConfig` if you need more (and size
   the pooler to match).
