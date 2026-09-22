@@ -75,7 +75,7 @@ func Defaults() Config {
 		MaintenanceWorkMem:            "16MB",
 		WorkMem:                       "1092kB",
 		MaxWorkerProcesses:            6,
-		EffectiveIoConcurrency:        0,
+		EffectiveIoConcurrency:        200,
 		MaxParallelWorkers:            2,
 		MaxParallelWorkersPerGather:   1,
 		MaxParallelMaintenanceWorkers: 1,

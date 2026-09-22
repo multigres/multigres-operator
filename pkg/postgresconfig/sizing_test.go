@@ -183,3 +183,10 @@ func TestDeriveWalSettings_Errors(t *testing.T) {
 		t.Error("expected error when segment size forces max_wal_size above the cap")
 	}
 }
+
+func TestDefaults_EffectiveIoConcurrency(t *testing.T) {
+	// SSDs everywhere; PgTune's OLTP/DW profile for SSD storage.
+	if got := Defaults().EffectiveIoConcurrency; got != 200 {
+		t.Errorf("Defaults().EffectiveIoConcurrency = %d, want 200", got)
+	}
+}

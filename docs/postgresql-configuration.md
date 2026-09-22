@@ -103,6 +103,7 @@ Notes:
 - **`max_connections` is not resource-derived.** It stays at the baseline so it remains above the
   connection pooler's capacity. Raise it explicitly with `postgresConfig` if you need more (and size
   the pooler to match).
+- **`effective_io_concurrency` defaults to `200`.** Matches PgTune's SSD profile.
 - These are pgtune-style heuristics; override any of them with `postgresConfig` when your workload
   needs something different.
 
