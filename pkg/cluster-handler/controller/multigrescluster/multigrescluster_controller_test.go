@@ -409,6 +409,149 @@ func TestHandleDeletionReleasesPoolerClient(t *testing.T) {
 	})
 }
 
+func TestHandleDeletionWaitsForChildren(t *testing.T) {
+	clusterKey := types.NamespacedName{Name: "test-cluster", Namespace: "test-ns"}
+	deletionTimestamp := metav1.Now()
+
+	newCluster := func() *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              clusterKey.Name,
+				Namespace:         clusterKey.Namespace,
+				DeletionTimestamp: &deletionTimestamp,
+				Finalizers:        []string{multigresv1alpha1.FinalizerClusterCleanup},
+			},
+		}
+	}
+	childLabels := map[string]string{metadata.LabelMultigresCluster: clusterKey.Name}
+
+	tests := []struct {
+		name  string
+		child client.Object
+	}{
+		{
+			name: "shard still present",
+			child: &multigresv1alpha1.Shard{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-shard",
+					Namespace: clusterKey.Namespace,
+					Labels:    childLabels,
+				},
+			},
+		},
+		{
+			name: "tablegroup still present",
+			child: &multigresv1alpha1.TableGroup{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-tablegroup",
+					Namespace:  clusterKey.Namespace,
+					Labels:     childLabels,
+					Finalizers: []string{"test/hold"},
+				},
+			},
+		},
+		{
+			name: "cell still present",
+			child: &multigresv1alpha1.Cell{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-cell",
+					Namespace:  clusterKey.Namespace,
+					Labels:     childLabels,
+					Finalizers: []string{"test/hold"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cluster := newCluster()
+			forgotten := false
+			r := &MultigresClusterReconciler{
+				Client: fake.NewClientBuilder().
+					WithScheme(setupScheme()).
+					WithObjects(cluster, tt.child).
+					Build(),
+				Recorder: record.NewFakeRecorder(1),
+				PoolerClientCache: poolerClientCacheFunc(func(types.NamespacedName) {
+					forgotten = true
+				}),
+			}
+
+			result, err := r.handleDeletion(t.Context(), cluster.DeepCopy())
+			if err != nil {
+				t.Fatalf("handleDeletion() error = %v", err)
+			}
+			if result.RequeueAfter != childDeletionRequeueDelay {
+				t.Fatalf(
+					"RequeueAfter = %v, want %v",
+					result.RequeueAfter,
+					childDeletionRequeueDelay,
+				)
+			}
+			if forgotten {
+				t.Fatal("pooler client cache notified while children remain")
+			}
+
+			got := &multigresv1alpha1.MultigresCluster{}
+			if err := r.Get(t.Context(), clusterKey, got); err != nil {
+				t.Fatalf("failed to get cluster: %v", err)
+			}
+			if !slices.Contains(got.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
+				t.Fatal("cluster cleanup finalizer removed while children remain")
+			}
+		})
+	}
+
+	t.Run("no children", func(t *testing.T) {
+		cluster := newCluster()
+		r := &MultigresClusterReconciler{
+			Client: fake.NewClientBuilder().
+				WithScheme(setupScheme()).
+				WithObjects(cluster).
+				Build(),
+			Recorder: record.NewFakeRecorder(1),
+		}
+		forgotten := make(chan types.NamespacedName, 1)
+		r.PoolerClientCache = poolerClientCacheFunc(func(key types.NamespacedName) {
+			forgotten <- key
+		})
+
+		fetched := &multigresv1alpha1.MultigresCluster{}
+		if err := r.Get(t.Context(), clusterKey, fetched); err != nil {
+			t.Fatalf("failed to get cluster: %v", err)
+		}
+
+		result, err := r.handleDeletion(t.Context(), fetched)
+		if err != nil {
+			t.Fatalf("handleDeletion() error = %v", err)
+		}
+		if result.RequeueAfter != 0 {
+			t.Fatalf("RequeueAfter = %v, want 0", result.RequeueAfter)
+		}
+		select {
+		case got := <-forgotten:
+			if got != clusterKey {
+				t.Fatalf("forgot cluster %v, want %v", got, clusterKey)
+			}
+		default:
+			t.Fatal("pooler client cache was not notified")
+		}
+
+		got := &multigresv1alpha1.MultigresCluster{}
+		err = r.Get(t.Context(), clusterKey, got)
+		switch {
+		case err == nil:
+			if slices.Contains(got.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
+				t.Fatal("cluster cleanup finalizer not removed")
+			}
+		case apierrors.IsNotFound(err):
+		default:
+			t.Fatalf("failed to get cluster: %v", err)
+		}
+	})
+}
+
 func TestReconcileNotFoundReleasesPoolerClient(t *testing.T) {
 	key := types.NamespacedName{Name: "missing", Namespace: "test-ns"}
 	forgotten := make(chan types.NamespacedName, 1)

@@ -151,11 +151,11 @@ func (r *ShardReconciler) handleDeletion(
 //
 // If the owning MultigresCluster is confirmed still present and being
 // deleted, PVCs are deleted in line. The cluster is going away, so there is
-// nothing left to roll a scale down back to. Otherwise, either the Shard is
-// being individually removed (e.g. a shard count scale down) while the
-// cluster stays up, or the parent cluster is unexpectedly unreadable, so PVCs
-// are orphaned instead. That gives multigres gc's retention window a chance
-// to recover from an accidental removal. See clusterIsChurning.
+// nothing left to roll a scale down back to. The cluster controller holds
+// its own finalizer until Shards are gone, so this is the normal path for a
+// full cluster teardown. Otherwise the Shard is being individually removed
+// (e.g. a shard count scale down) while the cluster stays up, so PVCs are
+// orphaned instead.
 func (r *ShardReconciler) cleanupShardPVCs(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,

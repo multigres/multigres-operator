@@ -391,8 +391,16 @@ func (r *MultigresClusterReconciler) ensureClusterFinalizer(
 	return nil
 }
 
-// handleDeletion deletes cluster children and retained topology PVCs before
-// releasing the cluster cleanup finalizer.
+// childDeletionRequeueDelay is how long handleDeletion waits before
+// rechecking for remaining children. The cluster controller does not watch
+// Shards, so it must poll rather than wait for a watch event.
+const childDeletionRequeueDelay = 2 * time.Second
+
+// handleDeletion deletes cluster children and retained topology PVCs, then
+// holds the cluster cleanup finalizer until all Shards, TableGroups, and
+// Cells are gone. That keeps the cluster's DeletionTimestamp visible so the
+// Shard controller's clusterIsChurning check can detect the teardown and
+// hard-delete PVCs instead of orphaning them.
 func (r *MultigresClusterReconciler) handleDeletion(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
@@ -465,6 +473,20 @@ func (r *MultigresClusterReconciler) handleDeletion(
 		}
 	}
 
+	shards := &multigresv1alpha1.ShardList{}
+	if err := r.List(ctx, shards, ns, clusterLabels); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to list shards: %w", err)
+	}
+
+	if len(shards.Items) > 0 || len(tableGroups.Items) > 0 || len(cells.Items) > 0 {
+		l.Info("Waiting for child resources to finish deleting",
+			"shards", len(shards.Items),
+			"tablegroups", len(tableGroups.Items),
+			"cells", len(cells.Items),
+		)
+		return ctrl.Result{RequeueAfter: childDeletionRequeueDelay}, nil
+	}
+
 	if slices.Contains(cluster.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
 		before := cluster.DeepCopy()
 
@@ -495,7 +517,7 @@ func (r *MultigresClusterReconciler) handleDeletion(
 	}
 
 	l.Info("Cluster cleanup complete")
-	r.Recorder.Event(cluster, "Normal", "CleanupComplete", "Initiated deletion of child resources")
+	r.Recorder.Event(cluster, "Normal", "CleanupComplete", "All child resources deleted")
 	return ctrl.Result{}, nil
 }
 
