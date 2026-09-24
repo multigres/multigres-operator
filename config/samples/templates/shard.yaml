@@ -16,7 +16,7 @@ spec:
   pools:
     main-app:
       type: "readWrite"
-      replicasPerCell: 4
+      replicasPerCell: 3
       storage:
         class: "standard"
         size: "100Gi"
