@@ -86,8 +86,8 @@ jobs:
         id: builder-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
-          private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
+          app-id: ${{ vars.BUILDER_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.BUILDER_DISPATCH_APP_PRIVATE_KEY }}
           owner: multigres
           repositories: multigres-operator-builder
           # repository_dispatch requires contents: write on the target repo.
