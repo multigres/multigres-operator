@@ -26,6 +26,11 @@ import (
 // These tests launch disposable local etcd processes, never a configured
 // Kubernetes cluster. Prefer the same binary as envtest when available.
 func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
+	c, endpoints, _ := startTestEtcd(t)
+	return c, endpoints
+}
+
+func startTestEtcd(t *testing.T) (*memberClients, []string, []func()) {
 	t.Helper()
 	binary := filepath.Join(os.Getenv("KUBEBUILDER_ASSETS"), "etcd")
 	if _, err := os.Stat(binary); err != nil {
@@ -53,6 +58,7 @@ func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 		peers[i] = allocateURL()
 		cluster[i] = fmt.Sprintf("member-%d=%s", i, peers[i])
 	}
+	stop := make([]func(), len(endpoints))
 	for i := range endpoints {
 		dir := t.TempDir()
 		logFile, err := os.Create(filepath.Join(dir, "etcd.log"))
@@ -91,6 +97,7 @@ func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 			_ = logFile.Close()
 			t.Fatal(err)
 		}
+		stop[i] = func() { _ = cmd.Process.Kill() }
 		t.Cleanup(func() {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
@@ -122,7 +129,7 @@ func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return c, endpoints
+	return c, endpoints, stop
 }
 
 func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {

@@ -100,6 +100,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 	err = r.Get(ctx, req.NamespacedName, cluster)
 	if err != nil {
 		if errors.IsNotFound(err) {
+			monitoring.DeleteFailoverHealth(req.Name, req.Namespace)
 			if r.PoolerClientCache != nil {
 				r.PoolerClientCache.ForgetCluster(req.NamespacedName)
 			}
@@ -137,6 +138,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 	}
 
 	if !cluster.DeletionTimestamp.IsZero() {
+		monitoring.DeleteFailoverHealth(cluster.Name, cluster.Namespace)
 		return r.handleDeletion(ctx, cluster)
 	}
 	if r.PoolerClientCache != nil {
@@ -290,6 +292,15 @@ func (r *MultigresClusterReconciler) Reconcile(
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileTopology")
 		result, err := r.reconcileTopology(ctx, cluster, res, pendingCells)
+		if err != nil || result.RequeueAfter > 0 {
+			if statusErr := r.updateStatus(ctx, cluster); statusErr != nil {
+				childSpan.End()
+				return ctrl.Result{}, fmt.Errorf(
+					"refreshing status after topology reconciliation: %w",
+					statusErr,
+				)
+			}
+		}
 		if err != nil {
 			monitoring.RecordSpanError(childSpan, err)
 			childSpan.End()
@@ -343,24 +354,6 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
-	// Emit cluster-level metrics
-	monitoring.SetClusterInfo(
-		cluster.Name,
-		cluster.Namespace,
-		string(cluster.Status.Phase),
-		cluster.Status.InitializedAt != nil,
-	)
-	var totalShards int
-	for _, db := range cluster.Status.Databases {
-		totalShards += int(db.TotalShards)
-	}
-	monitoring.SetClusterTopology(
-		cluster.Name,
-		cluster.Namespace,
-		len(cluster.Status.Cells),
-		totalShards,
-	)
-
 	if pendingCells || pendingDBs {
 		l.V(1).Info("Pending graceful deletions, requeueing",
 			"duration", time.Since(start).String())
@@ -369,7 +362,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(start).String())
 	r.Recorder.Event(cluster, "Normal", "Synced", "Successfully reconciled MultigresCluster")
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: clusterHealthInterval}, nil
 }
 
 func (r *MultigresClusterReconciler) ensureClusterFinalizer(

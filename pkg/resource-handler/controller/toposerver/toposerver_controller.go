@@ -551,6 +551,14 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
+	if err := ctrl.NewControllerManagedBy(mgr).
+		Named("toposerver-health").
+		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		WithOptions(controllerOpts).
+		Complete(reconcile.Func(r.reconcileHealth)); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(
 			predicate.GenerationChangedPredicate{},

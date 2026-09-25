@@ -127,28 +127,13 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(
-		clusterInfo,
-		clusterCellsTotal,
-		clusterShardsTotal,
-		cellGatewayReplicas,
-		shardPoolReplicas,
-		poolPodsDrifted,
-		toposerverReplicas,
-		webhookRequestTotal,
-		webhookRequestDuration,
-		lastBackupAgeSeconds,
-		drainOperationsTotal,
-		rollingUpdateInProgress,
-		reconcileErrorsTotal,
-		shardPostureInconsistent,
-	)
+	metrics.Registry.MustRegister(Collectors()...)
 }
 
 // Collectors returns all registered metric collectors. This is useful for
 // testing that metrics are properly registered.
 func Collectors() []prometheus.Collector {
-	return []prometheus.Collector{
+	collectors := []prometheus.Collector{
 		clusterInfo,
 		clusterCellsTotal,
 		clusterShardsTotal,
@@ -164,6 +149,10 @@ func Collectors() []prometheus.Collector {
 		reconcileErrorsTotal,
 		shardPostureInconsistent,
 	}
+	for _, collector := range topologyCollectors {
+		collectors = append(collectors, collector)
+	}
+	return collectors
 }
 
 // RecordReconcileError increments the per-object reconcile error counter.

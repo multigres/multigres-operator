@@ -470,6 +470,15 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 			},
 			Status: multigresv1alpha1.TopoServerStatus{
+				HealthCheckedAt: func() *metav1.Time { now := metav1.Now(); return &now }(),
+				Conditions: []metav1.Condition{
+					{
+						Type:    "QuorumAvailable",
+						Status:  metav1.ConditionTrue,
+						Reason:  "QuorumAvailable",
+						Message: "Quorum confirmed",
+					},
+				},
 				Phase: multigresv1alpha1.PhaseHealthy,
 			},
 		}
@@ -529,6 +538,15 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			meta.SetStatusCondition(
+				&tt.cluster.Status.Conditions,
+				metav1.Condition{
+					Type:    conditionTopologyReady,
+					Status:  metav1.ConditionTrue,
+					Reason:  "TopoConnected",
+					Message: "Topology reachable",
+				},
+			)
 			objects := append([]client.Object{tt.cluster}, tt.children...)
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -604,6 +622,15 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 		},
 	}
 
+	meta.SetStatusCondition(
+		&cluster.Status.Conditions,
+		metav1.Condition{
+			Type:    conditionTopologyReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  "TopoConnected",
+			Message: "Topology reachable",
+		},
+	)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(cluster, cell, tableGroup).

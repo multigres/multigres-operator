@@ -1,0 +1,173 @@
+evaluation_interval: 30s
+rule_files:
+- rules.yaml
+tests:
+- input_series:
+  - series: multigres_operator_toposerver_quorum_available{cluster="example", name="example-global-topo",
+      target_namespace="database",reason="EtcdStatusError"}
+    values: 0x4 stale
+  - series: multigres_operator_cluster_failover_ready{cluster="example", target_namespace="database",reason="EtcdStatusError"}
+    values: 0x4 stale
+  - series: multigres_operator_toposerver_member_up{cluster="example", name="example-global-topo",
+      target_namespace="database",member="example-global-topo-0"}
+    values: 1x6
+  interval: 30s
+  name: etcd alarms trigger topology and failover alerts despite successful reads
+  promql_expr_test:
+  - eval_time: 30s
+    exp_samples: []
+    expr: count(ALERTS{reason="EtcdStatusError",alertstate="firing"})
+  - eval_time: 60s
+    exp_samples:
+    - labels: '{}'
+      value: 2
+    expr: count(ALERTS{alertname=~"MultigresTopologyQuorumUnavailable|MultigresFailoverUnavailable",reason="EtcdStatusError",alertstate="firing"})
+  - eval_time: 120s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyMemberUnavailable",alertstate="firing"})
+  - eval_time: 150s
+    exp_samples: []
+    expr: count(ALERTS{reason="EtcdStatusError",alertstate="firing"})
+- input_series:
+  - series: multigres_operator_toposerver_quorum_available{cluster="example", name="example-global-topo",
+      target_namespace="database",reason="QuorumUnavailable"}
+    values: 1x1 0x4 1x3
+  interval: 30s
+  name: quorum loss fires in one minute and clears on recovery
+  promql_expr_test:
+  - eval_time: 90s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyQuorumUnavailable",alertstate="firing"})
+  - eval_time: 120s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresTopologyQuorumUnavailable",alertstate="firing"})
+  - eval_time: 210s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyQuorumUnavailable",alertstate="firing"})
+- input_series:
+  - series: container_memory_working_set_bytes{namespace="database",pod="example-global-topo-0",container="etcd",instance="node"}
+    values: 85x8
+  - series: multigres_operator_toposerver_memory_limit_bytes{cluster="example", name="example-global-topo",
+      target_namespace="database", member="example-global-topo-0",namespace="operator",pod="controller-manager",instance="operator"}
+    values: 100x8
+  - series: multigres_operator_toposerver_member_oom_timestamp_seconds{cluster="example",
+      name="example-global-topo", target_namespace="database", member="example-global-topo-0"}
+    values: "0x8"
+  interval: 30s
+  name: memory pressure fires before any OOM despite exporter label collisions
+  promql_expr_test:
+  - eval_time: 30s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyMemoryPressure",alertstate="firing"})
+  - eval_time: 60s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresTopologyMemoryPressure",alertstate="firing"})
+  - eval_time: 120s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyMemberOOMKilled",alertstate="firing"})
+- input_series:
+  - series: container_memory_working_set_bytes{namespace="database",pod="example-global-topo-0",container="etcd"}
+    values: 1000x8
+  - series: multigres_operator_toposerver_memory_limit_bytes{cluster="example", name="example-global-topo",
+      target_namespace="database", member="example-global-topo-0"}
+    values: "0x8"
+  interval: 30s
+  name: unlimited memory and unrelated containers do not alert
+  promql_expr_test:
+  - eval_time: 120s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyMemoryPressure",alertstate="firing"})
+- input_series:
+  - series: multigres_operator_toposerver_backend_bytes{cluster="example", name="example-global-topo",
+      target_namespace="database", member="example-global-topo-0"}
+    values: 90x12
+  - series: multigres_operator_toposerver_backend_quota_bytes{cluster="example", name="example-global-topo",
+      target_namespace="database", member="example-global-topo-0"}
+    values: 100x12
+  interval: 30s
+  name: backend pressure uses configured quota
+  promql_expr_test:
+  - eval_time: 4m
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyBackendNearQuota",alertstate="firing"})
+  - eval_time: 5m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresTopologyBackendNearQuota",alertstate="firing"})
+- input_series:
+  - series: multigres_operator_toposerver_backend_bytes{cluster="example", name="example-global-topo",
+      target_namespace="database", member="example-global-topo-0"}
+    values: 90x1 stale _x12
+  - series: multigres_operator_toposerver_backend_quota_bytes{cluster="example", name="example-global-topo",
+      target_namespace="database", member="example-global-topo-0"}
+    values: 100x14
+  interval: 30s
+  name: lost backend observations do not become zeros or stay healthy
+  promql_expr_test:
+  - eval_time: 6m
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyBackendNearQuota",alertstate="firing"})
+- input_series:
+  - series: multigres_operator_cluster_failover_ready{cluster="example",target_namespace="database",reason="OrchestratorUnavailable"}
+    values: "0x8"
+  interval: 30s
+  name: failover failure retains its cause and critical severity
+  promql_expr_test:
+  - eval_time: 1m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresFailoverUnavailable",alertstate="firing",reason="OrchestratorUnavailable",severity="critical"})
+- input_series:
+  - series: multigres_operator_toposerver_health_checked_timestamp_seconds{cluster="example",
+      name="example-global-topo", target_namespace="database"}
+    values: "0x12"
+  - series: multigres_operator_toposerver_quorum_available{cluster="example", name="example-global-topo",
+      target_namespace="database",reason="QuorumAvailable"}
+    values: 1x12
+  interval: 30s
+  name: old successful probes become unknown
+  promql_expr_test:
+  - eval_time: 2m
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyHealthUnknown",alertstate="firing"})
+  - eval_time: 4m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresTopologyHealthUnknown",alertstate="firing"})
+- input_series:
+  - series: multigres_operator_toposerver_member_oom_timestamp_seconds{cluster="example",
+      name="example-global-topo", target_namespace="database", member="example-global-topo-0"}
+    values: 0 30x12
+  interval: 30s
+  name: recent OOMs alert and expire
+  promql_expr_test:
+  - eval_time: 0s
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyMemberOOMKilled",alertstate="firing"})
+  - eval_time: 60s
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresTopologyMemberOOMKilled",alertstate="firing"})
+  - eval_time: 6m
+    exp_samples: []
+    expr: count(ALERTS{alertname="MultigresTopologyMemberOOMKilled",alertstate="firing"})
+- input_series:
+  - series: multigres_operator_toposerver_member_restarts_total{cluster="example",
+      name="example-global-topo", target_namespace="database", member="example-global-topo-0"}
+    values: 0 1 2 3 4 4x10
+  interval: 30s
+  name: repeated restarts alert
+  promql_expr_test:
+  - eval_time: 2m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+    expr: count(ALERTS{alertname="MultigresTopologyMemberRestarting",alertstate="firing"})
