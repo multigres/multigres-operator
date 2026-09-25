@@ -32,24 +32,24 @@ func (o *Observer) checkReplication(ctx context.Context) {
 		}
 		o.checkShardReplication(ctx, shard)
 
-		var primaryCount, replicaCount, drainedCount int
+		var primaryCount, replicaCount, quarantinedCount int
 		for _, role := range shard.Status.PodRoles {
-			switch {
-			case role == "PRIMARY" || role == "primary":
+			switch role {
+			case "PRIMARY", "primary":
 				primaryCount++
-			case role == "DRAINED":
-				drainedCount++
+			case "QUARANTINED":
+				quarantinedCount++
 			default:
 				replicaCount++
 			}
 		}
 		replData = append(replData, map[string]any{
-			"shard":        shard.Name,
-			"namespace":    shard.Namespace,
-			"primaryCount": primaryCount,
-			"replicaCount": replicaCount,
-			"drainedCount": drainedCount,
-			"podRoles":     shard.Status.PodRoles,
+			"shard":            shard.Name,
+			"namespace":        shard.Namespace,
+			"primaryCount":     primaryCount,
+			"replicaCount":     replicaCount,
+			"quarantinedCount": quarantinedCount,
+			"podRoles":         shard.Status.PodRoles,
 		})
 	}
 
@@ -66,32 +66,37 @@ func (o *Observer) checkShardReplication(ctx context.Context, shard *multigresv1
 	shardLabelValue := shard.Labels[common.LabelMultigresShard]
 	password := o.fetchShardPassword(ctx, shard)
 
-	// Classify pods by role.
+	// Classify pods by role. QUARANTINED pods are kept out of the replica set:
+	// their postgres cannot start, so they neither stream from the primary nor
+	// count toward the expected replica connection count. Counting them as
+	// replicas would inflate expectedReplicas and produce false "primary has
+	// fewer standbys than expected" findings. They are surfaced separately and
+	// replaced by quarantine remediation (data PVC wipe + re-bootstrap).
 	var primaryPodNames []string
 	var replicaPodNames []string
-	var drainedPodNames []string
+	var quarantinedPodNames []string
 	for podName, role := range shard.Status.PodRoles {
-		switch {
-		case role == "PRIMARY" || role == "primary":
+		switch role {
+		case "PRIMARY", "primary":
 			primaryPodNames = append(primaryPodNames, podName)
-		case role == "DRAINED":
-			drainedPodNames = append(drainedPodNames, podName)
+		case "QUARANTINED":
+			quarantinedPodNames = append(quarantinedPodNames, podName)
 		default:
 			replicaPodNames = append(replicaPodNames, podName)
 		}
 	}
 
-	if len(drainedPodNames) > 0 {
+	if len(quarantinedPodNames) > 0 {
 		o.reporter.Report(report.Finding{
 			Severity:  report.SeverityWarn,
 			Check:     "replication",
 			Component: comp,
 			Message: fmt.Sprintf(
-				"Shard has %d DRAINED pod(s) awaiting admin intervention: %v",
-				len(drainedPodNames), drainedPodNames,
+				"Shard has %d QUARANTINED pod(s) awaiting remediation (data PVC wipe + re-bootstrap): %v",
+				len(quarantinedPodNames), quarantinedPodNames,
 			),
 			Details: map[string]any{
-				"drainedPods": drainedPodNames,
+				"quarantinedPods": quarantinedPodNames,
 			},
 		})
 	}
