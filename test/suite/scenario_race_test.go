@@ -64,21 +64,11 @@ func TestTwoControllersWriteOneShard(t *testing.T) {
 	// managers.
 	t.Run("field ownership on the Shard is disjoint", func(t *testing.T) {
 		c := c.Sub(t)
-		// Several Shard status writes carry no field owner, so the API server
-		// attributes them to the manager that happens to be the process name,
-		// and that manager ends up co-owning fields the shard controller's own
-		// applier claims. Retire this pin with an explicit owner on every
-		// status write, and replace it with c.Empty on the conflicts.
 		conflicts := c.fieldOwnershipConflicts(key)
-		c.KnownDefect("MGO-SHARD-STATUS-WRITES-NO-FIELD-OWNER", func() error {
-			if len(conflicts) == 0 {
-				return nil
-			}
-			return fmt.Errorf(
-				"Shard %s has fields claimed by more than one field manager, "+
-					"the same shape of defect as the status hot loop:\n  %s",
-				key.Name, strings.Join(conflicts, "\n  "))
-		})
+		c.Empty(conflicts,
+			"Shard %s has fields claimed by more than one field manager, "+
+				"the same shape of defect as the status hot loop:\n  %s",
+			key.Name, strings.Join(conflicts, "\n  "))
 	})
 
 	t.Run("tablegroup's patches to the Shard never change it", func(t *testing.T) {

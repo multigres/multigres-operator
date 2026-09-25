@@ -205,8 +205,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 				shard,
 				fmt.Sprintf("Failed to check backup health: %v", err),
 			)
-			if patchErr := r.Status().
-				Patch(ctx, shard, client.MergeFrom(backupBase)); patchErr != nil {
+			if patchErr := r.Status().Patch(
+				ctx,
+				shard,
+				client.MergeFrom(backupBase),
+				client.FieldOwner("multigres-resource-handler"),
+			); patchErr != nil {
 				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
 			}
 		} else if result != nil {
@@ -222,7 +226,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 				r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
 			}
 
-			if err := r.Status().Patch(ctx, shard, client.MergeFrom(backupBase)); err != nil {
+			if err := r.Status().Patch(
+				ctx,
+				shard,
+				client.MergeFrom(backupBase),
+				client.FieldOwner("multigres-resource-handler"),
+			); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
 				logger.Error(err, "Failed to update shard backup status")
@@ -317,7 +326,12 @@ func (r *ShardReconciler) reconcilePodRoles(
 	}
 
 	if rolesChanged {
-		if err := r.Status().Patch(ctx, shard, client.MergeFrom(statusBase)); err != nil {
+		if err := r.Status().Patch(
+			ctx,
+			shard,
+			client.MergeFrom(statusBase),
+			client.FieldOwner("multigres-resource-handler"),
+		); err != nil {
 			logger.Error(err, "Failed to update shard pod roles")
 		}
 	}
