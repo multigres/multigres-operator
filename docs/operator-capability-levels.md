@@ -142,7 +142,7 @@ The operator continuously updates status on all CRs:
 - **MultigresCluster**: Phase (Healthy/Progressing/Error/Deleting), conditions
   (Available, Progressing), per-cell and per-database status summaries
 - **Shard**: Phase, conditions, per-cell pool status, PodRoles map
-  (PRIMARY/REPLICA/DRAINED), LastBackupTime, LastBackupType
+  (PRIMARY/REPLICA/QUARANTINED), LastBackupTime, LastBackupType
 - **Cell/TableGroup/TopoServer**: Phase, conditions, ObservedGeneration
 - All CRs expose Phase, Available, and Age via `kubectl get` print columns
 
@@ -293,7 +293,7 @@ Two-dimensional PVC deletion policy:
 | Policy | Retain (default) | Delete |
 |:-------|:-----------------|:-------|
 | **WhenDeleted** | PVCs kept after Shard deletion | PVCs removed with Shard |
-| **WhenScaled** | PVCs kept after scale-down (explicit `Retain`) | PVCs removed on scale-down (default); always deleted for DRAINED pods |
+| **WhenScaled** | PVCs kept after scale-down (explicit `Retain`) | PVCs orphaned for garbage collection on scale-down (default) |
 
 ---
 
@@ -411,8 +411,9 @@ The operator continuously reconciles desired state and recovers from failures:
   entries are missing
 - **PodRoles refresh**: Continuously updated from topology server to reflect
   actual database roles
-- **DRAINED pod handling**: Detects DRAINED role from etcd, keeps pod alive
-  for admin investigation, creates stand-in replica for availability
+- **QUARANTINED pod handling**: Detects QUARANTINED role from etcd (a pooler
+  whose postgres cannot start) and remediates in place — deletes the pod, wipes
+  its data PVC, and re-bootstraps from backup at the same index
 - **Scale-down safety**: Blocks scale-down when pool is already degraded
 
 ### Auto-healing (upstream Multigres)

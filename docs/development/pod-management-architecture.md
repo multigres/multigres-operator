@@ -136,7 +136,7 @@ PVC lifecycle is managed through **conditional owner references** based on the `
 - When `WhenDeleted` is `Delete`: PVCs are created with an ownerRef pointing to the Shard CR, enabling Kubernetes garbage collection to cascade-delete them when the Shard is removed.
 - When `WhenDeleted` is `Retain`: PVCs are created without ownerRefs, ensuring they persist after Shard deletion.
 - The shard controller's `reconcilePVCOwnerRefs` function ensures existing PVCs stay in sync with the current policy — adding or removing ownerRefs as the policy changes mid-lifecycle.
-- During scale-down, `cleanupDrainedPod` checks `WhenScaled` and deletes data PVCs directly if the policy is `Delete` (the default). For DRAINED pods (identified by the `multigres.com/role=DRAINED` label), PVCs are always deleted regardless of the `WhenScaled` policy because DRAINED pod data is known-bad.
+- During scale-down, `cleanupDrainedPod` checks `WhenScaled`: for a scaled-down pod (index >= replicas) under the `Delete` policy (the default) it orphans the data PVC for garbage collection, while a rolling-update pod (index < replicas) keeps its PVC.
 
 ---
 
@@ -408,7 +408,7 @@ Metrics are emitted per pool via `monitoring.SetShardPoolReplicas()`. A `PoolEmp
 | **Etcd topology cleanup** | `UnregisterMultiPooler` called during drain flow; stale entries removed on pod termination |
 | **Topology registration & pruning** | Cell and database registration centralized in MultigresCluster controller; stale entries pruned when `topologyPruning.enabled` (default) |
 | **Backup health reporting** | Shard controller calls `GetBackups` RPC, sets `BackupHealthy` condition and `LastBackupTime` status |
-| **DRAINED pod handling** | DRAINED pods (diverged data, pg_rewind failure) are kept alive for admin investigation. Stand-in replicas created at next index for availability. Admin discards via `kubectl delete pod`, triggering drain + PVC deletion |
+| **QUARANTINED pod handling** | QUARANTINED pods (postgres cannot start) are remediated in place: the operator deletes the pod, wipes its data PVC, and re-bootstraps from backup at the same index |
 | **Shard-wide drain serialization** | Planned drains check all persisted drain/termination state across reconciles and wait for data-plane recovery before the next removal |
 | **Two-cell maintenance surge** | Creates and verifies temporary same-cell capacity before disrupting the final ready member of a two-cell cross-cell shard |
 | **Scale-down health gate** | Drains deferred when either the current pool or another shard pool/cell has non-ready pods |
@@ -523,7 +523,7 @@ Pods reference this via `spec.subdomain`, combined with `spec.hostname` (set to 
 ### Etcd Topology
 
 The operator reads from etcd topology (via the shard controller) to:
-- Determine pod roles (`PRIMARY`, `REPLICA`, `DRAINED`) for scale-down and rolling-update decisions.
+- Determine pod roles (`PRIMARY`, `REPLICA`, `QUARANTINED`) for scale-down and rolling-update decisions.
 - Clean up stale topology entries on permanent pod removal (`UnregisterMultiPooler`).
 
 The operator writes to etcd topology (via the MultigresCluster controller) to:
@@ -559,7 +559,7 @@ Through the shard controller:
 | Scale-up (new replicas) | Create PVC + Pod, multigres handles the rest |
 | Scale-down | Drain state machine with standby removal + etcd unregistration |
 | Rolling update | Spec-hash detection, ordered recreation |
-| DRAINED pod handling | Detects DRAINED role from etcd, keeps pod alive for investigation, creates stand-in replica |
+| QUARANTINED pod handling | Detects QUARANTINED role from etcd, remediates in place (delete pod + wipe data PVC + re-bootstrap from backup) |
 | Backup health reporting | Calls `GetBackups` RPC, sets `BackupHealthy` condition |
 | PVC lifecycle | Direct creation/deletion per policy |
 | Certificate provisioning | `pkg/cert` for pgBackRest TLS |

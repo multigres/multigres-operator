@@ -529,6 +529,9 @@ When scaling down, the operator must choose which pod to delete. The selection a
 
 ### DRAINED Pooler Replacement
 
+> [!WARNING]
+> **Obsolete — needs rewrite.** This section (and the other `DRAINED` references in this design doc) describes the retired "stand-in replica" model. Multigres no longer emits the `DRAINED` topology role (`PoolerType.DRAINED` is deprecated and never produced); poolers whose postgres cannot start are surfaced as `QUARANTINED` and remediated in place (delete pod + wipe data PVC + re-bootstrap from backup). The stand-in machinery has been removed from the operator. This narrative should be rewritten around quarantine remediation; it is left in place here pending that rewrite.
+
 Multiorch may mark a pooler as `DRAINED` in etcd independently of the operator (e.g., during internal recovery or rebalancing). When this happens, the operator must:
 
 1. **Detect the DRAINED pooler** by reading etcd topology during reconciliation and comparing `PoolerType` for each pod's `service-id`

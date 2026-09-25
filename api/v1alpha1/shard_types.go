@@ -326,7 +326,7 @@ type ShardStatus struct {
 	// +kubebuilder:validation:Enum=full;diff;incr
 	LastBackupType string `json:"lastBackupType,omitempty"`
 
-	// PodRoles maps pod names to their database roles (e.g. PRIMARY, REPLICA, DRAINED).
+	// PodRoles maps pod names to their database roles (e.g. PRIMARY, REPLICA, QUARANTINED).
 	// +optional
 	PodRoles map[string]string `json:"podRoles,omitempty"`
 

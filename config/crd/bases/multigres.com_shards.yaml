@@ -3042,7 +3042,7 @@ spec:
                 additionalProperties:
                   type: string
                 description: PodRoles maps pod names to their database roles (e.g.
-                  PRIMARY, REPLICA, DRAINED).
+                  PRIMARY, REPLICA, QUARANTINED).
                 type: object
               poolsReady:
                 description: PoolsReady indicates if all data pools are ready.
