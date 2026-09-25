@@ -108,7 +108,7 @@ KUSTOMIZE_VERSION ?= v5.6.0
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT_VERSION ?= v2.13.2
 
 CERT_MANAGER_VERSION ?= v1.19.2
 
@@ -722,10 +722,13 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 # golangci-lint's own go.mod selects an older toolchain than this module
 # targets, and a linter built with a lower Go version refuses to run. Pin the
-# build toolchain to the one resolved by this module's go.mod.
+# build toolchain to the one resolved by this module's go.mod, and put that
+# version in the binary's name: CI restores bin/ from older caches, and a
+# name keyed only on the linter's version would reuse a binary built by the
+# previous toolchain after a Go bump.
 $(GOLANGCI_LINT): export GOTOOLCHAIN = $(shell go env GOVERSION)
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION),$(shell go env GOVERSION))
 
 .PHONY: install-certmanager
 install-certmanager: ## Install Cert-Manager into the cluster
@@ -738,16 +741,17 @@ install-certmanager: ## Install Cert-Manager into the cluster
 # $1 - target path with name of binary
 # $2 - package url which can be installed
 # $3 - specific version of package
+# $4 - optional extra suffix for the binary's name, e.g. the Go version it was built with
 define go-install-tool
-@[ -f "$(1)-$(3)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)" ] || { \
+@[ -f "$(1)-$(3)$(if $(4),-$(4))" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)$(if $(4),-$(4))" ] || { \
 set -e; \
 package=$(2)@$(3) ;\
 echo "Downloading $${package}" ;\
 rm -f $(1) ;\
 GOBIN=$(LOCALBIN) go install $${package} ;\
-mv $(1) $(1)-$(3) ;\
+mv $(1) $(1)-$(3)$(if $(4),-$(4)) ;\
 } ;\
-ln -sf $$(realpath $(1)-$(3)) $(1)
+ln -sf $$(realpath $(1)-$(3)$(if $(4),-$(4))) $(1)
 endef
 
 ##@ Backward Compatibility Aliases
