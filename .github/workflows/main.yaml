@@ -77,6 +77,31 @@ jobs:
             --target "$COMMIT_SHA" \
             dist/install*.yaml
 
+  notify-builder:
+    needs: update-current-release
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Generate GitHub App token for the builder repo
+        id: builder-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BUILDER_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.BUILDER_DISPATCH_APP_PRIVATE_KEY }}
+          owner: multigres
+          repositories: multigres-operator-builder
+          # repository_dispatch requires contents: write on the target repo.
+          permission-contents: write
+
+      - name: Dispatch current-release-updated
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ steps.builder-token.outputs.token }}
+        run: |
+          gh api repos/multigres/multigres-operator-builder/dispatches \
+            -f event_type=current-release-updated \
+            -f "client_payload[sha]=$COMMIT_SHA"
+
   coverage:
     name: Coverage
     permissions:
