@@ -18,25 +18,24 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestClusterDeletion verifies that deleting a MultigresCluster triggers
 // cascading deletion of all child resources (CRDs and Kubernetes resources).
 func TestClusterDeletion(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	// Load and create the minimal sample.
 	cr := framework.MustLoadCluster("config/samples/minimal.yaml", ns)
 	cr.Name = "delete-me" // distinct name for clarity in logs
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	// Wait for full provisioning.
 	cluster.WaitForAllPodsReady(t, ns)
@@ -44,20 +43,21 @@ func TestClusterDeletion(t *testing.T) {
 
 	// Delete the cluster.
 	clusterKey := client.ObjectKeyFromObject(cr)
-	if err := c.Delete(ctx, cr); err != nil {
-		t.Fatalf("delete MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Delete(ctx, cr), "delete MultigresCluster")
 
 	// Wait for the MultigresCluster object to disappear.
 	pollCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	err = wait.PollUntilContextCancel(pollCtx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		err := c.Get(ctx, clusterKey, &multigresv1alpha1.MultigresCluster{})
-		return apierrors.IsNotFound(err), nil
-	})
-	if err != nil {
-		t.Fatalf("MultigresCluster not deleted: %v", err)
-	}
+	err = wait.PollUntilContextCancel(
+		pollCtx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			err := c.Get(ctx, clusterKey, &multigresv1alpha1.MultigresCluster{})
+			return apierrors.IsNotFound(err), nil
+		},
+	)
+	ck.NoError(err, "MultigresCluster not deleted")
 
 	// Verify child CRDs are cleaned up.
 	framework.WaitForEmpty(t, c, ns,
@@ -95,11 +95,10 @@ func TestClusterDeletion(t *testing.T) {
 // StatefulSet no longer exist by the time cluster deletion starts.
 func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.Require().NoError(err, "create CR client")
 	ctx := context.Background()
 
 	cr := framework.MustLoadCluster("config/samples/minimal.yaml", ns)
@@ -108,22 +107,19 @@ func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 		WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
 		WhenScaled:  multigresv1alpha1.RetainPVCRetentionPolicy,
 	}
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	cluster.WaitForAllPodsReady(t, ns)
 	topoStatefulSet := framework.WaitForStatefulSet(t, c, ns, "etcd")
 
 	topoPVCNames := waitForBoundTopoPVCs(t, c, ns, cr.Name)
 	nonTopoPVCNames := listNonTopoPVCNames(t, c, ns, topoPVCNames)
-	if len(nonTopoPVCNames) == 0 {
-		t.Fatal("expected at least one non-topo PVC to verify the Retain policy")
-	}
+	ck.Require().
+		NotEmpty(nonTopoPVCNames, "expected at least one non-topo PVC to verify the Retain policy")
 
 	// Patch directly instead of using framework.PatchCluster (the external
 	// endpoint is intentionally unreachable).
-	if err := c.Patch(ctx, cr, client.RawPatch(types.MergePatchType, []byte(`{
+	ck.Require().NoError(c.Patch(ctx, cr, client.RawPatch(types.MergePatchType, []byte(`{
 		"spec": {
 			"globalTopoServer": {
 				"etcd": null,
@@ -133,9 +129,7 @@ func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 				}
 			}
 		}
-	}`))); err != nil {
-		t.Fatalf("switch cluster to external topology: %v", err)
-	}
+	}`))), "switch cluster to external topology")
 
 	waitForObjectsDeleted(t, c, 3*time.Minute,
 		objectToDelete{
@@ -153,22 +147,17 @@ func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 	// Retain must leave the old managed-topology PVCs behind during the switch.
 	for _, name := range topoPVCNames {
 		pvc := &corev1.PersistentVolumeClaim{}
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, pvc); err != nil {
-			t.Fatalf("expected retained topo PVC %q after switching to external topo: %v", name, err)
-		}
-		if !pvc.DeletionTimestamp.IsZero() {
-			t.Fatalf("topo PVC %q is unexpectedly terminating after switching to external topo", name)
-		}
+		ck.Require().
+			NoError(c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, pvc), "expected retained topo PVC %q after switching to external topo", name)
+		ck.Require().
+			True(pvc.DeletionTimestamp.IsZero(), "topo PVC %q is unexpectedly terminating after switching to external topo", name)
 	}
 
 	liveCluster := &multigresv1alpha1.MultigresCluster{}
 	clusterKey := client.ObjectKeyFromObject(cr)
-	if err := c.Get(ctx, clusterKey, liveCluster); err != nil {
-		t.Fatalf("get MultigresCluster before deletion: %v", err)
-	}
-	if err := c.Delete(ctx, liveCluster); err != nil {
-		t.Fatalf("delete MultigresCluster: %v", err)
-	}
+	ck.Require().
+		NoError(c.Get(ctx, clusterKey, liveCluster), "get MultigresCluster before deletion")
+	ck.Require().NoError(c.Delete(ctx, liveCluster), "delete MultigresCluster")
 
 	objects := []objectToDelete{{
 		key:         clusterKey,
@@ -200,9 +189,11 @@ func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 			t.Errorf("expected retained non-topo PVC %q after cluster deletion: %v", name, err)
 			continue
 		}
-		if !pvc.DeletionTimestamp.IsZero() {
-			t.Errorf("retained non-topo PVC %q is unexpectedly terminating", name)
-		}
+		ck.True(
+			pvc.DeletionTimestamp.IsZero(),
+			"retained non-topo PVC %q is unexpectedly terminating",
+			name,
+		)
 	}
 }
 
@@ -216,35 +207,38 @@ func waitForBoundTopoPVCs(
 	var names []string
 	pollCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(pollCtx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-		list := &corev1.PersistentVolumeClaimList{}
-		if err := c.List(
-			ctx,
-			list,
-			client.InNamespace(ns),
-			client.MatchingLabels{
-				metadata.LabelMultigresCluster: clusterName,
-				metadata.LabelAppComponent:     metadata.ComponentTopoServer,
-			},
-		); err != nil {
-			return false, nil
-		}
-		if len(list.Items) == 0 {
-			return false, nil
-		}
-		currentNames := make([]string, 0, len(list.Items))
-		for _, pvc := range list.Items {
-			if pvc.Status.Phase != corev1.ClaimBound {
+	err := wait.PollUntilContextCancel(
+		pollCtx,
+		2*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			list := &corev1.PersistentVolumeClaimList{}
+			if err := c.List(
+				ctx,
+				list,
+				client.InNamespace(ns),
+				client.MatchingLabels{
+					metadata.LabelMultigresCluster: clusterName,
+					metadata.LabelAppComponent:     metadata.ComponentTopoServer,
+				},
+			); err != nil {
 				return false, nil
 			}
-			currentNames = append(currentNames, pvc.Name)
-		}
-		names = currentNames
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for bound managed-topology PVCs: %v", err)
-	}
+			if len(list.Items) == 0 {
+				return false, nil
+			}
+			currentNames := make([]string, 0, len(list.Items))
+			for _, pvc := range list.Items {
+				if pvc.Status.Phase != corev1.ClaimBound {
+					return false, nil
+				}
+				currentNames = append(currentNames, pvc.Name)
+			}
+			names = currentNames
+			return true, nil
+		},
+	)
+	assert.NewAborting(t).NoError(err, "timed out waiting for bound managed-topology PVCs")
 	return names
 }
 
@@ -261,9 +255,8 @@ func listNonTopoPVCNames(
 	}
 
 	list := &corev1.PersistentVolumeClaimList{}
-	if err := c.List(context.Background(), list, client.InNamespace(ns)); err != nil {
-		t.Fatalf("list PVCs: %v", err)
-	}
+	assert.NewAborting(t).
+		NoError(c.List(context.Background(), list, client.InNamespace(ns)), "list PVCs")
 	var names []string
 	for _, pvc := range list.Items {
 		if _, isTopo := topoPVCs[pvc.Name]; !isTopo {
@@ -288,14 +281,25 @@ func waitForObjectsDeleted(
 	t.Helper()
 	pollCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	err := wait.PollUntilContextCancel(pollCtx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-		for _, object := range objects {
-			if err := c.Get(ctx, object.key, object.object.DeepCopyObject().(client.Object)); !apierrors.IsNotFound(err) {
-				return false, nil
+	err := wait.PollUntilContextCancel(
+		pollCtx,
+		2*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			for _, object := range objects {
+				if err := c.Get(
+					ctx,
+					object.key,
+					object.object.DeepCopyObject().(client.Object),
+				); !apierrors.IsNotFound(
+					err,
+				) {
+					return false, nil
+				}
 			}
-		}
-		return true, nil
-	})
+			return true, nil
+		},
+	)
 	if err != nil {
 		pending := make([]string, 0, len(objects))
 		for _, object := range objects {

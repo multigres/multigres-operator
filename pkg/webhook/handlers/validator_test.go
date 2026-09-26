@@ -21,6 +21,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // setupScheme creates a new scheme with all required types registered
@@ -514,6 +516,7 @@ func TestMultigresClusterValidator(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			// Default existing objects if nil
 			existing := tc.existing
@@ -563,20 +566,15 @@ func TestMultigresClusterValidator(t *testing.T) {
 				warnings, err = validator.ValidateDelete(t.Context(), tc.object)
 			}
 
-			if tc.wantAllowed && err != nil {
-				t.Fatalf("Expected allowed, got error: %v", err)
-			}
+			c.Require().False(tc.wantAllowed && err != nil, "Expected allowed, got error: %v", err)
 			if !tc.wantAllowed {
-				if err == nil {
-					t.Fatal("Expected error, got nil")
-				}
-				if tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage) {
-					t.Errorf(
-						"Expected error message containing '%s', got '%v'",
-						tc.wantMessage,
-						err,
-					)
-				}
+				c.Require().Error(err, "Expected error, got nil")
+				c.False(
+					tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage),
+					"Expected error message containing '%s', got '%v'",
+					tc.wantMessage,
+					err,
+				)
 			}
 
 			// Check Warnings
@@ -592,13 +590,12 @@ func TestMultigresClusterValidator(t *testing.T) {
 								break
 							}
 						}
-						if !found {
-							t.Errorf(
-								"Expected warning containing '%s', got warnings: %v",
-								want,
-								warnings,
-							)
-						}
+						c.True(
+							found,
+							"Expected warning containing '%s', got warnings: %v",
+							want,
+							warnings,
+						)
 					}
 				}
 			}
@@ -621,9 +618,8 @@ func TestMultigresClusterValidator_WrongType(t *testing.T) {
 	t.Parallel()
 	validator := NewMultigresClusterValidator(fake.NewClientBuilder().Build())
 	_, err := validator.ValidateCreate(t.Context(), &TrulyOnlyRuntimeObject{})
-	if err == nil || !strings.Contains(err.Error(), "expected MultigresCluster") {
-		t.Errorf("Expected wrong type error, got: %v", err)
-	}
+	assert.NewCollecting(t).
+		False(err == nil || !strings.Contains(err.Error(), "expected MultigresCluster"), "Expected wrong type error, got: %v", err)
 }
 
 func TestTemplateValidator(t *testing.T) {
@@ -791,6 +787,7 @@ func TestTemplateValidator(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			objs := make([]client.Object, len(tc.existing))
 			for i, obj := range tc.existing {
@@ -836,27 +833,21 @@ func TestTemplateValidator(t *testing.T) {
 					_, err = validator.ValidateDelete(t.Context(), obj)
 				}
 				if method != "Delete" {
-					if err != nil {
-						t.Errorf("%s: Expected nil error, got %v", method, err)
-					}
+					c.NoError(err, "%s: Expected nil error, got", method)
 					continue
 				}
 
 				// For Delete
-				if tc.wantAllowed && err != nil {
-					t.Fatalf("Delete: Expected allowed, got error: %v", err)
-				}
+				c.Require().
+					False(tc.wantAllowed && err != nil, "Delete: Expected allowed, got error: %v", err)
 				if !tc.wantAllowed {
-					if err == nil {
-						t.Fatal("Delete: Expected error, got nil")
-					}
-					if tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage) {
-						t.Errorf(
-							"Delete: Expected error message containing '%s', got '%v'",
-							tc.wantMessage,
-							err,
-						)
-					}
+					c.Require().Error(err, "Delete: Expected error, got nil")
+					c.False(
+						tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage),
+						"Delete: Expected error message containing '%s', got '%v'",
+						tc.wantMessage,
+						err,
+					)
 				}
 			}
 		})
@@ -917,22 +908,19 @@ func TestTemplateValidator_ShardTemplatePoolNames(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			validator := NewTemplateValidator(fakeClient, "ShardTemplate")
 
 			if name == "Non-ShardTemplate skipped" {
 				// CellTemplate with Kind != ShardTemplate should skip validation
 				v := NewTemplateValidator(fakeClient, "CellTemplate")
 				_, err := v.ValidateCreate(t.Context(), &multigresv1alpha1.CellTemplate{})
-				if err != nil {
-					t.Fatalf("Expected nil for non-ShardTemplate, got %v", err)
-				}
+				c.Require().NoError(err, "Expected nil for non-ShardTemplate, got")
 
 				// ShardTemplate validator with wrong object type
 				v2 := NewTemplateValidator(fakeClient, "ShardTemplate")
 				_, err2 := v2.ValidateCreate(t.Context(), &multigresv1alpha1.CellTemplate{})
-				if err2 != nil {
-					t.Fatalf("Expected nil for wrong object type, got %v", err2)
-				}
+				c.Require().NoError(err2, "Expected nil for wrong object type, got")
 				return
 			}
 
@@ -959,18 +947,15 @@ func TestTemplateValidator_ShardTemplatePoolNames(t *testing.T) {
 				}
 
 				if tc.wantErr == "" {
-					if err != nil {
-						t.Errorf("%s: expected nil error, got %v", method, err)
-					}
+					c.NoError(err, "%s: expected nil error, got", method)
 				} else {
-					if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-						t.Errorf(
-							"%s: expected error containing '%s', got %v",
-							method,
-							tc.wantErr,
-							err,
-						)
-					}
+					c.False(
+						err == nil || !strings.Contains(err.Error(), tc.wantErr),
+						"%s: expected error containing '%s', got %v",
+						method,
+						tc.wantErr,
+						err,
+					)
 				}
 			}
 		})
@@ -1039,9 +1024,8 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 		// window 30s merges with no override: binary maxFailoverDuration
 		// default (20s) applies at startup, so the update must be rejected.
 		_, err := v.ValidateUpdate(t.Context(), stored, windowOnly)
-		if err == nil || !strings.Contains(err.Error(), "cell 'z1'") {
-			t.Errorf("expected merged validation error naming the cell, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "cell 'z1'"), "expected merged validation error naming the cell, got %v", err)
 	})
 
 	t.Run("metadata-only update never gated on consumer state", func(t *testing.T) {
@@ -1054,9 +1038,8 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 		v := NewTemplateValidator(c, "CellTemplate")
 		relabeled := windowOnly.DeepCopy()
 		relabeled.Annotations = map[string]string{"touched": "true"}
-		if _, err := v.ValidateUpdate(t.Context(), windowOnly, relabeled); err != nil {
-			t.Errorf("metadata-only update must be accepted, got %v", err)
-		}
+		_, err := v.ValidateUpdate(t.Context(), windowOnly, relabeled)
+		assert.NewCollecting(t).NoError(err, "metadata-only update must be accepted, got")
 	})
 
 	t.Run("pre-existing breakage does not wedge template writes", func(t *testing.T) {
@@ -1081,9 +1064,9 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 		updated := tpl(&multigresv1alpha1.GatewayBufferConfig{
 			MaxFailoverDuration: &metav1.Duration{Duration: 20 * time.Second},
 		})
-		if _, err := v.ValidateUpdate(t.Context(), stored, updated); err != nil {
-			t.Errorf("write leaving a pre-broken consumer equally broken must pass, got %v", err)
-		}
+		_, err := v.ValidateUpdate(t.Context(), stored, updated)
+		assert.NewCollecting(t).
+			NoError(err, "write leaving a pre-broken consumer equally broken must pass, got")
 	})
 
 	t.Run("terminating consumers do not gate template writes", func(t *testing.T) {
@@ -1105,9 +1088,8 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).
 			WithObjects(terminating, stored).Build()
 		v := NewTemplateValidator(c, "CellTemplate")
-		if _, err := v.ValidateUpdate(t.Context(), stored, windowOnly); err != nil {
-			t.Errorf("terminating consumer must not gate the write, got %v", err)
-		}
+		_, err := v.ValidateUpdate(t.Context(), stored, windowOnly)
+		assert.NewCollecting(t).NoError(err, "terminating consumer must not gate the write, got")
 	})
 
 	t.Run(
@@ -1235,9 +1217,9 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 		}
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(independent, stored).Build()
 		v := NewTemplateValidator(c, "CellTemplate")
-		if _, err := v.ValidateDelete(t.Context(), stored); err != nil {
-			t.Errorf("deleting 'default' must be allowed when consumers stay valid, got %v", err)
-		}
+		_, err := v.ValidateDelete(t.Context(), stored)
+		assert.NewCollecting(t).
+			NoError(err, "deleting 'default' must be allowed when consumers stay valid, got")
 	})
 
 	t.Run("update accepted when consumer override completes the config", func(t *testing.T) {
@@ -1252,9 +1234,9 @@ func TestTemplateValidator_CellTemplateBuffer(t *testing.T) {
 			},
 		)).Build()
 		v := NewTemplateValidator(c, "CellTemplate")
-		if _, err := v.ValidateUpdate(t.Context(), nil, windowOnly); err != nil {
-			t.Errorf("override raises maxFailoverDuration, update must be accepted, got %v", err)
-		}
+		_, err := v.ValidateUpdate(t.Context(), nil, windowOnly)
+		assert.NewCollecting(t).
+			NoError(err, "override raises maxFailoverDuration, update must be accepted, got")
 	})
 }
 
@@ -1312,6 +1294,7 @@ func TestChildResourceValidator(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			// Create context with admission request
 			ctx := t.Context()
@@ -1346,20 +1329,15 @@ func TestChildResourceValidator(t *testing.T) {
 				_, err = validator.ValidateDelete(ctx, obj)
 			}
 
-			if tc.wantAllowed && err != nil {
-				t.Fatalf("Expected allowed, got error: %v", err)
-			}
+			c.Require().False(tc.wantAllowed && err != nil, "Expected allowed, got error: %v", err)
 			if !tc.wantAllowed {
-				if err == nil {
-					t.Fatal("Expected error, got nil")
-				}
-				if tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage) {
-					t.Errorf(
-						"Expected error message containing '%s', got '%v'",
-						tc.wantMessage,
-						err,
-					)
-				}
+				c.Require().Error(err, "Expected error, got nil")
+				c.False(
+					tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage),
+					"Expected error message containing '%s', got '%v'",
+					tc.wantMessage,
+					err,
+				)
 			}
 		})
 	}
@@ -1367,9 +1345,7 @@ func TestChildResourceValidator(t *testing.T) {
 	t.Run("Wrong Type", func(t *testing.T) {
 		t.Parallel()
 		_, err := validator.ValidateCreate(t.Context(), &TrulyOnlyRuntimeObject{})
-		if err == nil {
-			t.Error("Expected error for wrong type, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error for wrong type, got nil")
 	})
 }
 
@@ -1405,22 +1381,22 @@ func TestValidateNoStorageShrink(t *testing.T) {
 		oldObj := makeCluster("10Gi")
 		newObj := makeCluster("20Gi")
 		_, err := validateNoStorageShrink(oldObj, newObj)
-		if err != nil {
-			t.Fatalf("expected no error for storage grow, got: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected no error for storage grow, got")
 	})
 
 	t.Run("rejects storage shrink", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		oldObj := makeCluster("20Gi")
 		newObj := makeCluster("10Gi")
 		_, err := validateNoStorageShrink(oldObj, newObj)
-		if err == nil {
-			t.Fatal("expected error for storage shrink, got nil")
-		}
-		if !strings.Contains(err.Error(), "cannot be decreased") {
-			t.Errorf("expected 'cannot be decreased' error, got: %v", err)
-		}
+		c.Require().Error(err, "expected error for storage shrink, got nil")
+		c.StrContains(
+			err.Error(),
+			"cannot be decreased",
+			"expected 'cannot be decreased' error, got: %v",
+			err,
+		)
 	})
 
 	t.Run("no-op when sizes equal", func(t *testing.T) {
@@ -1428,34 +1404,27 @@ func TestValidateNoStorageShrink(t *testing.T) {
 		oldObj := makeCluster("10Gi")
 		newObj := makeCluster("10Gi")
 		_, err := validateNoStorageShrink(oldObj, newObj)
-		if err != nil {
-			t.Fatalf("expected no error for equal sizes, got: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected no error for equal sizes, got")
 	})
 
 	t.Run("ignores non-MultigresCluster objects", func(t *testing.T) {
 		t.Parallel()
 		_, err := validateNoStorageShrink(&TrulyOnlyRuntimeObject{}, &TrulyOnlyRuntimeObject{})
-		if err != nil {
-			t.Fatalf("expected no error for wrong types, got: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected no error for wrong types, got")
 	})
 
 	t.Run("ignores parse errors", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 		oldObj := makeCluster("invalidQty")
 		newObj := makeCluster("10Gi")
 		_, err := validateNoStorageShrink(oldObj, newObj)
-		if err != nil {
-			t.Fatalf("expected no error when parsing fails, got: %v", err)
-		}
+		c.NoError(err, "expected no error when parsing fails, got")
 
 		oldObj2 := makeCluster("10Gi")
 		newObj2 := makeCluster("invalidQty")
 		_, err2 := validateNoStorageShrink(oldObj2, newObj2)
-		if err2 != nil {
-			t.Fatalf("expected no error when parsing fails, got: %v", err2)
-		}
+		c.NoError(err2, "expected no error when parsing fails, got")
 	})
 
 	t.Run("collects from shard overrides", func(t *testing.T) {
@@ -1479,9 +1448,8 @@ func TestValidateNoStorageShrink(t *testing.T) {
 			},
 		}
 		sizes := collectPoolStorageSizes(obj)
-		if sizes["db1/tg1/s1/pool1"] != "42Gi" {
-			t.Errorf("expected 42Gi, got %v", sizes)
-		}
+		assert.NewCollecting(t).
+			Eq("42Gi", sizes["db1/tg1/s1/pool1"], "expected 42Gi, got %v", sizes)
 	})
 }
 
@@ -1509,9 +1477,7 @@ func TestValidateEtcdReplicasImmutable(t *testing.T) {
 		oldObj := makeCluster(ptr.To(int32(5)), false)
 		newObj := makeCluster(ptr.To(int32(5)), false)
 		_, err := validateEtcdReplicasImmutable(oldObj, newObj)
-		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected nil error, got")
 	})
 
 	t.Run("rejects changed replica counts", func(t *testing.T) {
@@ -1519,9 +1485,8 @@ func TestValidateEtcdReplicasImmutable(t *testing.T) {
 		oldObj := makeCluster(ptr.To(int32(3)), false)
 		newObj := makeCluster(ptr.To(int32(5)), false)
 		_, err := validateEtcdReplicasImmutable(oldObj, newObj)
-		if err == nil || !strings.Contains(err.Error(), "etcd uses static bootstrap") {
-			t.Fatalf("expected immutable error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "etcd uses static bootstrap"), "expected immutable error, got %v", err)
 	})
 
 	t.Run("allows transitions to or from external (0 replicas)", func(t *testing.T) {
@@ -1530,21 +1495,16 @@ func TestValidateEtcdReplicasImmutable(t *testing.T) {
 		oldObj := makeCluster(nil, true)
 		newObj := makeCluster(ptr.To(int32(3)), false)
 		_, err := validateEtcdReplicasImmutable(oldObj, newObj)
-		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected nil error, got")
 	})
 
 	t.Run("ignores wrong types", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 		_, err := validateEtcdReplicasImmutable(&TrulyOnlyRuntimeObject{}, makeCluster(nil, false))
-		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
-		}
+		c.NoError(err, "expected nil error, got")
 		_, err = validateEtcdReplicasImmutable(makeCluster(nil, false), &TrulyOnlyRuntimeObject{})
-		if err != nil {
-			t.Fatalf("expected nil error, got %v", err)
-		}
+		c.NoError(err, "expected nil error, got")
 	})
 }
 
@@ -1585,9 +1545,8 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 	t.Run("bubbles up base validation error", func(t *testing.T) {
 		t.Parallel()
 		_, err := validator.ValidateUpdate(t.Context(), baseCluster, baseCluster)
-		if err == nil || !strings.Contains(err.Error(), "not found") {
-			t.Fatalf("expected validation error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "not found"), "expected validation error, got %v", err)
 	})
 
 	validCluster := &multigresv1alpha1.MultigresCluster{
@@ -1629,9 +1588,8 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 	t.Run("bubbles up shrink error", func(t *testing.T) {
 		t.Parallel()
 		_, err := validator.ValidateUpdate(t.Context(), largeCluster, shrunkCluster)
-		if err == nil || !strings.Contains(err.Error(), "shrink is not supported") {
-			t.Fatalf("expected shrink error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "shrink is not supported"), "expected shrink error, got %v", err)
 	})
 
 	largeEtcdCluster := validCluster.DeepCopy()
@@ -1646,9 +1604,8 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 	t.Run("bubbles up etcd error", func(t *testing.T) {
 		t.Parallel()
 		_, err := validator.ValidateUpdate(t.Context(), largeEtcdCluster, smallEtcdCluster)
-		if err == nil || !strings.Contains(err.Error(), "etcd uses static bootstrap") {
-			t.Fatalf("expected etcd error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "etcd uses static bootstrap"), "expected etcd error, got %v", err)
 	})
 }
 
@@ -1695,18 +1652,19 @@ func TestValidatePostgresConfig(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			err := validatePostgresConfig(tc.cluster)
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Errorf("expected nil, got %v", err)
-				}
+				c.NoError(err, "expected nil, got")
 			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("expected error containing %q, got %v", tc.wantErr, err)
 			}
 			// The error must identify the shard location.
-			if tc.wantErr != "" && err != nil && !strings.Contains(err.Error(), "shard") {
-				t.Errorf("error should name the shard, got %v", err)
-			}
+			c.False(
+				tc.wantErr != "" && err != nil && !strings.Contains(err.Error(), "shard"),
+				"error should name the shard, got %v",
+				err,
+			)
 		})
 	}
 }

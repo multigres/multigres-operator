@@ -4,17 +4,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/certs"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestExternalTopologyKeepsLongRoot(t *testing.T) {
+	c := assert.NewCollecting(t)
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster-abcdefghijklmnop",
@@ -28,9 +29,8 @@ func TestExternalTopologyKeepsLongRoot(t *testing.T) {
 		},
 	}
 	roots, err := ForCluster(cluster)
-	require.NoError(t, err)
-	assert.Equal(
-		t,
+	c.Require().NoError(err)
+	c.EqDeep(
 		"/multigres/namespace-abcdefghijklmnopqrstu/cluster-abcdefghijklmnop",
 		roots.ClusterRoot(),
 	)
@@ -38,6 +38,7 @@ func TestExternalTopologyKeepsLongRoot(t *testing.T) {
 
 func TestRootsWithTopologyTLS(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	const namespace = "namespace-abcdefghijklmnopqrstu"
 	const clusterName = "cluster-abcdefghijklmnop"
@@ -56,16 +57,17 @@ func TestRootsWithTopologyTLS(t *testing.T) {
 		{"64 byte TLS fallback is unchanged", namespace, clusterName[:21], true, unboundedRoot[:64]},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			roots, err := NewRoots(nil, tc.namespace, tc.clusterName, tc.topoTLS)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, roots.ClusterRoot())
-			assert.Equal(t, tc.want+"/global", roots.Global())
+			c.Require().NoError(err)
+			c.EqDeep(tc.want, roots.ClusterRoot())
+			c.EqDeep(tc.want+"/global", roots.Global())
 			cellRoot, err := roots.Cell("zone-a")
-			require.NoError(t, err)
-			assert.Equal(t, tc.want+"/zone-a", cellRoot)
-			assert.True(t, strings.HasPrefix(cellRoot, roots.KeyPrefix()))
+			c.Require().NoError(err)
+			c.EqDeep(tc.want+"/zone-a", cellRoot)
+			c.True(strings.HasPrefix(cellRoot, roots.KeyPrefix()))
 			if tc.topoTLS {
-				assert.LessOrEqual(t, len(roots.ClusterRoot()), certs.MaxCommonNameBytes)
+				c.LessOrEqual(certs.MaxCommonNameBytes, len(roots.ClusterRoot()))
 			}
 		})
 	}
@@ -73,12 +75,12 @@ func TestRootsWithTopologyTLS(t *testing.T) {
 	for _, ref := range []string{"~", "namespace-abcdefghijklmnopqrstu", "../multigres-fallback", strings.Repeat("p", 64)} {
 		annotations := map[string]string{metadata.AnnotationProjectRef: ref}
 		plain, err := NewRoots(annotations, namespace, clusterName, false)
-		require.NoError(t, err)
+		c.Require().NoError(err)
 		tls, err := NewRoots(annotations, namespace, clusterName, true)
-		require.NoError(t, err)
-		assert.Equal(t, plain, tls, "explicit refs must not change with TLS")
-		assert.NotEqual(t, hashedRoot, tls.ClusterRoot())
-		assert.False(t, strings.HasPrefix(hashedRoot+"/global", tls.KeyPrefix()))
+		c.Require().NoError(err)
+		c.EqDeep(plain, tls, "explicit refs must not change with TLS")
+		c.NotEqDeep(hashedRoot, tls.ClusterRoot())
+		c.False(strings.HasPrefix(hashedRoot+"/global", tls.KeyPrefix()))
 	}
 
 	seen := map[string]bool{hashedRoot: true}
@@ -90,9 +92,9 @@ func TestRootsWithTopologyTLS(t *testing.T) {
 		{strings.Repeat("n", 63), strings.Repeat("c", 253)},
 	} {
 		roots, err := NewRoots(nil, pair[0], pair[1], true)
-		require.NoError(t, err)
-		assert.LessOrEqual(t, len(roots.ClusterRoot()), certs.MaxCommonNameBytes)
-		assert.False(t, seen[roots.ClusterRoot()], "fallback identities must be distinct")
+		c.Require().NoError(err)
+		c.LessOrEqual(certs.MaxCommonNameBytes, len(roots.ClusterRoot()))
+		c.False(seen[roots.ClusterRoot()], "fallback identities must be distinct")
 		seen[roots.ClusterRoot()] = true
 	}
 }
@@ -140,47 +142,35 @@ func TestRoots(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			roots, err := NewRoots(tc.annotations, tc.namespace, tc.clusterName, false)
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("expected an error")
-				}
+				c.Require().Error(err, "expected an error")
 				return
 			}
-			if err != nil {
-				t.Fatalf("NewRoots: %v", err)
-			}
+			c.Require().NoError(err, "NewRoots")
 			cell, err := roots.Cell(tc.cellName)
-			if err != nil {
-				t.Fatalf("Cell: %v", err)
-			}
-			if got := roots.Global(); got != tc.wantGlobal {
-				t.Errorf("Global() = %q, want %q", got, tc.wantGlobal)
-			}
-			if cell != tc.wantCell {
-				t.Errorf("Cell() = %q, want %q", cell, tc.wantCell)
-			}
-			if roots.Global() == cell {
-				t.Error("global and cell roots must be disjoint")
-			}
+			c.Require().NoError(err, "Cell")
+			c.Eq(tc.wantGlobal, roots.Global(), "Global()")
+			c.Eq(tc.wantCell, cell, "Cell()")
+			c.NotEq(cell, roots.Global(), "global and cell roots must be disjoint")
 		})
 	}
 }
 
 func TestFallbackIdentityIsNamespaceScoped(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	first, err := NewRoots(nil, "tenant-a", "production", false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.NoError(err)
 	second, err := NewRoots(nil, "tenant-b", "production", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Global() == second.Global() {
-		t.Fatalf("equal cluster names in different namespaces collided at %q", first.Global())
-	}
+	c.NoError(err)
+	c.NotEq(
+		second.Global(),
+		first.Global(),
+		"equal cluster names in different namespaces collided at",
+	)
 }
 
 func TestClusterRootPrefixesEveryRoot(t *testing.T) {
@@ -205,23 +195,14 @@ func TestClusterRootPrefixesEveryRoot(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			roots, err := NewRoots(tc.annotations, tc.namespace, tc.clusterName, false)
-			if err != nil {
-				t.Fatalf("NewRoots() error = %v", err)
-			}
-			if got := roots.ClusterRoot(); got != tc.want {
-				t.Errorf("ClusterRoot() = %q, want %q", got, tc.want)
-			}
-			if want := roots.ClusterRoot() + "/global"; roots.Global() != want {
-				t.Errorf("Global() = %q, want %q", roots.Global(), want)
-			}
+			c.Require().NoError(err, "NewRoots() error =")
+			c.Eq(tc.want, roots.ClusterRoot(), "ClusterRoot()")
+			c.Eq(roots.ClusterRoot()+"/global", roots.Global(), "Global()")
 			cell, err := roots.Cell("zone-a")
-			if err != nil {
-				t.Fatalf("Cell() error = %v", err)
-			}
-			if want := roots.ClusterRoot() + "/zone-a"; cell != want {
-				t.Errorf("Cell() = %q, want %q", cell, want)
-			}
+			c.Require().NoError(err, "Cell() error =")
+			c.Eq(roots.ClusterRoot()+"/zone-a", cell, "Cell()")
 		})
 	}
 }
@@ -230,18 +211,15 @@ func TestClusterRootPrefixesEveryRoot(t *testing.T) {
 // merely starts with the same characters, so authorization grants on the
 // prefix that includes the separator.
 func TestKeyPrefixDoesNotReachSiblingClusters(t *testing.T) {
+	c := assert.NewAborting(t)
 	short, err := NewRoots(
 		map[string]string{metadata.AnnotationProjectRef: "proj_123"}, "supabase", "a", false,
 	)
-	if err != nil {
-		t.Fatalf("NewRoots() error = %v", err)
-	}
+	c.NoError(err, "NewRoots() error =")
 	long, err := NewRoots(
 		map[string]string{metadata.AnnotationProjectRef: "proj_1234"}, "supabase", "b", false,
 	)
-	if err != nil {
-		t.Fatalf("NewRoots() error = %v", err)
-	}
+	c.NoError(err, "NewRoots() error =")
 
 	if !strings.HasPrefix(long.ClusterRoot(), short.ClusterRoot()) {
 		t.Fatal("fixtures no longer exercise the sibling prefix hazard")

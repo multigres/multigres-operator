@@ -3,7 +3,6 @@ package topo_test
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -14,6 +13,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func newMemoryStore(t *testing.T, cells ...string) topoclient.Store {
@@ -44,6 +45,7 @@ func (f rootedMemoryFactory) Create(
 
 func TestSharedTopologyRootsIsolateClusters(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	const (
 		address     = "shared-topo:2379"
@@ -86,19 +88,15 @@ func TestSharedTopologyRootsIsolateClusters(t *testing.T) {
 		{store: clusterA, cellRoot: cellRootA, host: "pooler-a"},
 		{store: clusterB, cellRoot: cellRootB, host: "pooler-b"},
 	} {
-		if err := cluster.store.CreateCell(ctx, cellName, &clustermetadatapb.Cell{
+		c.NoError(cluster.store.CreateCell(ctx, cellName, &clustermetadatapb.Cell{
 			Name:            cellName,
 			ServerAddresses: []string{address},
 			Root:            cluster.cellRoot,
-		}); err != nil {
-			t.Fatalf("CreateCell(%s): %v", cluster.cellRoot, err)
-		}
-		if err := cluster.store.CreateMultipooler(
+		}), "CreateCell(%s)", cluster.cellRoot)
+		c.NoError(cluster.store.CreateMultipooler(
 			ctx,
 			topoclient.NewMultipooler("pooler", cellName, cluster.host),
-		); err != nil {
-			t.Fatalf("CreateMultipooler(%s): %v", cluster.cellRoot, err)
-		}
+		), "CreateMultipooler(%s)", cluster.cellRoot)
 	}
 
 	for _, cluster := range []struct {
@@ -109,15 +107,9 @@ func TestSharedTopologyRootsIsolateClusters(t *testing.T) {
 		{store: clusterB, wantHost: "pooler-b"},
 	} {
 		poolers, err := cluster.store.GetMultipoolersByCell(ctx, cellName, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(poolers) != 1 {
-			t.Fatalf("got %d multipoolers, want 1", len(poolers))
-		}
-		if got := poolers[0].GetHostname(); got != cluster.wantHost {
-			t.Fatalf("multipooler host = %q, want %q", got, cluster.wantHost)
-		}
+		c.NoError(err)
+		c.Len(poolers, 1, "got %d multipoolers, want 1", len(poolers))
+		c.Eq(cluster.wantHost, poolers[0].GetHostname(), "multipooler host")
 	}
 }
 
@@ -215,6 +207,7 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 
 	t.Run("creates database with filesystem backup", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -226,20 +219,15 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			context.Background(), store, recorder, owner,
 			dbConfig, []string{"cell1"}, nil, "",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 
 		db, err := store.GetDatabase(context.Background(), "mydb")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
-		if db.BootstrapDurabilityPolicy.GetPolicyName() != "AT_LEAST_2" {
-			t.Errorf(
-				"expected default durability AT_LEAST_2, got %s",
-				db.BootstrapDurabilityPolicy.GetPolicyName(),
-			)
-		}
+		c.Require().NoError(err, "database not found")
+		c.Eq(
+			"AT_LEAST_2",
+			db.BootstrapDurabilityPolicy.GetPolicyName(),
+			"expected default durability AT_LEAST_2, got",
+		)
 		fs := db.BackupLocation.GetFilesystem()
 		if fs == nil || fs.Path != "/backups" {
 			t.Errorf("expected filesystem backup at /backups, got %v", db.BackupLocation)
@@ -248,6 +236,7 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 
 	t.Run("creates database with S3 backup", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -264,14 +253,10 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			multigresv1alpha1.DatabaseConfig{Name: "s3db"},
 			[]string{"cell1"}, backup, "",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.NoError(err, "unexpected error")
 
 		db, err := store.GetDatabase(context.Background(), "s3db")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
+		c.NoError(err, "database not found")
 		s3 := db.BackupLocation.GetS3()
 		if s3 == nil || s3.Bucket != "my-bucket" {
 			t.Errorf("expected S3 backup with bucket my-bucket, got %v", db.BackupLocation)
@@ -280,6 +265,7 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 
 	t.Run("creates database with custom filesystem path", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -295,14 +281,10 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			multigresv1alpha1.DatabaseConfig{Name: "fsdb"},
 			[]string{"cell1"}, backup, "",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.NoError(err, "unexpected error")
 
 		db, err := store.GetDatabase(context.Background(), "fsdb")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
+		c.NoError(err, "database not found")
 		fs := db.BackupLocation.GetFilesystem()
 		if fs == nil || fs.Path != "/custom/path" {
 			t.Errorf("expected filesystem backup at /custom/path, got %v", db.BackupLocation)
@@ -311,43 +293,36 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 
 	t.Run("updates existing database on re-registration", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1", "cell2")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
 
 		dbConfig := multigresv1alpha1.DatabaseConfig{Name: "upddb"}
-		if err := topo.RegisterDatabaseFromSpec(
+		c.Require().NoError(topo.RegisterDatabaseFromSpec(
 			ctx, store, recorder, owner, dbConfig,
 			[]string{"cell1"}, nil, "",
-		); err != nil {
-			t.Fatalf("first registration: %v", err)
-		}
+		), "first registration")
 
 		// Re-register with different cells.
-		if err := topo.RegisterDatabaseFromSpec(
+		c.Require().NoError(topo.RegisterDatabaseFromSpec(
 			ctx, store, recorder, owner, dbConfig,
 			[]string{"cell1", "cell2"}, nil, "MULTI_CELL_AT_LEAST_2",
-		); err != nil {
-			t.Fatalf("re-registration: %v", err)
-		}
+		), "re-registration")
 
 		db, err := store.GetDatabase(ctx, "upddb")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
-		if len(db.Cells) != 2 {
-			t.Errorf("expected 2 cells, got %d", len(db.Cells))
-		}
-		if db.BootstrapDurabilityPolicy.GetPolicyName() != "MULTI_CELL_AT_LEAST_2" {
-			t.Errorf(
-				"expected MULTI_CELL_AT_LEAST_2, got %s",
-				db.BootstrapDurabilityPolicy.GetPolicyName(),
-			)
-		}
+		c.Require().NoError(err, "database not found")
+		c.Len(db.Cells, 2, "expected 2 cells, got %d", len(db.Cells))
+		c.Eq(
+			"MULTI_CELL_AT_LEAST_2",
+			db.BootstrapDurabilityPolicy.GetPolicyName(),
+			"expected MULTI_CELL_AT_LEAST_2, got",
+		)
 	})
 
 	t.Run("creates database with encryption enabled", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -366,33 +341,29 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			multigresv1alpha1.DatabaseConfig{Name: "encdb"},
 			[]string{"cell1"}, backup, "",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 
 		db, err := store.GetDatabase(context.Background(), "encdb")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
-		if !db.BackupLocation.GetRequireInitialRepoEncryption() {
-			t.Error("expected RequireInitialRepoEncryption=true")
-		}
+		c.Require().NoError(err, "database not found")
+		c.True(
+			db.BackupLocation.GetRequireInitialRepoEncryption(),
+			"expected RequireInitialRepoEncryption=true",
+		)
 	})
 
 	t.Run("update path propagates encryption flag", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
 
 		dbConfig := multigresv1alpha1.DatabaseConfig{Name: "encupddb"}
 
-		if err := topo.RegisterDatabaseFromSpec(
+		c.Require().NoError(topo.RegisterDatabaseFromSpec(
 			ctx, store, recorder, owner, dbConfig,
 			[]string{"cell1"}, nil, "",
-		); err != nil {
-			t.Fatalf("first registration: %v", err)
-		}
+		), "first registration")
 
 		backup := &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeFilesystem,
@@ -404,24 +375,22 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			},
 		}
 
-		if err := topo.RegisterDatabaseFromSpec(
+		c.Require().NoError(topo.RegisterDatabaseFromSpec(
 			ctx, store, recorder, owner, dbConfig,
 			[]string{"cell1"}, backup, "",
-		); err != nil {
-			t.Fatalf("re-registration: %v", err)
-		}
+		), "re-registration")
 
 		db, err := store.GetDatabase(ctx, "encupddb")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
-		if !db.BackupLocation.GetRequireInitialRepoEncryption() {
-			t.Error("expected RequireInitialRepoEncryption=true after update")
-		}
+		c.Require().NoError(err, "database not found")
+		c.True(
+			db.BackupLocation.GetRequireInitialRepoEncryption(),
+			"expected RequireInitialRepoEncryption=true after update",
+		)
 	})
 
 	t.Run("uses database-level durability policy", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -434,20 +403,15 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			context.Background(), store, recorder, owner,
 			dbConfig, []string{"cell1"}, nil, "AT_LEAST_2",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 
 		db, err := store.GetDatabase(context.Background(), "durdb")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
-		if db.BootstrapDurabilityPolicy.GetPolicyName() != "MULTI_CELL_AT_LEAST_2" {
-			t.Errorf(
-				"expected database-level policy MULTI_CELL_AT_LEAST_2, got %s",
-				db.BootstrapDurabilityPolicy.GetPolicyName(),
-			)
-		}
+		c.Require().NoError(err, "database not found")
+		c.Eq(
+			"MULTI_CELL_AT_LEAST_2",
+			db.BootstrapDurabilityPolicy.GetPolicyName(),
+			"expected database-level policy MULTI_CELL_AT_LEAST_2, got",
+		)
 	})
 
 	t.Run("returns error on CreateDatabase failure", func(t *testing.T) {
@@ -462,9 +426,7 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			context.Background(), store, record.NewFakeRecorder(10), owner,
 			multigresv1alpha1.DatabaseConfig{Name: "errdb"}, []string{"cell1"}, nil, "",
 		)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("returns error on UpdateDatabaseFields failure", func(t *testing.T) {
@@ -482,9 +444,7 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 			context.Background(), store, record.NewFakeRecorder(10), owner,
 			multigresv1alpha1.DatabaseConfig{Name: "errdb"}, []string{"cell1"}, nil, "",
 		)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 }
 
@@ -501,6 +461,7 @@ func TestRegisterCellFromSpec(t *testing.T) {
 
 	t.Run("creates new cell", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -514,27 +475,22 @@ func TestRegisterCellFromSpec(t *testing.T) {
 		err := topo.RegisterCellFromSpec(
 			context.Background(), store, recorder, owner, cellCfg, localTopo, topoRef,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 
 		cell, err := store.GetCell(context.Background(), "cell2")
-		if err != nil {
-			t.Fatalf("cell not found: %v", err)
-		}
-		if cell.Name != "cell2" {
-			t.Errorf("expected cell2, got %s", cell.Name)
-		}
-		if !reflect.DeepEqual(cell.ServerAddresses, []string{"http://cell2-local:2379"}) {
-			t.Errorf("expected local topo addresses, got %v", cell.ServerAddresses)
-		}
-		if cell.Root != "/multigres/cells/cell2" {
-			t.Errorf("expected local topo root, got %s", cell.Root)
-		}
+		c.Require().NoError(err, "cell not found")
+		c.Eq("cell2", cell.Name, "expected cell2, got")
+		c.EqDiff(
+			[]string{"http://cell2-local:2379"},
+			cell.ServerAddresses,
+			"expected local topo addresses, got",
+		)
+		c.Eq("/multigres/cells/cell2", cell.Root, "expected local topo root, got")
 	})
 
 	t.Run("idempotent on re-registration", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
@@ -546,7 +502,7 @@ func TestRegisterCellFromSpec(t *testing.T) {
 				RootPath:  "/multigres/cells/cell1",
 			},
 		}
-		if err := topo.RegisterCellFromSpec(
+		c.NoError(topo.RegisterCellFromSpec(
 			ctx,
 			store,
 			recorder,
@@ -554,10 +510,8 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			cellCfg,
 			localTopo,
 			topoRef,
-		); err != nil {
-			t.Fatalf("first: %v", err)
-		}
-		if err := topo.RegisterCellFromSpec(
+		), "first")
+		c.NoError(topo.RegisterCellFromSpec(
 			ctx,
 			store,
 			recorder,
@@ -565,18 +519,17 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			cellCfg,
 			localTopo,
 			topoRef,
-		); err != nil {
-			t.Fatalf("second: %v", err)
-		}
+		), "second")
 	})
 
 	t.Run("updates stale cell topology on re-registration", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
 
-		if err := store.UpdateCellFields(
+		c.Require().NoError(store.UpdateCellFields(
 			ctx,
 			"cell1",
 			func(existing *clustermetadatapb.Cell) error {
@@ -584,9 +537,7 @@ func TestRegisterCellFromSpec(t *testing.T) {
 				existing.Root = "/stale/cell1"
 				return nil
 			},
-		); err != nil {
-			t.Fatalf("seeding stale cell: %v", err)
-		}
+		), "seeding stale cell")
 
 		localTopo := &multigresv1alpha1.LocalTopoServerSpec{
 			External: &multigresv1alpha1.ExternalTopoServerSpec{
@@ -597,7 +548,7 @@ func TestRegisterCellFromSpec(t *testing.T) {
 				RootPath: "/multigres/cells/cell1",
 			},
 		}
-		if err := topo.RegisterCellFromSpec(
+		c.Require().NoError(topo.RegisterCellFromSpec(
 			ctx,
 			store,
 			recorder,
@@ -605,27 +556,21 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			multigresv1alpha1.CellConfig{Name: "cell1"},
 			localTopo,
 			topoRef,
-		); err != nil {
-			t.Fatalf("re-registration should update stale cell, got: %v", err)
-		}
+		), "re-registration should update stale cell, got")
 
 		cell, err := store.GetCell(ctx, "cell1")
-		if err != nil {
-			t.Fatalf("cell not found: %v", err)
-		}
-		if !reflect.DeepEqual(
-			cell.ServerAddresses,
+		c.Require().NoError(err, "cell not found")
+		c.EqDiff(
 			[]string{"http://cell1-local-a:2379", "http://cell1-local-b:2379"},
-		) {
-			t.Errorf("expected local topo addresses, got %v", cell.ServerAddresses)
-		}
-		if cell.Root != "/multigres/cells/cell1" {
-			t.Errorf("expected local topo root, got %s", cell.Root)
-		}
+			cell.ServerAddresses,
+			"expected local topo addresses, got",
+		)
+		c.Eq("/multigres/cells/cell1", cell.Root, "expected local topo root, got")
 	})
 
 	t.Run("falls back to global topology when no local topology is configured", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -638,24 +583,21 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			nil,
 			topoRef,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 
 		cell, err := store.GetCell(context.Background(), "cell2")
-		if err != nil {
-			t.Fatalf("cell not found: %v", err)
-		}
-		if !reflect.DeepEqual(cell.ServerAddresses, []string{"global:2379"}) {
-			t.Errorf("expected global topo address fallback, got %v", cell.ServerAddresses)
-		}
-		if cell.Root != "/multigres/global" {
-			t.Errorf("expected global topology root fallback, got %s", cell.Root)
-		}
+		c.Require().NoError(err, "cell not found")
+		c.EqDiff(
+			[]string{"global:2379"},
+			cell.ServerAddresses,
+			"expected global topo address fallback, got",
+		)
+		c.Eq("/multigres/global", cell.Root, "expected global topology root fallback, got")
 	})
 
 	t.Run("uses managed local topology address for etcd local topology", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -675,20 +617,16 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			topoRef,
 			managedAddress,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 
 		cell, err := store.GetCell(context.Background(), "cell2")
-		if err != nil {
-			t.Fatalf("cell not found: %v", err)
-		}
-		if !reflect.DeepEqual(cell.ServerAddresses, []string{managedAddress}) {
-			t.Errorf("expected managed local topo address, got %v", cell.ServerAddresses)
-		}
-		if cell.Root != "/multigres/cells/cell2" {
-			t.Errorf("expected managed local topo root, got %s", cell.Root)
-		}
+		c.Require().NoError(err, "cell not found")
+		c.EqDiff(
+			[]string{managedAddress},
+			cell.ServerAddresses,
+			"expected managed local topo address, got",
+		)
+		c.Eq("/multigres/cells/cell2", cell.Root, "expected managed local topo root, got")
 	})
 
 	t.Run("returns error on CreateCell failure", func(t *testing.T) {
@@ -703,13 +641,12 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			context.Background(), store, record.NewFakeRecorder(10), owner,
 			multigresv1alpha1.CellConfig{Name: "cell1"}, nil, topoRef,
 		)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("copies metadata from CellConfig into topo record", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 
@@ -717,19 +654,13 @@ func TestRegisterCellFromSpec(t *testing.T) {
 			Name:     "cell2",
 			Metadata: `{"zoneId":"use1-az1"}`,
 		}
-		if err := topo.RegisterCellFromSpec(
+		c.Require().NoError(topo.RegisterCellFromSpec(
 			context.Background(), store, recorder, owner, cellCfg, nil, topoRef,
-		); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		), "unexpected error")
 
 		cell, err := store.GetCell(context.Background(), "cell2")
-		if err != nil {
-			t.Fatalf("cell not found: %v", err)
-		}
-		if cell.Metadata != `{"zoneId":"use1-az1"}` {
-			t.Errorf("expected metadata copied verbatim, got %q", cell.Metadata)
-		}
+		c.Require().NoError(err, "cell not found")
+		c.Eq(`{"zoneId":"use1-az1"}`, cell.Metadata, "expected metadata copied verbatim, got")
 	})
 }
 
@@ -742,6 +673,7 @@ func TestPruneDatabases(t *testing.T) {
 
 	t.Run("removes stale database", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
@@ -753,26 +685,23 @@ func TestPruneDatabases(t *testing.T) {
 				multigresv1alpha1.DatabaseConfig{Name: multigresv1alpha1.DatabaseName(name)},
 				[]string{"cell1"}, nil, "",
 			)
-			if err != nil {
-				t.Fatalf("registering %s: %v", name, err)
-			}
+			c.Require().NoError(err, "registering %s", name)
 		}
 
 		// Prune, keeping only db1.
-		if err := topo.PruneDatabases(ctx, store, recorder, owner, []string{"db1"}); err != nil {
-			t.Fatalf("prune: %v", err)
-		}
+		c.Require().
+			NoError(topo.PruneDatabases(ctx, store, recorder, owner, []string{"db1"}), "prune")
 
 		if _, err := store.GetDatabase(ctx, "db1"); err != nil {
 			t.Error("db1 should still exist")
 		}
-		if _, err := store.GetDatabase(ctx, "db2"); err == nil {
-			t.Error("db2 should have been pruned")
-		}
+		_, err := store.GetDatabase(ctx, "db2")
+		c.Error(err, "db2 should have been pruned")
 	})
 
 	t.Run("no-op when all databases active", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
@@ -782,13 +711,9 @@ func TestPruneDatabases(t *testing.T) {
 			multigresv1alpha1.DatabaseConfig{Name: "db1"},
 			[]string{"cell1"}, nil, "",
 		)
-		if err != nil {
-			t.Fatalf("registering: %v", err)
-		}
+		c.NoError(err, "registering")
 
-		if err := topo.PruneDatabases(ctx, store, recorder, owner, []string{"db1"}); err != nil {
-			t.Fatalf("prune: %v", err)
-		}
+		c.NoError(topo.PruneDatabases(ctx, store, recorder, owner, []string{"db1"}), "prune")
 
 		if _, err := store.GetDatabase(ctx, "db1"); err != nil {
 			t.Error("db1 should still exist")
@@ -810,9 +735,7 @@ func TestPruneDatabases(t *testing.T) {
 			owner,
 			nil,
 		)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("skips if database delete returns NoNode", func(t *testing.T) {
@@ -833,9 +756,7 @@ func TestPruneDatabases(t *testing.T) {
 			owner,
 			nil,
 		)
-		if err != nil {
-			t.Fatalf("expected nil as NoNode is skipped, got %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected nil as NoNode is skipped, got")
 	})
 
 	t.Run("returns error on deleting database", func(t *testing.T) {
@@ -856,9 +777,7 @@ func TestPruneDatabases(t *testing.T) {
 			owner,
 			nil,
 		)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 }
 
@@ -875,52 +794,46 @@ func TestPruneCells(t *testing.T) {
 
 	t.Run("removes stale cell", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1", "cell2")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
 
 		for _, c := range []string{"cell1", "cell2"} {
-			if err := topo.RegisterCellFromSpec(
+			ck.Require().NoError(topo.RegisterCellFromSpec(
 				ctx, store, recorder, owner,
 				multigresv1alpha1.CellConfig{Name: multigresv1alpha1.CellName(c)}, nil, topoRef,
-			); err != nil {
-				t.Fatalf("registering %s: %v", c, err)
-			}
+			), "registering %s", c)
 		}
 
 		// Prune, keeping only cell1.
-		if err := topo.PruneCells(ctx, store, recorder, owner, []string{"cell1"}); err != nil {
-			t.Fatalf("prune: %v", err)
-		}
+		ck.Require().
+			NoError(topo.PruneCells(ctx, store, recorder, owner, []string{"cell1"}), "prune")
 
 		if _, err := store.GetCell(ctx, "cell1"); err != nil {
 			t.Error("cell1 should still exist")
 		}
-		if _, err := store.GetCell(ctx, "cell2"); err == nil {
-			t.Error("cell2 should have been pruned")
-		}
+		_, err := store.GetCell(ctx, "cell2")
+		ck.Error(err, "cell2 should have been pruned")
 	})
 
 	t.Run("no-op when all cells active", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := newMemoryStore(t, "cell1")
 		recorder := record.NewFakeRecorder(10)
 		ctx := context.Background()
 
-		if err := topo.RegisterCellFromSpec(
+		c.Require().NoError(topo.RegisterCellFromSpec(
 			ctx, store, recorder, owner,
 			multigresv1alpha1.CellConfig{Name: "cell1"}, nil, topoRef,
-		); err != nil {
-			t.Fatalf("registering: %v", err)
-		}
+		), "registering")
 
-		if err := topo.PruneCells(ctx, store, recorder, owner, []string{"cell1"}); err != nil {
-			t.Fatalf("prune: %v", err)
-		}
+		c.Require().
+			NoError(topo.PruneCells(ctx, store, recorder, owner, []string{"cell1"}), "prune")
 
-		if _, err := store.GetCell(ctx, "cell1"); err != nil {
-			t.Error("cell1 should still exist")
-		}
+		_, err := store.GetCell(ctx, "cell1")
+		c.NoError(err, "cell1 should still exist")
 	})
 
 	t.Run("returns error on getting cell names", func(t *testing.T) {
@@ -932,9 +845,7 @@ func TestPruneCells(t *testing.T) {
 		}
 
 		err := topo.PruneCells(context.Background(), store, record.NewFakeRecorder(10), owner, nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("skips if cell delete returns NoNode", func(t *testing.T) {
@@ -949,9 +860,7 @@ func TestPruneCells(t *testing.T) {
 		}
 
 		err := topo.PruneCells(context.Background(), store, record.NewFakeRecorder(10), owner, nil)
-		if err != nil {
-			t.Fatalf("expected nil as NoNode is skipped, got %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "expected nil as NoNode is skipped, got")
 	})
 
 	t.Run("returns error on deleting cell", func(t *testing.T) {
@@ -966,8 +875,6 @@ func TestPruneCells(t *testing.T) {
 		}
 
 		err := topo.PruneCells(context.Background(), store, record.NewFakeRecorder(10), owner, nil)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 }

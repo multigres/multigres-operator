@@ -8,8 +8,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/multigres/multigres/go/common/topoclient"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -22,9 +20,12 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestTopologyTLSLongFallbackUsesSameRoot(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	cluster := topoTLSCluster("cluster-abcdefghijklmnop", "namespace-abcdefghijklmnopqrstu", nil)
 	cluster.Spec.Cells = []multigresv1alpha1.CellConfig{{Name: "zone-a"}}
 	scheme := setupScheme()
@@ -33,33 +34,32 @@ func TestTopologyTLSLongFallbackUsesSameRoot(t *testing.T) {
 	r := &MultigresClusterReconciler{
 		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
-			assert.Equal(
-				t,
+			ck.EqDeep(
 				"/multigres-fallback/b-Tmo_r9oWzDWEuz_6f6LFOAmYO7ve1i4ksIy7qa9ac/global",
 				ref.RootPath,
 			)
 			return noCloseStore{Store: store}, nil
 		},
 	}
-	require.NoError(t, r.reconcileCertificate(t.Context(), cluster))
+	ck.Require().NoError(r.reconcileCertificate(t.Context(), cluster))
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certGVK)
-	require.NoError(t, c.Get(t.Context(), client.ObjectKey{
+	ck.Require().NoError(c.Get(t.Context(), client.ObjectKey{
 		Namespace: cluster.Namespace, Name: multigresv1alpha1.TopoClientCertName(cluster.Name),
 	}, cert))
 	subject, _, err := unstructured.NestedString(cert.Object, "spec", "literalSubject")
-	require.NoError(t, err)
+	ck.Require().NoError(err)
 	cn, ok := parseCommonName(subject)
-	require.True(t, ok)
-	assert.Equal(t, "/multigres-fallback/b-Tmo_r9oWzDWEuz_6f6LFOAmYO7ve1i4ksIy7qa9ac", cn)
+	ck.Require().True(ok)
+	ck.EqDeep("/multigres-fallback/b-Tmo_r9oWzDWEuz_6f6LFOAmYO7ve1i4ksIy7qa9ac", cn)
 
 	res := resolver.NewResolver(c, cluster.Namespace)
 	result, err := r.reconcileTopology(t.Context(), cluster, res)
-	require.NoError(t, err)
-	assert.Zero(t, result.RequeueAfter)
+	ck.Require().NoError(err)
+	ck.Zero(result.RequeueAfter)
 	cell, err := store.GetCell(t.Context(), "zone-a")
-	require.NoError(t, err)
-	assert.Equal(t, cn+"/global", cell.Root)
+	ck.Require().NoError(err)
+	ck.EqDeep(cn+"/global", cell.Root)
 
 	cluster.Spec.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
 		LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
@@ -67,13 +67,14 @@ func TestTopologyTLSLongFallbackUsesSameRoot(t *testing.T) {
 		},
 	}
 	_, _, local, err := res.ResolveCell(t.Context(), cluster, &cluster.Spec.Cells[0])
-	require.NoError(t, err)
-	assert.Equal(t, cn+"/zone-a", local.Etcd.RootPath)
+	ck.Require().NoError(err)
+	ck.EqDeep(cn+"/zone-a", local.Etcd.RootPath)
 }
 
 func TestReconcileOversizedProjectRefStatusAndRecovery(t *testing.T) {
 	for _, ref := range []string{strings.Repeat("p", 55), strings.Repeat("/", 19)} {
 		t.Run(ref, func(t *testing.T) {
+			ck := assert.NewCollecting(t)
 			cluster := topoTLSCluster(
 				"cluster",
 				"default",
@@ -93,35 +94,35 @@ func TestReconcileOversizedProjectRefStatusAndRecovery(t *testing.T) {
 			}
 			key := client.ObjectKeyFromObject(cluster)
 			_, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key})
-			require.ErrorContains(t, err, "64 byte certificate common name limit")
-			require.NoError(t, c.Get(t.Context(), key, cluster))
-			assert.Equal(t, multigresv1alpha1.PhaseDegraded, cluster.Status.Phase)
+			ck.Require().ErrorContains(err, "64 byte certificate common name limit")
+			ck.Require().NoError(c.Get(t.Context(), key, cluster))
+			ck.EqDeep(multigresv1alpha1.PhaseDegraded, cluster.Status.Phase)
 			condition := meta.FindStatusCondition(cluster.Status.Conditions, conditionTopologyReady)
-			require.NotNil(t, condition)
-			assert.Equal(t, metav1.ConditionFalse, condition.Status)
-			assert.Equal(t, "TopoCertificateFailed", condition.Reason)
-			assert.Equal(t, cluster.Generation, condition.ObservedGeneration)
-			assert.Contains(
-				t,
+			ck.Require().NotNil(condition)
+			ck.EqDeep(metav1.ConditionFalse, condition.Status)
+			ck.EqDeep("TopoCertificateFailed", condition.Reason)
+			ck.EqDeep(cluster.Generation, condition.ObservedGeneration)
+			ck.StrContains(
 				condition.Message,
 				"shorten annotation multigres.com/project-ref to at most 53 bytes after path escaping",
 			)
 
 			cluster.Annotations[metadata.AnnotationProjectRef] = strings.Repeat("p", 53)
-			require.NoError(t, c.Update(t.Context(), cluster))
+			ck.Require().NoError(c.Update(t.Context(), cluster))
 			_, err = r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key})
-			require.NoError(t, err)
-			require.NoError(t, c.Get(t.Context(), key, cluster))
+			ck.Require().NoError(err)
+			ck.Require().NoError(c.Get(t.Context(), key, cluster))
 			condition = meta.FindStatusCondition(cluster.Status.Conditions, conditionTopologyReady)
-			require.NotNil(t, condition)
-			assert.Equal(t, metav1.ConditionTrue, condition.Status)
-			assert.Equal(t, "TopoConnected", condition.Reason)
-			assert.NotContains(t, cluster.Status.Message, "certificate common name limit")
+			ck.Require().NotNil(condition)
+			ck.EqDeep(metav1.ConditionTrue, condition.Status)
+			ck.EqDeep("TopoConnected", condition.Reason)
+			ck.NotStrContains(cluster.Status.Message, "certificate common name limit")
 		})
 	}
 }
 
 func TestReconcileCertificatePreservesExplicitLongRoot(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	cluster := topoTLSCluster("cluster-abcdefghijklmnop", "namespace-abcdefghijklmnopqrstu", nil)
 	const explicitRoot = "/multigres/namespace-abcdefghijklmnopqrstu/cluster-abcdefghijklmnop/global"
 	cluster.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
@@ -138,17 +139,14 @@ func TestReconcileCertificatePreservesExplicitLongRoot(t *testing.T) {
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 	}
-	require.ErrorContains(
-		t,
-		r.reconcileCertificate(t.Context(), cluster),
-		"outside certificate identity",
-	)
-	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
-	assert.Equal(t, explicitRoot, cluster.Spec.GlobalTopoServer.Etcd.RootPath)
+	ck.Require().
+		ErrorContains(r.reconcileCertificate(t.Context(), cluster), "outside certificate identity")
+	ck.Require().NoError(c.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+	ck.EqDeep(explicitRoot, cluster.Spec.GlobalTopoServer.Etcd.RootPath)
 	condition := meta.FindStatusCondition(cluster.Status.Conditions, conditionTopologyReady)
-	require.NotNil(t, condition)
-	assert.Equal(t, "TopoCertificateFailed", condition.Reason)
-	assert.Contains(t, condition.Message, "migrate any existing topology data")
+	ck.Require().NotNil(condition)
+	ck.EqDeep("TopoCertificateFailed", condition.Reason)
+	ck.StrContains(condition.Message, "migrate any existing topology data")
 
 	cluster.Spec.GlobalTopoServer.Etcd.RootPath = ""
 	cluster.Spec.Cells = []multigresv1alpha1.CellConfig{{
@@ -159,12 +157,9 @@ func TestReconcileCertificatePreservesExplicitLongRoot(t *testing.T) {
 			},
 		},
 	}}
-	require.NoError(t, c.Update(t.Context(), cluster))
-	require.ErrorContains(
-		t,
-		r.reconcileCertificate(t.Context(), cluster),
-		`cell "zone-a" topology root`,
-	)
+	ck.Require().NoError(c.Update(t.Context(), cluster))
+	ck.Require().
+		ErrorContains(r.reconcileCertificate(t.Context(), cluster), `cell "zone-a" topology root`)
 }
 
 func topoTLSCluster(
@@ -225,48 +220,36 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			scheme := setupScheme()
 			got, err := buildTopoClientCertificate(tc.cluster, scheme)
-			if err != nil {
-				t.Fatalf("buildTopoClientCertificate() error = %v", err)
-			}
+			c.Require().NoError(err, "buildTopoClientCertificate() error =")
 
 			wantName := tc.cluster.Name + "-topo-client-tls"
-			if got.GetName() != wantName {
-				t.Errorf("name = %q, want %q", got.GetName(), wantName)
-			}
-			if got.GetNamespace() != tc.cluster.Namespace {
-				t.Errorf("namespace = %q, want %q", got.GetNamespace(), tc.cluster.Namespace)
-			}
+			c.Eq(wantName, got.GetName(), "name")
+			c.Eq(tc.cluster.Namespace, got.GetNamespace(), "namespace")
 
 			ownerRefs := got.GetOwnerReferences()
-			if len(ownerRefs) != 1 || ownerRefs[0].Kind != "MultigresCluster" {
-				t.Fatalf("ownerReferences = %+v, want one MultigresCluster ref", ownerRefs)
-			}
+			c.Require().
+				False(len(ownerRefs) != 1 || ownerRefs[0].Kind != "MultigresCluster", "ownerReferences = %+v, want one MultigresCluster ref", ownerRefs)
 
 			spec, ok := got.Object["spec"].(map[string]any)
-			if !ok {
-				t.Fatal("spec is not a map")
-			}
+			c.Require().True(ok, "spec is not a map")
 			wantSubject := fmt.Sprintf(CertLiteralSubjectTemplate, tc.wantSubject)
-			if diff := cmp.Diff(wantSubject, spec["literalSubject"]); diff != "" {
-				t.Errorf("literalSubject mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(wantName, spec["secretName"]); diff != "" {
-				t.Errorf("secretName mismatch (-want +got):\n%s", diff)
-			}
+			c.Eq(
+				"",
+				cmp.Diff(wantSubject, spec["literalSubject"]),
+				"literalSubject mismatch (-want +got):\n",
+			)
+			c.Eq("", cmp.Diff(wantName, spec["secretName"]), "secretName mismatch (-want +got):\n")
 			// A client credential is verified by subject, so it carries no SANs.
-			if diff := cmp.Diff([]any{}, spec["dnsNames"]); diff != "" {
-				t.Errorf("dnsNames mismatch (-want +got):\n%s", diff)
-			}
+			c.Eq("", cmp.Diff([]any{}, spec["dnsNames"]), "dnsNames mismatch (-want +got):\n")
 			wantUsages := []any{
 				"digital signature",
 				"key encipherment",
 				"client auth",
 			}
-			if diff := cmp.Diff(wantUsages, spec["usages"]); diff != "" {
-				t.Errorf("usages mismatch (-want +got):\n%s", diff)
-			}
+			c.Eq("", cmp.Diff(wantUsages, spec["usages"]), "usages mismatch (-want +got):\n")
 			// The credential is only useful if it chains to the CA the
 			// topology server trusts, never to the cluster's own issuer.
 			wantIssuerRef := map[string]any{
@@ -274,9 +257,11 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 				"kind":  "ClusterIssuer",
 				"group": "cert-manager.io",
 			}
-			if diff := cmp.Diff(wantIssuerRef, spec["issuerRef"]); diff != "" {
-				t.Errorf("issuerRef mismatch (-want +got):\n%s", diff)
-			}
+			c.Eq(
+				"",
+				cmp.Diff(wantIssuerRef, spec["issuerRef"]),
+				"issuerRef mismatch (-want +got):\n",
+			)
 		})
 	}
 }
@@ -284,25 +269,21 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 // The CN is the identity a topology server authorizes against, so it has to
 // be the string ClusterRoot() produces and not a re-derivation of it.
 func TestBuildTopoClientCertificateCommonNameMatchesTopologyRoot(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := setupScheme()
 	cluster := topoTLSCluster("test-cluster", "supabase", map[string]string{
 		metadata.AnnotationProjectRef: "proj_123",
 	})
 
 	cert, err := buildTopoClientCertificate(cluster, scheme)
-	if err != nil {
-		t.Fatalf("buildTopoClientCertificate() error = %v", err)
-	}
+	c.Require().NoError(err, "buildTopoClientCertificate() error =")
 	subject, _, _ := unstructured.NestedString(cert.Object, "spec", "literalSubject")
 
 	globalRoot := "/multigres/proj_123/global"
 	cn, ok := parseCommonName(subject)
-	if !ok {
-		t.Fatalf("no CN in literalSubject %q", subject)
-	}
-	if got := cn + "/global"; got != globalRoot {
-		t.Errorf("CN %q does not prefix the global root: got %q, want %q", cn, got, globalRoot)
-	}
+	c.Require().True(ok, "no CN in literalSubject %q", subject)
+	got := cn + "/global"
+	c.Eq(globalRoot, got, "CN %q does not prefix the global root: got %q, want", cn, got)
 }
 
 func parseCommonName(subject string) (string, bool) {
@@ -318,6 +299,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 	certName := "test-cluster-topo-client-tls"
 
 	t.Run("issues the client certificate when topology TLS is enabled", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
@@ -327,19 +309,22 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.NoError(
+			r.reconcileCertificate(context.Background(), cluster),
+			"reconcileCertificate() error =",
+		)
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certGVK)
 		key := client.ObjectKey{Namespace: "supabase", Name: certName}
-		if err := c.Get(context.Background(), key, got); err != nil {
-			t.Fatalf("expected topology client Certificate, got error %v", err)
-		}
+		ck.NoError(
+			c.Get(context.Background(), key, got),
+			"expected topology client Certificate, got error",
+		)
 	})
 
 	t.Run("prunes the client certificate when topology TLS is disabled", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)
 		cluster.Spec.TopoTLS.Enabled = ptr.To(false)
@@ -347,9 +332,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 		existing, err := buildTopoClientCertificate(
 			topoTLSCluster("test-cluster", "supabase", nil), scheme,
 		)
-		if err != nil {
-			t.Fatalf("buildTopoClientCertificate() error = %v", err)
-		}
+		ck.NoError(err, "buildTopoClientCertificate() error =")
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(cluster, existing).
@@ -360,20 +343,20 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.NoError(
+			r.reconcileCertificate(context.Background(), cluster),
+			"reconcileCertificate() error =",
+		)
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certGVK)
 		key := client.ObjectKey{Namespace: "supabase", Name: certName}
 		err = c.Get(context.Background(), key, got)
-		if err == nil {
-			t.Fatal("expected topology client Certificate to be deleted")
-		}
+		ck.Error(err, "expected topology client Certificate to be deleted")
 	})
 
 	t.Run("issues nothing when the topology server is external", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)
 		// An external topology server brings its own CA and client Secrets, so
@@ -390,19 +373,22 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.NoError(
+			r.reconcileCertificate(context.Background(), cluster),
+			"reconcileCertificate() error =",
+		)
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certGVK)
 		key := client.ObjectKey{Namespace: "supabase", Name: certName}
-		if err := c.Get(context.Background(), key, got); err == nil {
-			t.Fatal("expected no topology client Certificate for an external topology server")
-		}
+		ck.Error(
+			c.Get(context.Background(), key, got),
+			"expected no topology client Certificate for an external topology server",
+		)
 	})
 
 	t.Run("issues nothing when topology TLS is unset", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)
 		cluster.Spec.TopoTLS = nil
@@ -413,18 +399,13 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileCertificate(context.Background(), cluster), "reconcileCertificate() error =")
 
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(certGVK)
-		if err := c.List(context.Background(), list); err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(list.Items) != 0 {
-			t.Errorf("got %d Certificates, want 0", len(list.Items))
-		}
+		ck.Require().NoError(c.List(context.Background(), list), "List() error =")
+		ck.Empty(list.Items, "got %d Certificates, want 0", len(list.Items))
 	})
 }
 
@@ -436,26 +417,29 @@ func TestBuildTopoClientCertificateRejectsOverLongRoot(t *testing.T) {
 		metadata.AnnotationProjectRef: strings.Repeat("p", 64),
 	})
 
-	if _, err := buildTopoClientCertificate(cluster, scheme); err == nil {
-		t.Fatal("buildTopoClientCertificate() = nil error, want a common name limit error")
-	}
+	_, err := buildTopoClientCertificate(cluster, scheme)
+	assert.NewAborting(t).
+		Error(err, "buildTopoClientCertificate() = nil error, want a common name limit error")
 }
 
 // Internal component certificates keep using the cluster's own issuer; only
 // the topology credential follows the topology CA.
 func TestInternalCertificatesKeepClusterIssuer(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := setupScheme()
 	cluster := topoTLSCluster("test-cluster", "supabase", nil)
 	cluster.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)}
 
 	built, err := buildInternalCertificates(cluster, scheme)
-	if err != nil {
-		t.Fatalf("buildInternalCertificates() error = %v", err)
-	}
+	c.Require().NoError(err, "buildInternalCertificates() error =")
 	for _, cert := range built {
 		issuer, _, _ := unstructured.NestedString(cert.Object, "spec", "issuerRef", "name")
-		if issuer != "cluster-issuer" {
-			t.Errorf("%s issuerRef.name = %q, want cluster-issuer", cert.GetName(), issuer)
-		}
+		c.Eq(
+			"cluster-issuer",
+			issuer,
+			"%s issuerRef.name = %q, want cluster-issuer",
+			cert.GetName(),
+			issuer,
+		)
 	}
 }

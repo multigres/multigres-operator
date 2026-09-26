@@ -6,7 +6,6 @@ import (
 	"errors"
 	"maps"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +27,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestValidateStorageClassDependencies(t *testing.T) {
@@ -54,6 +55,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 	}
 
 	t.Run("nothing explicit reports one not-specified verdict", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -65,18 +67,21 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		r := newReconciler(shard)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if check.status != metav1.ConditionTrue || check.reason != storageClassNotSpecifiedReason {
-			t.Fatalf("unexpected verdict: %+v", check)
-		}
-		if check.backupDependency != nil || check.poolDependency != nil {
-			t.Fatalf("expected no dependency errors, got %+v", check)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(
+			check.status != metav1.ConditionTrue || check.reason != storageClassNotSpecifiedReason,
+			"unexpected verdict: %+v",
+			check,
+		)
+		c.False(
+			check.backupDependency != nil || check.poolDependency != nil,
+			"expected no dependency errors, got %+v",
+			check,
+		)
 	})
 
 	t.Run("explicit classes all present report found", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -95,12 +100,12 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if check.status != metav1.ConditionTrue || check.reason != storageClassFoundReason {
-			t.Fatalf("unexpected verdict: %+v", check)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(
+			check.status != metav1.ConditionTrue || check.reason != storageClassFoundReason,
+			"unexpected verdict: %+v",
+			check,
+		)
 	})
 
 	// One writer means one verdict, and in the mixed cases the merged verdict
@@ -109,6 +114,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 	// was explicit. The reason is published on the condition, so both directions
 	// of "some of it is explicit" are pinned here.
 	t.Run("explicit backup class with no pool class reports found", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -124,15 +130,16 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if check.status != metav1.ConditionTrue || check.reason != storageClassFoundReason {
-			t.Fatalf("unexpected verdict: %+v", check)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(
+			check.status != metav1.ConditionTrue || check.reason != storageClassFoundReason,
+			"unexpected verdict: %+v",
+			check,
+		)
 	})
 
 	t.Run("explicit pool class with no backup class reports found", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -149,15 +156,16 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if check.status != metav1.ConditionTrue || check.reason != storageClassFoundReason {
-			t.Fatalf("unexpected verdict: %+v", check)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(
+			check.status != metav1.ConditionTrue || check.reason != storageClassFoundReason,
+			"unexpected verdict: %+v",
+			check,
+		)
 	})
 
 	t.Run("missing backup class reports the backup dependency", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec:       multigresv1alpha1.ShardSpec{Backup: filesystemBackup("missing-sc")},
@@ -165,24 +173,23 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		r := newReconciler(shard)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if check.status != metav1.ConditionFalse || check.reason != storageClassNotFoundReason {
-			t.Fatalf("unexpected verdict: %+v", check)
-		}
-		if !isMissingStorageClassDependency(check.backupDependency) {
-			t.Fatalf("expected backup dependency error, got %v", check.backupDependency)
-		}
-		if check.poolDependency != nil {
-			t.Fatalf("expected no pool dependency error, got %v", check.poolDependency)
-		}
-		if !strings.Contains(check.message, `"missing-sc"`) {
-			t.Fatalf("message must name the class, got %q", check.message)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(
+			check.status != metav1.ConditionFalse || check.reason != storageClassNotFoundReason,
+			"unexpected verdict: %+v",
+			check,
+		)
+		c.True(
+			isMissingStorageClassDependency(check.backupDependency),
+			"expected backup dependency error, got %v",
+			check.backupDependency,
+		)
+		c.NoError(check.poolDependency, "expected no pool dependency error, got")
+		c.StrContains(check.message, `"missing-sc"`, "message must name the class, got")
 	})
 
 	t.Run("missing pool class reports the pool dependency", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -196,24 +203,23 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		r := newReconciler(shard)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if check.status != metav1.ConditionFalse || check.reason != storageClassNotFoundReason {
-			t.Fatalf("unexpected verdict: %+v", check)
-		}
-		if !isMissingStorageClassDependency(check.poolDependency) {
-			t.Fatalf("expected pool dependency error, got %v", check.poolDependency)
-		}
-		if check.backupDependency != nil {
-			t.Fatalf("expected no backup dependency error, got %v", check.backupDependency)
-		}
-		if !strings.Contains(check.message, "primary") {
-			t.Fatalf("message must name the pool, got %q", check.message)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(
+			check.status != metav1.ConditionFalse || check.reason != storageClassNotFoundReason,
+			"unexpected verdict: %+v",
+			check,
+		)
+		c.True(
+			isMissingStorageClassDependency(check.poolDependency),
+			"expected pool dependency error, got %v",
+			check.poolDependency,
+		)
+		c.NoError(check.backupDependency, "expected no backup dependency error, got")
+		c.StrContains(check.message, "primary", "message must name the pool, got")
 	})
 
 	t.Run("missing backup class wins over a missing pool class", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -231,18 +237,15 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		r := newReconciler(shard)
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !isMissingStorageClassDependency(check.backupDependency) ||
-			check.poolDependency != nil {
-			t.Fatalf("expected only the backup dependency, got %+v", check)
-		}
+		c.NoError(err, "unexpected error")
+		c.False(!isMissingStorageClassDependency(check.backupDependency) ||
+			check.poolDependency != nil, "expected only the backup dependency, got %+v", check)
 	})
 
 	// Spec.Pools is a map, so an unordered scan would report whichever missing
 	// pool Go's iteration reached first and flap the condition message.
 	t.Run("the reported pool is stable across calls", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -264,19 +267,13 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		want := ""
 		for i := range 30 {
 			check, err := r.validateStorageClassDependencies(t.Context(), shard)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			c.NoError(err, "unexpected error")
 			if i == 0 {
 				want = check.message
 			}
-			if check.message != want {
-				t.Fatalf("message flapped: %q then %q", want, check.message)
-			}
+			c.Eq(want, check.message, "message flapped")
 		}
-		if !strings.Contains(want, "aaa") {
-			t.Fatalf("expected the first pool by name, got %q", want)
-		}
+		c.StrContains(want, "aaa", "expected the first pool by name, got")
 	})
 }
 
@@ -298,6 +295,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 // test/suite.
 func TestSetStorageClassCondition_AppliesOnlyConditions(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -321,9 +319,7 @@ func TestSetStorageClassCondition_AppliesOnlyConditions(t *testing.T) {
 	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 		OnStatusPatch: func(obj client.Object) error {
 			raw, err := json.Marshal(obj)
-			if err != nil {
-				t.Fatalf("marshal patch payload: %v", err)
-			}
+			c.NoError(err, "marshal patch payload")
 			captured = raw
 			return nil
 		},
@@ -336,32 +332,24 @@ func TestSetStorageClassCondition_AppliesOnlyConditions(t *testing.T) {
 		reason:  storageClassNotSpecifiedReason,
 		message: "No explicit backup filesystem or pool StorageClass configured; using cluster default",
 	}
-	if err := r.setStorageClassCondition(t.Context(), shard, check); err != nil {
-		t.Fatalf("setStorageClassCondition: %v", err)
-	}
-	if captured == nil {
-		t.Fatal("guard did not apply a status patch")
-	}
+	c.NoError(r.setStorageClassCondition(t.Context(), shard, check), "setStorageClassCondition")
+	c.NotNil(captured, "guard did not apply a status patch")
 
 	var payload struct {
 		Status map[string]json.RawMessage `json:"status"`
 	}
-	if err := json.Unmarshal(captured, &payload); err != nil {
-		t.Fatalf("unmarshal patch payload: %v", err)
-	}
+	c.NoError(json.Unmarshal(captured, &payload), "unmarshal patch payload")
 	keys := slices.Sorted(maps.Keys(payload.Status))
-	if !slices.Equal(keys, []string{"conditions"}) {
-		t.Fatalf("guard payload must own status.conditions only, got %v", keys)
-	}
+	c.EqDiff([]string{"conditions"}, keys, "guard payload must own status.conditions only, got")
 
 	var conditions []metav1.Condition
-	if err := json.Unmarshal(payload.Status["conditions"], &conditions); err != nil {
-		t.Fatalf("unmarshal conditions: %v", err)
-	}
-	if len(conditions) != 1 || conditions[0].Type != conditionStorageClassValid {
-		t.Fatalf("guard payload must carry exactly the %s condition, got %+v",
-			conditionStorageClassValid, conditions)
-	}
+	c.NoError(json.Unmarshal(payload.Status["conditions"], &conditions), "unmarshal conditions")
+	c.False(
+		len(conditions) != 1 || conditions[0].Type != conditionStorageClassValid,
+		"guard payload must carry exactly the %s condition, got %+v",
+		conditionStorageClassValid,
+		conditions,
+	)
 	if conditions[0].Status != check.status || conditions[0].Reason != check.reason ||
 		conditions[0].Message != check.message {
 		t.Fatalf("condition does not match the verdict: %+v", conditions[0])
@@ -380,6 +368,7 @@ func TestSetStorageClassCondition_AppliesOnlyConditions(t *testing.T) {
 // of this assertion is TestShardStatusQuiesces under test/suite.
 func TestStorageClassCondition_IsStableAcrossReconciles(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -414,44 +403,33 @@ func TestStorageClassCondition_IsStableAcrossReconciles(t *testing.T) {
 
 	reconcileStorageClasses := func() []byte {
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("validate: %v", err)
-		}
-		if err := r.setStorageClassCondition(t.Context(), shard, check); err != nil {
-			t.Fatalf("set condition: %v", err)
-		}
+		c.NoError(err, "validate")
+		c.NoError(r.setStorageClassCondition(t.Context(), shard, check), "set condition")
 
 		var got multigresv1alpha1.Shard
-		if err := baseClient.Get(t.Context(), client.ObjectKeyFromObject(shard), &got); err != nil {
-			t.Fatalf("read shard: %v", err)
-		}
+		c.NoError(
+			baseClient.Get(t.Context(), client.ObjectKeyFromObject(shard), &got),
+			"read shard",
+		)
 		cond := findCondition(got.Status.Conditions, conditionStorageClassValid)
-		if cond == nil {
-			t.Fatalf("no %s condition", conditionStorageClassValid)
-		}
+		c.NotNil(cond, "no %s condition", conditionStorageClassValid)
 		raw, err := json.Marshal(cond)
-		if err != nil {
-			t.Fatalf("marshal condition: %v", err)
-		}
+		c.NoError(err, "marshal condition")
 		return raw
 	}
 
 	first := reconcileStorageClasses()
-	if patches != 1 {
-		t.Fatalf("first cycle must apply the condition once, applied %d times", patches)
-	}
+	c.Eq(1, patches, "first cycle must apply the condition once, applied")
 
 	second := reconcileStorageClasses()
-	if string(first) != string(second) {
-		t.Fatalf(
-			"StorageClassValid condition moved between reconciles:\n  %s\n  %s",
-			first,
-			second,
-		)
-	}
-	if patches != 1 {
-		t.Fatalf("second cycle rewrote a settled condition: %d applies total", patches)
-	}
+	c.Eq(
+		string(second),
+		string(first),
+		"StorageClassValid condition moved between reconciles:\n  %s\n  %s",
+		first,
+		second,
+	)
+	c.Eq(1, patches, "second cycle rewrote a settled condition")
 }
 
 // guardStatusApply is one status apply captured under the guard's field
@@ -494,6 +472,7 @@ type guardStatusApply struct {
 // TestShardStatusQuiesces under test/suite.
 func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -541,27 +520,16 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 				popts := (&client.SubResourcePatchOptions{}).ApplyOptions(opts)
 				if popts.FieldManager == "multigres-resource-handler-guard" {
 					raw, err := json.Marshal(obj)
-					if err != nil {
-						t.Fatalf("marshal guard payload: %v", err)
-					}
+					ck.NoError(err, "marshal guard payload")
 					var payload struct {
 						Status map[string]json.RawMessage `json:"status"`
 					}
-					if err := json.Unmarshal(raw, &payload); err != nil {
-						t.Fatalf("unmarshal guard payload: %v", err)
-					}
+					ck.NoError(json.Unmarshal(raw, &payload), "unmarshal guard payload")
 					var conditions []metav1.Condition
 					if raw, ok := payload.Status["conditions"]; ok {
-						if err := json.Unmarshal(raw, &conditions); err != nil {
-							t.Fatalf("unmarshal guard conditions: %v", err)
-						}
+						ck.NoError(json.Unmarshal(raw, &conditions), "unmarshal guard conditions")
 					}
-					if len(conditions) != 1 {
-						t.Fatalf(
-							"guard payload must carry exactly one condition, got %+v",
-							conditions,
-						)
-					}
+					ck.Len(conditions, 1, "guard payload must carry exactly one condition, got")
 					guardApplies = append(guardApplies, guardStatusApply{
 						statusKeys: slices.Sorted(maps.Keys(payload.Status)),
 						condition:  conditions[0],
@@ -583,30 +551,34 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 
 	assertOnlyOwnsConditions := func(t *testing.T, apply guardStatusApply) {
 		t.Helper()
-		if !slices.Equal(apply.statusKeys, []string{"conditions"}) {
-			t.Fatalf("guard payload must own status.conditions only, got %v", apply.statusKeys)
-		}
-		if apply.condition.Type != conditionStorageClassValid {
-			t.Fatalf("guard payload must carry the %s condition, got %+v",
-				conditionStorageClassValid, apply.condition)
-		}
+		c := assert.NewAborting(t)
+		c.EqDiff(
+			[]string{"conditions"},
+			apply.statusKeys,
+			"guard payload must own status.conditions only, got",
+		)
+		c.Eq(
+			conditionStorageClassValid,
+			apply.condition.Type,
+			"guard payload must carry the %s condition, got %+v",
+			conditionStorageClassValid,
+			apply.condition,
+		)
 	}
 
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	if len(guardApplies) != 1 {
-		t.Fatalf(
-			"first reconcile must make exactly one guard apply (a second writer is back), got %d",
-			len(guardApplies),
-		)
-	}
+	ck.Len(
+		guardApplies,
+		1,
+		"first reconcile must make exactly one guard apply (a second writer is back), got %d",
+		len(guardApplies),
+	)
 	first := guardApplies[0]
 	assertOnlyOwnsConditions(t, first)
-	if first.condition.Status != metav1.ConditionTrue ||
-		first.condition.Reason != storageClassNotSpecifiedReason {
-		t.Fatalf("unexpected first verdict: %+v", first.condition)
-	}
+	ck.False(first.condition.Status != metav1.ConditionTrue ||
+		first.condition.Reason != storageClassNotSpecifiedReason, "unexpected first verdict: %+v", first.condition)
 
 	// The fake client's SSA status apply replaces the whole object rather than
 	// scoping to the applied fields, which drops Spec. Restore it exactly as the
@@ -614,39 +586,32 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 	// second reconcile sees the same spec as the first rather than erroring on a
 	// shard with no pools.
 	var stored multigresv1alpha1.Shard
-	if err := fakeClient.Get(t.Context(), req.NamespacedName, &stored); err != nil {
-		t.Fatalf("read shard before restoring spec: %v", err)
-	}
+	ck.NoError(
+		fakeClient.Get(t.Context(), req.NamespacedName, &stored),
+		"read shard before restoring spec",
+	)
 	stored.Spec = shard.Spec
-	if err := fakeClient.Update(t.Context(), &stored); err != nil {
-		t.Fatalf("restore shard spec: %v", err)
-	}
+	ck.NoError(fakeClient.Update(t.Context(), &stored), "restore shard spec")
 
-	if _, err := r.Reconcile(t.Context(), req); err != nil {
-		t.Fatalf("second reconcile: %v", err)
-	}
-	if len(guardApplies) != 2 {
-		t.Fatalf(
-			"second reconcile must make exactly one guard apply of its own (a second writer "+
-				"is back), got %d total",
-			len(guardApplies),
-		)
-	}
+	_, err := r.Reconcile(t.Context(), req)
+	ck.NoError(err, "second reconcile")
+	ck.Len(
+		guardApplies,
+		2,
+		"second reconcile must make exactly one guard apply of its own (a second writer "+
+			"is back), got %d total",
+		len(guardApplies),
+	)
 	second := guardApplies[1]
 	assertOnlyOwnsConditions(t, second)
 
-	if second.condition.Status != first.condition.Status ||
+	ck.False(second.condition.Status != first.condition.Status ||
 		second.condition.Reason != first.condition.Reason ||
-		second.condition.Message != first.condition.Message {
-		t.Fatalf(
-			"StorageClassValid verdict flapped between reconciles:\n  %+v\n  %+v",
-			first.condition,
-			second.condition,
-		)
-	}
+		second.condition.Message != first.condition.Message, "StorageClassValid verdict flapped between reconciles:\n  %+v\n  %+v", first.condition, second.condition)
 }
 
 func TestReconcile_MissingStorageClassReturnsDependencyRequeueEvenWhenPVCExists(t *testing.T) {
+	ck := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -712,24 +677,20 @@ func TestReconcile_MissingStorageClassReturnsDependencyRequeueEvenWhenPVCExists(
 	result, err := r.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: client.ObjectKeyFromObject(shard),
 	})
-	if err != nil {
-		t.Fatalf("expected non-error dependency requeue, got error: %v", err)
-	}
-	if result.RequeueAfter != storageClassDependencyRequeue {
-		t.Fatalf("requeueAfter = %v, want %v", result.RequeueAfter, storageClassDependencyRequeue)
-	}
+	ck.NoError(err, "expected non-error dependency requeue, got error")
+	ck.Eq(storageClassDependencyRequeue, result.RequeueAfter, "requeueAfter")
 }
 
 func TestIsMissingStorageClassDependencyWrapped(t *testing.T) {
+	c := assert.NewAborting(t)
 	err := errors.New("other")
-	if isMissingStorageClassDependency(err) {
-		t.Fatal("expected false for non-dependency error")
-	}
+	c.False(isMissingStorageClassDependency(err), "expected false for non-dependency error")
 
 	wrapped := errors.Join(errors.New("outer"), &missingStorageClassDependencyError{className: "x"})
-	if !isMissingStorageClassDependency(wrapped) {
-		t.Fatal("expected true for wrapped missing dependency error")
-	}
+	c.True(
+		isMissingStorageClassDependency(wrapped),
+		"expected true for wrapped missing dependency error",
+	)
 }
 
 func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
@@ -753,6 +714,7 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 
 	t.Run("updateStatus patch contains only Available condition", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewAborting(t)
 
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
@@ -821,27 +783,16 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 			Recorder: record.NewFakeRecorder(100),
 		}
 
-		if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
-			t.Fatalf("updateStatus: %v", err)
-		}
+		ck.NoError(r.updateStatus(t.Context(), shard, renderedConfig{}), "updateStatus")
 
 		patchShard, ok := capturedPatchObj.(*multigresv1alpha1.Shard)
-		if !ok {
-			t.Fatalf("expected *Shard patch, got %T", capturedPatchObj)
-		}
+		ck.True(ok, "expected *Shard patch, got %T", capturedPatchObj)
 
 		for _, c := range patchShard.Status.Conditions {
-			if c.Type == conditionStorageClassValid {
-				t.Fatalf(
-					"updateStatus patch must not contain %s condition",
-					conditionStorageClassValid,
-				)
-			}
+			ck.NotEq(conditionStorageClassValid, c.Type, "updateStatus patch must not contain")
 		}
 		availCond := findCondition(patchShard.Status.Conditions, "Available")
-		if availCond == nil {
-			t.Fatal("updateStatus patch must contain Available condition")
-		}
+		ck.NotNil(availCond, "updateStatus patch must contain Available condition")
 	})
 }
 
@@ -904,9 +855,8 @@ func childExists(t *testing.T, c client.Client, obj client.Object, namespace, na
 	if err == nil {
 		return true
 	}
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("unexpected error reading %T %s: %v", obj, name, err)
-	}
+	assert.NewAborting(t).
+		True(apierrors.IsNotFound(err), "unexpected error reading %T %s: %v", obj, name, err)
 	return false
 }
 
@@ -918,6 +868,7 @@ func childExists(t *testing.T, c client.Client, obj client.Object, namespace, na
 // a missing pool class must stop after it and before anything that consumes
 // pool storage.
 func TestReconcile_MissingBackupStorageClassStopsBeforeTheSharedBackupPVC(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := storageClassGateScheme()
 	shard := storageClassGateShard("missing-backup-sc", "")
 
@@ -938,32 +889,32 @@ func TestReconcile_MissingBackupStorageClassStopsBeforeTheSharedBackupPVC(t *tes
 	result, err := r.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: client.ObjectKeyFromObject(shard),
 	})
-	if err != nil {
-		t.Fatalf("expected non-error dependency requeue, got error: %v", err)
-	}
-	if result.RequeueAfter != storageClassDependencyRequeue {
-		t.Fatalf("requeueAfter = %v, want %v", result.RequeueAfter, storageClassDependencyRequeue)
-	}
+	ck.Require().NoError(err, "expected non-error dependency requeue, got error")
+	ck.Require().Eq(storageClassDependencyRequeue, result.RequeueAfter, "requeueAfter")
 
 	ns := shard.Namespace
-	if !childExists(t, c, &corev1.ConfigMap{}, ns, PgHbaConfigMapName(shard.Name)) {
-		t.Error("pg_hba ConfigMap is missing: the backup gate moved above the shared ConfigMaps")
-	}
-	if childExists(t, c, &appsv1.Deployment{}, ns, buildHashedMultiorchName(shard, "zone1")) {
-		t.Error("Multiorch Deployment was created: the backup gate moved below the Multiorch block")
-	}
+	ck.True(
+		childExists(t, c, &corev1.ConfigMap{}, ns, PgHbaConfigMapName(shard.Name)),
+		"pg_hba ConfigMap is missing: the backup gate moved above the shared ConfigMaps",
+	)
+	ck.False(
+		childExists(t, c, &appsv1.Deployment{}, ns, buildHashedMultiorchName(shard, "zone1")),
+		"Multiorch Deployment was created: the backup gate moved below the Multiorch block",
+	)
 	if childExists(t, c, &corev1.PersistentVolumeClaim{}, ns, BuildSharedBackupPVCName(shard)) {
 		t.Error(
 			"shared backup PVC was created against a StorageClass that does not exist: " +
 				"the backup gate moved below the backup PVC block",
 		)
 	}
-	if childExists(t, c, &corev1.ConfigMap{}, ns, PostgresConfigMapName(shard.Name)) {
-		t.Error("postgres config ConfigMap was created: the reconcile ran past both gates")
-	}
+	ck.False(
+		childExists(t, c, &corev1.ConfigMap{}, ns, PostgresConfigMapName(shard.Name)),
+		"postgres config ConfigMap was created: the reconcile ran past both gates",
+	)
 }
 
 func TestReconcile_MissingPoolStorageClassStopsAfterTheSharedBackupPVC(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := storageClassGateScheme()
 	shard := storageClassGateShard("backup-sc", "missing-pool-sc")
 
@@ -988,26 +939,24 @@ func TestReconcile_MissingPoolStorageClassStopsAfterTheSharedBackupPVC(t *testin
 	result, err := r.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: client.ObjectKeyFromObject(shard),
 	})
-	if err != nil {
-		t.Fatalf("expected non-error dependency requeue, got error: %v", err)
-	}
-	if result.RequeueAfter != storageClassDependencyRequeue {
-		t.Fatalf("requeueAfter = %v, want %v", result.RequeueAfter, storageClassDependencyRequeue)
-	}
+	ck.Require().NoError(err, "expected non-error dependency requeue, got error")
+	ck.Require().Eq(storageClassDependencyRequeue, result.RequeueAfter, "requeueAfter")
 
 	ns := shard.Namespace
-	if !childExists(t, c, &appsv1.Deployment{}, ns, buildHashedMultiorchName(shard, "zone1")) {
-		t.Error("Multiorch Deployment is missing: the pool gate moved above the Multiorch block")
-	}
+	ck.True(
+		childExists(t, c, &appsv1.Deployment{}, ns, buildHashedMultiorchName(shard, "zone1")),
+		"Multiorch Deployment is missing: the pool gate moved above the Multiorch block",
+	)
 	if !childExists(t, c, &corev1.PersistentVolumeClaim{}, ns, BuildSharedBackupPVCName(shard)) {
 		t.Error(
 			"shared backup PVC is missing: a missing pool class must not stop the reconcile " +
 				"before the backup PVC, whose own StorageClass is present",
 		)
 	}
-	if childExists(t, c, &corev1.ConfigMap{}, ns, PostgresConfigMapName(shard.Name)) {
-		t.Error("postgres config ConfigMap was created: the pool gate moved below it")
-	}
+	ck.False(
+		childExists(t, c, &corev1.ConfigMap{}, ns, PostgresConfigMapName(shard.Name)),
+		"postgres config ConfigMap was created: the pool gate moved below it",
+	)
 	if childExists(t, c, &corev1.Pod{}, ns, BuildPoolPodName(shard, "primary", "zone1", 0)) {
 		t.Error(
 			"pool pod was created against a StorageClass that does not exist: " +
@@ -1027,15 +976,12 @@ func persistStorageClassCondition(
 	build func(generation int64) metav1.Condition,
 ) {
 	t.Helper()
+	ck := assert.NewAborting(t)
 
 	var shard multigresv1alpha1.Shard
-	if err := c.Get(t.Context(), key, &shard); err != nil {
-		t.Fatalf("read shard: %v", err)
-	}
+	ck.NoError(c.Get(t.Context(), key, &shard), "read shard")
 	shard.Status.Conditions = []metav1.Condition{build(shard.Generation)}
-	if err := c.Status().Update(t.Context(), &shard); err != nil {
-		t.Fatalf("seed condition: %v", err)
-	}
+	ck.NoError(c.Status().Update(t.Context(), &shard), "seed condition")
 }
 
 // TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers takes the
@@ -1139,6 +1085,7 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewAborting(t)
 
 			scheme := runtime.NewScheme()
 			_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1172,29 +1119,24 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			if err := r.setStorageClassCondition(t.Context(), shard, settled); err != nil {
-				t.Fatalf("setStorageClassCondition: %v", err)
-			}
+			c.NoError(
+				r.setStorageClassCondition(t.Context(), shard, settled),
+				"setStorageClassCondition",
+			)
 
 			want := 0
 			if tc.wantPatch {
 				want = 1
 			}
-			if patches != want {
-				t.Fatalf("applied %d patches, want %d", patches, want)
-			}
+			c.Eq(want, patches, "applied")
 			if !tc.wantPatch {
 				return
 			}
 
 			var got multigresv1alpha1.Shard
-			if err := baseClient.Get(t.Context(), key, &got); err != nil {
-				t.Fatalf("read shard: %v", err)
-			}
+			c.NoError(baseClient.Get(t.Context(), key, &got), "read shard")
 			cond := findCondition(got.Status.Conditions, conditionStorageClassValid)
-			if cond == nil {
-				t.Fatalf("no %s condition", conditionStorageClassValid)
-			}
+			c.NotNil(cond, "no %s condition", conditionStorageClassValid)
 			if cond.Status != settled.status || cond.Reason != settled.reason ||
 				cond.Message != settled.message || cond.ObservedGeneration != got.Generation {
 				t.Fatalf("published condition does not match the verdict: %+v", *cond)
@@ -1210,6 +1152,7 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 // message and lastTransitionTime all have to move with it.
 func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1246,31 +1189,20 @@ func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 		t.Helper()
 
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("validate: %v", err)
-		}
-		if err := r.setStorageClassCondition(t.Context(), shard, check); err != nil {
-			t.Fatalf("set condition: %v", err)
-		}
+		c.Require().NoError(err, "validate")
+		c.Require().NoError(r.setStorageClassCondition(t.Context(), shard, check), "set condition")
 
 		var got multigresv1alpha1.Shard
-		if err := baseClient.Get(t.Context(), key, &got); err != nil {
-			t.Fatalf("read shard: %v", err)
-		}
+		c.Require().NoError(baseClient.Get(t.Context(), key, &got), "read shard")
 		cond := findCondition(got.Status.Conditions, conditionStorageClassValid)
-		if cond == nil {
-			t.Fatalf("no %s condition", conditionStorageClassValid)
-		}
+		c.Require().NotNil(cond, "no %s condition", conditionStorageClassValid)
 		return *cond
 	}
 
 	before := cycle()
-	if before.Status != metav1.ConditionFalse || before.Reason != storageClassNotFoundReason {
-		t.Fatalf("first cycle must report the missing class: %+v", before)
-	}
-	if patches != 1 {
-		t.Fatalf("first cycle applied %d patches, want 1", patches)
-	}
+	c.Require().
+		False(before.Status != metav1.ConditionFalse || before.Reason != storageClassNotFoundReason, "first cycle must report the missing class: %+v", before)
+	c.Require().Eq(1, patches, "first cycle applied")
 
 	// Backdated because metav1.Time serialises at second precision and both
 	// cycles run inside the same second, which would make a rewritten
@@ -1287,35 +1219,22 @@ func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 		}
 	})
 
-	if err := baseClient.Create(t.Context(), &storagev1.StorageClass{
+	c.Require().NoError(baseClient.Create(t.Context(), &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "appears-later"},
-	}); err != nil {
-		t.Fatalf("create StorageClass: %v", err)
-	}
+	}), "create StorageClass")
 
 	after := cycle()
-	if patches != 2 {
-		t.Fatalf("the changed verdict was skipped: %d patches total", patches)
-	}
-	if after.Status != metav1.ConditionTrue {
-		t.Errorf("status = %s, want %s", after.Status, metav1.ConditionTrue)
-	}
-	if after.Reason != storageClassFoundReason {
-		t.Errorf("reason = %s, want %s", after.Reason, storageClassFoundReason)
-	}
-	if after.Message == before.Message {
-		t.Errorf("message did not move off the missing-class text: %q", after.Message)
-	}
-	if want := "All explicitly configured StorageClasses are present"; after.Message != want {
-		t.Errorf("message = %q, want %q", after.Message, want)
-	}
-	if !after.LastTransitionTime.After(backdated.Time) {
-		t.Errorf(
-			"lastTransitionTime = %s, want it moved past %s: the condition transitioned",
-			after.LastTransitionTime,
-			backdated,
-		)
-	}
+	c.Require().Eq(2, patches, "the changed verdict was skipped")
+	c.Eq(metav1.ConditionTrue, after.Status, "status")
+	c.Eq(storageClassFoundReason, after.Reason, "reason")
+	c.NotEq(before.Message, after.Message, "message did not move off the missing-class text")
+	c.Eq("All explicitly configured StorageClasses are present", after.Message, "message")
+	c.True(
+		after.LastTransitionTime.After(backdated.Time),
+		"lastTransitionTime = %s, want it moved past %s: the condition transitioned",
+		after.LastTransitionTime,
+		backdated,
+	)
 }
 
 // TestStorageClassCondition_PreservesLastTransitionTimeWithoutATransition
@@ -1325,6 +1244,7 @@ func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 // lastTransitionTime stays put, matching meta.SetStatusCondition.
 func TestStorageClassCondition_PreservesLastTransitionTimeWithoutATransition(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1369,30 +1289,16 @@ func TestStorageClassCondition_PreservesLastTransitionTimeWithoutATransition(t *
 	r := &ShardReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(50)}
 
 	check, err := r.validateStorageClassDependencies(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	if err := r.setStorageClassCondition(t.Context(), shard, check); err != nil {
-		t.Fatalf("set condition: %v", err)
-	}
-	if patches != 1 {
-		t.Fatalf("the stale message was not republished: %d patches", patches)
-	}
+	c.NoError(err, "validate")
+	c.NoError(r.setStorageClassCondition(t.Context(), shard, check), "set condition")
+	c.Eq(1, patches, "the stale message was not republished")
 
 	var got multigresv1alpha1.Shard
-	if err := baseClient.Get(t.Context(), key, &got); err != nil {
-		t.Fatalf("read shard: %v", err)
-	}
+	c.NoError(baseClient.Get(t.Context(), key, &got), "read shard")
 	cond := findCondition(got.Status.Conditions, conditionStorageClassValid)
-	if cond == nil {
-		t.Fatalf("no %s condition", conditionStorageClassValid)
-	}
-	if cond.Message == staleMessage {
-		t.Fatalf("message was not rewritten: %q", cond.Message)
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Fatalf("status = %s, want %s", cond.Status, metav1.ConditionTrue)
-	}
+	c.NotNil(cond, "no %s condition", conditionStorageClassValid)
+	c.NotEq(staleMessage, cond.Message, "message was not rewritten")
+	c.Eq(metav1.ConditionTrue, cond.Status, "status")
 	if !cond.LastTransitionTime.Time.Equal(backdated.Time) {
 		t.Errorf(
 			"lastTransitionTime = %s, want it preserved at %s: the status did not transition",

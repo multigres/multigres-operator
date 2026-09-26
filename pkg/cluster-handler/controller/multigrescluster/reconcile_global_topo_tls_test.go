@@ -11,6 +11,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func topoRefCluster(
@@ -49,9 +51,7 @@ func resolveTopoRef(
 	ref, err := r.globalTopoRef(
 		context.Background(), cluster, resolver.NewResolver(c, cluster.Namespace),
 	)
-	if err != nil {
-		t.Fatalf("globalTopoRef() error = %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "globalTopoRef() error =")
 	return ref
 }
 
@@ -61,29 +61,23 @@ func TestGlobalTopoRefResolvesManagedSecrets(t *testing.T) {
 	}
 
 	t.Run("topology TLS enabled resolves the operator-issued secret", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		ref := resolveTopoRef(t, topoRefCluster(
 			&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)}, managed,
 		))
 
 		want := "test-cluster-topo-client-tls"
-		if ref.ClientCertSecret != want {
-			t.Errorf("ClientCertSecret = %q, want %q", ref.ClientCertSecret, want)
-		}
+		c.Eq(want, ref.ClientCertSecret, "ClientCertSecret")
 		// cert-manager writes ca.crt into the same Secret as the keypair.
-		if ref.CASecret != want {
-			t.Errorf("CASecret = %q, want %q", ref.CASecret, want)
-		}
+		c.Eq(want, ref.CASecret, "CASecret")
 	})
 
 	t.Run("topology TLS unset leaves both references empty", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		ref := resolveTopoRef(t, topoRefCluster(nil, managed))
 
-		if ref.ClientCertSecret != "" {
-			t.Errorf("ClientCertSecret = %q, want empty", ref.ClientCertSecret)
-		}
-		if ref.CASecret != "" {
-			t.Errorf("CASecret = %q, want empty", ref.CASecret)
-		}
+		c.Eq("", ref.ClientCertSecret, "ClientCertSecret")
+		c.Eq("", ref.CASecret, "CASecret")
 	})
 
 	t.Run("topology TLS disabled leaves both references empty", func(t *testing.T) {
@@ -91,12 +85,8 @@ func TestGlobalTopoRefResolvesManagedSecrets(t *testing.T) {
 			&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(false)}, managed,
 		))
 
-		if ref.ClientCertSecret != "" || ref.CASecret != "" {
-			t.Errorf(
-				"want empty references, got CASecret=%q ClientCertSecret=%q",
-				ref.CASecret, ref.ClientCertSecret,
-			)
-		}
+		assert.NewCollecting(t).
+			False(ref.ClientCertSecret != "" || ref.CASecret != "", "want empty references, got CASecret=%q ClientCertSecret=%q", ref.CASecret, ref.ClientCertSecret)
 	})
 }
 
@@ -104,6 +94,7 @@ func TestGlobalTopoRefResolvesManagedSecrets(t *testing.T) {
 // spec's secret names are what reach the ref the cell and shard controllers
 // read.
 func TestGlobalTopoRefResolvesExternalSecrets(t *testing.T) {
+	c := assert.NewCollecting(t)
 	ref := resolveTopoRef(t, topoRefCluster(nil, &multigresv1alpha1.GlobalTopoServerSpec{
 		//nolint:gosec // K8s resource names, not credentials
 		External: &multigresv1alpha1.ExternalTopoServerSpec{
@@ -115,15 +106,12 @@ func TestGlobalTopoRefResolvesExternalSecrets(t *testing.T) {
 		},
 	}))
 
-	if ref.CASecret != "infra-etcd-ca" {
-		t.Errorf("CASecret = %q, want infra-etcd-ca", ref.CASecret)
-	}
-	if ref.ClientCertSecret != "proj-123-topo-client" {
-		t.Errorf("ClientCertSecret = %q, want proj-123-topo-client", ref.ClientCertSecret)
-	}
+	c.Eq("infra-etcd-ca", ref.CASecret, "CASecret")
+	c.Eq("proj-123-topo-client", ref.ClientCertSecret, "ClientCertSecret")
 }
 
 func TestBuildGlobalTopoServerPropagatesTopoTLS(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := setupScheme()
 	tls := &multigresv1alpha1.TopoTLSConfig{
 		Enabled:    ptr.To(true),
@@ -135,21 +123,16 @@ func TestBuildGlobalTopoServerPropagatesTopoTLS(t *testing.T) {
 	}
 
 	ts, err := BuildGlobalTopoServer(cluster, spec, scheme)
-	if err != nil {
-		t.Fatalf("BuildGlobalTopoServer() error = %v", err)
-	}
-	if ts.Spec.TLS == nil {
-		t.Fatal("TopoServer.Spec.TLS = nil, want the cluster's topology TLS config")
-	}
-	if !ts.Spec.TLS.IsEnabled() {
-		t.Error("TopoServer.Spec.TLS is not enabled")
-	}
-	if ts.Spec.TLS.IssuerName != "multigres-infra-issuer" {
-		t.Errorf("IssuerName = %q, want multigres-infra-issuer", ts.Spec.TLS.IssuerName)
-	}
+	c.Require().NoError(err, "BuildGlobalTopoServer() error =")
+	c.Require().
+		NotNil(ts.Spec.TLS, "TopoServer.Spec.TLS = nil, want the cluster's topology TLS config")
+	c.True(ts.Spec.TLS.IsEnabled(), "TopoServer.Spec.TLS is not enabled")
+	c.Eq("multigres-infra-issuer", ts.Spec.TLS.IssuerName, "IssuerName")
 	// A deep copy, so mutating the child spec cannot reach back into the cluster.
 	ts.Spec.TLS.IssuerName = "mutated"
-	if cluster.Spec.TopoTLS.IssuerName != "multigres-infra-issuer" {
-		t.Error("mutating the child TLS config changed the cluster spec")
-	}
+	c.Eq(
+		"multigres-infra-issuer",
+		cluster.Spec.TopoTLS.IssuerName,
+		"mutating the child TLS config changed the cluster spec",
+	)
 }

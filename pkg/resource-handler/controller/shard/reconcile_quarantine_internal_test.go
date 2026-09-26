@@ -21,6 +21,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // markBackupHealthy sets the shard's backup-health condition to True so
@@ -132,9 +134,8 @@ func qrStoreWithQuarantinedReason(
 				Reason: reason,
 			}
 		}
-		if err := store.RegisterMultipooler(context.Background(), mp, false); err != nil {
-			t.Fatalf("register pooler %s: %v", name, err)
-		}
+		assert.NewAborting(t).
+			NoError(store.RegisterMultipooler(context.Background(), mp, false), "register pooler %s", name)
 	}
 	return store
 }
@@ -169,6 +170,7 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 	old := time.Now().Add(-1 * time.Hour)
 
 	t.Run("wipes a quarantined replica when pool healthy", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := qrShard()
 		markBackupHealthy(shard)
 		badPod := qrPod(shard, 1, old, false) // quarantined replica, old, not ready
@@ -178,21 +180,20 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		store := qrStoreWithQuarantined(t, shard, 1)
 
 		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !acted {
-			t.Fatal("expected remediation to act on the quarantined pod")
-		}
-		if exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)) {
-			t.Error("expected quarantined pod to be deleted")
-		}
-		if exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)) {
-			t.Error("expected quarantined pod's data PVC to be deleted (wiped)")
-		}
-		if !exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(goodPod)) {
-			t.Error("healthy sibling pod should be untouched")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().True(acted, "expected remediation to act on the quarantined pod")
+		c.False(
+			exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)),
+			"expected quarantined pod to be deleted",
+		)
+		c.False(
+			exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)),
+			"expected quarantined pod's data PVC to be deleted (wiped)",
+		)
+		c.True(
+			exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(goodPod)),
+			"healthy sibling pod should be untouched",
+		)
 
 		// The remediation event should carry the topology quarantine reason.
 		rec := r.Recorder.(*record.FakeRecorder)
@@ -202,12 +203,15 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 				foundReason = true
 			}
 		}
-		if !foundReason {
-			t.Errorf("expected a remediation event containing the quarantine reason %q", qrReason)
-		}
+		c.True(
+			foundReason,
+			"expected a remediation event containing the quarantine reason %q",
+			qrReason,
+		)
 	})
 
 	t.Run("wipes with an empty reason -> event falls back to 'unspecified'", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := qrShard()
 		markBackupHealthy(shard)
 		badPod := qrPod(shard, 1, old, false)
@@ -217,15 +221,12 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		store := qrStoreWithQuarantinedReason(t, shard, "", 1) // no reason recorded
 
 		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !acted {
-			t.Fatal("expected remediation to act even without a recorded reason")
-		}
-		if exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)) {
-			t.Error("expected quarantined pod to be deleted")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().True(acted, "expected remediation to act even without a recorded reason")
+		c.False(
+			exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)),
+			"expected quarantined pod to be deleted",
+		)
 
 		rec := r.Recorder.(*record.FakeRecorder)
 		foundUnspecified := false
@@ -234,12 +235,11 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 				foundUnspecified = true
 			}
 		}
-		if !foundUnspecified {
-			t.Error("expected the event to fall back to 'unspecified' on empty reason")
-		}
+		c.True(foundUnspecified, "expected the event to fall back to 'unspecified' on empty reason")
 	})
 
 	t.Run("defers when the pod is too young (stale-record guard)", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := qrShard()
 		markBackupHealthy(shard)
 		badPod := qrPod(shard, 1, time.Now(), false) // just created
@@ -249,21 +249,20 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		store := qrStoreWithQuarantined(t, shard, 1)
 
 		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if acted {
-			t.Error("expected no action for a too-young pod")
-		}
-		if !exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)) {
-			t.Error("young quarantined pod must not be deleted yet")
-		}
-		if !exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)) {
-			t.Error("young quarantined pod's PVC must not be deleted yet")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(acted, "expected no action for a too-young pod")
+		c.True(
+			exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)),
+			"young quarantined pod must not be deleted yet",
+		)
+		c.True(
+			exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)),
+			"young quarantined pod's PVC must not be deleted yet",
+		)
 	})
 
 	t.Run("defers when another pod in the pool is unhealthy", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := qrShard()
 		markBackupHealthy(shard)
 		badPod := qrPod(shard, 1, old, false)  // quarantined
@@ -273,18 +272,16 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		store := qrStoreWithQuarantined(t, shard, 1) // only idx 1 quarantined
 
 		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if acted {
-			t.Error("expected no action while another pool pod is unhealthy")
-		}
-		if !exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)) {
-			t.Error("quarantined pod must not be wiped during a broader outage")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(acted, "expected no action while another pool pod is unhealthy")
+		c.True(
+			exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)),
+			"quarantined pod must not be wiped during a broader outage",
+		)
 	})
 
 	t.Run("defers when no healthy backup exists (never wipe the last copy)", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := qrShard() // no backup-health condition => not healthy
 		badPod := qrPod(shard, 1, old, false)
 		goodPod := qrPod(shard, 0, old, true)
@@ -293,21 +290,20 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		store := qrStoreWithQuarantined(t, shard, 1)
 
 		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if acted {
-			t.Error("expected no action when there is no healthy backup to restore from")
-		}
-		if !exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)) {
-			t.Error("must not delete the pod without a healthy backup")
-		}
-		if !exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)) {
-			t.Error("must not wipe the data PVC without a healthy backup")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(acted, "expected no action when there is no healthy backup to restore from")
+		c.True(
+			exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)),
+			"must not delete the pod without a healthy backup",
+		)
+		c.True(
+			exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)),
+			"must not wipe the data PVC without a healthy backup",
+		)
 	})
 
 	t.Run("no quarantined poolers -> no action", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := qrShard()
 		p0 := qrPod(shard, 0, old, true)
 		p1 := qrPod(shard, 1, old, true)
@@ -315,11 +311,7 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		store := qrStoreWithQuarantined(t, shard) // none quarantined
 
 		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if acted {
-			t.Error("expected no action when nothing is quarantined")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(acted, "expected no action when nothing is quarantined")
 	})
 }

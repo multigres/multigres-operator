@@ -13,9 +13,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestMaintenanceReservationSurvivesStatusApply(t *testing.T) {
+	ck := assert.NewAborting(t)
 	scheme := certScheme()
 	_ = appsv1.AddToScheme(scheme)
 	cfg := testutil.SetUpEnvtest(
@@ -23,22 +26,14 @@ func TestMaintenanceReservationSurvivesStatusApply(t *testing.T) {
 		testutil.WithCRDPaths(filepath.Join("../../../..", "config", "crd", "bases")),
 	)
 	c, err := client.New(cfg, client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(err)
 	ts := certTestTopoServer(nil)
 	ts.Namespace = "default"
 	ts.UID = ""
-	if err := c.Create(t.Context(), ts); err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(c.Create(t.Context(), ts))
 	sts, err := BuildStatefulSet(ts, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Create(t.Context(), sts); err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(err)
+	ck.NoError(c.Create(t.Context(), sts))
 	r := &TopoServerReconciler{
 		Client:    c,
 		APIReader: c,
@@ -51,22 +46,17 @@ func TestMaintenanceReservationSurvivesStatusApply(t *testing.T) {
 		Endpoint:        maintenanceEndpoints(ts)[0],
 		InProgress:      true,
 	}
-	if err := r.saveMaintenance(t.Context(), ts, state); err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(r.saveMaintenance(t.Context(), ts, state))
 	if err := r.saveMaintenance(t.Context(), stale, state); !apierrors.IsConflict(err) {
 		t.Fatalf("stale reservation should conflict, got %v", err)
 	}
 	// The ordinary status writer intentionally omits maintenance fields; SSA
 	// must preserve the independently owned reservation, including after restart.
-	if err := r.updateStatus(t.Context(), stale); err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(r.updateStatus(t.Context(), stale))
 	fresh := &multigresv1alpha1.TopoServer{}
-	if err := c.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if fresh.Status.EtcdMaintenance == nil || !fresh.Status.EtcdMaintenance.InProgress {
-		t.Fatal("status apply removed active maintenance reservation")
-	}
+	ck.NoError(c.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh))
+	ck.False(
+		fresh.Status.EtcdMaintenance == nil || !fresh.Status.EtcdMaintenance.InProgress,
+		"status apply removed active maintenance reservation",
+	)
 }

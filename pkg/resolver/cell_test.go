@@ -17,6 +17,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestResolver_ResolveCell(t *testing.T) {
@@ -147,6 +149,7 @@ func TestResolver_ResolveCell(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			var c client.Client
 			if name == "Client Error" {
 				base := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -163,34 +166,29 @@ func TestResolver_ResolveCell(t *testing.T) {
 
 			gw, placement, topo, err := r.ResolveCell(t.Context(), cluster, tc.config)
 			if tc.wantErr {
-				if err == nil {
-					t.Error("Expected error")
-				}
+				ck.Error(err, "Expected error")
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+			ck.Require().NoError(err, "Unexpected error")
 
-			if diff := cmp.Diff(
+			ck.EqDiffOpts(
 				tc.wantGw,
 				gw,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Gateway Diff (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tc.wantPlacement, placement, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("Placement Diff (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Gateway Diff",
+			)
+			ck.EqDiffOpts(
+				tc.wantPlacement,
+				placement,
+				[]cmp.Option{cmpopts.EquateEmpty()},
+				"Placement Diff",
+			)
+			ck.EqDiffOpts(
 				tc.wantTopo,
 				topo,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Topo Diff (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Topo Diff",
+			)
 		})
 	}
 }
@@ -245,6 +243,7 @@ func TestResolver_ResolveCellTemplate(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			c := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(tc.existingObjects...).
@@ -253,9 +252,7 @@ func TestResolver_ResolveCellTemplate(t *testing.T) {
 
 			res, err := r.ResolveCellTemplate(t.Context(), tc.reqName)
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("Expected error, got nil")
-				}
+				ck.Require().Error(err, "Expected error, got nil")
 				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
 					t.Errorf(
 						"Error message mismatch: got %q, want substring %q",
@@ -269,20 +266,14 @@ func TestResolver_ResolveCellTemplate(t *testing.T) {
 			}
 
 			if !tc.wantFound {
-				if res == nil {
-					t.Fatal(
-						"Expected non-nil result structure even for not-found implicit fallback",
-					)
-				}
-				if res.GetName() != "" {
-					t.Errorf("Expected empty result, got object with name %q", res.GetName())
-				}
+				ck.Require().
+					NotNil(res, "Expected non-nil result structure even for not-found implicit fallback")
+				ck.Eq("", res.GetName(), "Expected empty result, got object with name")
 				return
 			}
 
-			if got, want := res.GetName(), tc.wantResName; got != want {
-				t.Errorf("Result name mismatch: got %q, want %q", got, want)
-			}
+			got, want := res.GetName(), tc.wantResName
+			ck.Eq(want, got, "Result name mismatch: got")
 		})
 	}
 }
@@ -548,22 +539,22 @@ func TestMergeCellConfig(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			gw, placement, topo := mergeCellConfig(tc.tpl, tc.overrides, tc.inline)
 
-			if diff := cmp.Diff(
+			c.EqDiffOpts(
 				tc.wantGw,
 				gw,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Gateway mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tc.wantPlacement, placement, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("Placement mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tc.wantTopo, topo); diff != "" {
-				t.Errorf("Topo mismatch (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Gateway mismatch",
+			)
+			c.EqDiffOpts(
+				tc.wantPlacement,
+				placement,
+				[]cmp.Option{cmpopts.EquateEmpty()},
+				"Placement mismatch",
+			)
+			c.EqDiff(tc.wantTopo, topo, "Topo mismatch")
 		})
 	}
 }
@@ -582,8 +573,6 @@ func TestResolver_ClientErrors_Cell(t *testing.T) {
 	r := NewResolver(mc, "default")
 
 	_, err := r.ResolveCellTemplate(t.Context(), "any")
-	if err == nil ||
-		err.Error() != "failed to get CellTemplate: simulated database connection error" {
-		t.Errorf("Error mismatch: got %v, want simulated error", err)
-	}
+	assert.NewCollecting(t).False(err == nil ||
+		err.Error() != "failed to get CellTemplate: simulated database connection error", "Error mismatch: got %v, want simulated error", err)
 }

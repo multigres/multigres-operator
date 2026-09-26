@@ -11,6 +11,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 const testPostgresAuthRefName = "multigres-admin-ref"
@@ -78,9 +80,8 @@ func TestReconcilePostgresPasswordSecret_ValidatesExternalRef(t *testing.T) {
 		Scheme: scheme,
 	}
 
-	if err := reconciler.reconcilePostgresPasswordSecret(context.Background(), shard); err != nil {
-		t.Fatalf("reconcilePostgresPasswordSecret() error = %v", err)
-	}
+	assert.NewAborting(t).
+		NoError(reconciler.reconcilePostgresPasswordSecret(context.Background(), shard), "reconcilePostgresPasswordSecret() error =")
 }
 
 func TestReconcilePostgresInitSecretsSecret(t *testing.T) {
@@ -254,6 +255,7 @@ func TestReconcilePostgresInitSecretsSecret(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			shard := newShard()
 			tc.configureShard(shard)
 
@@ -268,23 +270,26 @@ func TestReconcilePostgresInitSecretsSecret(t *testing.T) {
 			}
 
 			err := reconciler.reconcilePostgresInitSecretsSecret(context.Background(), shard)
-			if tc.wantErr && err == nil {
-				t.Fatal("expected error, got nil")
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			c.Require().False(tc.wantErr && err == nil, "expected error, got nil")
+			c.Require().False(!tc.wantErr && err != nil, "unexpected error: %v", err)
 			if err != nil {
 				msg := err.Error()
-				if tc.wantErrText != "" && !strings.Contains(msg, tc.wantErrText) {
-					t.Errorf("error = %q, want it to contain %q", msg, tc.wantErrText)
-				}
-				if strings.Contains(msg, payloadRoleName) {
-					t.Errorf("error message must not contain role names, got: %q", msg)
-				}
-				if strings.Contains(msg, payloadPassword) {
-					t.Errorf("error message must not contain payload values, got: %q", msg)
-				}
+				c.False(
+					tc.wantErrText != "" && !strings.Contains(msg, tc.wantErrText),
+					"error = %q, want it to contain %q",
+					msg,
+					tc.wantErrText,
+				)
+				c.NotStrContains(
+					msg,
+					payloadRoleName,
+					"error message must not contain role names, got",
+				)
+				c.NotStrContains(
+					msg,
+					payloadPassword,
+					"error message must not contain payload values, got",
+				)
 			}
 		})
 	}

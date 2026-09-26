@@ -9,8 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/multigres/testkit/assert"
 )
 
 func TestLoadDigestImages(t *testing.T) {
@@ -52,14 +51,15 @@ func TestLoadDigestImages(t *testing.T) {
 		{name: "no images", empty: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			dir := t.TempDir()
 			logPath := filepath.Join(dir, "commands")
-			require.NoError(t, os.WriteFile(logPath, nil, 0o600))
+			c.Require().NoError(os.WriteFile(logPath, nil, 0o600))
 			// #nosec G306 -- Owner-only executable test fixture in t.TempDir.
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "kind"), []byte(
+			c.Require().NoError(os.WriteFile(filepath.Join(dir, "kind"), []byte(
 				"#!/bin/sh\nprintf 'node-a\\nnode-b\\n'\n"), 0o700))
 			// #nosec G306 -- Owner-only executable test fixture in t.TempDir.
-			require.NoError(t, os.WriteFile(filepath.Join(dir, "docker"), []byte(`#!/bin/sh
+			c.Require().NoError(os.WriteFile(filepath.Join(dir, "docker"), []byte(`#!/bin/sh
 printf '%s\n' "$*" >> "$COMMAND_LOG"
 case "$4" in
   inspecti) [ "$CACHE_HIT" = true ] ;;
@@ -82,16 +82,16 @@ esac
 			}
 			err := LoadImages(context.Background(), "test-cluster", images)
 			if tt.wantError {
-				require.ErrorContains(t, err, image)
-				assert.ErrorContains(t, err, "node-a")
-				assert.ErrorContains(t, err, "registry unavailable")
+				c.Require().ErrorContains(err, image)
+				c.ErrorContains(err, "node-a")
+				c.ErrorContains(err, "registry unavailable")
 			} else {
-				require.NoError(t, err)
+				c.Require().NoError(err)
 			}
 			// #nosec G304 -- Read only the command log created in t.TempDir above.
 			calls, err := os.ReadFile(logPath)
-			require.NoError(t, err)
-			assert.Equal(t, strings.Join(tt.wantCalls, "\n"), strings.TrimSpace(string(calls)))
+			c.Require().NoError(err)
+			c.EqDeep(strings.Join(tt.wantCalls, "\n"), strings.TrimSpace(string(calls)))
 		})
 	}
 }

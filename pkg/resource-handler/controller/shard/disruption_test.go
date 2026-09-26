@@ -22,6 +22,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 type disruptionTopo struct {
@@ -108,40 +110,31 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 		{name: "missing committed member blocks cleanup", stillInCohort: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			r, shard, groups, rpc, responses := fourToTwoFixture(t)
 			name := BuildPoolPodName(shard, "main", "b", 1)
 			key := client.ObjectKey{Namespace: shard.Namespace, Name: name}
 			pod := &corev1.Pod{}
-			if err := r.Get(t.Context(), key, pod); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(r.Get(t.Context(), key, pod))
 			pod.Status.Phase = corev1.PodPending
 			pod.Status.Conditions = []corev1.PodCondition{
 				{Type: corev1.PodReady, Status: corev1.ConditionFalse},
 			}
-			if err := r.Status().Update(t.Context(), pod); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(r.Status().Update(t.Context(), pod))
 			groups["b"][name] = pod.DeepCopy()
 			// Keep the caller's pod stale: scheduling evidence must come from
 			// the uncached API reader used by the disruption preflight.
 			pod.Spec.NodeName = tc.nodeName
-			if err := r.Update(t.Context(), pod); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(r.Update(t.Context(), pod))
 			if tc.scheduled {
 				pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
 					Type: corev1.PodScheduled, Status: corev1.ConditionTrue,
 				})
-				if err := r.Status().Update(t.Context(), pod); err != nil {
-					t.Fatal(err)
-				}
+				c.NoError(r.Status().Update(t.Context(), pod))
 			}
 			r.APIReader = r.Client
 			store, err := r.CreateTopoStore(shard)
-			if err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(err)
 			topo := store.(*disruptionTopo)
 			topo.poolers = slices.DeleteFunc(
 				topo.poolers,
@@ -168,14 +161,13 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 				groups["b"][name],
 				&shardRolloutTracker{},
 			)
-			if err != nil || allowed != tc.wantAction {
-				t.Fatalf(
-					"preflight with stale target: allowed=%v err=%v; want %v",
-					allowed,
-					err,
-					tc.wantAction,
-				)
-			}
+			c.False(
+				err != nil || allowed != tc.wantAction,
+				"preflight with stale target: allowed=%v err=%v; want %v",
+				allowed,
+				err,
+				tc.wantAction,
+			)
 			tracker := &shardRolloutTracker{}
 			action, _, err := r.handleScaleDown(
 				t.Context(),
@@ -188,9 +180,7 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 				false,
 				tracker,
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(err)
 			if action != tc.wantAction || tracker.waitingForRecovery == tc.wantAction {
 				t.Fatalf(
 					"action=%v waitingForRecovery=%v; want action=%v",
@@ -202,9 +192,7 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 			if !tc.wantAction {
 				return
 			}
-			if !tracker.HasStarted() {
-				t.Fatal("cleanup must reserve this pass's disruption")
-			}
+			c.True(tracker.HasStarted(), "cleanup must reserve this pass's disruption")
 			// Complete the ordinary drain/PVC cleanup path, then ensure the
 			// other cell's excess primary is no longer blocked by this pod.
 			for range 3 {
@@ -212,9 +200,7 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := r.Get(t.Context(), key, pod); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(r.Get(t.Context(), key, pod))
 			groups["b"][name] = pod
 			if _, _, err := r.handleScaleDown(
 				t.Context(),
@@ -243,9 +229,12 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 				false,
 				&shardRolloutTracker{},
 			)
-			if err != nil || !action {
-				t.Fatalf("next scale-down did not resume: action=%v err=%v", action, err)
-			}
+			c.False(
+				err != nil || !action,
+				"next scale-down did not resume: action=%v err=%v",
+				action,
+				err,
+			)
 		})
 	}
 }
@@ -253,28 +242,21 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 func TestScaleDownWaitsForOtherCellsExtraPodDrain(t *testing.T) {
 	for _, state := range []string{metadata.DrainStateRequested, metadata.DrainStateDraining, metadata.DrainStateAcknowledged, metadata.DrainStateReadyForDeletion, "terminating"} {
 		t.Run(state, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			r, shard, groups, _, _ := fourToTwoFixture(t)
 			pod := &corev1.Pod{}
 			key := client.ObjectKey{
 				Namespace: shard.Namespace,
 				Name:      BuildPoolPodName(shard, "main", "a", 1),
 			}
-			if err := r.Get(t.Context(), key, pod); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(r.Get(t.Context(), key, pod))
 			if state == "terminating" {
 				pod.Finalizers = []string{"test/hold"}
-				if err := r.Update(t.Context(), pod); err != nil {
-					t.Fatal(err)
-				}
-				if err := r.Delete(t.Context(), pod); err != nil {
-					t.Fatal(err)
-				}
+				c.NoError(r.Update(t.Context(), pod))
+				c.NoError(r.Delete(t.Context(), pod))
 			} else {
 				pod.Annotations = map[string]string{metadata.AnnotationDrainState: state}
-				if err := r.Update(t.Context(), pod); err != nil {
-					t.Fatal(err)
-				}
+				c.NoError(r.Update(t.Context(), pod))
 			}
 			// No shared in-memory tracker survives this new reconciliation.
 			action, _, err := r.handleScaleDown(
@@ -288,14 +270,13 @@ func TestScaleDownWaitsForOtherCellsExtraPodDrain(t *testing.T) {
 				false,
 				&shardRolloutTracker{},
 			)
-			if err != nil || action {
-				t.Fatalf("overlapping drain: action=%v err=%v", action, err)
-			}
+			c.False(err != nil || action, "overlapping drain: action=%v err=%v", action, err)
 		})
 	}
 }
 
 func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
+	c := assert.NewAborting(t)
 	r, shard, groups, rpc, responses := fourToTwoFixture(t)
 	run := func(cell string) (bool, *shardRolloutTracker) {
 		t.Helper()
@@ -311,9 +292,7 @@ func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
 			false,
 			tracker,
 		)
-		if err != nil {
-			t.Fatal(err)
-		}
+		c.NoError(err)
 		return action, tracker
 	}
 	if action, _ := run("a"); action {
@@ -326,9 +305,7 @@ func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
 		t.Fatal("second reconcile started an overlapping drain")
 	}
 	removed := groups["b"][BuildPoolPodName(shard, "main", "b", 1)]
-	if err := r.Delete(t.Context(), removed); err != nil {
-		t.Fatal(err)
-	}
+	c.NoError(r.Delete(t.Context(), removed))
 	delete(groups["b"], removed.Name)
 	if action, tracker := run("a"); action || !tracker.waitingForRecovery {
 		t.Fatal("must requeue while deleted member remains in committed cohort")
@@ -343,9 +320,8 @@ func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
 		)
 		rpc.SetStatusResponse(topoclient.ComponentIDString(response.ConsensusStatus.Id), response)
 	}
-	if action, _ := run("a"); !action {
-		t.Fatal("scale-down did not resume after cohort recovery")
-	}
+	action, _ := run("a")
+	c.True(action, "scale-down did not resume after cohort recovery")
 }
 
 func TestDisruptionReadsUncachedState(t *testing.T) {
@@ -364,9 +340,8 @@ func TestDisruptionReadsUncachedState(t *testing.T) {
 	}
 	r.APIReader = fake.NewClientBuilder().WithScheme(r.Scheme).WithObjects(objects...).Build()
 	healthy, err := r.isShardHealthy(t.Context(), shard)
-	if err != nil || healthy {
-		t.Fatalf("uncached drain ignored: healthy=%v err=%v", healthy, err)
-	}
+	assert.NewAborting(t).
+		False(err != nil || healthy, "uncached drain ignored: healthy=%v err=%v", healthy, err)
 }
 
 func TestDisruptionWithoutObservationsFailsClosed(t *testing.T) {
@@ -390,22 +365,19 @@ func TestDisruptionWithoutObservationsFailsClosed(t *testing.T) {
 }
 
 func TestScaleDownCleanupReservesShardDisruption(t *testing.T) {
+	c := assert.NewAborting(t)
 	r, shard, groups, _, _ := fourToTwoFixture(t)
 	name := BuildPoolPodName(shard, "main", "b", 1)
 	pod := &corev1.Pod{}
-	if err := r.Get(
+	c.NoError(r.Get(
 		t.Context(),
 		client.ObjectKey{Namespace: shard.Namespace, Name: name},
 		pod,
-	); err != nil {
-		t.Fatal(err)
-	}
+	))
 	pod.Annotations = map[string]string{
 		metadata.AnnotationDrainState: metadata.DrainStateReadyForDeletion,
 	}
-	if err := r.Update(t.Context(), pod); err != nil {
-		t.Fatal(err)
-	}
+	c.NoError(r.Update(t.Context(), pod))
 	groups["b"][name] = pod
 	tracker := &shardRolloutTracker{}
 	action, _, err := r.handleScaleDown(
@@ -419,9 +391,12 @@ func TestScaleDownCleanupReservesShardDisruption(t *testing.T) {
 		false,
 		tracker,
 	)
-	if err != nil || !action || !tracker.HasStarted() {
-		t.Fatalf("cleanup did not reserve disruption: action=%v err=%v", action, err)
-	}
+	c.False(
+		err != nil || !action || !tracker.HasStarted(),
+		"cleanup did not reserve disruption: action=%v err=%v",
+		action,
+		err,
+	)
 	action, _, err = r.handleScaleDown(
 		t.Context(),
 		shard,
@@ -433,9 +408,12 @@ func TestScaleDownCleanupReservesShardDisruption(t *testing.T) {
 		false,
 		tracker,
 	)
-	if err != nil || action {
-		t.Fatalf("cleanup allowed another drain in same pass: action=%v err=%v", action, err)
-	}
+	c.False(
+		err != nil || action,
+		"cleanup allowed another drain in same pass: action=%v err=%v",
+		action,
+		err,
+	)
 }
 
 func (s *disruptionTopo) Close() error { return nil }
@@ -464,10 +442,9 @@ func observeHealthyDisruption(
 	poolName, cellName string,
 ) (*rpcclient.FakeClient, []*md.StatusResponse) {
 	t.Helper()
+	c := assert.NewAborting(t)
 	pods := &corev1.PodList{}
-	if err := r.List(t.Context(), pods, client.InNamespace(shard.Namespace)); err != nil {
-		t.Fatal(err)
-	}
+	c.NoError(r.List(t.Context(), pods, client.InNamespace(shard.Namespace)))
 	slices.SortFunc(pods.Items, func(a, b corev1.Pod) int {
 		if a.Name < b.Name {
 			return -1
@@ -506,9 +483,7 @@ func observeHealthyDisruption(
 				},
 			},
 		}
-		if err := r.Create(t.Context(), pod); err != nil {
-			t.Fatal(err)
-		}
+		c.NoError(r.Create(t.Context(), pod))
 		pods.Items = append(pods.Items, *pod)
 	}
 	if missing > 0 {
@@ -534,16 +509,12 @@ func observeHealthyDisruption(
 		if pod.Labels[metadata.LabelMultigresCell] == "" {
 			pod.Labels[metadata.LabelMultigresCell] = cellName
 		}
-		if err := r.Update(t.Context(), pod); err != nil {
-			t.Fatal(err)
-		}
+		c.NoError(r.Update(t.Context(), pod))
 		if len(pod.Status.Conditions) == 0 {
 			pod.Status.Conditions = []corev1.PodCondition{
 				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
 			}
-			if err := r.Client.Status().Update(t.Context(), pod); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(r.Client.Status().Update(t.Context(), pod))
 		}
 		ids[i] = &cm.ID{Name: pod.Name, Cell: pod.Labels[metadata.LabelMultigresCell]}
 		if shard.Status.PodRoles[pod.Name] == "PRIMARY" {

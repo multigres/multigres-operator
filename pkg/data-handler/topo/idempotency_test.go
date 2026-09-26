@@ -10,6 +10,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // Inspect the backing record version, not just the returned value: rewriting
@@ -19,6 +21,7 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 	for _, kind := range []string{"cell", "database", "shard-database"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewAborting(t)
 			ctx := t.Context()
 			store := newMemoryStore(t)
 			recorder := record.NewFakeRecorder(100)
@@ -68,28 +71,18 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 				file = path.Join(topoclient.CellsPath, "cell1", topoclient.CellFile)
 			}
 			conn, err := store.ConnForCell(ctx, topoclient.GlobalCell)
-			if err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(err)
 			version := func() string {
 				t.Helper()
 				_, v, err := conn.Get(ctx, file)
-				if err != nil {
-					t.Fatal(err)
-				}
+				c.NoError(err)
 				return v.String()
 			}
-			if err := register(); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(register())
 			initial := version()
 			for range 5 {
-				if err := register(); err != nil {
-					t.Fatal(err)
-				}
-				if got := version(); got != initial {
-					t.Fatalf("unchanged registration rewrote record: %s -> %s", initial, got)
-				}
+				c.NoError(register())
+				c.Eq(initial, version(), "unchanged registration rewrote record")
 			}
 			switch kind {
 			case "cell":
@@ -101,19 +94,11 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 					Cells: []multigresv1alpha1.CellName{"cell2"},
 				}
 			}
-			if err := register(); err != nil {
-				t.Fatal(err)
-			}
+			c.NoError(register())
 			changed := version()
-			if changed == initial {
-				t.Fatal("changed registration did not update record")
-			}
-			if err := register(); err != nil {
-				t.Fatal(err)
-			}
-			if version() != changed {
-				t.Fatal("registration did not converge after change")
-			}
+			c.NotEq(initial, changed, "changed registration did not update record")
+			c.NoError(register())
+			c.Eq(changed, version(), "registration did not converge after change")
 		})
 	}
 }

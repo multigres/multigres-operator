@@ -13,6 +13,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestResolver_ValidateClusterIntegrity verifies checking template existence.
@@ -139,17 +141,19 @@ func TestResolver_ValidateClusterIntegrity(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			r := NewResolver(fakeClient, "default")
 			err := r.ValidateClusterIntegrity(t.Context(), tc.cluster)
 
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Errorf("Expected nil error, got %v", err)
-				}
+				c.NoError(err, "Expected nil error, got")
 			} else {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Errorf("Expected error containing '%s', got %v", tc.wantErr, err)
-				}
+				c.False(
+					err == nil || !strings.Contains(err.Error(), tc.wantErr),
+					"Expected error containing '%s', got %v",
+					tc.wantErr,
+					err,
+				)
 			}
 		})
 	}
@@ -1782,6 +1786,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			ck := assert.NewCollecting(t)
 			var c client.Client = fakeClient
 			if tc.customClient != nil {
 				c = tc.customClient
@@ -1794,20 +1799,19 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 
 			// Check Error
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Errorf("Expected nil error, got %v", err)
-				}
+				ck.NoError(err, "Expected nil error, got")
 			} else {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Errorf("Expected error containing '%s', got %v", tc.wantErr, err)
-				}
+				ck.False(
+					err == nil || !strings.Contains(err.Error(), tc.wantErr),
+					"Expected error containing '%s', got %v",
+					tc.wantErr,
+					err,
+				)
 			}
 
 			// Check Warnings
 			if len(tc.wantWarnings) > 0 {
-				if len(warnings) == 0 {
-					t.Errorf("Expected warnings containing %v, got none", tc.wantWarnings)
-				}
+				ck.NotEmpty(warnings, "Expected warnings containing %v, got none", tc.wantWarnings)
 				for _, want := range tc.wantWarnings {
 					found := false
 					for _, got := range warnings {
@@ -1816,14 +1820,14 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 							break
 						}
 					}
-					if !found {
-						t.Errorf("Expected warning containing '%s', got %v", want, warnings)
-					}
+					ck.True(found, "Expected warning containing '%s', got %v", want, warnings)
 				}
 			}
-			if tc.wantNoWarnings && len(warnings) > 0 {
-				t.Errorf("Expected no warnings, got %v", warnings)
-			}
+			ck.False(
+				tc.wantNoWarnings && len(warnings) > 0,
+				"Expected no warnings, got %v",
+				warnings,
+			)
 		})
 	}
 }

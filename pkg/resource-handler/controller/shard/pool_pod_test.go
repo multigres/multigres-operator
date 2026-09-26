@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +14,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func newTestShard() *multigresv1alpha1.Shard {
@@ -54,28 +54,20 @@ func testScheme() *runtime.Scheme {
 }
 
 func TestBuildPoolPod_BasicStructure(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	pool := newTestPoolSpec()
 
 	pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if pod.Namespace != "default" {
-		t.Errorf("namespace = %q, want %q", pod.Namespace, "default")
-	}
+	c.Eq("default", pod.Namespace, "namespace")
 
 	// Verify owner reference
-	if len(pod.OwnerReferences) != 1 {
-		t.Fatalf("expected 1 owner reference, got %d", len(pod.OwnerReferences))
-	}
-	if pod.OwnerReferences[0].Name != "test-shard" {
-		t.Errorf("owner name = %q, want %q", pod.OwnerReferences[0].Name, "test-shard")
-	}
-	if pod.OwnerReferences[0].Kind != "Shard" {
-		t.Errorf("owner kind = %q, want %q", pod.OwnerReferences[0].Kind, "Shard")
-	}
+	c.Require().
+		Len(pod.OwnerReferences, 1, "expected 1 owner reference, got %d", len(pod.OwnerReferences))
+	c.Eq("test-shard", pod.OwnerReferences[0].Name, "owner name")
+	c.Eq("Shard", pod.OwnerReferences[0].Kind, "owner kind")
 
 	// Verify labels
 	expectedLabels := map[string]string{
@@ -90,14 +82,12 @@ func TestBuildPoolPod_BasicStructure(t *testing.T) {
 		"multigres.com/tablegroup":     "default",
 	}
 	for k, want := range expectedLabels {
-		if got := pod.Labels[k]; got != want {
-			t.Errorf("label %q = %q, want %q", k, got, want)
-		}
+		got := pod.Labels[k]
+		c.Eq(want, got, "label %q = %q, want", k, got)
 	}
 
-	if got := pod.Annotations[metadata.AnnotationProjectRef]; got != "test-cluster" {
-		t.Errorf("annotation %q = %q, want %q", metadata.AnnotationProjectRef, got, "test-cluster")
-	}
+	got := pod.Annotations[metadata.AnnotationProjectRef]
+	c.Eq("test-cluster", got, "annotation %q = %q, want", metadata.AnnotationProjectRef, got)
 	if len(pod.Spec.ReadinessGates) != 1 ||
 		pod.Spec.ReadinessGates[0].ConditionType != PoolerDataReadyCondition {
 		t.Errorf(
@@ -126,26 +116,23 @@ func TestBuildPoolPod_ProjectRefAnnotation(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			shard := newTestShard()
 			shard.Annotations = tc.annotations
 
 			pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			c.NoError(err, "unexpected error")
 
-			if got := pod.Annotations[metadata.AnnotationProjectRef]; got != tc.want {
-				t.Fatalf("annotation %q = %q, want %q", metadata.AnnotationProjectRef, got, tc.want)
-			}
+			got := pod.Annotations[metadata.AnnotationProjectRef]
+			c.Eq(tc.want, got, "annotation %q = %q, want", metadata.AnnotationProjectRef, got)
 		})
 	}
 }
 
 func TestBuildPoolPod_PrometheusScrapeAnnotations(t *testing.T) {
+	c := assert.NewAborting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.NoError(err, "unexpected error")
 
 	wantAnnotations := map[string]string{
 		metadata.AnnotationPrometheusScrape: "true",
@@ -153,55 +140,30 @@ func TestBuildPoolPod_PrometheusScrapeAnnotations(t *testing.T) {
 		metadata.AnnotationPrometheusPath:   "/metrics",
 	}
 	for key, want := range wantAnnotations {
-		if got := pod.Annotations[key]; got != want {
-			t.Fatalf("annotation %q = %q, want %q", key, got, want)
-		}
+		got := pod.Annotations[key]
+		c.Eq(want, got, "annotation %q = %q, want", key, got)
 	}
 }
 
 func TestBuildPoolPod_Containers(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if len(pod.Spec.InitContainers) != 1 {
-		t.Fatalf(
-			"expected 1 init container (pgctld sidecar), got %d",
-			len(pod.Spec.InitContainers),
-		)
-	}
-	if pod.Spec.InitContainers[0].Name != "postgres" {
-		t.Errorf(
-			"init container name = %q, want %q",
-			pod.Spec.InitContainers[0].Name,
-			"postgres",
-		)
-	}
+	c.Require().
+		Len(pod.Spec.InitContainers, 1, "expected 1 init container (pgctld sidecar), got %d", len(pod.Spec.InitContainers))
+	c.Eq("postgres", pod.Spec.InitContainers[0].Name, "init container name")
 
-	if len(pod.Spec.Containers) != 2 {
-		t.Fatalf(
-			"expected 2 containers (multipooler + postgres-exporter), got %d",
-			len(pod.Spec.Containers),
-		)
-	}
-	if pod.Spec.Containers[0].Name != "multipooler" {
-		t.Errorf("container name = %q, want %q", pod.Spec.Containers[0].Name, "multipooler")
-	}
-	if pod.Spec.Containers[1].Name != "postgres-exporter" {
-		t.Errorf(
-			"container name = %q, want %q",
-			pod.Spec.Containers[1].Name,
-			"postgres-exporter",
-		)
-	}
+	c.Require().
+		Len(pod.Spec.Containers, 2, "expected 2 containers (multipooler + postgres-exporter), got %d", len(pod.Spec.Containers))
+	c.Eq("multipooler", pod.Spec.Containers[0].Name, "container name")
+	c.Eq("postgres-exporter", pod.Spec.Containers[1].Name, "container name")
 }
 
 func TestBuildPoolPod_Volumes(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	volumeNames := make(map[string]bool)
 	for _, v := range pod.Spec.Volumes {
@@ -216,26 +178,21 @@ func TestBuildPoolPod_Volumes(t *testing.T) {
 		PostgresPasswordVolumeName,
 	}
 	for _, name := range required {
-		if !volumeNames[name] {
-			t.Errorf("missing required volume %q", name)
-		}
+		c.False(!volumeNames[name], "missing required volume %q", name)
 	}
 
 	// Verify data volume references PVC
 	for _, v := range pod.Spec.Volumes {
 		if v.Name == DataVolumeName {
-			if v.PersistentVolumeClaim == nil {
-				t.Fatal("data volume should reference a PVC")
-			}
+			c.Require().NotNil(v.PersistentVolumeClaim, "data volume should reference a PVC")
 			pvcName := v.PersistentVolumeClaim.ClaimName
-			if pvcName == "" {
-				t.Error("data volume PVC claim name is empty")
-			}
+			c.NotEq("", pvcName, "data volume PVC claim name is empty")
 		}
 	}
 }
 
 func TestBuildPoolPod_UsesShardWideBackupPVC(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
 		Type:       multigresv1alpha1.BackupTypeFilesystem,
@@ -245,13 +202,9 @@ func TestBuildPoolPod_UsesShardWideBackupPVC(t *testing.T) {
 	pool := newTestPoolSpec()
 	pool.Cells = []multigresv1alpha1.CellName{"zone-a", "zone-b"}
 	podA, err := BuildPoolPod(shard, "main", "zone-a", pool, 0, testScheme())
-	if err != nil {
-		t.Fatalf("build zone-a pooler pod: %v", err)
-	}
+	c.Require().NoError(err, "build zone-a pooler pod")
 	podB, err := BuildPoolPod(shard, "main", "zone-b", pool, 0, testScheme())
-	if err != nil {
-		t.Fatalf("build zone-b pooler pod: %v", err)
-	}
+	c.Require().NoError(err, "build zone-b pooler pod")
 
 	backupClaim := func(pod *corev1.Pod) string {
 		for _, volume := range pod.Spec.Volumes {
@@ -263,34 +216,24 @@ func TestBuildPoolPod_UsesShardWideBackupPVC(t *testing.T) {
 	}
 
 	want := BuildSharedBackupPVCName(shard)
-	if got := backupClaim(podA); got != want {
-		t.Errorf("zone-a backup claim = %q, want %q", got, want)
-	}
-	if got := backupClaim(podB); got != want {
-		t.Errorf("zone-b backup claim = %q, want %q", got, want)
-	}
+	c.Eq(want, backupClaim(podA), "zone-a backup claim")
+	c.Eq(want, backupClaim(podB), "zone-b backup claim")
 }
 
 func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ck.Require().NoError(err, "unexpected error")
 
 	passwordVolume := findVolume(pod.Spec.Volumes, PostgresPasswordVolumeName)
-	if passwordVolume == nil {
-		t.Fatalf("missing postgres password volume %q", PostgresPasswordVolumeName)
-	}
-	if passwordVolume.Secret == nil {
-		t.Fatal("postgres password volume should use Secret source")
-	}
-	if passwordVolume.Secret.SecretName != "multigres-admin-password" {
-		t.Errorf(
-			"postgres password SecretName = %q, want %q",
-			passwordVolume.Secret.SecretName,
-			"multigres-admin-password",
-		)
-	}
+	ck.Require().
+		NotNil(passwordVolume, "missing postgres password volume %q", PostgresPasswordVolumeName)
+	ck.Require().NotNil(passwordVolume.Secret, "postgres password volume should use Secret source")
+	ck.Eq(
+		"multigres-admin-password",
+		passwordVolume.Secret.SecretName,
+		"postgres password SecretName",
+	)
 	if passwordVolume.Secret.DefaultMode == nil || *passwordVolume.Secret.DefaultMode != 0o444 {
 		t.Errorf("postgres password defaultMode = %v, want 0444", passwordVolume.Secret.DefaultMode)
 	}
@@ -327,6 +270,7 @@ func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
 }
 
 func TestBuildPoolPod_PostgresPasswordSecretRef(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
 		Name: "multigres-admin-password",
@@ -334,23 +278,17 @@ func TestBuildPoolPod_PostgresPasswordSecretRef(t *testing.T) {
 	}
 
 	pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	passwordVolume := findVolume(pod.Spec.Volumes, PostgresPasswordVolumeName)
-	if passwordVolume == nil {
-		t.Fatalf("missing postgres password volume %q", PostgresPasswordVolumeName)
-	}
-	if passwordVolume.Secret == nil {
-		t.Fatal("postgres password volume should use Secret source")
-	}
-	if passwordVolume.Secret.SecretName != "multigres-admin-password" {
-		t.Errorf(
-			"postgres password SecretName = %q, want multigres-admin-password",
-			passwordVolume.Secret.SecretName,
-		)
-	}
+	c.Require().
+		NotNil(passwordVolume, "missing postgres password volume %q", PostgresPasswordVolumeName)
+	c.Require().NotNil(passwordVolume.Secret, "postgres password volume should use Secret source")
+	c.Eq(
+		"multigres-admin-password",
+		passwordVolume.Secret.SecretName,
+		"postgres password SecretName",
+	)
 	if len(passwordVolume.Secret.Items) != 1 ||
 		passwordVolume.Secret.Items[0].Key != "current" ||
 		passwordVolume.Secret.Items[0].Path != PostgresPasswordSecretKey {
@@ -372,6 +310,7 @@ func TestBuildPoolPod_PostgresPasswordSecretRef(t *testing.T) {
 }
 
 func TestBuildPoolPod_PostgresInitSecretsRef(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
 		Name: "multigres-init-secrets",
@@ -379,23 +318,18 @@ func TestBuildPoolPod_PostgresInitSecretsRef(t *testing.T) {
 	}
 
 	pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	initSecretsVolume := findVolume(pod.Spec.Volumes, PostgresInitSecretsVolumeName)
-	if initSecretsVolume == nil {
-		t.Fatalf("missing postgres init-secrets volume %q", PostgresInitSecretsVolumeName)
-	}
-	if initSecretsVolume.Secret == nil {
-		t.Fatal("postgres init-secrets volume should use Secret source")
-	}
-	if initSecretsVolume.Secret.SecretName != "multigres-init-secrets" {
-		t.Errorf(
-			"postgres init-secrets SecretName = %q, want multigres-init-secrets",
-			initSecretsVolume.Secret.SecretName,
-		)
-	}
+	c.Require().
+		NotNil(initSecretsVolume, "missing postgres init-secrets volume %q", PostgresInitSecretsVolumeName)
+	c.Require().
+		NotNil(initSecretsVolume.Secret, "postgres init-secrets volume should use Secret source")
+	c.Eq(
+		"multigres-init-secrets",
+		initSecretsVolume.Secret.SecretName,
+		"postgres init-secrets SecretName",
+	)
 	if len(initSecretsVolume.Secret.Items) != 1 ||
 		initSecretsVolume.Secret.Items[0].Key != "custom-key.json" ||
 		initSecretsVolume.Secret.Items[0].Path != PostgresInitSecretsFileName {
@@ -425,21 +359,20 @@ func TestBuildPoolPod_PostgresInitSecretsRef(t *testing.T) {
 }
 
 func TestBuildPoolPod_PostgresInitSecretsRef_Absent(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if v := findVolume(pod.Spec.Volumes, PostgresInitSecretsVolumeName); v != nil {
-		t.Errorf("expected no postgres init-secrets volume, got %+v", v)
-	}
+	c.Nil(
+		findVolume(pod.Spec.Volumes, PostgresInitSecretsVolumeName),
+		"expected no postgres init-secrets volume, got",
+	)
 }
 
 func TestComputeSpecHash_ChangesOnPostgresInitSecretsRef(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 	wantHash := ComputeSpecHash(pod)
 
 	shardWithRef := newTestShard()
@@ -447,27 +380,21 @@ func TestComputeSpecHash_ChangesOnPostgresInitSecretsRef(t *testing.T) {
 		Name: "multigres-init-secrets",
 	}
 	podWithRef, err := BuildPoolPod(shardWithRef, "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if got := ComputeSpecHash(podWithRef); got == wantHash {
-		t.Error("spec hash should differ when postgres init-secrets ref is set vs unset")
-	}
+	c.NotEq(
+		wantHash,
+		ComputeSpecHash(podWithRef),
+		"spec hash should differ when postgres init-secrets ref is set vs unset",
+	)
 }
 
 func TestBuildPoolPod_SecurityContext(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if pod.Spec.SecurityContext != nil {
-		t.Errorf(
-			"pod security context = %v, want nil when fsGroup is not configured",
-			pod.Spec.SecurityContext,
-		)
-	}
+	c.Nil(pod.Spec.SecurityContext, "pod security context")
 
 	if pod.Spec.TerminationGracePeriodSeconds == nil ||
 		*pod.Spec.TerminationGracePeriodSeconds != 30 {
@@ -487,9 +414,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		pool.FSGroup = ptr.To(int64(2000))
 
 		pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 
 		// Overriding the image must not drop the numeric identity. pgctld
 		// declares USER postgres by name, so leaving RunAsUser unset pairs
@@ -522,9 +447,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		pool.FSGroup = ptr.To(int64(2000))
 
 		pod, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
@@ -559,9 +482,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		pool.Multipooler.RunAsGroup = ptr.To(int64(3001))
 
 		pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
@@ -593,9 +514,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		pool.Postgres.RunAsGroup = ptr.To(int64(1001))
 
 		pod, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
@@ -618,7 +537,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		pool.Multipooler.RunAsUser = ptr.To(int64(1000))
 
 		_, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
-		require.ErrorContains(t, err, "requires matching postgres runAsUser")
+		assert.NewAborting(t).ErrorContains(err, "requires matching postgres runAsUser")
 	})
 
 	t.Run("rejects mismatched explicit shared data UIDs", func(t *testing.T) {
@@ -628,44 +547,44 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		pool.Multipooler.RunAsUser = ptr.To(int64(1000))
 
 		_, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
-		require.ErrorContains(t, err, "must match because both access PGDATA")
+		assert.NewAborting(t).ErrorContains(err, "must match because both access PGDATA")
 	})
 }
 
 func TestBuildContainerSecurityContext(t *testing.T) {
 	t.Run("image identity", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		sc := buildContainerSecurityContext(nil, nil)
-		assert.True(t, *sc.RunAsNonRoot)
-		assert.Nil(t, sc.RunAsUser)
-		assert.Nil(t, sc.RunAsGroup)
+		c.True(*sc.RunAsNonRoot)
+		c.Nil(sc.RunAsUser)
+		c.Nil(sc.RunAsGroup)
 	})
 
 	t.Run("explicit identity", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		sc := buildContainerSecurityContext(ptr.To(int64(1000)), ptr.To(int64(1001)))
-		assert.True(t, *sc.RunAsNonRoot)
-		assert.Equal(t, int64(1000), *sc.RunAsUser)
-		assert.Equal(t, int64(1001), *sc.RunAsGroup)
+		c.True(*sc.RunAsNonRoot)
+		c.EqDeep(int64(1000), *sc.RunAsUser)
+		c.EqDeep(int64(1001), *sc.RunAsGroup)
 	})
 
 	t.Run("non-root user with root group", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		sc := buildContainerSecurityContext(ptr.To(int64(1000)), ptr.To(int64(0)))
-		assert.True(t, *sc.RunAsNonRoot)
-		assert.Equal(t, int64(1000), *sc.RunAsUser)
-		assert.Equal(t, int64(0), *sc.RunAsGroup)
+		c.True(*sc.RunAsNonRoot)
+		c.EqDeep(int64(1000), *sc.RunAsUser)
+		c.EqDeep(int64(0), *sc.RunAsGroup)
 	})
 }
 
 func assertPoolPodFSGroup(t *testing.T, pod *corev1.Pod, want int64) {
 	t.Helper()
-	if pod.Spec.SecurityContext == nil {
-		t.Fatal("pod security context is nil")
-	}
-	if pod.Spec.SecurityContext.FSGroup == nil {
-		t.Fatal("pod fsGroup is nil")
-	}
-	assert.Equal(t, want, *pod.Spec.SecurityContext.FSGroup)
-	assert.Nil(t, pod.Spec.SecurityContext.RunAsUser)
-	assert.Nil(t, pod.Spec.SecurityContext.RunAsGroup)
+	c := assert.NewCollecting(t)
+	c.Require().NotNil(pod.Spec.SecurityContext, "pod security context is nil")
+	c.Require().NotNil(pod.Spec.SecurityContext.FSGroup, "pod fsGroup is nil")
+	c.EqDeep(want, *pod.Spec.SecurityContext.FSGroup)
+	c.Nil(pod.Spec.SecurityContext.RunAsUser)
+	c.Nil(pod.Spec.SecurityContext.RunAsGroup)
 }
 
 func assertContainerIdentity(
@@ -675,61 +594,49 @@ func assertContainerIdentity(
 	wantGroup *int64,
 ) {
 	t.Helper()
-	if container.SecurityContext == nil {
-		t.Fatalf("container %q security context is nil", container.Name)
-	}
-	assert.True(t, *container.SecurityContext.RunAsNonRoot)
-	assert.Equal(t, wantUser, container.SecurityContext.RunAsUser, container.Name)
-	assert.Equal(t, wantGroup, container.SecurityContext.RunAsGroup, container.Name)
+	c := assert.NewCollecting(t)
+	c.Require().
+		NotNil(container.SecurityContext, "container %q security context is nil", container.Name)
+	c.True(*container.SecurityContext.RunAsNonRoot)
+	c.EqDeep(wantUser, container.SecurityContext.RunAsUser, container.Name)
+	c.EqDeep(wantGroup, container.SecurityContext.RunAsGroup, container.Name)
 }
 
 func TestBuildPoolPod_SpecHash(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	hash, ok := pod.Annotations[metadata.AnnotationSpecHash]
-	if !ok {
-		t.Fatal("spec-hash annotation missing")
-	}
-	if hash == "" {
-		t.Error("spec-hash annotation is empty")
-	}
-	if len(hash) != 8 {
-		t.Errorf("spec-hash length = %d, want 8 (FNV-1a 32-bit hex)", len(hash))
-	}
+	c.Require().True(ok, "spec-hash annotation missing")
+	c.NotEq("", hash, "spec-hash annotation is empty")
+	c.Len(hash, 8, "spec-hash length = %d, want 8 (FNV-1a 32-bit hex)", len(hash))
 }
 
 func TestComputeSpecHash_ChangesOnPostgresPasswordFileSpec(t *testing.T) {
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "unexpected error")
 	wantHash := ComputeSpecHash(pod)
 
 	t.Run("volume", func(t *testing.T) {
 		oldPod := pod.DeepCopy()
 		oldPod.Spec.Volumes = removeVolume(oldPod.Spec.Volumes, PostgresPasswordVolumeName)
-		if got := ComputeSpecHash(oldPod); got == wantHash {
-			t.Error("spec hash should differ when postgres password volume is removed")
-		}
+		assert.NewCollecting(t).
+			NotEq(wantHash, ComputeSpecHash(oldPod), "spec hash should differ when postgres password volume is removed")
 	})
 
 	t.Run("pgctld env", func(t *testing.T) {
 		oldPod := pod.DeepCopy()
 		useLegacyPasswordEnv(&oldPod.Spec.InitContainers[0])
-		if got := ComputeSpecHash(oldPod); got == wantHash {
-			t.Error("spec hash should differ when pgctld password env changes")
-		}
+		assert.NewCollecting(t).
+			NotEq(wantHash, ComputeSpecHash(oldPod), "spec hash should differ when pgctld password env changes")
 	})
 
 	t.Run("multipooler env", func(t *testing.T) {
 		oldPod := pod.DeepCopy()
 		useLegacyPasswordEnv(&oldPod.Spec.Containers[0])
-		if got := ComputeSpecHash(oldPod); got == wantHash {
-			t.Error("spec hash should differ when multipooler password env changes")
-		}
+		assert.NewCollecting(t).
+			NotEq(wantHash, ComputeSpecHash(oldPod), "spec hash should differ when multipooler password env changes")
 	})
 
 	t.Run("volume mount", func(t *testing.T) {
@@ -738,9 +645,8 @@ func TestComputeSpecHash_ChangesOnPostgresPasswordFileSpec(t *testing.T) {
 			oldPod.Spec.Containers[0].VolumeMounts,
 			PostgresPasswordVolumeName,
 		)
-		if got := ComputeSpecHash(oldPod); got == wantHash {
-			t.Error("spec hash should differ when postgres password volume mount is removed")
-		}
+		assert.NewCollecting(t).
+			NotEq(wantHash, ComputeSpecHash(oldPod), "spec hash should differ when postgres password volume mount is removed")
 	})
 
 	t.Run("volume mount read-only", func(t *testing.T) {
@@ -750,24 +656,21 @@ func TestComputeSpecHash_ChangesOnPostgresPasswordFileSpec(t *testing.T) {
 				changedPod.Spec.Containers[0].VolumeMounts[i].ReadOnly = false
 			}
 		}
-		if got := ComputeSpecHash(changedPod); got == wantHash {
-			t.Error("spec hash should differ when postgres password volume mount readOnly changes")
-		}
+		assert.NewCollecting(t).
+			NotEq(wantHash, ComputeSpecHash(changedPod), "spec hash should differ when postgres password volume mount readOnly changes")
 	})
 }
 
 func TestBuildPoolPod_NoFinalizers(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if len(pod.Finalizers) != 0 {
-		t.Errorf("finalizers = %v, want none", pod.Finalizers)
-	}
+	c.Empty(pod.Finalizers, "finalizers")
 }
 
 func TestBuildPoolPod_Affinity(t *testing.T) {
+	c := assert.NewAborting(t)
 	pool := newTestPoolSpec()
 	pool.Affinity = &corev1.Affinity{
 		NodeAffinity: &corev1.NodeAffinity{
@@ -786,16 +689,16 @@ func TestBuildPoolPod_Affinity(t *testing.T) {
 	}
 
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.NoError(err, "unexpected error")
 
-	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil {
-		t.Fatal("affinity not set on pod")
-	}
+	c.False(
+		pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil,
+		"affinity not set on pod",
+	)
 }
 
 func TestBuildPoolPod_Tolerations(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pool := newTestPoolSpec()
 	pool.Tolerations = []corev1.Toleration{
 		{
@@ -807,19 +710,12 @@ func TestBuildPoolPod_Tolerations(t *testing.T) {
 	}
 
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", pool, 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if len(pod.Spec.Tolerations) != 1 {
-		t.Fatalf("expected 1 toleration, got %d", len(pod.Spec.Tolerations))
-	}
-	if pod.Spec.Tolerations[0].Key != "dedicated" {
-		t.Errorf("toleration key = %q, want %q", pod.Spec.Tolerations[0].Key, "dedicated")
-	}
-	if pod.Spec.Tolerations[0].Value != "database" {
-		t.Errorf("toleration value = %q, want %q", pod.Spec.Tolerations[0].Value, "database")
-	}
+	c.Require().
+		Len(pod.Spec.Tolerations, 1, "expected 1 toleration, got %d", len(pod.Spec.Tolerations))
+	c.Eq("dedicated", pod.Spec.Tolerations[0].Key, "toleration key")
+	c.Eq("database", pod.Spec.Tolerations[0].Value, "toleration value")
 }
 
 func TestComputeSpecHash_ChangesOnTolerations(t *testing.T) {
@@ -840,9 +736,7 @@ func TestComputeSpecHash_ChangesOnTolerations(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when tolerations change")
-	}
+	assert.NewCollecting(t).NotEq(hash2, hash1, "spec hash should differ when tolerations change")
 }
 
 func TestComputeSpecHash_ChangesOnFSGroup(t *testing.T) {
@@ -856,49 +750,41 @@ func TestComputeSpecHash_ChangesOnFSGroup(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when fsGroup changes")
-	}
+	assert.NewCollecting(t).NotEq(hash2, hash1, "spec hash should differ when fsGroup changes")
 }
 
 func TestComputeSpecHash_ChangesOnRuntimeIdentity(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pool1 := newTestPoolSpec()
 	pool1.Postgres.RunAsUser = ptr.To(int64(1000))
 	pool1.Multipooler.RunAsUser = ptr.To(int64(1000))
 	pod1, err := BuildPoolPod(newTestShard(), "main", "z1", pool1, 0, testScheme())
-	require.NoError(t, err)
+	c.Require().NoError(err)
 
 	pool2 := newTestPoolSpec()
 	pool2.Postgres.RunAsUser = ptr.To(int64(2000))
 	pool2.Multipooler.RunAsUser = ptr.To(int64(2000))
 	pod2, err := BuildPoolPod(newTestShard(), "main", "z1", pool2, 0, testScheme())
-	require.NoError(t, err)
+	c.Require().NoError(err)
 
-	assert.NotEqual(
-		t,
+	c.NotEqDeep(
 		pod1.Annotations[metadata.AnnotationSpecHash],
 		pod2.Annotations[metadata.AnnotationSpecHash],
 	)
 }
 
 func TestBuildPoolPod_NodeSelector(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Spec.CellTopologyLabels = map[multigresv1alpha1.CellName]map[string]string{
 		"z1": {"topology.kubernetes.io/zone": "us-east-1a"},
 	}
 
 	pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if pod.Spec.NodeSelector == nil {
-		t.Fatal("node selector is nil")
-	}
-	if pod.Spec.NodeSelector["topology.kubernetes.io/zone"] != "us-east-1a" {
-		t.Errorf("node selector zone = %q, want %q",
-			pod.Spec.NodeSelector["topology.kubernetes.io/zone"], "us-east-1a")
-	}
+	c.Require().NotNil(pod.Spec.NodeSelector, "node selector is nil")
+	c.Eq("us-east-1a", pod.Spec.NodeSelector["topology.kubernetes.io/zone"], "node selector zone")
 }
 
 func TestBuildPoolPod_Hostname(t *testing.T) {
@@ -917,6 +803,7 @@ func TestBuildPoolPod_Hostname(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			shard := newTestShard()
 			shard.Labels["multigres.com/cluster"] = tt.clusterName
 			shard.Namespace = tt.namespace
@@ -926,7 +813,7 @@ func TestBuildPoolPod_Hostname(t *testing.T) {
 				multigresv1alpha1.PoolName(tt.poolName): pool,
 			}
 			pod, err := BuildPoolPod(shard, tt.poolName, tt.cellName, pool, tt.index, testScheme())
-			require.NoError(t, err)
+			c.Require().NoError(err)
 			svc, err := BuildPoolHeadlessService(
 				shard,
 				tt.poolName,
@@ -934,28 +821,27 @@ func TestBuildPoolPod_Hostname(t *testing.T) {
 				pool,
 				testScheme(),
 			)
-			require.NoError(t, err)
+			c.Require().NoError(err)
 
-			assert.Equal(t, pod.Name, pod.Spec.Hostname)
-			assert.Equal(t, svc.Name, pod.Spec.Subdomain)
-			assert.True(t, svc.Spec.PublishNotReadyAddresses)
+			c.EqDeep(pod.Name, pod.Spec.Hostname)
+			c.EqDeep(svc.Name, pod.Spec.Subdomain)
+			c.True(svc.Spec.PublishNotReadyAddresses)
 			for key, value := range svc.Spec.Selector {
-				assert.Equal(t, value, pod.Labels[key], "headless service must select the pod")
+				c.EqDeep(value, pod.Labels[key], "headless service must select the pod")
 			}
 			hostname := fmt.Sprintf("%s.%s.%s.svc.cluster.local", pod.Name, svc.Name, tt.namespace)
 			var hostnameArgs []string
 			for _, container := range pod.Spec.Containers {
 				for _, arg := range container.Args {
 					if strings.HasPrefix(arg, "--hostname=") {
-						assert.Equal(t, "multipooler", container.Name)
+						c.EqDeep("multipooler", container.Name)
 						hostnameArgs = append(hostnameArgs, arg)
 					}
 				}
 			}
-			assert.Equal(t, []string{"--hostname=" + hostname}, hostnameArgs)
+			c.EqDeep([]string{"--hostname=" + hostname}, hostnameArgs)
 			cert := &x509.Certificate{DNSNames: pgBackRestPoolDNSNames(shard)}
-			assert.NoError(
-				t,
+			c.NoError(
 				cert.VerifyHostname(hostname),
 				"advertised address must match backup TLS SANs",
 			)
@@ -968,18 +854,15 @@ func TestBuildPoolPod_Hostname(t *testing.T) {
 					func(arg string) bool { return strings.HasPrefix(arg, "--hostname=") },
 				)
 			}
-			assert.Equal(t, ComputeSpecHash(pod), pod.Annotations[metadata.AnnotationSpecHash])
-			assert.NotEqual(
-				t,
-				ComputeSpecHash(legacyPod),
-				pod.Annotations[metadata.AnnotationSpecHash],
-			)
+			c.EqDeep(ComputeSpecHash(pod), pod.Annotations[metadata.AnnotationSpecHash])
+			c.NotEqDeep(ComputeSpecHash(legacyPod), pod.Annotations[metadata.AnnotationSpecHash])
 		})
 	}
 }
 
 func TestBuildPoolPod_ServiceAccountName(t *testing.T) {
 	t.Run("set when S3 serviceAccountName configured", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := newTestShard()
 		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeS3,
@@ -990,29 +873,19 @@ func TestBuildPoolPod_ServiceAccountName(t *testing.T) {
 			},
 		}
 		pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pod.Spec.ServiceAccountName != "multigres-backup" {
-			t.Errorf(
-				"ServiceAccountName = %q, want %q",
-				pod.Spec.ServiceAccountName,
-				"multigres-backup",
-			)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("multigres-backup", pod.Spec.ServiceAccountName, "ServiceAccountName")
 	})
 
 	t.Run("empty when no backup config", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pod.Spec.ServiceAccountName != "" {
-			t.Errorf("ServiceAccountName = %q, want empty", pod.Spec.ServiceAccountName)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("", pod.Spec.ServiceAccountName, "ServiceAccountName")
 	})
 
 	t.Run("empty when S3 has no serviceAccountName", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := newTestShard()
 		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeS3,
@@ -1022,26 +895,19 @@ func TestBuildPoolPod_ServiceAccountName(t *testing.T) {
 			},
 		}
 		pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pod.Spec.ServiceAccountName != "" {
-			t.Errorf("ServiceAccountName = %q, want empty", pod.Spec.ServiceAccountName)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("", pod.Spec.ServiceAccountName, "ServiceAccountName")
 	})
 
 	t.Run("empty when backup is filesystem type", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := newTestShard()
 		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeFilesystem,
 		}
 		pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pod.Spec.ServiceAccountName != "" {
-			t.Errorf("ServiceAccountName = %q, want empty", pod.Spec.ServiceAccountName)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("", pod.Spec.ServiceAccountName, "ServiceAccountName")
 	})
 }
 
@@ -1063,9 +929,8 @@ func TestComputeSpecHash_ChangesOnServiceAccountName(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when ServiceAccountName is added")
-	}
+	assert.NewCollecting(t).
+		NotEq(hash2, hash1, "spec hash should differ when ServiceAccountName is added")
 }
 
 func TestComputeSpecHash_Deterministic(t *testing.T) {
@@ -1075,16 +940,15 @@ func TestComputeSpecHash_Deterministic(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 != hash2 {
-		t.Errorf("spec hash not deterministic: %q != %q", hash1, hash2)
-	}
+	assert.NewCollecting(t).Eq(hash2, hash1, "spec hash not deterministic")
 }
 
 func TestPodNeedsUpdateWhenReadinessProtectionsChange(t *testing.T) {
+	c := assert.NewAborting(t)
 	shard := newTestShard()
 	pool := newTestPoolSpec()
 	desired, err := BuildPoolPod(shard, "main", "z1", pool, 0, testScheme())
-	require.NoError(t, err)
+	c.NoError(err)
 
 	legacy := desired.DeepCopy()
 	legacy.Spec.ReadinessGates = nil
@@ -1096,9 +960,10 @@ func TestPodNeedsUpdateWhenReadinessProtectionsChange(t *testing.T) {
 	}
 	legacy.Annotations[metadata.AnnotationSpecHash] = ComputeSpecHash(legacy)
 
-	if !podNeedsUpdate(legacy, shard, "main", "z1", pool, 0, testScheme()) {
-		t.Fatal("pod without the current readiness gates and probes must be replaced")
-	}
+	c.True(
+		podNeedsUpdate(legacy, shard, "main", "z1", pool, 0, testScheme()),
+		"pod without the current readiness gates and probes must be replaced",
+	)
 }
 
 func TestComputeSpecHashIncludesReadinessGatesAndProbes(t *testing.T) {
@@ -1110,7 +975,7 @@ func TestComputeSpecHashIncludesReadinessGatesAndProbes(t *testing.T) {
 		0,
 		testScheme(),
 	)
-	require.NoError(t, err)
+	assert.NewAborting(t).NoError(err)
 	wantHash := ComputeSpecHash(desired)
 
 	tests := map[string]func(*corev1.Pod){
@@ -1131,9 +996,8 @@ func TestComputeSpecHashIncludesReadinessGatesAndProbes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			changed := desired.DeepCopy()
 			mutate(changed)
-			if got := ComputeSpecHash(changed); got == wantHash {
-				t.Fatalf("spec hash did not change when %s changed", name)
-			}
+			assert.NewAborting(t).
+				NotEq(wantHash, ComputeSpecHash(changed), "spec hash did not change when %s changed", name)
 		})
 	}
 }
@@ -1164,9 +1028,7 @@ func TestComputeSpecHash_ChangesOnDrift(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when affinity changes")
-	}
+	assert.NewCollecting(t).NotEq(hash2, hash1, "spec hash should differ when affinity changes")
 }
 
 func TestComputeSpecHash_ChangesOnValueFromDrift(t *testing.T) {
@@ -1195,9 +1057,8 @@ func TestComputeSpecHash_ChangesOnValueFromDrift(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when ValueFrom secret name changes")
-	}
+	assert.NewCollecting(t).
+		NotEq(hash2, hash1, "spec hash should differ when ValueFrom secret name changes")
 }
 
 func TestComputeSpecHash_ChangesOnEnvFromDrift(t *testing.T) {
@@ -1218,12 +1079,12 @@ func TestComputeSpecHash_ChangesOnEnvFromDrift(t *testing.T) {
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
 
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when EnvFrom config map name changes")
-	}
+	assert.NewCollecting(t).
+		NotEq(hash2, hash1, "spec hash should differ when EnvFrom config map name changes")
 }
 
 func TestBuildPoolPodName_Truncation(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Labels["multigres.com/cluster"] = "very-long-cluster-name-for-testing"
 	shard.Spec.DatabaseName = "long-database-name"
@@ -1232,27 +1093,18 @@ func TestBuildPoolPodName_Truncation(t *testing.T) {
 
 	name := BuildPoolPodName(shard, "main-pool", "us-east-1a", 99)
 
-	if len(name) > 63 {
-		t.Errorf("pod name %q exceeds 63 chars (len=%d)", name, len(name))
-	}
-	if !strings.HasSuffix(name, "-99") {
-		t.Errorf("pod name %q should end with -99", name)
-	}
+	c.LessOrEqual(63, len(name), "pod name %q exceeds 63 chars (len=%d)", name, len(name))
+	c.True(strings.HasSuffix(name, "-99"), "pod name %q should end with -99", name)
 }
 
 func TestBuildPoolPodName_ShortName(t *testing.T) {
+	c := assert.NewCollecting(t)
 	name := BuildPoolPodName(newTestShard(), "main", "z1", 0)
 
-	if len(name) > 63 {
-		t.Errorf("pod name %q exceeds 63 chars (len=%d)", name, len(name))
-	}
-	if !strings.HasSuffix(name, "-0") {
-		t.Errorf("pod name %q should end with -0", name)
-	}
+	c.LessOrEqual(63, len(name), "pod name %q exceeds 63 chars (len=%d)", name, len(name))
+	c.True(strings.HasSuffix(name, "-0"), "pod name %q should end with -0", name)
 	// Pod name should contain meaningful parts
-	if !strings.Contains(name, "pool") {
-		t.Errorf("pod name %q should contain 'pool'", name)
-	}
+	c.StrContains(name, "pool", "pod name")
 }
 
 func TestComputeSpecHash_ChangesOnPostgresConfigHash(t *testing.T) {
@@ -1267,9 +1119,8 @@ func TestComputeSpecHash_ChangesOnPostgresConfigHash(t *testing.T) {
 
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when postgres config hash annotation is added")
-	}
+	assert.NewCollecting(t).
+		NotEq(hash2, hash1, "spec hash should differ when postgres config hash annotation is added")
 }
 
 func TestComputeSpecHash_ChangesOnDifferentPostgresConfigHash(t *testing.T) {
@@ -1287,37 +1138,31 @@ func TestComputeSpecHash_ChangesOnDifferentPostgresConfigHash(t *testing.T) {
 
 	hash1 := ComputeSpecHash(pod1)
 	hash2 := ComputeSpecHash(pod2)
-	if hash1 == hash2 {
-		t.Error("spec hash should differ when postgres config hash value changes")
-	}
+	assert.NewCollecting(t).
+		NotEq(hash2, hash1, "spec hash should differ when postgres config hash value changes")
 }
 
 func TestBuildPoolPod_PropagatesPostgresConfigHash(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Annotations = map[string]string{
 		metadata.AnnotationPostgresConfigHash: "deadbeef",
 	}
 
 	pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	got := pod.Annotations[metadata.AnnotationPostgresConfigHash]
-	if got != "deadbeef" {
-		t.Errorf("postgres config hash annotation = %q, want %q", got, "deadbeef")
-	}
+	c.Eq("deadbeef", got, "postgres config hash annotation")
 }
 
 func TestBuildPoolPod_OmitsPostgresConfigHashWhenAbsent(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if _, ok := pod.Annotations[metadata.AnnotationPostgresConfigHash]; ok {
-		t.Error("postgres config hash annotation should not be present when shard has none")
-	}
+	_, ok := pod.Annotations[metadata.AnnotationPostgresConfigHash]
+	c.False(ok, "postgres config hash annotation should not be present when shard has none")
 }
 
 func findVolume(volumes []corev1.Volume, name string) *corev1.Volume {

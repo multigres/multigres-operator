@@ -1,12 +1,10 @@
 package shard
 
 import (
+	"reflect"
 	"regexp"
-	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +12,8 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildMultipoolerContainer(t *testing.T) {
@@ -375,9 +375,7 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 				tc.serviceID,
 			)
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildMultipoolerContainer() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "buildMultipoolerContainer() mismatch")
 		})
 	}
 }
@@ -429,9 +427,7 @@ func TestBuildPostgresExporterContainer(t *testing.T) {
 		},
 	}
 
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("buildPostgresExporterContainer() mismatch (-want +got):\n%s", diff)
-	}
+	assert.NewAborting(t).EqDiff(want, got, "buildPostgresExporterContainer() mismatch")
 }
 
 func TestPoolContainers_CustomPostgresSuperuser(t *testing.T) {
@@ -519,6 +515,7 @@ func TestPoolContainers_PostgresPasswordFile(t *testing.T) {
 }
 
 func TestPoolContainers_PostgresPasswordSecretRef(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 		Spec: multigresv1alpha1.ShardSpec{
@@ -537,15 +534,8 @@ func TestPoolContainers_PostgresPasswordSecretRef(t *testing.T) {
 		if v.Name != PostgresPasswordVolumeName {
 			continue
 		}
-		if v.Secret == nil {
-			t.Fatal("postgres password volume should use Secret source")
-		}
-		if v.Secret.SecretName != "multigres-admin-password" {
-			t.Errorf(
-				"postgres password SecretName = %q, want multigres-admin-password",
-				v.Secret.SecretName,
-			)
-		}
+		c.Require().NotNil(v.Secret, "postgres password volume should use Secret source")
+		c.Eq("multigres-admin-password", v.Secret.SecretName, "postgres password SecretName")
 		if len(v.Secret.Items) != 1 ||
 			v.Secret.Items[0].Key != PostgresPasswordSecretKey ||
 			v.Secret.Items[0].Path != PostgresPasswordSecretKey {
@@ -574,6 +564,7 @@ func TestPoolContainers_PostgresInitSecretsRef(t *testing.T) {
 	}
 
 	t.Run("ref set projects custom key to default filename", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -589,18 +580,9 @@ func TestPoolContainers_PostgresInitSecretsRef(t *testing.T) {
 
 		volumes := buildPoolVolumes(shard, "zone1")
 		vol := findVolume(volumes, PostgresInitSecretsVolumeName)
-		if vol == nil {
-			t.Fatal("expected postgres init-secrets Secret volume in pool volumes")
-		}
-		if vol.Secret == nil {
-			t.Fatal("postgres init-secrets volume should use Secret source")
-		}
-		if vol.Secret.SecretName != "multigres-init-secrets" {
-			t.Errorf(
-				"postgres init-secrets SecretName = %q, want multigres-init-secrets",
-				vol.Secret.SecretName,
-			)
-		}
+		ck.Require().NotNil(vol, "expected postgres init-secrets Secret volume in pool volumes")
+		ck.Require().NotNil(vol.Secret, "postgres init-secrets volume should use Secret source")
+		ck.Eq("multigres-init-secrets", vol.Secret.SecretName, "postgres init-secrets SecretName")
 		if len(vol.Secret.Items) != 1 ||
 			vol.Secret.Items[0].Key != "custom-key.json" ||
 			vol.Secret.Items[0].Path != PostgresInitSecretsFileName {
@@ -639,9 +621,8 @@ func TestPoolContainers_PostgresInitSecretsRef(t *testing.T) {
 
 		volumes := buildPoolVolumes(shard, "zone1")
 		vol := findVolume(volumes, PostgresInitSecretsVolumeName)
-		if vol == nil {
-			t.Fatal("expected postgres init-secrets Secret volume in pool volumes")
-		}
+		assert.NewAborting(t).
+			NotNil(vol, "expected postgres init-secrets Secret volume in pool volumes")
 		if len(vol.Secret.Items) != 1 || vol.Secret.Items[0].Key != PostgresInitSecretsFileName {
 			t.Errorf(
 				"postgres init-secrets Secret items = %+v, want default key %q",
@@ -662,9 +643,8 @@ func TestPoolContainers_PostgresInitSecretsRef(t *testing.T) {
 		}
 
 		volumes := buildPoolVolumes(shard, "zone1")
-		if findVolume(volumes, PostgresInitSecretsVolumeName) != nil {
-			t.Error("expected no postgres init-secrets Secret volume when ref is nil")
-		}
+		assert.NewCollecting(t).
+			Nil(findVolume(volumes, PostgresInitSecretsVolumeName), "expected no postgres init-secrets Secret volume when ref is nil")
 
 		c := buildPgctldSidecar(shard, pool)
 		assertNotContainsEnvVar(t, c.Env, "POSTGRES_INIT_SECRETS_FILE")
@@ -775,9 +755,7 @@ func TestBuildMultiorchContainer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got := buildMultiorchContainer(tc.shard, tc.cellName)
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildMultiorchContainer() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "buildMultiorchContainer() mismatch")
 		})
 	}
 }
@@ -816,52 +794,54 @@ func otelShard() *multigresv1alpha1.Shard {
 
 func TestBuildPgctldSidecar(t *testing.T) {
 	t.Run("default image", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
 		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		if c.Image != multigresv1alpha1.DefaultPostgresImage {
-			t.Errorf("Image = %q, want %q", c.Image, multigresv1alpha1.DefaultPostgresImage)
-		}
-		assert.Equal(t, DefaultPostgresUID, *c.SecurityContext.RunAsUser)
-		assert.Equal(t, DefaultPostgresGID, *c.SecurityContext.RunAsGroup)
-		if c.Command[0] != "/usr/local/bin/pgctld" {
-			t.Errorf("Command = %v, want /usr/local/bin/pgctld", c.Command)
-		}
+		ck.Eq(multigresv1alpha1.DefaultPostgresImage, c.Image, "Image")
+		ck.EqDeep(DefaultPostgresUID, *c.SecurityContext.RunAsUser)
+		ck.EqDeep(DefaultPostgresGID, *c.SecurityContext.RunAsGroup)
+		ck.Eq(
+			"/usr/local/bin/pgctld",
+			c.Command[0],
+			"Command = %v, want /usr/local/bin/pgctld",
+			c.Command,
+		)
 		assertContainsFlag(t, c.Args, "--http-port=15400")
-		if c.StartupProbe == nil || c.StartupProbe.HTTPGet.Path != "/live" {
-			t.Errorf("expected StartupProbe to hit /live, got %v", c.StartupProbe)
-		}
-		if c.LivenessProbe == nil || c.LivenessProbe.HTTPGet.Path != "/live" {
-			t.Errorf("expected LivenessProbe to hit /live, got %v", c.LivenessProbe)
-		}
+		ck.False(
+			c.StartupProbe == nil || c.StartupProbe.HTTPGet.Path != "/live",
+			"expected StartupProbe to hit /live, got %v",
+			c.StartupProbe,
+		)
+		ck.False(
+			c.LivenessProbe == nil || c.LivenessProbe.HTTPGet.Path != "/live",
+			"expected LivenessProbe to hit /live, got %v",
+			c.LivenessProbe,
+		)
 		wantReadinessCommand := []string{
 			"pg_isready", "-h", "/var/lib/pooler/pg_sockets", "-p", "5432",
 		}
-		if c.ReadinessProbe == nil ||
+		ck.False(c.ReadinessProbe == nil ||
 			c.ReadinessProbe.Exec == nil ||
-			!assert.ObjectsAreEqual(c.ReadinessProbe.Exec.Command, wantReadinessCommand) {
-			t.Errorf(
-				"expected ReadinessProbe command %v, got %v",
+			!reflect.DeepEqual(
+				c.ReadinessProbe.Exec.Command,
 				wantReadinessCommand,
-				c.ReadinessProbe,
-			)
-		}
+			), "expected ReadinessProbe command %v, got %v", wantReadinessCommand, c.ReadinessProbe)
 	})
 
 	t.Run("custom image", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{
 				Images: multigresv1alpha1.ShardImages{Postgres: "custom/pgctld:v1"},
 			},
 		}
 		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		if c.Image != "custom/pgctld:v1" {
-			t.Errorf("Image = %q, want %q", c.Image, "custom/pgctld:v1")
-		}
+		ck.Eq("custom/pgctld:v1", c.Image, "Image")
 		// The numeric identity must not depend on the image reference: pgctld
 		// declares USER postgres by name, so without it RunAsNonRoot makes the
 		// kubelet reject the container regardless of which tag is in use.
-		assert.Equal(t, ptr.To(DefaultPostgresUID), c.SecurityContext.RunAsUser)
-		assert.Equal(t, ptr.To(DefaultPostgresGID), c.SecurityContext.RunAsGroup)
+		ck.EqDeep(ptr.To(DefaultPostgresUID), c.SecurityContext.RunAsUser)
+		ck.EqDeep(ptr.To(DefaultPostgresGID), c.SecurityContext.RunAsGroup)
 	})
 
 	t.Run("with observability", func(t *testing.T) {
@@ -968,10 +948,8 @@ func TestBuildPgctldSidecar(t *testing.T) {
 		assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_ARGS")
 		for _, e := range c.Env {
 			if e.Name == "POSTGRES_INITDB_ARGS" {
-				if e.Value != "--locale-provider=icu --icu-locale=en_US.UTF-8" {
-					t.Errorf("POSTGRES_INITDB_ARGS = %q, want %q",
-						e.Value, "--locale-provider=icu --icu-locale=en_US.UTF-8")
-				}
+				assert.NewCollecting(t).
+					Eq("--locale-provider=icu --icu-locale=en_US.UTF-8", e.Value, "POSTGRES_INITDB_ARGS")
 				return
 			}
 		}
@@ -999,13 +977,8 @@ func TestBuildPgctldSidecar(t *testing.T) {
 				c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 				assertContainsEnvVar(t, c.Env, "POSTGRES_INITDB_EXTRA_CONF")
 				for _, e := range c.Env {
-					if e.Name == "POSTGRES_INITDB_EXTRA_CONF" && e.Value != PostgresConfigFilePath {
-						t.Errorf(
-							"POSTGRES_INITDB_EXTRA_CONF = %q, want %q",
-							e.Value,
-							PostgresConfigFilePath,
-						)
-					}
+					assert.NewCollecting(t).
+						False(e.Name == "POSTGRES_INITDB_EXTRA_CONF" && e.Value != PostgresConfigFilePath, "POSTGRES_INITDB_EXTRA_CONF = %q, want %q", e.Value, PostgresConfigFilePath)
 				}
 			})
 		}
@@ -1019,20 +992,13 @@ func TestBuildPgctldSidecar(t *testing.T) {
 			"without ref": {Spec: multigresv1alpha1.ShardSpec{}},
 		} {
 			t.Run(name, func(t *testing.T) {
+				ck := assert.NewCollecting(t)
 				c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
 				assertContainsVolumeMount(t, c.VolumeMounts, PostgresConfigVolumeName)
 				for _, m := range c.VolumeMounts {
 					if m.Name == PostgresConfigVolumeName {
-						if m.MountPath != PostgresConfigMountPath {
-							t.Errorf(
-								"postgres config mount path = %q, want %q",
-								m.MountPath,
-								PostgresConfigMountPath,
-							)
-						}
-						if !m.ReadOnly {
-							t.Error("postgres config volume mount should be read-only")
-						}
+						ck.Eq(PostgresConfigMountPath, m.MountPath, "postgres config mount path")
+						ck.True(m.ReadOnly, "postgres config volume mount should be read-only")
 					}
 				}
 			})
@@ -1043,18 +1009,14 @@ func TestBuildPgctldSidecar(t *testing.T) {
 func TestS3EnvVars(t *testing.T) {
 	t.Run("nil backup returns nil", func(t *testing.T) {
 		got := s3EnvVars(nil)
-		if got != nil {
-			t.Errorf("s3EnvVars(nil) = %v, want nil", got)
-		}
+		assert.NewCollecting(t).Nil(got, "s3EnvVars(nil)")
 	})
 
 	t.Run("filesystem backup returns nil", func(t *testing.T) {
 		got := s3EnvVars(&multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeFilesystem,
 		})
-		if got != nil {
-			t.Errorf("s3EnvVars(filesystem) = %v, want nil", got)
-		}
+		assert.NewCollecting(t).Nil(got, "s3EnvVars(filesystem)")
 	})
 
 	t.Run("s3 with region only", func(t *testing.T) {
@@ -1065,12 +1027,12 @@ func TestS3EnvVars(t *testing.T) {
 				Region: "eu-west-1",
 			},
 		})
-		if len(got) != 1 || got[0].Name != "AWS_REGION" || got[0].Value != "eu-west-1" {
-			t.Errorf("s3EnvVars(region-only) = %v, want [{AWS_REGION eu-west-1}]", got)
-		}
+		assert.NewCollecting(t).
+			False(len(got) != 1 || got[0].Name != "AWS_REGION" || got[0].Value != "eu-west-1", "s3EnvVars(region-only) = %v, want [{AWS_REGION eu-west-1}]", got)
 	})
 
 	t.Run("s3 with credentials secret", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		got := s3EnvVars(&multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeS3,
 			S3: &multigresv1alpha1.S3BackupConfig{
@@ -1079,9 +1041,7 @@ func TestS3EnvVars(t *testing.T) {
 				CredentialsSecret: "my-secret",
 			},
 		})
-		if len(got) != 3 {
-			t.Fatalf("s3EnvVars(full) returned %d vars, want 3", len(got))
-		}
+		c.Require().Len(got, 3, "s3EnvVars(full) returned %d vars, want 3", len(got))
 		assertContainsEnvVar(t, got, "AWS_REGION")
 		assertContainsEnvVar(t, got, "AWS_ACCESS_KEY_ID")
 		assertContainsEnvVar(t, got, "AWS_SECRET_ACCESS_KEY")
@@ -1089,13 +1049,9 @@ func TestS3EnvVars(t *testing.T) {
 		// Verify it references the correct secret
 		for _, e := range got {
 			if e.Name == "AWS_ACCESS_KEY_ID" {
-				if e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil {
-					t.Fatal("AWS_ACCESS_KEY_ID missing SecretKeyRef")
-				}
-				if e.ValueFrom.SecretKeyRef.Name != "my-secret" {
-					t.Errorf("AWS_ACCESS_KEY_ID secret = %q, want %q",
-						e.ValueFrom.SecretKeyRef.Name, "my-secret")
-				}
+				c.Require().
+					False(e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil, "AWS_ACCESS_KEY_ID missing SecretKeyRef")
+				c.Eq("my-secret", e.ValueFrom.SecretKeyRef.Name, "AWS_ACCESS_KEY_ID secret")
 			}
 		}
 	})
@@ -1112,12 +1068,8 @@ func TestS3EnvVars(t *testing.T) {
 				},
 			})
 			// Should only have AWS_REGION, no credential env vars
-			if len(got) != 1 {
-				t.Fatalf(
-					"s3EnvVars(serviceAccountName-only) returned %d vars, want 1 (AWS_REGION only)",
-					len(got),
-				)
-			}
+			assert.NewAborting(t).
+				Len(got, 1, "s3EnvVars(serviceAccountName-only) returned %d vars, want 1 (AWS_REGION only)", len(got))
 			assertContainsEnvVar(t, got, "AWS_REGION")
 			assertNotContainsEnvVar(t, got, "AWS_ACCESS_KEY_ID")
 			assertNotContainsEnvVar(t, got, "AWS_SECRET_ACCESS_KEY")
@@ -1133,15 +1085,14 @@ func TestS3EnvVars(t *testing.T) {
 			},
 		})
 		// Should have 2 vars: KEY_ID and SECRET_KEY, but no REGION
-		if len(got) != 2 {
-			t.Fatalf("s3EnvVars(no-region) returned %d vars, want 2", len(got))
-		}
+		assert.NewAborting(t).Len(got, 2, "s3EnvVars(no-region) returned %d vars, want 2", len(got))
 		assertNotContainsEnvVar(t, got, "AWS_REGION")
 		assertContainsEnvVar(t, got, "AWS_ACCESS_KEY_ID")
 	})
 }
 
 func TestBuildSharedBackupVolume_S3(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{"multigres.com/cluster": "test-cluster"},
@@ -1161,15 +1112,9 @@ func TestBuildSharedBackupVolume_S3(t *testing.T) {
 	}
 	vol := buildSharedBackupVolume(shard)
 
-	if vol.Name != BackupVolumeName {
-		t.Errorf("volume name = %q, want %q", vol.Name, BackupVolumeName)
-	}
-	if vol.EmptyDir == nil {
-		t.Error("S3 backup volume should use EmptyDir, got PVC or other source")
-	}
-	if vol.PersistentVolumeClaim != nil {
-		t.Error("S3 backup volume should NOT use PersistentVolumeClaim")
-	}
+	c.Eq(BackupVolumeName, vol.Name, "volume name")
+	c.NotNil(vol.EmptyDir, "S3 backup volume should use EmptyDir, got PVC or other source")
+	c.Nil(vol.PersistentVolumeClaim, "S3 backup volume should NOT use PersistentVolumeClaim")
 }
 
 func assertContainsFlag(t *testing.T, args []string, want string) {
@@ -1184,16 +1129,14 @@ func assertContainsFlag(t *testing.T, args []string, want string) {
 
 func assertFlagValue(t *testing.T, args []string, flag, want string) {
 	t.Helper()
+	c := assert.NewCollecting(t)
 	for i, arg := range args {
 		if arg != flag {
 			continue
 		}
-		if i+1 >= len(args) {
-			t.Fatalf("%s has no value in args %v", flag, args)
-		}
-		if got := args[i+1]; got != want {
-			t.Errorf("%s = %q, want %q", flag, got, want)
-		}
+		c.Require().Less(len(args), i+1, "%s has no value in args %v", flag, args)
+		got := args[i+1]
+		c.Eq(want, got, "%s = %q, want", flag, got)
 		return
 	}
 	t.Errorf("args %v does not contain flag %q", args, flag)
@@ -1367,9 +1310,7 @@ func assertEnvVarValue(t *testing.T, envVars []corev1.EnvVar, name, want string)
 	t.Helper()
 	for _, e := range envVars {
 		if e.Name == name {
-			if e.Value != want {
-				t.Errorf("env var %q = %q, want %q", name, e.Value, want)
-			}
+			assert.NewCollecting(t).Eq(want, e.Value, "env var %q = %q, want", name, e.Value)
 			return
 		}
 	}
@@ -1380,9 +1321,7 @@ func assertOTELResourceAttribute(t *testing.T, envVars []corev1.EnvVar, want str
 	t.Helper()
 	for _, e := range envVars {
 		if e.Name == "OTEL_RESOURCE_ATTRIBUTES" {
-			if !strings.Contains(e.Value, want) {
-				t.Errorf("OTEL_RESOURCE_ATTRIBUTES = %q, want it to contain %q", e.Value, want)
-			}
+			assert.NewCollecting(t).StrContains(e.Value, want, "OTEL_RESOURCE_ATTRIBUTES")
 			return
 		}
 	}
@@ -1421,16 +1360,13 @@ func assertContainsVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name s
 
 func assertReadOnlyVolumeMount(t *testing.T, mounts []corev1.VolumeMount, name, mountPath string) {
 	t.Helper()
+	c := assert.NewCollecting(t)
 	for _, m := range mounts {
 		if m.Name != name {
 			continue
 		}
-		if m.MountPath != mountPath {
-			t.Errorf("mount %q path = %q, want %q", name, m.MountPath, mountPath)
-		}
-		if !m.ReadOnly {
-			t.Errorf("mount %q should be read-only", name)
-		}
+		c.Eq(mountPath, m.MountPath, "mount %q path = %q, want", name, m.MountPath)
+		c.True(m.ReadOnly, "mount %q should be read-only", name)
 		return
 	}
 	t.Errorf("volume mounts %v does not contain mount %q", mounts, name)
@@ -1450,12 +1386,11 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 	t.Run("nil when no backup", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
 		vol := buildPgBackRestCertVolume(shard)
-		if vol != nil {
-			t.Fatalf("expected nil volume when no backup, got %+v", vol)
-		}
+		assert.NewAborting(t).Nil(vol, "expected nil volume when no backup, got")
 	})
 
 	t.Run("auto-generated projected volume", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -1465,44 +1400,25 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 			},
 		}
 		vol := buildPgBackRestCertVolume(shard)
-		if vol == nil {
-			t.Fatal("expected non-nil volume for auto-generated certs")
-		}
-		if vol.Name != PgBackRestCertVolumeName {
-			t.Errorf("volume name = %q, want %q", vol.Name, PgBackRestCertVolumeName)
-		}
-		if vol.Projected == nil {
-			t.Fatal("expected projected volume source for auto-generated certs")
-		}
-		if len(vol.Projected.Sources) != 2 {
-			t.Fatalf("expected 2 projection sources, got %d", len(vol.Projected.Sources))
-		}
+		c.Require().NotNil(vol, "expected non-nil volume for auto-generated certs")
+		c.Eq(PgBackRestCertVolumeName, vol.Name, "volume name")
+		c.Require().
+			NotNil(vol.Projected, "expected projected volume source for auto-generated certs")
+		c.Require().
+			Len(vol.Projected.Sources, 2, "expected 2 projection sources, got %d", len(vol.Projected.Sources))
 
 		// Verify CA source
 		caSource := vol.Projected.Sources[0]
-		if caSource.Secret.Name != "test-shard-pgbackrest-ca" {
-			t.Errorf(
-				"CA secret name = %q, want %q",
-				caSource.Secret.Name,
-				"test-shard-pgbackrest-ca",
-			)
-		}
+		c.Eq("test-shard-pgbackrest-ca", caSource.Secret.Name, "CA secret name")
 		if len(caSource.Secret.Items) != 1 || caSource.Secret.Items[0].Key != "ca.crt" {
 			t.Errorf("CA items = %+v, want [{Key:ca.crt Path:ca.crt}]", caSource.Secret.Items)
 		}
 
 		// Verify TLS source (key renaming)
 		tlsSource := vol.Projected.Sources[1]
-		if tlsSource.Secret.Name != "test-shard-pgbackrest-tls" {
-			t.Errorf(
-				"TLS secret name = %q, want %q",
-				tlsSource.Secret.Name,
-				"test-shard-pgbackrest-tls",
-			)
-		}
-		if len(tlsSource.Secret.Items) != 2 {
-			t.Fatalf("expected 2 TLS items, got %d", len(tlsSource.Secret.Items))
-		}
+		c.Eq("test-shard-pgbackrest-tls", tlsSource.Secret.Name, "TLS secret name")
+		c.Require().
+			Len(tlsSource.Secret.Items, 2, "expected 2 TLS items, got %d", len(tlsSource.Secret.Items))
 		if tlsSource.Secret.Items[0].Key != "tls.crt" ||
 			tlsSource.Secret.Items[0].Path != "pgbackrest.crt" {
 			t.Errorf(
@@ -1520,6 +1436,7 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 	})
 
 	t.Run("user-provided Secret volume", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{
 				Backup: &multigresv1alpha1.BackupConfig{
@@ -1534,33 +1451,19 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 			},
 		}
 		vol := buildPgBackRestCertVolume(shard)
-		if vol == nil {
-			t.Fatal("expected non-nil volume for user-provided certs")
-		}
-		if vol.Projected == nil {
-			t.Fatal(
-				"expected projected volume for user-provided certs (key renaming for cert-manager compat)",
-			)
-		}
-		if len(vol.Projected.Sources) != 1 {
-			t.Fatalf(
-				"expected 1 projection source for user-provided, got %d",
-				len(vol.Projected.Sources),
-			)
-		}
+		c.Require().NotNil(vol, "expected non-nil volume for user-provided certs")
+		c.Require().
+			NotNil(vol.Projected, "expected projected volume for user-provided certs (key renaming for cert-manager compat)")
+		c.Require().
+			Len(vol.Projected.Sources, 1, "expected 1 projection source for user-provided, got %d", len(vol.Projected.Sources))
 		src := vol.Projected.Sources[0]
-		if src.Secret.Name != "my-custom-certs" {
-			t.Errorf("secret name = %q, want %q", src.Secret.Name, "my-custom-certs")
-		}
-		if len(src.Secret.Items) != 3 {
-			t.Fatalf(
-				"expected 3 items (ca.crt, tls.crt→pgbackrest.crt, tls.key→pgbackrest.key), got %d",
-				len(src.Secret.Items),
-			)
-		}
+		c.Eq("my-custom-certs", src.Secret.Name, "secret name")
+		c.Require().
+			Len(src.Secret.Items, 3, "expected 3 items (ca.crt, tls.crt→pgbackrest.crt, tls.key→pgbackrest.key), got %d", len(src.Secret.Items))
 	})
 
 	t.Run("auto-generated when PgBackRestTLS is nil", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "shard1"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -1571,15 +1474,13 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 			},
 		}
 		vol := buildPgBackRestCertVolume(shard)
-		if vol == nil {
-			t.Fatal("expected non-nil volume when PgBackRestTLS is nil (auto-generated)")
-		}
-		if vol.Projected == nil {
-			t.Error("expected projected volume for auto-generated fallback")
-		}
+		c.Require().
+			NotNil(vol, "expected non-nil volume when PgBackRestTLS is nil (auto-generated)")
+		c.NotNil(vol.Projected, "expected projected volume for auto-generated fallback")
 	})
 
 	t.Run("auto-generated when SecretName is empty", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "shard1"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -1592,12 +1493,8 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 			},
 		}
 		vol := buildPgBackRestCertVolume(shard)
-		if vol == nil {
-			t.Fatal("expected non-nil volume when SecretName is empty (auto-generated)")
-		}
-		if vol.Projected == nil {
-			t.Error("expected projected volume for auto-generated fallback")
-		}
+		c.Require().NotNil(vol, "expected non-nil volume when SecretName is empty (auto-generated)")
+		c.NotNil(vol.Projected, "expected projected volume for auto-generated fallback")
 	})
 }
 
@@ -1605,9 +1502,7 @@ func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
 	t.Run("nil when no backup", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
 		vol := buildPgBackRestCipherKeyVolume(shard)
-		if vol != nil {
-			t.Fatalf("expected nil volume when no backup, got %+v", vol)
-		}
+		assert.NewAborting(t).Nil(vol, "expected nil volume when no backup, got")
 	})
 
 	t.Run("nil when backup configured but encryption disabled", func(t *testing.T) {
@@ -1619,12 +1514,11 @@ func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
 			},
 		}
 		vol := buildPgBackRestCipherKeyVolume(shard)
-		if vol != nil {
-			t.Fatalf("expected nil volume when encryption disabled, got %+v", vol)
-		}
+		assert.NewAborting(t).Nil(vol, "expected nil volume when encryption disabled, got")
 	})
 
 	t.Run("user-provided secret volume", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -1637,18 +1531,10 @@ func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
 			},
 		}
 		vol := buildPgBackRestCipherKeyVolume(shard)
-		if vol == nil {
-			t.Fatal("expected non-nil volume for user-provided cipher key")
-		}
-		if vol.Name != PgBackRestCipherKeyVolumeName {
-			t.Errorf("volume name = %q, want %q", vol.Name, PgBackRestCipherKeyVolumeName)
-		}
-		if vol.Secret == nil {
-			t.Fatal("expected Secret volume source")
-		}
-		if vol.Secret.SecretName != "my-cipher-secret" {
-			t.Errorf("secret name = %q, want %q", vol.Secret.SecretName, "my-cipher-secret")
-		}
+		c.Require().NotNil(vol, "expected non-nil volume for user-provided cipher key")
+		c.Eq(PgBackRestCipherKeyVolumeName, vol.Name, "volume name")
+		c.Require().NotNil(vol.Secret, "expected Secret volume source")
+		c.Eq("my-cipher-secret", vol.Secret.SecretName, "secret name")
 		if vol.Secret.DefaultMode == nil || *vol.Secret.DefaultMode != 0o444 {
 			t.Errorf("defaultMode = %v, want 0444", vol.Secret.DefaultMode)
 		}
@@ -1671,9 +1557,8 @@ func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
 
 		// Verify volume mount is read-only
 		for _, m := range c.VolumeMounts {
-			if m.Name == PgBackRestCertVolumeName && !m.ReadOnly {
-				t.Error("pgbackrest cert volume mount should be read-only")
-			}
+			assert.NewCollecting(t).
+				False(m.Name == PgBackRestCertVolumeName && !m.ReadOnly, "pgbackrest cert volume mount should be read-only")
 		}
 	})
 
@@ -1777,9 +1662,8 @@ func TestMultipoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 		)
 		assertContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
 		for _, m := range c.VolumeMounts {
-			if m.Name == PgBackRestCipherKeyVolumeName && !m.ReadOnly {
-				t.Error("pgbackrest cipher key volume mount should be read-only")
-			}
+			assert.NewCollecting(t).
+				False(m.Name == PgBackRestCipherKeyVolumeName && !m.ReadOnly, "pgbackrest cipher key volume mount should be read-only")
 		}
 	})
 
@@ -1803,6 +1687,7 @@ func TestMultipoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 
 func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 	t.Run("postgres password secret volume present", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "test-shard",
@@ -1820,16 +1705,8 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 			if v.Name != PostgresPasswordVolumeName {
 				continue
 			}
-			if v.Secret == nil {
-				t.Fatal("postgres password volume should use Secret source")
-			}
-			if v.Secret.SecretName != "multigres-admin-password" {
-				t.Errorf(
-					"postgres password SecretName = %q, want %q",
-					v.Secret.SecretName,
-					"multigres-admin-password",
-				)
-			}
+			c.Require().NotNil(v.Secret, "postgres password volume should use Secret source")
+			c.Eq("multigres-admin-password", v.Secret.SecretName, "postgres password SecretName")
 			if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
 				t.Errorf("postgres password defaultMode = %v, want 0444", v.Secret.DefaultMode)
 			}
@@ -1866,9 +1743,8 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Error("expected pgbackrest-certs volume when backup configured")
-		}
+		assert.NewCollecting(t).
+			True(found, "expected pgbackrest-certs volume when backup configured")
 	})
 
 	t.Run("no cert volume when no backup", func(t *testing.T) {
@@ -1880,9 +1756,8 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 		}
 		volumes := buildPoolVolumes(shard, "zone1")
 		for _, v := range volumes {
-			if v.Name == PgBackRestCertVolumeName {
-				t.Error("cert volume should not be present when no backup configured")
-			}
+			assert.NewCollecting(t).
+				NotEq(PgBackRestCertVolumeName, v.Name, "cert volume should not be present when no backup configured")
 		}
 	})
 
@@ -1909,9 +1784,8 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Error("expected pgbackrest-cipher volume when encryption configured")
-		}
+		assert.NewCollecting(t).
+			True(found, "expected pgbackrest-cipher volume when encryption configured")
 	})
 
 	t.Run("no cipher key volume when encryption disabled", func(t *testing.T) {
@@ -1928,13 +1802,13 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 		}
 		volumes := buildPoolVolumes(shard, "zone1")
 		for _, v := range volumes {
-			if v.Name == PgBackRestCipherKeyVolumeName {
-				t.Error("cipher key volume should not be present when encryption disabled")
-			}
+			assert.NewCollecting(t).
+				NotEq(PgBackRestCipherKeyVolumeName, v.Name, "cipher key volume should not be present when encryption disabled")
 		}
 	})
 
 	t.Run("always projects the operator-owned postgres config ConfigMap", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "test-shard",
@@ -1949,13 +1823,13 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 		for _, v := range volumes {
 			if v.Name == PostgresConfigVolumeName {
 				found = true
-				if v.ConfigMap == nil {
-					t.Fatal("postgres config volume should use ConfigMap source")
-				}
-				if v.ConfigMap.Name != PostgresConfigMapName("test-shard") {
-					t.Errorf("postgres config ConfigMap name = %q, want %q",
-						v.ConfigMap.Name, PostgresConfigMapName("test-shard"))
-				}
+				c.Require().
+					NotNil(v.ConfigMap, "postgres config volume should use ConfigMap source")
+				c.Eq(
+					PostgresConfigMapName("test-shard"),
+					v.ConfigMap.Name,
+					"postgres config ConfigMap name",
+				)
 				if len(v.ConfigMap.Items) != 1 ||
 					v.ConfigMap.Items[0].Key != PostgresConfigMapKey ||
 					v.ConfigMap.Items[0].Path != "postgresql.conf" {
@@ -1968,12 +1842,11 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Error("expected postgres-config volume in pool volumes")
-		}
+		c.True(found, "expected postgres-config volume in pool volumes")
 	})
 
 	t.Run("internal multipooler tls volume is present when enabled", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-shard",
@@ -1990,17 +1863,9 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 			if v.Name != ShardTLSVolumeName {
 				continue
 			}
-			if v.Secret == nil {
-				t.Fatal("shard TLS volume should use Secret source")
-			}
+			c.Require().NotNil(v.Secret, "shard TLS volume should use Secret source")
 			wantSecretName := "multipooler.test.default.multigres.internal"
-			if v.Secret.SecretName != wantSecretName {
-				t.Errorf(
-					"shard TLS secret = %q, want internal secret %q",
-					v.Secret.SecretName,
-					wantSecretName,
-				)
-			}
+			c.Eq(wantSecretName, v.Secret.SecretName, "shard TLS secret")
 			if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
 				t.Errorf(
 					"shard TLS secret defaultMode = %v, want 0444",
@@ -2027,12 +1892,8 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 			}
 
 			for _, volume := range buildPoolVolumes(shard, "zone1") {
-				if volume.Name == ShardTLSVolumeName {
-					t.Errorf(
-						"internal TLS volume should be absent for config %+v",
-						internalTLS,
-					)
-				}
+				assert.NewCollecting(t).
+					NotEq(ShardTLSVolumeName, volume.Name, "internal TLS volume should be absent for config %+v", internalTLS)
 			}
 		}
 	})
@@ -2043,34 +1904,28 @@ func TestBuildPoolServiceID(t *testing.T) {
 		podName := "minimal-postgres-default-0-inf-pool-default-zone-a-a3a0d77b-1"
 		id1 := BuildPoolServiceID(podName)
 		id2 := BuildPoolServiceID(podName)
-		if id1 != id2 {
-			t.Errorf("non-deterministic: %q != %q", id1, id2)
-		}
+		assert.NewCollecting(t).Eq(id2, id1, "non-deterministic")
 	})
 
 	t.Run("format", func(t *testing.T) {
 		id := BuildPoolServiceID("some-pod-name")
 		pattern := regexp.MustCompile(`^p-[0-9a-f]{8}$`)
-		if !pattern.MatchString(id) {
-			t.Errorf("BuildPoolServiceID(%q) = %q, want format p-[0-9a-f]{8}", "some-pod-name", id)
-		}
+		assert.NewCollecting(t).
+			True(pattern.MatchString(id), "BuildPoolServiceID(%q) = %q, want format p-[0-9a-f]{8}", "some-pod-name", id)
 	})
 
 	t.Run("different inputs produce different outputs", func(t *testing.T) {
 		id1 := BuildPoolServiceID("pod-a")
 		id2 := BuildPoolServiceID("pod-b")
-		if id1 == id2 {
-			t.Errorf("collision: BuildPoolServiceID(%q) == BuildPoolServiceID(%q) == %q",
-				"pod-a", "pod-b", id1)
-		}
+		assert.NewCollecting(t).
+			NotEq(id2, id1, "collision: BuildPoolServiceID(%q) == BuildPoolServiceID(%q) ==", "pod-a", "pod-b")
 	})
 
 	t.Run("length is always 10", func(t *testing.T) {
 		for _, name := range []string{"a", "short", "a-very-long-pod-name-that-goes-on-and-on"} {
 			id := BuildPoolServiceID(name)
-			if len(id) != 10 {
-				t.Errorf("BuildPoolServiceID(%q) = %q (len %d), want len 10", name, id, len(id))
-			}
+			assert.NewCollecting(t).
+				Len(id, 10, "BuildPoolServiceID(%q) = %q (len %d), want len 10", name, id, len(id))
 		}
 	})
 }

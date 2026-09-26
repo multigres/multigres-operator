@@ -20,6 +20,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 const (
@@ -31,13 +33,10 @@ const (
 
 func reloadTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
+	c := assert.NewAborting(t)
 	s := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("add multigres scheme: %v", err)
-	}
-	if err := corev1.AddToScheme(s); err != nil {
-		t.Fatalf("add corev1 scheme: %v", err)
-	}
+	c.NoError(multigresv1alpha1.AddToScheme(s), "add multigres scheme")
+	c.NoError(corev1.AddToScheme(s), "add corev1 scheme")
 	return s
 }
 
@@ -107,13 +106,12 @@ func reloadTestStore(t *testing.T) (topoclient.Store, topoclient.ComponentID) {
 		factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
 	)
 	id := &clustermetadata.ID{Cell: reloadTestCell, Name: reloadTestPod}
-	if err := store.RegisterMultipooler(context.Background(), &clustermetadata.Multipooler{
-		Id:       id,
-		Hostname: reloadTestPod,
-		ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
-	}, false); err != nil {
-		t.Fatalf("register pooler: %v", err)
-	}
+	assert.NewAborting(t).
+		NoError(store.RegisterMultipooler(context.Background(), &clustermetadata.Multipooler{
+			Id:       id,
+			Hostname: reloadTestPod,
+			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		}, false), "register pooler")
 	return store, topoclient.ComponentIDString(id)
 }
 
@@ -142,19 +140,18 @@ func callLogHas(log []string, method string) bool {
 func podReloadHash(t *testing.T, r *ShardReconciler) string {
 	t.Helper()
 	got := &corev1.Pod{}
-	if err := r.Get(
+	assert.NewAborting(t).NoError(r.Get(
 		context.Background(),
 		client.ObjectKey{Namespace: "ns", Name: reloadTestPod},
 		got,
-	); err != nil {
-		t.Fatalf("get pod: %v", err)
-	}
+	), "get pod")
 	return got.Annotations[metadata.AnnotationPostgresReloadHash]
 }
 
 // TestReconcileReloadStateStampsWhenVerified: the RPC confirms the reload took
 // effect (config_load_time set), so the pod is stamped current.
 func TestReconcileReloadStateStampsWhenVerified(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := reloadTestScheme(t)
 	shard := reloadTestShard()
 	store, poolerID := reloadTestStore(t)
@@ -175,28 +172,19 @@ func TestReconcileReloadStateStampsWhenVerified(t *testing.T) {
 		reloadTestRendered(),
 		rpc,
 	)
-	if err != nil {
-		t.Fatalf("reconcileReloadState: %v", err)
-	}
-	if wait != 0 {
-		t.Errorf("wait = %v, want 0 (reload completed)", wait)
-	}
+	c.Require().NoError(err, "reconcileReloadState")
+	c.Eq(0, wait, "wait")
 	if !callLogHas(rpc.GetCallLog(), "ReloadConfig") {
 		t.Errorf("ReloadConfig was not called; call log = %v", rpc.GetCallLog())
 	}
-	if h := podReloadHash(t, r); h != reloadTestDesired {
-		t.Errorf(
-			"pod reload-hash = %q, want %q (stamped after verified reload)",
-			h,
-			reloadTestDesired,
-		)
-	}
+	c.Eq(reloadTestDesired, podReloadHash(t, r), "pod reload-hash")
 }
 
 // TestReconcileReloadStateNotSyncedRetries: the RPC returns no config_load_time
 // (mounted file not yet caught up, or postgres down) — the pod must NOT be
 // stamped and the step must requeue.
 func TestReconcileReloadStateNotSyncedRetries(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := reloadTestScheme(t)
 	shard := reloadTestShard()
 	store, poolerID := reloadTestStore(t)
@@ -218,20 +206,19 @@ func TestReconcileReloadStateNotSyncedRetries(t *testing.T) {
 		reloadTestRendered(),
 		rpc,
 	)
-	if err != nil {
-		t.Fatalf("reconcileReloadState: %v", err)
-	}
-	if wait != reloadRetryDelay {
-		t.Errorf("wait = %v, want %v (retry until file syncs)", wait, reloadRetryDelay)
-	}
-	if h := podReloadHash(t, r); h == reloadTestDesired {
-		t.Errorf("pod reload-hash was stamped despite an unsynced file")
-	}
+	c.Require().NoError(err, "reconcileReloadState")
+	c.Eq(reloadRetryDelay, wait, "wait")
+	c.NotEq(
+		reloadTestDesired,
+		podReloadHash(t, r),
+		"pod reload-hash was stamped despite an unsynced file",
+	)
 }
 
 // TestReconcileReloadStateNeedsRestart: a reload-classified setting actually
 // needs a restart — surfaced (requeue), not stamped.
 func TestReconcileReloadStateNeedsRestart(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := reloadTestScheme(t)
 	shard := reloadTestShard()
 	store, poolerID := reloadTestStore(t)
@@ -255,15 +242,13 @@ func TestReconcileReloadStateNeedsRestart(t *testing.T) {
 		reloadTestRendered(),
 		rpc,
 	)
-	if err != nil {
-		t.Fatalf("reconcileReloadState: %v", err)
-	}
-	if wait != reloadRetryDelay {
-		t.Errorf("wait = %v, want %v", wait, reloadRetryDelay)
-	}
-	if h := podReloadHash(t, r); h == reloadTestDesired {
-		t.Errorf("pod reload-hash was stamped despite needs_restart")
-	}
+	c.Require().NoError(err, "reconcileReloadState")
+	c.Eq(reloadRetryDelay, wait, "wait")
+	c.NotEq(
+		reloadTestDesired,
+		podReloadHash(t, r),
+		"pod reload-hash was stamped despite needs_restart",
+	)
 }
 
 // TestReconcileReloadStateSkips: pods that are already current, draining, or
@@ -299,15 +284,14 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 			pod := reloadTestPodObj(tc.reloadHash, tc.restart, tc.extraAnn)
 			r := newReloadReconciler(scheme, rpc, shard, pod)
 
-			if _, err := r.reconcileReloadState(
+			_, err := r.reconcileReloadState(
 				context.Background(),
 				store,
 				shard,
 				reloadTestRendered(),
 				rpc,
-			); err != nil {
-				t.Fatalf("reconcileReloadState: %v", err)
-			}
+			)
+			assert.NewAborting(t).NoError(err, "reconcileReloadState")
 			if callLogHas(rpc.GetCallLog(), "ReloadConfig") {
 				t.Errorf(
 					"ReloadConfig should not be called for %q; call log = %v",

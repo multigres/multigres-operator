@@ -3,7 +3,6 @@ package tablegroup
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -11,6 +10,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildShard(t *testing.T) {
@@ -41,10 +42,9 @@ func TestBuildShard(t *testing.T) {
 	}
 
 	t.Run("Success", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		got, err := BuildShard(tg, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
+		c.Require().NoError(err, "BuildShard() error =")
 
 		// Calculate expected hash: md5("my-cluster", "my-db", "my-tg", "shard-0") -> "a068d59f"
 		expectedName := name.JoinWithConstraints(
@@ -54,79 +54,47 @@ func TestBuildShard(t *testing.T) {
 			"my-tg",
 			"shard-0",
 		)
-		if got.Name != expectedName {
-			t.Errorf("Name = %v, want %v", got.Name, expectedName)
-		}
-		if got.Namespace != "default" {
-			t.Errorf("Namespace = %v, want %v", got.Namespace, "default")
-		}
-		if got.Labels["multigres.com/cluster"] != "my-cluster" {
-			t.Errorf(
-				"Labels[cluster] = %v, want %v",
-				got.Labels["multigres.com/cluster"],
-				"my-cluster",
-			)
-		}
+		c.Eq(expectedName, got.Name, "Name")
+		c.Eq("default", got.Namespace, "Namespace")
+		c.Eq("my-cluster", got.Labels["multigres.com/cluster"], "Labels[cluster]")
 		// Verify OwnerReference pointing to TableGroup
 		if len(got.OwnerReferences) != 1 {
 			t.Errorf("OwnerReferences count = %v, want 1", len(got.OwnerReferences))
 		} else {
-			if got.OwnerReferences[0].Name != "my-tg" {
-				t.Errorf("OwnerReference Name = %v, want %v", got.OwnerReferences[0].Name, "my-tg")
-			}
-			if got.OwnerReferences[0].UID != "tg-uid" {
-				t.Errorf("OwnerReference UID = %v, want %v", got.OwnerReferences[0].UID, "tg-uid")
-			}
+			c.Eq("my-tg", got.OwnerReferences[0].Name, "OwnerReference Name")
+			c.Eq("tg-uid", got.OwnerReferences[0].UID, "OwnerReference UID")
 		}
 
 		// Verify Spec fields are copied
-		if got.Spec.ShardName != "shard-0" {
-			t.Errorf("Spec.ShardName = %v, want %v", got.Spec.ShardName, "shard-0")
-		}
-		if got.Spec.DatabaseName != "my-db" {
-			t.Errorf("Spec.DatabaseName = %v, want %v", got.Spec.DatabaseName, "my-db")
-		}
-		if diff := cmp.Diff(shardSpec.Pools, got.Spec.Pools); diff != "" {
-			t.Errorf("Spec.Pools mismatch (-want +got):\n%s", diff)
-		}
+		c.Eq("shard-0", got.Spec.ShardName, "Spec.ShardName")
+		c.Eq("my-db", got.Spec.DatabaseName, "Spec.DatabaseName")
+		c.EqDiff(shardSpec.Pools, got.Spec.Pools, "Spec.Pools mismatch")
 	})
 
 	t.Run("DurabilityPolicy propagates from TableGroup to Shard", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tgWithPolicy := tg.DeepCopy()
 		tgWithPolicy.Spec.DurabilityPolicy = "MULTI_CELL_AT_LEAST_2"
 
 		got, err := BuildShard(tgWithPolicy, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
-		if got.Spec.DurabilityPolicy != "MULTI_CELL_AT_LEAST_2" {
-			t.Errorf(
-				"Spec.DurabilityPolicy = %v, want MULTI_CELL_AT_LEAST_2",
-				got.Spec.DurabilityPolicy,
-			)
-		}
+		c.Require().NoError(err, "BuildShard() error =")
+		c.Eq("MULTI_CELL_AT_LEAST_2", got.Spec.DurabilityPolicy, "Spec.DurabilityPolicy")
 	})
 
 	t.Run("InternalTLS propagates from TableGroup to Shard", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		tgWithInternalTLS := tg.DeepCopy()
 		tgWithInternalTLS.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{
 			Enabled: ptr.To(true),
 		}
 
 		got, err := BuildShard(tgWithInternalTLS, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
-		if got.Spec.InternalTLS != tgWithInternalTLS.Spec.InternalTLS {
-			t.Fatalf(
-				"Spec.InternalTLS = %#v, want propagated pointer %#v",
-				got.Spec.InternalTLS,
-				tgWithInternalTLS.Spec.InternalTLS,
-			)
-		}
+		c.NoError(err, "BuildShard() error =")
+		c.Eq(tgWithInternalTLS.Spec.InternalTLS, got.Spec.InternalTLS, "Spec.InternalTLS")
 	})
 
 	t.Run("PostgresPasswordSecretRef propagates from TableGroup to Shard", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tgWithRef := tg.DeepCopy()
 		tgWithRef.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
 			Name: "multigres-admin-password",
@@ -134,26 +102,23 @@ func TestBuildShard(t *testing.T) {
 		}
 
 		got, err := BuildShard(tgWithRef, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
-		if got.Spec.PostgresPasswordSecretRef.Name != "multigres-admin-password" {
-			t.Errorf(
-				"Spec.PostgresPasswordSecretRef.Name = %v, want multigres-admin-password",
-				got.Spec.PostgresPasswordSecretRef.Name,
-			)
-		}
-		if got.Spec.PostgresPasswordSecretRef.Key != "current" {
-			t.Errorf(
-				"Spec.PostgresPasswordSecretRef.Key = %v, want current",
-				got.Spec.PostgresPasswordSecretRef.Key,
-			)
-		}
+		c.Require().NoError(err, "BuildShard() error =")
+		c.Eq(
+			"multigres-admin-password",
+			got.Spec.PostgresPasswordSecretRef.Name,
+			"Spec.PostgresPasswordSecretRef.Name",
+		)
+		c.Eq(
+			"current",
+			got.Spec.PostgresPasswordSecretRef.Key,
+			"Spec.PostgresPasswordSecretRef.Key",
+		)
 	})
 
 	t.Run(
 		"PostgresInitSecretsRef propagates from TableGroup to Shard when set",
 		func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			tgWithRef := tg.DeepCopy()
 			tgWithRef.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
 				Name: "multigres-init-secrets",
@@ -161,77 +126,62 @@ func TestBuildShard(t *testing.T) {
 			}
 
 			got, err := BuildShard(tgWithRef, shardSpec, scheme)
-			if err != nil {
-				t.Fatalf("BuildShard() error = %v", err)
-			}
-			if got.Spec.PostgresInitSecretsRef == nil {
-				t.Fatal("Spec.PostgresInitSecretsRef = nil, want propagated ref")
-			}
-			if got.Spec.PostgresInitSecretsRef.Name != "multigres-init-secrets" {
-				t.Errorf(
-					"Spec.PostgresInitSecretsRef.Name = %v, want multigres-init-secrets",
-					got.Spec.PostgresInitSecretsRef.Name,
-				)
-			}
-			if got.Spec.PostgresInitSecretsRef.Key != "init-secrets.json" {
-				t.Errorf(
-					"Spec.PostgresInitSecretsRef.Key = %v, want init-secrets.json",
-					got.Spec.PostgresInitSecretsRef.Key,
-				)
-			}
+			c.Require().NoError(err, "BuildShard() error =")
+			c.Require().
+				NotNil(got.Spec.PostgresInitSecretsRef, "Spec.PostgresInitSecretsRef = nil, want propagated ref")
+			c.Eq(
+				"multigres-init-secrets",
+				got.Spec.PostgresInitSecretsRef.Name,
+				"Spec.PostgresInitSecretsRef.Name",
+			)
+			c.Eq(
+				"init-secrets.json",
+				got.Spec.PostgresInitSecretsRef.Key,
+				"Spec.PostgresInitSecretsRef.Key",
+			)
 		},
 	)
 
 	t.Run("PostgresInitSecretsRef nil on Shard when unset on TableGroup", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tgWithoutRef := tg.DeepCopy()
 		tgWithoutRef.Spec.PostgresInitSecretsRef = nil
 
 		got, err := BuildShard(tgWithoutRef, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
-		if got.Spec.PostgresInitSecretsRef != nil {
-			t.Errorf("Spec.PostgresInitSecretsRef = %+v, want nil", got.Spec.PostgresInitSecretsRef)
-		}
+		c.Require().NoError(err, "BuildShard() error =")
+		c.Nil(got.Spec.PostgresInitSecretsRef, "Spec.PostgresInitSecretsRef")
 	})
 
 	t.Run("DurabilityPolicy empty when not set on TableGroup", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		got, err := BuildShard(tg, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
-		if got.Spec.DurabilityPolicy != "" {
-			t.Errorf("Spec.DurabilityPolicy = %v, want empty", got.Spec.DurabilityPolicy)
-		}
+		c.Require().NoError(err, "BuildShard() error =")
+		c.Eq("", got.Spec.DurabilityPolicy, "Spec.DurabilityPolicy")
 	})
 
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
 		// Intentionally missing scheme registrations to force SetControllerReference failure
 		_, err := BuildShard(tg, shardSpec, emptyScheme)
-		if err == nil {
-			t.Error("Expected error due to missing scheme types, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to missing scheme types, got nil")
 	})
 
 	t.Run("Propagates explicit project ref annotation", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		tgWithProjectRef := tg.DeepCopy()
 		tgWithProjectRef.Annotations = map[string]string{
 			metadata.AnnotationProjectRef: "proj_123",
 		}
 
 		got, err := BuildShard(tgWithProjectRef, shardSpec, scheme)
-		if err != nil {
-			t.Fatalf("BuildShard() error = %v", err)
-		}
+		c.NoError(err, "BuildShard() error =")
 
-		if got.Annotations[metadata.AnnotationProjectRef] != "proj_123" {
-			t.Fatalf(
-				"annotation %q = %q, want %q",
-				metadata.AnnotationProjectRef,
-				got.Annotations[metadata.AnnotationProjectRef],
-				"proj_123",
-			)
-		}
+		c.Eq(
+			"proj_123",
+			got.Annotations[metadata.AnnotationProjectRef],
+			"annotation %q = %q, want",
+			metadata.AnnotationProjectRef,
+			got.Annotations[metadata.AnnotationProjectRef],
+		)
 	})
 }

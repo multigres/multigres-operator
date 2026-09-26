@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	corev1 "k8s.io/api/core/v1"
@@ -15,6 +14,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // setupFixtures helper returns a fresh set of test objects.
@@ -79,9 +80,8 @@ func TestNewResolver(t *testing.T) {
 	if got, want := r.Client, c; got != want {
 		t.Errorf("Client mismatch: got %v, want %v", got, want)
 	}
-	if got, want := r.Namespace, "ns"; got != want {
-		t.Errorf("Namespace mismatch: got %q, want %q", got, want)
-	}
+	got, want := r.Namespace, "ns"
+	assert.NewCollecting(t).Eq(want, got, "Namespace mismatch: got")
 }
 
 // setupScheme creates a new scheme with all required types registered
@@ -195,80 +195,99 @@ func TestResolver_ValidateReference(t *testing.T) {
 
 	// Case 1: Core Template
 	t.Run("Core", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		r := NewResolver(cEmpty, ns)
 
 		// Empty name -> Valid (no explicit reference)
-		if err := r.ValidateCoreTemplateReference(t.Context(), ""); err != nil {
-			t.Errorf("Empty name should be valid, got %v", err)
-		}
+		c.NoError(
+			r.ValidateCoreTemplateReference(t.Context(), ""),
+			"Empty name should be valid, got",
+		)
 		// Explicit "default" reference with missing template -> Invalid
-		if err := r.ValidateCoreTemplateReference(t.Context(), FallbackCoreTemplate); err == nil {
-			t.Error("Explicit 'default' reference should error when template is missing")
-		}
+		c.Error(
+			r.ValidateCoreTemplateReference(t.Context(), FallbackCoreTemplate),
+			"Explicit 'default' reference should error when template is missing",
+		)
 		// Random missing -> Invalid
-		if err := r.ValidateCoreTemplateReference(t.Context(), "missing"); err == nil {
-			t.Error("Missing template should error")
-		}
+		c.Error(
+			r.ValidateCoreTemplateReference(t.Context(), "missing"),
+			"Missing template should error",
+		)
 
 		// Real existence (Implicit Default)
 		rExists := NewResolver(cWithDefaults, ns)
-		if err := rExists.ValidateCoreTemplateReference(t.Context(), "default"); err != nil {
-			t.Errorf("Existing template should be valid, got %v", err)
-		}
+		c.NoError(
+			rExists.ValidateCoreTemplateReference(t.Context(), "default"),
+			"Existing template should be valid, got",
+		)
 		// Real existence (Explicit Custom) - Hits "exists" branch
-		if err := rExists.ValidateCoreTemplateReference(t.Context(), "custom"); err != nil {
-			t.Errorf("Custom template should be valid, got %v", err)
-		}
+		c.NoError(
+			rExists.ValidateCoreTemplateReference(t.Context(), "custom"),
+			"Custom template should be valid, got",
+		)
 	})
 
 	// Case 2: Cell Template
 	t.Run("Cell", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		r := NewResolver(cEmpty, ns)
 
-		if err := r.ValidateCellTemplateReference(t.Context(), ""); err != nil {
-			t.Errorf("Empty name should be valid, got %v", err)
-		}
+		c.NoError(
+			r.ValidateCellTemplateReference(t.Context(), ""),
+			"Empty name should be valid, got",
+		)
 		// Explicit "default" reference with missing template -> Invalid
-		if err := r.ValidateCellTemplateReference(t.Context(), FallbackCellTemplate); err == nil {
-			t.Error("Explicit 'default' reference should error when template is missing")
-		}
-		if err := r.ValidateCellTemplateReference(t.Context(), "missing"); err == nil {
-			t.Error("Missing template should error")
-		}
+		c.Error(
+			r.ValidateCellTemplateReference(t.Context(), FallbackCellTemplate),
+			"Explicit 'default' reference should error when template is missing",
+		)
+		c.Error(
+			r.ValidateCellTemplateReference(t.Context(), "missing"),
+			"Missing template should error",
+		)
 		rExists := NewResolver(cWithDefaults, ns)
-		if err := rExists.ValidateCellTemplateReference(t.Context(), "default"); err != nil {
-			t.Errorf("Existing template should be valid, got %v", err)
-		}
-		if err := rExists.ValidateCellTemplateReference(t.Context(), "custom"); err != nil {
-			t.Errorf("Custom template should be valid, got %v", err)
-		}
+		c.NoError(
+			rExists.ValidateCellTemplateReference(t.Context(), "default"),
+			"Existing template should be valid, got",
+		)
+		c.NoError(
+			rExists.ValidateCellTemplateReference(t.Context(), "custom"),
+			"Custom template should be valid, got",
+		)
 	})
 
 	// Case 3: Shard Template
 	t.Run("Shard", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		r := NewResolver(cEmpty, ns)
 
-		if err := r.ValidateShardTemplateReference(t.Context(), ""); err != nil {
-			t.Errorf("Empty name should be valid, got %v", err)
-		}
+		c.NoError(
+			r.ValidateShardTemplateReference(t.Context(), ""),
+			"Empty name should be valid, got",
+		)
 		// Explicit "default" reference with missing template -> Invalid
-		if err := r.ValidateShardTemplateReference(t.Context(), FallbackShardTemplate); err == nil {
-			t.Error("Explicit 'default' reference should error when template is missing")
-		}
-		if err := r.ValidateShardTemplateReference(t.Context(), "missing"); err == nil {
-			t.Error("Missing template should error")
-		}
+		c.Error(
+			r.ValidateShardTemplateReference(t.Context(), FallbackShardTemplate),
+			"Explicit 'default' reference should error when template is missing",
+		)
+		c.Error(
+			r.ValidateShardTemplateReference(t.Context(), "missing"),
+			"Missing template should error",
+		)
 		rExists := NewResolver(cWithDefaults, ns)
-		if err := rExists.ValidateShardTemplateReference(t.Context(), "default"); err != nil {
-			t.Errorf("Existing template should be valid, got %v", err)
-		}
-		if err := rExists.ValidateShardTemplateReference(t.Context(), "custom"); err != nil {
-			t.Errorf("Custom template should be valid, got %v", err)
-		}
+		c.NoError(
+			rExists.ValidateShardTemplateReference(t.Context(), "default"),
+			"Existing template should be valid, got",
+		)
+		c.NoError(
+			rExists.ValidateShardTemplateReference(t.Context(), "custom"),
+			"Custom template should be valid, got",
+		)
 	})
 
 	// Case 4: Client Failure
 	t.Run("ClientFailure", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		errSim := testutil.ErrInjected
 		failClient := testutil.NewFakeClientWithFailures(
 			fake.NewClientBuilder().Build(),
@@ -279,18 +298,21 @@ func TestResolver_ValidateReference(t *testing.T) {
 		rFail := NewResolver(failClient, ns)
 
 		// Should propagate error
-		if err := rFail.ValidateCoreTemplateReference(t.Context(), "any"); !errors.Is(err, errSim) {
-			t.Errorf("Expected error propagation for Core, got %v", err)
-		}
-		if err := rFail.ValidateCellTemplateReference(t.Context(), "any"); !errors.Is(err, errSim) {
-			t.Errorf("Expected error propagation for Cell, got %v", err)
-		}
-		if err := rFail.ValidateShardTemplateReference(t.Context(), "any"); !errors.Is(
-			err,
+		c.ErrorIs(
+			rFail.ValidateCoreTemplateReference(t.Context(), "any"),
 			errSim,
-		) {
-			t.Errorf("Expected error propagation for Shard, got %v", err)
-		}
+			"Expected error propagation for Core, got",
+		)
+		c.ErrorIs(
+			rFail.ValidateCellTemplateReference(t.Context(), "any"),
+			errSim,
+			"Expected error propagation for Cell, got",
+		)
+		c.ErrorIs(
+			rFail.ValidateShardTemplateReference(t.Context(), "any"),
+			errSim,
+			"Expected error propagation for Shard, got",
+		)
 	})
 }
 
@@ -305,6 +327,7 @@ func TestResolver_Caching(t *testing.T) {
 	baseClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 
 	t.Run("CoreTemplate", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		// Use a counter to track Get calls
 		var getCalls int
 		clientWithCounter := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
@@ -318,34 +341,24 @@ func TestResolver_Caching(t *testing.T) {
 
 		// First call - should hit the API
 		tpl1, err := r.ResolveCoreTemplate(t.Context(), "default")
-		if err != nil {
-			t.Fatalf("First ResolveCoreTemplate failed: %v", err)
-		}
-		if tpl1 == nil {
-			t.Fatal("Expected non-nil template")
-		}
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call after first resolve, got %d", getCalls)
-		}
+		c.Require().NoError(err, "First ResolveCoreTemplate failed")
+		c.Require().NotNil(tpl1, "Expected non-nil template")
+		c.Eq(1, getCalls, "Expected 1 Get call after first resolve, got")
 
 		// Second call - should use cache
 		tpl2, err := r.ResolveCoreTemplate(t.Context(), "default")
-		if err != nil {
-			t.Fatalf("Second ResolveCoreTemplate failed: %v", err)
-		}
-		if tpl2 == nil {
-			t.Fatal("Expected non-nil template")
-		}
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call after second resolve (cached), got %d", getCalls)
-		}
+		c.Require().NoError(err, "Second ResolveCoreTemplate failed")
+		c.Require().NotNil(tpl2, "Expected non-nil template")
+		c.Eq(1, getCalls, "Expected 1 Get call after second resolve (cached), got")
 
 		// Verify DeepCopy (forward): modifying first result shouldn't affect second
 		if tpl1.Spec.GlobalTopoServer != nil && tpl1.Spec.GlobalTopoServer.Etcd != nil {
 			tpl1.Spec.GlobalTopoServer.Etcd.Image = "modified"
-			if tpl2.Spec.GlobalTopoServer.Etcd.Image == "modified" {
-				t.Error("DeepCopy failed - modifications leaked from tpl1 to tpl2")
-			}
+			c.NotEq(
+				"modified",
+				tpl2.Spec.GlobalTopoServer.Etcd.Image,
+				"DeepCopy failed - modifications leaked from tpl1 to tpl2",
+			)
 		}
 
 		// Verify DeepCopy (reverse): modifying a cached result must not
@@ -354,16 +367,17 @@ func TestResolver_Caching(t *testing.T) {
 		if tpl2.Spec.GlobalTopoServer != nil && tpl2.Spec.GlobalTopoServer.Etcd != nil {
 			tpl2.Spec.GlobalTopoServer.Etcd.Image = "corrupted"
 			tpl3, err := r.ResolveCoreTemplate(t.Context(), "default")
-			if err != nil {
-				t.Fatalf("Third ResolveCoreTemplate failed: %v", err)
-			}
-			if tpl3.Spec.GlobalTopoServer.Etcd.Image == "corrupted" {
-				t.Error("Cache corruption - mutating a cached result polluted subsequent resolves")
-			}
+			c.Require().NoError(err, "Third ResolveCoreTemplate failed")
+			c.NotEq(
+				"corrupted",
+				tpl3.Spec.GlobalTopoServer.Etcd.Image,
+				"Cache corruption - mutating a cached result polluted subsequent resolves",
+			)
 		}
 	})
 
 	t.Run("CellTemplate", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		var getCalls int
 		clientWithCounter := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 			OnGet: func(_ client.ObjectKey) error {
@@ -376,34 +390,23 @@ func TestResolver_Caching(t *testing.T) {
 
 		// First call
 		tpl1, err := r.ResolveCellTemplate(t.Context(), "default")
-		if err != nil {
-			t.Fatalf("First ResolveCellTemplate failed: %v", err)
-		}
-		if tpl1 == nil {
-			t.Fatal("Expected non-nil template")
-		}
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call after first resolve, got %d", getCalls)
-		}
+		c.Require().NoError(err, "First ResolveCellTemplate failed")
+		c.Require().NotNil(tpl1, "Expected non-nil template")
+		c.Eq(1, getCalls, "Expected 1 Get call after first resolve, got")
 
 		// Second call - should use cache
 		tpl2, err := r.ResolveCellTemplate(t.Context(), "default")
-		if err != nil {
-			t.Fatalf("Second ResolveCellTemplate failed: %v", err)
-		}
-		if tpl2 == nil {
-			t.Fatal("Expected non-nil template")
-		}
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call after second resolve (cached), got %d", getCalls)
-		}
+		c.Require().NoError(err, "Second ResolveCellTemplate failed")
+		c.Require().NotNil(tpl2, "Expected non-nil template")
+		c.Eq(1, getCalls, "Expected 1 Get call after second resolve (cached), got")
 
 		// Verify DeepCopy (forward)
 		if tpl1.Spec.Multigateway != nil {
 			tpl1.Spec.Multigateway.Replicas = ptr.To(int32(999))
-			if tpl2.Spec.Multigateway.Replicas != nil && *tpl2.Spec.Multigateway.Replicas == 999 {
-				t.Error("DeepCopy failed - modifications leaked from tpl1 to tpl2")
-			}
+			c.False(
+				tpl2.Spec.Multigateway.Replicas != nil && *tpl2.Spec.Multigateway.Replicas == 999,
+				"DeepCopy failed - modifications leaked from tpl1 to tpl2",
+			)
 		}
 
 		// Verify DeepCopy (reverse): mutating a cached result must not
@@ -411,16 +414,16 @@ func TestResolver_Caching(t *testing.T) {
 		if tpl2.Spec.Multigateway != nil {
 			tpl2.Spec.Multigateway.Replicas = ptr.To(int32(777))
 			tpl3, err := r.ResolveCellTemplate(t.Context(), "default")
-			if err != nil {
-				t.Fatalf("Third ResolveCellTemplate failed: %v", err)
-			}
-			if tpl3.Spec.Multigateway.Replicas != nil && *tpl3.Spec.Multigateway.Replicas == 777 {
-				t.Error("Cache corruption - mutating a cached result polluted subsequent resolves")
-			}
+			c.Require().NoError(err, "Third ResolveCellTemplate failed")
+			c.False(
+				tpl3.Spec.Multigateway.Replicas != nil && *tpl3.Spec.Multigateway.Replicas == 777,
+				"Cache corruption - mutating a cached result polluted subsequent resolves",
+			)
 		}
 	})
 
 	t.Run("ShardTemplate", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		var getCalls int
 		clientWithCounter := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 			OnGet: func(_ client.ObjectKey) error {
@@ -433,34 +436,23 @@ func TestResolver_Caching(t *testing.T) {
 
 		// First call
 		tpl1, err := r.ResolveShardTemplate(t.Context(), "default")
-		if err != nil {
-			t.Fatalf("First ResolveShardTemplate failed: %v", err)
-		}
-		if tpl1 == nil {
-			t.Fatal("Expected non-nil template")
-		}
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call after first resolve, got %d", getCalls)
-		}
+		c.Require().NoError(err, "First ResolveShardTemplate failed")
+		c.Require().NotNil(tpl1, "Expected non-nil template")
+		c.Eq(1, getCalls, "Expected 1 Get call after first resolve, got")
 
 		// Second call - should use cache
 		tpl2, err := r.ResolveShardTemplate(t.Context(), "default")
-		if err != nil {
-			t.Fatalf("Second ResolveShardTemplate failed: %v", err)
-		}
-		if tpl2 == nil {
-			t.Fatal("Expected non-nil template")
-		}
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call after second resolve (cached), got %d", getCalls)
-		}
+		c.Require().NoError(err, "Second ResolveShardTemplate failed")
+		c.Require().NotNil(tpl2, "Expected non-nil template")
+		c.Eq(1, getCalls, "Expected 1 Get call after second resolve (cached), got")
 
 		// Verify DeepCopy (forward)
 		if tpl1.Spec.Multiorch != nil {
 			tpl1.Spec.Multiorch.Replicas = ptr.To(int32(999))
-			if tpl2.Spec.Multiorch.Replicas != nil && *tpl2.Spec.Multiorch.Replicas == 999 {
-				t.Error("DeepCopy failed - modifications leaked from tpl1 to tpl2")
-			}
+			c.False(
+				tpl2.Spec.Multiorch.Replicas != nil && *tpl2.Spec.Multiorch.Replicas == 999,
+				"DeepCopy failed - modifications leaked from tpl1 to tpl2",
+			)
 		}
 
 		// Verify DeepCopy (reverse): mutating a cached result must not
@@ -468,16 +460,16 @@ func TestResolver_Caching(t *testing.T) {
 		if tpl2.Spec.Multiorch != nil {
 			tpl2.Spec.Multiorch.Replicas = ptr.To(int32(777))
 			tpl3, err := r.ResolveShardTemplate(t.Context(), "default")
-			if err != nil {
-				t.Fatalf("Third ResolveShardTemplate failed: %v", err)
-			}
-			if tpl3.Spec.Multiorch.Replicas != nil && *tpl3.Spec.Multiorch.Replicas == 777 {
-				t.Error("Cache corruption - mutating a cached result polluted subsequent resolves")
-			}
+			c.Require().NoError(err, "Third ResolveShardTemplate failed")
+			c.False(
+				tpl3.Spec.Multiorch.Replicas != nil && *tpl3.Spec.Multiorch.Replicas == 777,
+				"Cache corruption - mutating a cached result polluted subsequent resolves",
+			)
 		}
 	})
 
 	t.Run("FallbackNotCached", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		// Verify that fallback empty templates are NOT cached
 		var getCalls int
 		emptyClient := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -495,25 +487,17 @@ func TestResolver_Caching(t *testing.T) {
 
 		// Call with empty name (triggers fallback)
 		_, err := r.ResolveShardTemplate(t.Context(), "")
-		if err != nil {
-			t.Fatalf("Fallback resolve failed: %v", err)
-		}
+		c.Require().NoError(err, "Fallback resolve failed")
 
 		// Should have attempted Get once and got NotFound
-		if getCalls != 1 {
-			t.Errorf("Expected 1 Get call for fallback, got %d", getCalls)
-		}
+		c.Eq(1, getCalls, "Expected 1 Get call for fallback, got")
 
 		// Second call - fallback should NOT be cached, so another Get attempt
 		_, err = r.ResolveShardTemplate(t.Context(), "")
-		if err != nil {
-			t.Fatalf("Second fallback resolve failed: %v", err)
-		}
+		c.Require().NoError(err, "Second fallback resolve failed")
 
 		// Since fallback is not cached, we expect another Get call
-		if getCalls != 2 {
-			t.Errorf("Expected 2 Get calls (fallback not cached), got %d", getCalls)
-		}
+		c.Eq(2, getCalls, "Expected 2 Get calls (fallback not cached), got")
 	})
 }
 
@@ -532,50 +516,37 @@ func TestSharedHelpers(t *testing.T) {
 			{"Claims Set", corev1.ResourceRequirements{Claims: []corev1.ResourceClaim{}}, false},
 		}
 		for _, tc := range tests {
-			if got := isResourcesZero(tc.res); got != tc.want {
-				t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
-			}
+			got := isResourcesZero(tc.res)
+			assert.NewCollecting(t).Eq(tc.want, got, "%s: got %v, want", tc.name, got)
 		}
 	})
 
 	t.Run("defaultEtcdSpec", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		spec := &multigresv1alpha1.EtcdSpec{}
 		defaultEtcdSpec(spec, "/test/global")
 
-		if spec.Image != DefaultEtcdImage {
-			t.Errorf("Image: got %q, want %q", spec.Image, DefaultEtcdImage)
-		}
-		if spec.Storage.Size != DefaultEtcdStorageSize {
-			t.Errorf("Storage: got %q, want %q", spec.Storage.Size, DefaultEtcdStorageSize)
-		}
-		if *spec.Replicas != DefaultEtcdReplicas {
-			t.Errorf("Replicas: got %d, want %d", *spec.Replicas, DefaultEtcdReplicas)
-		}
-		if isResourcesZero(spec.Resources) {
-			t.Error("Resources should be defaulted")
-		}
+		c.Eq(DefaultEtcdImage, spec.Image, "Image: got")
+		c.Eq(DefaultEtcdStorageSize, spec.Storage.Size, "Storage: got")
+		c.Eq(DefaultEtcdReplicas, *spec.Replicas, "Replicas: got")
+		c.False(isResourcesZero(spec.Resources), "Resources should be defaulted")
 
 		// Test Preservation
 		spec2 := &multigresv1alpha1.EtcdSpec{Image: "custom"}
 		defaultEtcdSpec(spec2, "/test/global")
-		if spec2.Image != "custom" {
-			t.Error("Should preserve existing image")
-		}
+		c.Eq("custom", spec2.Image, "Should preserve existing image")
 	})
 
 	t.Run("defaultStatelessSpec", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		spec := &multigresv1alpha1.StatelessSpec{}
 		res := corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: parseQty("1")},
 		}
 		defaultStatelessSpec(spec, res, 5)
 
-		if *spec.Replicas != 5 {
-			t.Errorf("Replicas: got %d, want 5", *spec.Replicas)
-		}
-		if cmp.Diff(spec.Resources, res) != "" {
-			t.Error("Resources not copied correctly")
-		}
+		c.Eq(5, *spec.Replicas, "Replicas: got")
+		c.EqDiff(spec.Resources, res, "Resources not copied correctly")
 
 		// Test DeepCopy independence
 		res.Requests[corev1.ResourceCPU] = parseQty("999")
@@ -584,9 +555,7 @@ func TestSharedHelpers(t *testing.T) {
 		// Wait, Requests[...] returns a Value.
 		// We need to capture it to check it.
 		val := spec.Resources.Requests[corev1.ResourceCPU]
-		if val.String() == "999" {
-			t.Error("Shared pointer detected in defaultStatelessSpec")
-		}
+		c.NotEq("999", val.String(), "Shared pointer detected in defaultStatelessSpec")
 
 		// Test Preservation
 		spec2 := &multigresv1alpha1.StatelessSpec{
@@ -596,15 +565,12 @@ func TestSharedHelpers(t *testing.T) {
 			},
 		}
 		defaultStatelessSpec(spec2, res, 5)
-		if *spec2.Replicas != 10 {
-			t.Error("Should preserve existing Replicas")
-		}
-		if spec2.Resources.Requests.Cpu().String() != "5m" {
-			t.Error("Should preserve existing Resources")
-		}
+		c.Eq(10, *spec2.Replicas, "Should preserve existing Replicas")
+		c.Eq("5m", spec2.Resources.Requests.Cpu().String(), "Should preserve existing Resources")
 	})
 
 	t.Run("mergeStatelessSpec", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		base := &multigresv1alpha1.StatelessSpec{
 			PodAnnotations: map[string]string{"a": "1"},
 			PodLabels:      map[string]string{"l1": "v1"},
@@ -622,24 +588,15 @@ func TestSharedHelpers(t *testing.T) {
 		}
 		mergeStatelessSpec(base, override)
 
-		if len(base.PodAnnotations) != 2 {
-			t.Errorf("Map merge failed (Annotations), got %v", base.PodAnnotations)
-		}
-		if len(base.PodLabels) != 2 {
-			t.Errorf("Map merge failed (Labels), got %v", base.PodLabels)
-		}
-		if *base.Replicas != 3 {
-			t.Error("Replicas not merged")
-		}
-		if base.Resources.Requests == nil {
-			t.Error("Resources not merged")
-		}
-		if base.Affinity == nil {
-			t.Error("Affinity not merged")
-		}
+		c.Len(base.PodAnnotations, 2, "Map merge failed (Annotations), got")
+		c.Len(base.PodLabels, 2, "Map merge failed (Labels), got")
+		c.Eq(3, *base.Replicas, "Replicas not merged")
+		c.NotNil(base.Resources.Requests, "Resources not merged")
+		c.NotNil(base.Affinity, "Affinity not merged")
 	})
 
 	t.Run("mergePodPlacementSpec", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		override := &multigresv1alpha1.PodPlacementSpec{
 			Tolerations: []corev1.Toleration{
 				{
@@ -654,20 +611,19 @@ func TestSharedHelpers(t *testing.T) {
 		var base *multigresv1alpha1.PodPlacementSpec
 		mergePodPlacementSpec(&base, override)
 
-		if base == nil {
-			t.Fatal("Placement not initialized")
-		}
-		if len(base.Tolerations) != 1 {
-			t.Fatalf("Tolerations not merged, got %v", base.Tolerations)
-		}
+		c.Require().NotNil(base, "Placement not initialized")
+		c.Require().Len(base.Tolerations, 1, "Tolerations not merged, got")
 
 		override.Tolerations[0].Value = "changed"
-		if base.Tolerations[0].Value != "customer-pg" {
-			t.Error("Tolerations should be deep-copied during merge")
-		}
+		c.Eq(
+			"customer-pg",
+			base.Tolerations[0].Value,
+			"Tolerations should be deep-copied during merge",
+		)
 	})
 
 	t.Run("mergePodPlacementSpec clears inherited tolerations", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		base := &multigresv1alpha1.PodPlacementSpec{
 			Tolerations: []corev1.Toleration{
 				{
@@ -682,12 +638,8 @@ func TestSharedHelpers(t *testing.T) {
 		override := &multigresv1alpha1.PodPlacementSpec{}
 		mergePodPlacementSpec(&base, override)
 
-		if base == nil {
-			t.Fatal("Placement should remain initialized")
-		}
-		if len(base.Tolerations) != 0 {
-			t.Fatalf("Expected inherited tolerations to be cleared, got %v", base.Tolerations)
-		}
+		c.NotNil(base, "Placement should remain initialized")
+		c.Empty(base.Tolerations, "Expected inherited tolerations to be cleared, got")
 	})
 }
 

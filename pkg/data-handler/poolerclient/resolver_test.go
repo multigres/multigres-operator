@@ -26,17 +26,16 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
+	c := assert.NewAborting(t)
 	s := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(s); err != nil {
-		t.Fatalf("add scheme: %v", err)
-	}
-	if err := multigresv1alpha1.AddToScheme(s); err != nil {
-		t.Fatalf("add Multigres scheme: %v", err)
-	}
+	c.NoError(clientgoscheme.AddToScheme(s), "add scheme")
+	c.NoError(multigresv1alpha1.AddToScheme(s), "add Multigres scheme")
 	return s
 }
 
@@ -73,10 +72,9 @@ type testCA struct {
 
 func newTestCA(t *testing.T) *testCA {
 	t.Helper()
+	c := assert.NewAborting(t)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate CA key: %v", err)
-	}
+	c.NoError(err, "generate CA key")
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: "test-ca"},
@@ -87,13 +85,9 @@ func newTestCA(t *testing.T) *testCA {
 		BasicConstraintsValid: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create CA: %v", err)
-	}
+	c.NoError(err, "create CA")
 	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse CA: %v", err)
-	}
+	c.NoError(err, "parse CA")
 	return &testCA{
 		cert: cert,
 		key:  key,
@@ -107,10 +101,9 @@ func (ca *testCA) issue(
 	usages ...x509.ExtKeyUsage,
 ) (certPEM, keyPEM []byte, leaf *x509.Certificate) {
 	t.Helper()
+	c := assert.NewAborting(t)
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate leaf key: %v", err)
-	}
+	c.NoError(err, "generate leaf key")
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: "leaf"},
@@ -121,17 +114,11 @@ func (ca *testCA) issue(
 		DNSNames:     dnsNames,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, ca.cert, &key.PublicKey, ca.key)
-	if err != nil {
-		t.Fatalf("create leaf: %v", err)
-	}
+	c.NoError(err, "create leaf")
 	leaf, err = x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse leaf: %v", err)
-	}
+	c.NoError(err, "parse leaf")
 	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal leaf key: %v", err)
-	}
+	c.NoError(err, "marshal leaf key")
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
 		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), leaf
 }
@@ -171,9 +158,7 @@ func newResolver(
 	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(objects...).Build()
 	insecure := rpcclient.NewFakeClient()
 	r, err := NewOperatorCertResolver(c, Options{Capacity: 10, Insecure: insecure})
-	if err != nil {
-		t.Fatalf("NewOperatorCertResolver() error = %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "NewOperatorCertResolver() error =")
 	t.Cleanup(r.Close)
 	return r, insecure, c
 }
@@ -201,41 +186,33 @@ func TestNewOperatorCertResolverValidatesDependencies(t *testing.T) {
 }
 
 func TestStaticResolver(t *testing.T) {
+	c := assert.NewCollecting(t)
 	want := rpcclient.NewFakeClient()
 	got, err := Static(want).ClientFor(t.Context(), testShard("s", "ns", "c", true))
-	if err != nil {
-		t.Fatalf("ClientFor() error = %v", err)
-	}
-	if got != want {
-		t.Error("Static resolver returned a different client")
-	}
+	c.Require().NoError(err, "ClientFor() error =")
+	c.False(got != want, "Static resolver returned a different client")
 }
 
 func TestClientForTLSDisabledReturnsInsecure(t *testing.T) {
+	c := assert.NewCollecting(t)
 	r, insecure, _ := newResolver(t)
 	got, err := r.ClientFor(t.Context(), testShard("s", "ns", "c", false))
-	if err != nil {
-		t.Fatalf("ClientFor() error = %v", err)
-	}
-	if got != insecure {
-		t.Error("TLS-disabled shard did not get the insecure client")
-	}
+	c.Require().NoError(err, "ClientFor() error =")
+	c.False(got != insecure, "TLS-disabled shard did not get the insecure client")
 }
 
 func TestClientForRequiresClusterLabel(t *testing.T) {
 	r, _, _ := newResolver(t)
 	_, err := r.ClientFor(t.Context(), testShard("s", "ns", "", true))
-	if err == nil || !strings.Contains(err.Error(), metadata.LabelMultigresCluster) {
-		t.Fatalf("ClientFor() error = %v, want missing label error", err)
-	}
+	assert.NewAborting(t).
+		False(err == nil || !strings.Contains(err.Error(), metadata.LabelMultigresCluster), "ClientFor() error = %v, want missing label error", err)
 }
 
 func TestClientForSecretNotIssued(t *testing.T) {
 	r, _, _ := newResolver(t)
 	_, err := r.ClientFor(t.Context(), activeTLSShard(r, "s", "ns", "c"))
-	if err == nil || !strings.Contains(err.Error(), "reading operator internal TLS secret") {
-		t.Fatalf("ClientFor() error = %v, want missing Secret error", err)
-	}
+	assert.NewAborting(t).
+		False(err == nil || !strings.Contains(err.Error(), "reading operator internal TLS secret"), "ClientFor() error = %v, want missing Secret error", err)
 }
 
 type countingBlockingReader struct {
@@ -275,6 +252,7 @@ func (r *countingBlockingReader) getCount() int {
 }
 
 func TestClientForCoalescesAndCachesInitialFailure(t *testing.T) {
+	c := assert.NewAborting(t)
 	r, _, reader := newResolver(t)
 	blocking := &countingBlockingReader{
 		Reader:  reader,
@@ -300,9 +278,7 @@ func TestClientForCoalescesAndCachesInitialFailure(t *testing.T) {
 	}
 	// Give the other callers a chance to join the in-flight initialization.
 	time.Sleep(20 * time.Millisecond)
-	if got := blocking.getCount(); got != 1 {
-		t.Fatalf("concurrent initial Secret reads = %d, want 1", got)
-	}
+	c.Eq(1, blocking.getCount(), "concurrent initial Secret reads")
 	close(blocking.release)
 	for range callers {
 		if err := <-errs; err == nil ||
@@ -311,12 +287,9 @@ func TestClientForCoalescesAndCachesInitialFailure(t *testing.T) {
 		}
 	}
 
-	if _, err := r.ClientFor(t.Context(), shard); err == nil {
-		t.Fatal("ClientFor() expected cached missing Secret error")
-	}
-	if got := blocking.getCount(); got != 1 {
-		t.Fatalf("Secret reads during failure cache = %d, want 1", got)
-	}
+	_, err := r.ClientFor(t.Context(), shard)
+	c.Error(err, "ClientFor() expected cached missing Secret error")
+	c.Eq(1, blocking.getCount(), "Secret reads during failure cache")
 }
 
 type cancelFirstReader struct {
@@ -352,6 +325,7 @@ func (r *cancelFirstReader) getCount() int {
 }
 
 func TestClientForCanceledColdLeaderDoesNotPoisonJoiner(t *testing.T) {
+	c := assert.NewAborting(t)
 	ca := newTestCA(t)
 	r, _, reader := newResolver(t, operatorSecret(t, ca, "ns", "c", "1"))
 	cancelReader := &cancelFirstReader{
@@ -389,18 +363,20 @@ func TestClientForCanceledColdLeaderDoesNotPoisonJoiner(t *testing.T) {
 	}
 	select {
 	case result := <-joinerResult:
-		if result.err != nil || result.client == nil {
-			t.Fatalf("joiner ClientFor() = (%v, %v), want a client", result.client, result.err)
-		}
+		c.False(
+			result.err != nil || result.client == nil,
+			"joiner ClientFor() = (%v, %v), want a client",
+			result.client,
+			result.err,
+		)
 	case <-time.After(time.Second):
 		t.Fatal("healthy joiner did not retry canceled initialization")
 	}
-	if got := cancelReader.getCount(); got != 2 {
-		t.Fatalf("Secret reads = %d, want canceled read plus healthy retry", got)
-	}
+	c.Eq(2, cancelReader.getCount(), "Secret reads")
 }
 
 func TestClientForCachesPerClusterAndBindsServerName(t *testing.T) {
+	c := assert.NewCollecting(t)
 	ca := newTestCA(t)
 	r, insecure, _ := newResolver(t,
 		operatorSecret(t, ca, "ns-a", "cluster-a", "1"),
@@ -415,23 +391,16 @@ func TestClientForCachesPerClusterAndBindsServerName(t *testing.T) {
 	r.ActivateCluster(types.NamespacedName{Namespace: "ns-b", Name: "cluster-b"})
 
 	a1, err := r.ClientFor(t.Context(), testShard("s1", "ns-a", "cluster-a", true))
-	if err != nil {
-		t.Fatalf("first cluster A ClientFor() error = %v", err)
-	}
+	c.Require().NoError(err, "first cluster A ClientFor() error =")
 	a2, err := r.ClientFor(t.Context(), testShard("s2", "ns-a", "cluster-a", true))
-	if err != nil {
-		t.Fatalf("second cluster A ClientFor() error = %v", err)
-	}
+	c.Require().NoError(err, "second cluster A ClientFor() error =")
 	b, err := r.ClientFor(t.Context(), testShard("s", "ns-b", "cluster-b", true))
-	if err != nil {
-		t.Fatalf("cluster B ClientFor() error = %v", err)
-	}
-	if a1 == insecure || b == insecure || a1 != a2 || a1 == b {
-		t.Error("clients were not cached independently per cluster")
-	}
-	if len(configs) != 2 {
-		t.Fatalf("created %d TLS configs, want 2", len(configs))
-	}
+	c.Require().NoError(err, "cluster B ClientFor() error =")
+	c.False(
+		a1 == insecure || b == insecure || a1 != a2 || a1 == b,
+		"clients were not cached independently per cluster",
+	)
+	c.Require().Len(configs, 2, "created %d TLS configs, want 2", len(configs))
 	wantA := "multipooler.cluster-a.ns-a.multigres.internal"
 	wantB := "multipooler.cluster-b.ns-b.multigres.internal"
 	if configs[0].ServerName != wantA || configs[1].ServerName != wantB {
@@ -443,12 +412,14 @@ func TestClientForCachesPerClusterAndBindsServerName(t *testing.T) {
 			wantB,
 		)
 	}
-	if configs[0].InsecureSkipVerify || configs[0].VerifyConnection != nil {
-		t.Error("cluster client bypasses normal TLS hostname verification")
-	}
+	c.False(
+		configs[0].InsecureSkipVerify || configs[0].VerifyConnection != nil,
+		"cluster client bypasses normal TLS hostname verification",
+	)
 }
 
 func TestClientForKeepsClientOnRefreshFailure(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	ca := newTestCA(t)
 	secret := operatorSecret(t, ca, "ns", "c", "1")
 	r, _, c := newResolver(t, secret)
@@ -456,19 +427,11 @@ func TestClientForKeepsClientOnRefreshFailure(t *testing.T) {
 	shard := activeTLSShard(r, "s", "ns", "c")
 
 	want, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
-	if err := c.Delete(t.Context(), secret); err != nil {
-		t.Fatalf("delete secret: %v", err)
-	}
+	ck.Require().NoError(err, "first ClientFor() error =")
+	ck.Require().NoError(c.Delete(t.Context(), secret), "delete secret")
 	got, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("refresh ClientFor() error = %v", err)
-	}
-	if got != want {
-		t.Error("refresh failure replaced the working client")
-	}
+	ck.Require().NoError(err, "refresh ClientFor() error =")
+	ck.False(got != want, "refresh failure replaced the working client")
 }
 
 type countingReader struct {
@@ -496,6 +459,7 @@ func (r *countingReader) getCount() int {
 }
 
 func TestClientForRetriesWarmRefreshFailureOnFailureInterval(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ca := newTestCA(t)
 	secret := operatorSecret(t, ca, "ns", "c", "1")
 	r, _, c := newResolver(t, secret)
@@ -506,54 +470,41 @@ func TestClientForRetriesWarmRefreshFailureOnFailureInterval(t *testing.T) {
 	shard := activeTLSShard(r, "s", "ns", "c")
 
 	want, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
+	ck.NoError(err, "first ClientFor() error =")
 	state := r.states[types.NamespacedName{Namespace: "ns", Name: "c"}]
 	state.mu.Lock()
 	state.fetchedAt = time.Now().Add(-2 * r.refreshInterval)
 	state.mu.Unlock()
-	if err := c.Delete(t.Context(), secret); err != nil {
-		t.Fatalf("delete Secret: %v", err)
-	}
+	ck.NoError(c.Delete(t.Context(), secret), "delete Secret")
 	if got, err := r.ClientFor(t.Context(), shard); err != nil || got != want {
 		t.Fatalf("failed refresh ClientFor() = (%v, %v), want existing client", got, err)
 	}
-	if got := reader.getCount(); got != 2 {
-		t.Fatalf("Secret reads after failed refresh = %d, want 2", got)
-	}
+	ck.Eq(2, reader.getCount(), "Secret reads after failed refresh")
 	if _, err := r.ClientFor(t.Context(), shard); err != nil {
 		t.Fatalf("ClientFor() during failure retry window error = %v", err)
 	}
-	if got := reader.getCount(); got != 2 {
-		t.Fatalf("Secret reads during failure retry window = %d, want 2", got)
-	}
+	ck.Eq(2, reader.getCount(), "Secret reads during failure retry window")
 
 	replacement := operatorSecret(t, ca, "ns", "c", "")
-	if err := c.Create(t.Context(), replacement); err != nil {
-		t.Fatalf("recreate Secret: %v", err)
-	}
+	ck.NoError(c.Create(t.Context(), replacement), "recreate Secret")
 	state.mu.Lock()
 	state.fetchedAt = time.Now().Add(-2 * r.failureRetry)
 	state.mu.Unlock()
 	if _, err := r.ClientFor(t.Context(), shard); err != nil {
 		t.Fatalf("ClientFor() after failure retry interval error = %v", err)
 	}
-	if got := reader.getCount(); got != 3 {
-		t.Fatalf("Secret reads after failure retry interval = %d, want 3", got)
-	}
+	ck.Eq(3, reader.getCount(), "Secret reads after failure retry interval")
 }
 
 func TestClientForCanceledWarmRefreshDoesNotDelayRetry(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ca := newTestCA(t)
 	secret := operatorSecret(t, ca, "ns", "c", "1")
 	r, _, c := newResolver(t, secret)
 	r.refreshInterval = time.Hour
 	shard := activeTLSShard(r, "s", "ns", "c")
 	want, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
+	ck.NoError(err, "first ClientFor() error =")
 	state := r.states[types.NamespacedName{Namespace: "ns", Name: "c"}]
 	state.mu.Lock()
 	state.fetchedAt = time.Now().Add(-2 * r.refreshInterval)
@@ -575,25 +526,20 @@ func TestClientForCanceledWarmRefreshDoesNotDelayRetry(t *testing.T) {
 	<-cancelReader.started
 	cancelRefresh()
 	result := <-refreshResult
-	if result.err != nil || result.client != want {
-		t.Fatalf(
-			"canceled refresh ClientFor() = (%v, %v), want existing client",
-			result.client,
-			result.err,
-		)
-	}
+	ck.False(
+		result.err != nil || result.client != want,
+		"canceled refresh ClientFor() = (%v, %v), want existing client",
+		result.client,
+		result.err,
+	)
 	state.mu.Lock()
 	lastErr := state.lastErr
 	state.mu.Unlock()
-	if lastErr != nil {
-		t.Fatalf("canceled refresh cached error %v", lastErr)
-	}
+	ck.NoError(lastErr, "canceled refresh cached error")
 	if got, err := r.ClientFor(t.Context(), shard); err != nil || got != want {
 		t.Fatalf("healthy retry ClientFor() = (%v, %v), want existing client", got, err)
 	}
-	if got := cancelReader.getCount(); got != 2 {
-		t.Fatalf("Secret reads = %d, want immediate retry after cancellation", got)
-	}
+	ck.Eq(2, cancelReader.getCount(), "Secret reads")
 }
 
 type blockingReader struct {
@@ -618,6 +564,7 @@ func (r *blockingReader) Get(
 }
 
 func TestClientForDoesNotBlockOnConcurrentRefresh(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ca := newTestCA(t)
 	secret := operatorSecret(t, ca, "ns", "c", "1")
 	r, _, c := newResolver(t, secret)
@@ -625,9 +572,7 @@ func TestClientForDoesNotBlockOnConcurrentRefresh(t *testing.T) {
 	shard := activeTLSShard(r, "s", "ns", "c")
 
 	want, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
+	ck.NoError(err, "first ClientFor() error =")
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	r.reader = &blockingReader{Reader: c, started: started, release: release}
@@ -663,12 +608,11 @@ func TestClientForDoesNotBlockOnConcurrentRefresh(t *testing.T) {
 		t.Fatal("concurrent reconcile blocked behind Secret refresh")
 	}
 	close(release)
-	if err := <-refreshDone; err != nil {
-		t.Fatalf("background refresh error = %v", err)
-	}
+	ck.NoError(<-refreshDone, "background refresh error =")
 }
 
 func TestClientForKeepsClientOnMalformedRotation(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	ca := newTestCA(t)
 	secret := operatorSecret(t, ca, "ns", "c", "1")
 	r, _, c := newResolver(t, secret)
@@ -676,28 +620,19 @@ func TestClientForKeepsClientOnMalformedRotation(t *testing.T) {
 	shard := activeTLSShard(r, "s", "ns", "c")
 
 	want, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
+	ck.Require().NoError(err, "first ClientFor() error =")
 	current := &corev1.Secret{}
 	key := types.NamespacedName{Namespace: secret.Namespace, Name: secret.Name}
-	if err := c.Get(t.Context(), key, current); err != nil {
-		t.Fatalf("get secret: %v", err)
-	}
+	ck.Require().NoError(c.Get(t.Context(), key, current), "get secret")
 	current.Data[corev1.TLSCertKey] = []byte("not a cert")
-	if err := c.Update(t.Context(), current); err != nil {
-		t.Fatalf("update secret: %v", err)
-	}
+	ck.Require().NoError(c.Update(t.Context(), current), "update secret")
 	got, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("refresh ClientFor() error = %v", err)
-	}
-	if got != want {
-		t.Error("malformed rotation replaced the working client")
-	}
+	ck.Require().NoError(err, "refresh ClientFor() error =")
+	ck.False(got != want, "malformed rotation replaced the working client")
 }
 
 func TestClientForRebuildsOnSecretRotation(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	ca := newTestCA(t)
 	secret := operatorSecret(t, ca, "ns", "c", "1")
 	r, _, c := newResolver(t, secret)
@@ -712,37 +647,26 @@ func TestClientForRebuildsOnSecretRotation(t *testing.T) {
 	}
 	shard := activeTLSShard(r, "s", "ns", "c")
 	first, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
+	ck.Require().NoError(err, "first ClientFor() error =")
 
 	current := &corev1.Secret{}
 	key := types.NamespacedName{Namespace: secret.Namespace, Name: secret.Name}
-	if err := c.Get(t.Context(), key, current); err != nil {
-		t.Fatalf("get secret: %v", err)
-	}
+	ck.Require().NoError(c.Get(t.Context(), key, current), "get secret")
 	certPEM, keyPEM, _ := ca.issue(t, nil, x509.ExtKeyUsageClientAuth)
 	current.Data[corev1.TLSCertKey] = certPEM
 	current.Data[corev1.TLSPrivateKeyKey] = keyPEM
-	if err := c.Update(t.Context(), current); err != nil {
-		t.Fatalf("rotate secret: %v", err)
-	}
+	ck.Require().NoError(c.Update(t.Context(), current), "rotate secret")
 
 	after, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("post-rotation ClientFor() error = %v", err)
-	}
-	if after == first {
-		t.Error("rotated secret did not produce a new client")
-	}
+	ck.Require().NoError(err, "post-rotation ClientFor() error =")
+	ck.False(after == first, "rotated secret did not produce a new client")
 	state := r.states[types.NamespacedName{Namespace: "ns", Name: "c"}]
-	if len(state.retiredClients) != 1 || state.retiredClients[0].client != first {
-		t.Error("old client was not retained for in-flight RPCs")
-	}
+	ck.False(
+		len(state.retiredClients) != 1 || state.retiredClients[0].client != first,
+		"old client was not retained for in-flight RPCs",
+	)
 	r.Close()
-	if closeCount != 2 {
-		t.Errorf("client close count after resolver shutdown = %d, want 2", closeCount)
-	}
+	ck.Eq(2, closeCount, "client close count after resolver shutdown")
 }
 
 type closeTrackingClient struct {
@@ -765,6 +689,7 @@ func (c *closeSignalClient) Close() {
 }
 
 func TestForgetClusterBlocksStaleShardUntilReactivated(t *testing.T) {
+	c := assert.NewAborting(t)
 	ca := newTestCA(t)
 	r, _, _ := newResolver(t, operatorSecret(t, ca, "ns", "c", "1"))
 	r.retirementGrace = 10 * time.Millisecond
@@ -780,9 +705,7 @@ func TestForgetClusterBlocksStaleShardUntilReactivated(t *testing.T) {
 	key := types.NamespacedName{Namespace: "ns", Name: "c"}
 	shard := activeTLSShard(r, "s", key.Namespace, key.Name)
 	first, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("first ClientFor() error = %v", err)
-	}
+	c.NoError(err, "first ClientFor() error =")
 
 	r.ForgetCluster(key)
 	if _, err := r.ClientFor(t.Context(), shard); err == nil ||
@@ -793,13 +716,12 @@ func TestForgetClusterBlocksStaleShardUntilReactivated(t *testing.T) {
 	_, stateRecreated := r.states[key]
 	_, stillActive := r.active[key]
 	r.mu.Unlock()
-	if stateRecreated || stillActive {
-		t.Fatalf(
-			"forgotten cluster state/active = %v/%v, want false/false",
-			stateRecreated,
-			stillActive,
-		)
-	}
+	c.False(
+		stateRecreated || stillActive,
+		"forgotten cluster state/active = %v/%v, want false/false",
+		stateRecreated,
+		stillActive,
+	)
 	select {
 	case <-clients[0].closed:
 	case <-time.After(time.Second):
@@ -808,15 +730,12 @@ func TestForgetClusterBlocksStaleShardUntilReactivated(t *testing.T) {
 
 	r.ActivateCluster(key)
 	after, err := r.ClientFor(t.Context(), shard)
-	if err != nil {
-		t.Fatalf("reactivated ClientFor() error = %v", err)
-	}
-	if after == first {
-		t.Fatal("reactivated cluster reused the forgotten client")
-	}
+	c.NoError(err, "reactivated ClientFor() error =")
+	c.False(after == first, "reactivated cluster reused the forgotten client")
 }
 
 func TestClientForValidatesLiveClusterBeforeClusterControllerReconciles(t *testing.T) {
+	c := assert.NewAborting(t)
 	ca := newTestCA(t)
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "ns"},
@@ -824,27 +743,23 @@ func TestClientForValidatesLiveClusterBeforeClusterControllerReconciles(t *testi
 	r, insecure, _ := newResolver(t, cluster, operatorSecret(t, ca, "ns", "c", "1"))
 
 	got, err := r.ClientFor(t.Context(), testShard("s", "ns", "c", true))
-	if err != nil {
-		t.Fatalf("ClientFor() before cluster reconcile error = %v", err)
-	}
-	if got == nil || got == insecure {
-		t.Fatal("ClientFor() before cluster reconcile did not build an mTLS client")
-	}
+	c.NoError(err, "ClientFor() before cluster reconcile error =")
+	c.False(
+		got == nil || got == insecure,
+		"ClientFor() before cluster reconcile did not build an mTLS client",
+	)
 	r.mu.Lock()
 	_, active := r.active[types.NamespacedName{Namespace: "ns", Name: "c"}]
 	r.mu.Unlock()
-	if !active {
-		t.Fatal("live cluster was not added to lifecycle registry")
-	}
+	c.True(active, "live cluster was not added to lifecycle registry")
 }
 
 func TestClientForMalformedInitialSecret(t *testing.T) {
 	secret := operatorSecret(t, newTestCA(t), "ns", "c", "1")
 	delete(secret.Data, corev1.TLSPrivateKeyKey)
 	r, _, _ := newResolver(t, secret)
-	if _, err := r.ClientFor(t.Context(), activeTLSShard(r, "s", "ns", "c")); err == nil {
-		t.Fatal("ClientFor() expected malformed Secret error")
-	}
+	_, err := r.ClientFor(t.Context(), activeTLSShard(r, "s", "ns", "c"))
+	assert.NewAborting(t).Error(err, "ClientFor() expected malformed Secret error")
 }
 
 func TestBuildTLSConfigVerifiesExactClusterIdentity(t *testing.T) {
@@ -852,9 +767,7 @@ func TestBuildTLSConfigVerifiesExactClusterIdentity(t *testing.T) {
 	secret := operatorSecret(t, ca, "ns-a", "cluster-a", "1")
 	serverName := "multipooler.cluster-a.ns-a.multigres.internal"
 	config, err := buildTLSConfig(secret, serverName)
-	if err != nil {
-		t.Fatalf("buildTLSConfig() error = %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "buildTLSConfig() error =")
 	if config.ServerName != serverName || config.InsecureSkipVerify {
 		t.Fatalf(
 			"TLS config ServerName/InsecureSkipVerify = %q/%v",
@@ -917,9 +830,8 @@ func TestBuildTLSConfigVerifiesExactClusterIdentity(t *testing.T) {
 				Roots:   config.RootCAs,
 				DNSName: config.ServerName,
 			})
-			if (err == nil) != tt.wantOK {
-				t.Errorf("Verify() error = %v, want success %v", err, tt.wantOK)
-			}
+			assert.NewCollecting(t).
+				Eq(tt.wantOK, (err == nil), "Verify() error = %v, want success", err)
 		})
 	}
 }

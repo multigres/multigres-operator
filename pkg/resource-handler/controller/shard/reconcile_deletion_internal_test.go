@@ -18,6 +18,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestHandleDeletion_ErrorPaths(t *testing.T) {
@@ -68,9 +70,7 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 		}
 
 		_, err := r.handleDeletion(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error on Pod list failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on Pod list failure")
 	})
 
 	t.Run("error listing deployments", func(t *testing.T) {
@@ -92,12 +92,11 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 		}
 
 		_, err := r.handleDeletion(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error on Deployment list failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on Deployment list failure")
 	})
 
 	t.Run("deletion with existing deployments deletes them", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		deploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -120,9 +119,7 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 		}
 
 		_, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
 
 		got := &appsv1.Deployment{}
 		err = c.Get(
@@ -130,8 +127,10 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 			types.NamespacedName{Name: "mo-deploy", Namespace: "default"},
 			got,
 		)
-		if !errors.IsNotFound(err) {
-			t.Errorf("deployment should have been deleted, but Get returned: %v", err)
-		}
+		ck.True(
+			errors.IsNotFound(err),
+			"deployment should have been deleted, but Get returned: %v",
+			err,
+		)
 	})
 }

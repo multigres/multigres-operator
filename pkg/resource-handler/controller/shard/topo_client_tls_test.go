@@ -6,6 +6,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // topoTLSShard returns a shard whose global topology reference carries the
@@ -61,18 +63,16 @@ func hasArg(args []string, flag string) bool {
 // server, never a container that also mounts postgres state, and the pod never
 // shares a process namespace.
 func TestPoolPod_TopoClientTLSMountBoundary(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	pod, err := BuildPoolPod(topoTLSShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("BuildPoolPod() error = %v", err)
-	}
+	ck.Require().NoError(err, "BuildPoolPod() error =")
 
 	multipooler := containerByName(pod.Spec.Containers, "multipooler")
-	if multipooler == nil {
-		t.Fatal("multipooler container missing")
-	}
-	if !mountsVolume(multipooler, multigresv1alpha1.TopoClientTLSVolumeName) {
-		t.Error("topo client certificate is not mounted into multipooler")
-	}
+	ck.Require().NotNil(multipooler, "multipooler container missing")
+	ck.True(
+		mountsVolume(multipooler, multigresv1alpha1.TopoClientTLSVolumeName),
+		"topo client certificate is not mounted into multipooler",
+	)
 
 	// No other container in the pod may mount the credential. pgctld runs as an
 	// init (native sidecar) container named postgres; the exporter sits beside
@@ -93,25 +93,24 @@ func TestPoolPod_TopoClientTLSMountBoundary(t *testing.T) {
 	// also mount: those share the data PVC and the socket directory, so anything
 	// projected onto them is readable by the postgres superuser.
 	postgres := containerByName(pod.Spec.InitContainers, "postgres")
-	if postgres == nil {
-		t.Fatal("postgres (pgctld) container missing")
-	}
+	ck.Require().NotNil(postgres, "postgres (pgctld) container missing")
 	sharedWithPostgres := map[string]struct{}{}
 	for _, m := range postgres.VolumeMounts {
 		sharedWithPostgres[m.Name] = struct{}{}
 	}
-	if _, shared := sharedWithPostgres[multigresv1alpha1.TopoClientTLSVolumeName]; shared {
-		t.Error("topo client certificate shares a volume with the postgres container")
-	}
+	_, shared := sharedWithPostgres[multigresv1alpha1.TopoClientTLSVolumeName]
+	ck.False(shared, "topo client certificate shares a volume with the postgres container")
 	for _, m := range multipooler.VolumeMounts {
 		if m.Name != multigresv1alpha1.TopoClientTLSVolumeName {
 			continue
 		}
 		// The mount path must be its own, not nested under the shared data or
 		// socket directories.
-		if m.MountPath == DataMountPath || m.MountPath == SocketDirMountPath {
-			t.Errorf("topo client certificate mounted on a shared path %q", m.MountPath)
-		}
+		ck.False(
+			m.MountPath == DataMountPath || m.MountPath == SocketDirMountPath,
+			"topo client certificate mounted on a shared path %q",
+			m.MountPath,
+		)
 	}
 
 	// Shared PID plus ptrace would expose one container's mounted files through
@@ -124,15 +123,16 @@ func TestPoolPod_TopoClientTLSMountBoundary(t *testing.T) {
 // With no topo client credential on the reference (topology TLS off), the pool
 // pod renders exactly as before: no topo client volume, mount or flags anywhere.
 func TestPoolPod_TopoClientTLSOffRendersUnchanged(t *testing.T) {
+	ck := assert.NewAborting(t)
 	pod, err := BuildPoolPod(newTestShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
-	if err != nil {
-		t.Fatalf("BuildPoolPod() error = %v", err)
-	}
+	ck.NoError(err, "BuildPoolPod() error =")
 
 	for _, v := range pod.Spec.Volumes {
-		if v.Name == multigresv1alpha1.TopoClientTLSVolumeName {
-			t.Fatal("topo client volume present with topology TLS off")
-		}
+		ck.NotEq(
+			multigresv1alpha1.TopoClientTLSVolumeName,
+			v.Name,
+			"topo client volume present with topology TLS off",
+		)
 	}
 	all := append([]corev1.Container{}, pod.Spec.InitContainers...)
 	all = append(all, pod.Spec.Containers...)
@@ -150,6 +150,7 @@ func TestPoolPod_TopoClientTLSOffRendersUnchanged(t *testing.T) {
 // multipooler and multiorch both open topology connections, so both present the
 // client certificate through the three etcd TLS flags when it is configured.
 func TestTopoSpeakingContainers_PresentClientCert(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := topoTLSShard()
 	pool := newTestPoolSpec()
 
@@ -160,16 +161,19 @@ func TestTopoSpeakingContainers_PresentClientCert(t *testing.T) {
 		"multipooler": mp.Args,
 		"multiorch":   orch.Args,
 	} {
-		if !hasArg(args, "--topo-etcd-tls-cert") ||
+		c.False(!hasArg(args, "--topo-etcd-tls-cert") ||
 			!hasArg(args, "--topo-etcd-tls-key") ||
-			!hasArg(args, "--topo-etcd-tls-ca") {
-			t.Errorf("%s is missing topo client TLS flags: %v", name, args)
-		}
+			!hasArg(
+				args,
+				"--topo-etcd-tls-ca",
+			), "%s is missing topo client TLS flags: %v", name, args)
 	}
-	if !mountsVolume(&mp, multigresv1alpha1.TopoClientTLSVolumeName) {
-		t.Error("multipooler does not mount the topo client certificate")
-	}
-	if !mountsVolume(&orch, multigresv1alpha1.TopoClientTLSVolumeName) {
-		t.Error("multiorch does not mount the topo client certificate")
-	}
+	c.True(
+		mountsVolume(&mp, multigresv1alpha1.TopoClientTLSVolumeName),
+		"multipooler does not mount the topo client certificate",
+	)
+	c.True(
+		mountsVolume(&orch, multigresv1alpha1.TopoClientTLSVolumeName),
+		"multiorch does not mount the topo client certificate",
+	)
 }

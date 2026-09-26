@@ -3,7 +3,6 @@ package topo_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -14,6 +13,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func newTestShard(name string) *multigresv1alpha1.Shard {
@@ -79,6 +80,7 @@ func TestRegisterDatabase(t *testing.T) {
 
 	t.Run("creates new database in topology", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -88,21 +90,17 @@ func TestRegisterDatabase(t *testing.T) {
 		recorder := record.NewFakeRecorder(10)
 		shard := newTestShard("test-shard")
 
-		if err := topo.RegisterDatabase(context.Background(), store, recorder, shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().
+			NoError(topo.RegisterDatabase(context.Background(), store, recorder, shard), "unexpected error")
 
 		db, err := store.GetDatabase(context.Background(), "test-db")
-		if err != nil {
-			t.Fatalf("database not found in topo after registration: %v", err)
-		}
-		if db.Name != "test-db" {
-			t.Errorf("expected database name test-db, got %s", db.Name)
-		}
+		c.Require().NoError(err, "database not found in topo after registration")
+		c.Eq("test-db", db.Name, "expected database name test-db, got")
 	})
 
 	t.Run("updates existing database on re-registration", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1", "cell2")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -113,29 +111,24 @@ func TestRegisterDatabase(t *testing.T) {
 		shard := newTestShard("test-shard")
 		ctx := context.Background()
 
-		if err := topo.RegisterDatabase(ctx, store, recorder, shard); err != nil {
-			t.Fatalf("first registration failed: %v", err)
-		}
+		c.Require().
+			NoError(topo.RegisterDatabase(ctx, store, recorder, shard), "first registration failed")
 
 		// Modify shard to add a second cell, re-register should update.
 		shard.Spec.Pools["pool2"] = multigresv1alpha1.PoolSpec{
 			Cells: []multigresv1alpha1.CellName{"cell2"},
 		}
-		if err := topo.RegisterDatabase(ctx, store, recorder, shard); err != nil {
-			t.Fatalf("second registration (update) failed: %v", err)
-		}
+		c.Require().
+			NoError(topo.RegisterDatabase(ctx, store, recorder, shard), "second registration (update) failed")
 
 		db, err := store.GetDatabase(ctx, "test-db")
-		if err != nil {
-			t.Fatalf("database not found after update: %v", err)
-		}
-		if len(db.Cells) != 2 {
-			t.Errorf("expected 2 cells after update, got %d: %v", len(db.Cells), db.Cells)
-		}
+		c.Require().NoError(err, "database not found after update")
+		c.Len(db.Cells, 2, "expected 2 cells after update, got %d", len(db.Cells))
 	})
 
 	t.Run("syncs durability policy on re-registration", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -147,35 +140,27 @@ func TestRegisterDatabase(t *testing.T) {
 		ctx := context.Background()
 
 		// First registration with default AT_LEAST_2.
-		if err := topo.RegisterDatabase(ctx, store, recorder, shard); err != nil {
-			t.Fatalf("first registration failed: %v", err)
-		}
+		c.Require().
+			NoError(topo.RegisterDatabase(ctx, store, recorder, shard), "first registration failed")
 		db, err := store.GetDatabase(ctx, "test-db")
-		if err != nil {
-			t.Fatalf("database not found: %v", err)
-		}
-		if db.BootstrapDurabilityPolicy.GetPolicyName() != "AT_LEAST_2" {
-			t.Errorf(
-				"expected AT_LEAST_2 after first registration, got %s",
-				db.BootstrapDurabilityPolicy.GetPolicyName(),
-			)
-		}
+		c.Require().NoError(err, "database not found")
+		c.Eq(
+			"AT_LEAST_2",
+			db.BootstrapDurabilityPolicy.GetPolicyName(),
+			"expected AT_LEAST_2 after first registration, got",
+		)
 
 		// Change to MULTI_CELL_AT_LEAST_2 and re-register.
 		shard.Spec.DurabilityPolicy = "MULTI_CELL_AT_LEAST_2"
-		if err := topo.RegisterDatabase(ctx, store, recorder, shard); err != nil {
-			t.Fatalf("second registration failed: %v", err)
-		}
+		c.Require().
+			NoError(topo.RegisterDatabase(ctx, store, recorder, shard), "second registration failed")
 		db, err = store.GetDatabase(ctx, "test-db")
-		if err != nil {
-			t.Fatalf("database not found after update: %v", err)
-		}
-		if db.BootstrapDurabilityPolicy.GetPolicyName() != "MULTI_CELL_AT_LEAST_2" {
-			t.Errorf(
-				"expected MULTI_CELL_AT_LEAST_2 after update, got %s",
-				db.BootstrapDurabilityPolicy.GetPolicyName(),
-			)
-		}
+		c.Require().NoError(err, "database not found after update")
+		c.Eq(
+			"MULTI_CELL_AT_LEAST_2",
+			db.BootstrapDurabilityPolicy.GetPolicyName(),
+			"expected MULTI_CELL_AT_LEAST_2 after update, got",
+		)
 	})
 
 	t.Run("returns error on creation failure", func(t *testing.T) {
@@ -190,9 +175,7 @@ func TestRegisterDatabase(t *testing.T) {
 		shard := newTestShard("test-shard")
 
 		err := topo.RegisterDatabase(context.Background(), store, recorder, shard)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("returns error on UpdateDatabaseFields failure", func(t *testing.T) {
@@ -210,9 +193,7 @@ func TestRegisterDatabase(t *testing.T) {
 		shard := newTestShard("test-shard")
 
 		err := topo.RegisterDatabase(context.Background(), store, recorder, shard)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 }
 
@@ -221,6 +202,7 @@ func TestUnregisterDatabase(t *testing.T) {
 
 	t.Run("removes existing database", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -231,17 +213,13 @@ func TestUnregisterDatabase(t *testing.T) {
 		shard := newTestShard("test-shard")
 		ctx := context.Background()
 
-		if err := topo.RegisterDatabase(ctx, store, recorder, shard); err != nil {
-			t.Fatalf("registration failed: %v", err)
-		}
-		if err := topo.UnregisterDatabase(ctx, store, recorder, shard); err != nil {
-			t.Fatalf("unregistration failed: %v", err)
-		}
+		c.Require().
+			NoError(topo.RegisterDatabase(ctx, store, recorder, shard), "registration failed")
+		c.Require().
+			NoError(topo.UnregisterDatabase(ctx, store, recorder, shard), "unregistration failed")
 
 		_, err := store.GetDatabase(ctx, "test-db")
-		if err == nil {
-			t.Error("expected database to be gone after unregistration")
-		}
+		c.Error(err, "expected database to be gone after unregistration")
 	})
 
 	t.Run("idempotent when database does not exist", func(t *testing.T) {
@@ -255,14 +233,12 @@ func TestUnregisterDatabase(t *testing.T) {
 		recorder := record.NewFakeRecorder(10)
 		shard := newTestShard("test-shard")
 
-		if err := topo.UnregisterDatabase(
+		assert.NewAborting(t).NoError(topo.UnregisterDatabase(
 			context.Background(),
 			store,
 			recorder,
 			shard,
-		); err != nil {
-			t.Fatalf("unregistering nonexistent database should succeed, got: %v", err)
-		}
+		), "unregistering nonexistent database should succeed, got")
 	})
 
 	t.Run("returns error on failure other than TopoUnavailable", func(t *testing.T) {
@@ -277,9 +253,7 @@ func TestUnregisterDatabase(t *testing.T) {
 		shard := newTestShard("test-shard")
 
 		err := topo.UnregisterDatabase(context.Background(), store, recorder, shard)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("returns error on TopoUnavailable", func(t *testing.T) {
@@ -294,9 +268,7 @@ func TestUnregisterDatabase(t *testing.T) {
 		shard := newTestShard("test-shard")
 
 		err := topo.UnregisterDatabase(context.Background(), store, recorder, shard)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
+		assert.NewAborting(t).Error(err, "expected error, got nil")
 	})
 }
 
@@ -305,76 +277,62 @@ func TestGetDurabilityPolicy(t *testing.T) {
 
 	t.Run("defaults to AT_LEAST_2 when empty", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := newTestShard("test-shard")
 		got, err := topo.GetDurabilityPolicy(shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.GetPolicyName() != "AT_LEAST_2" {
-			t.Errorf("expected AT_LEAST_2, got %s", got.GetPolicyName())
-		}
-		if got.GetQuorumType() != clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N {
-			t.Errorf("expected QUORUM_TYPE_AT_LEAST_N, got %s", got.GetQuorumType())
-		}
-		if got.GetRequiredCount() != 2 {
-			t.Errorf("expected RequiredCount 2, got %d", got.GetRequiredCount())
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("AT_LEAST_2", got.GetPolicyName(), "expected AT_LEAST_2, got")
+		c.Eq(
+			clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N,
+			got.GetQuorumType(),
+			"expected QUORUM_TYPE_AT_LEAST_N, got",
+		)
+		c.Eq(2, got.GetRequiredCount(), "expected RequiredCount 2, got")
 	})
 
 	t.Run("returns explicit AT_LEAST_2", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := newTestShard("test-shard")
 		shard.Spec.DurabilityPolicy = "AT_LEAST_2"
 		got, err := topo.GetDurabilityPolicy(shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.GetPolicyName() != "AT_LEAST_2" {
-			t.Errorf("expected AT_LEAST_2, got %s", got.GetPolicyName())
-		}
-		if got.GetQuorumType() != clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N {
-			t.Errorf("expected QUORUM_TYPE_AT_LEAST_N, got %s", got.GetQuorumType())
-		}
-		if got.GetRequiredCount() != 2 {
-			t.Errorf("expected RequiredCount 2, got %d", got.GetRequiredCount())
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("AT_LEAST_2", got.GetPolicyName(), "expected AT_LEAST_2, got")
+		c.Eq(
+			clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N,
+			got.GetQuorumType(),
+			"expected QUORUM_TYPE_AT_LEAST_N, got",
+		)
+		c.Eq(2, got.GetRequiredCount(), "expected RequiredCount 2, got")
 	})
 
 	t.Run("returns MULTI_CELL_AT_LEAST_2 when set", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := newTestShard("test-shard")
 		shard.Spec.DurabilityPolicy = "MULTI_CELL_AT_LEAST_2"
 		got, err := topo.GetDurabilityPolicy(shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.GetPolicyName() != "MULTI_CELL_AT_LEAST_2" {
-			t.Errorf("expected MULTI_CELL_AT_LEAST_2, got %s", got.GetPolicyName())
-		}
-		if got.GetQuorumType() != clustermetadatapb.QuorumType_QUORUM_TYPE_MULTI_CELL_AT_LEAST_N {
-			t.Errorf("expected QUORUM_TYPE_MULTI_CELL_AT_LEAST_N, got %s", got.GetQuorumType())
-		}
-		if got.GetRequiredCount() != 2 {
-			t.Errorf("expected RequiredCount 2, got %d", got.GetRequiredCount())
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq("MULTI_CELL_AT_LEAST_2", got.GetPolicyName(), "expected MULTI_CELL_AT_LEAST_2, got")
+		c.Eq(
+			clustermetadatapb.QuorumType_QUORUM_TYPE_MULTI_CELL_AT_LEAST_N,
+			got.GetQuorumType(),
+			"expected QUORUM_TYPE_MULTI_CELL_AT_LEAST_N, got",
+		)
+		c.Eq(2, got.GetRequiredCount(), "expected RequiredCount 2, got")
 	})
 
 	t.Run("unknown policy returns error", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := newTestShard("test-shard")
 		shard.Spec.DurabilityPolicy = "CUSTOM"
 		got, err := topo.GetDurabilityPolicy(shard)
-		if err == nil {
-			t.Fatal("expected error, got nil")
-		}
-		if got != nil {
-			t.Errorf("expected nil policy on error, got %+v", got)
-		}
+		c.Require().Error(err, "expected error, got nil")
+		c.Nil(got, "expected nil policy on error, got")
 		msg := err.Error()
 		for _, want := range []string{"CUSTOM", "AT_LEAST_2", "MULTI_CELL_AT_LEAST_2"} {
-			if !strings.Contains(msg, want) {
-				t.Errorf("expected error message to contain %q, got %q", want, msg)
-			}
+			c.StrContains(msg, want, "expected error message to contain")
 		}
 	})
 }
@@ -384,6 +342,7 @@ func TestGetBackupLocation(t *testing.T) {
 
 	t.Run("S3 backup", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{
 				Backup: &multigresv1alpha1.BackupConfig{
@@ -400,28 +359,17 @@ func TestGetBackupLocation(t *testing.T) {
 		}
 		loc := topo.GetBackupLocation(shard)
 		s3 := loc.GetS3()
-		if s3 == nil {
-			t.Fatal("expected S3 backup location")
-		}
-		if s3.Bucket != "my-bucket" {
-			t.Errorf("expected bucket my-bucket, got %s", s3.Bucket)
-		}
-		if s3.Region != "us-west-2" {
-			t.Errorf("expected region us-west-2, got %s", s3.Region)
-		}
-		if s3.Endpoint != "https://s3.example.com" {
-			t.Errorf("expected endpoint, got %s", s3.Endpoint)
-		}
-		if s3.KeyPrefix != "prefix/" {
-			t.Errorf("expected key prefix, got %s", s3.KeyPrefix)
-		}
-		if !s3.UseEnvCredentials {
-			t.Error("expected UseEnvCredentials=true")
-		}
+		c.Require().NotNil(s3, "expected S3 backup location")
+		c.Eq("my-bucket", s3.Bucket, "expected bucket my-bucket, got")
+		c.Eq("us-west-2", s3.Region, "expected region us-west-2, got")
+		c.Eq("https://s3.example.com", s3.Endpoint, "expected endpoint, got")
+		c.Eq("prefix/", s3.KeyPrefix, "expected key prefix, got")
+		c.True(s3.UseEnvCredentials, "expected UseEnvCredentials=true")
 	})
 
 	t.Run("filesystem with custom path", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{
 				Backup: &multigresv1alpha1.BackupConfig{
@@ -434,25 +382,18 @@ func TestGetBackupLocation(t *testing.T) {
 		}
 		loc := topo.GetBackupLocation(shard)
 		fs := loc.GetFilesystem()
-		if fs == nil {
-			t.Fatal("expected filesystem backup location")
-		}
-		if fs.Path != "/custom/backups" {
-			t.Errorf("expected path /custom/backups, got %s", fs.Path)
-		}
+		c.Require().NotNil(fs, "expected filesystem backup location")
+		c.Eq("/custom/backups", fs.Path, "expected path /custom/backups, got")
 	})
 
 	t.Run("default filesystem", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		loc := topo.GetBackupLocation(shard)
 		fs := loc.GetFilesystem()
-		if fs == nil {
-			t.Fatal("expected filesystem backup location")
-		}
-		if fs.Path != "/backups" {
-			t.Errorf("expected default path /backups, got %s", fs.Path)
-		}
+		c.Require().NotNil(fs, "expected filesystem backup location")
+		c.Eq("/backups", fs.Path, "expected default path /backups, got")
 	})
 
 	t.Run("encryption enabled", func(t *testing.T) {
@@ -471,17 +412,15 @@ func TestGetBackupLocation(t *testing.T) {
 			},
 		}
 		loc := topo.GetBackupLocation(shard)
-		if !loc.GetRequireInitialRepoEncryption() {
-			t.Error("expected RequireInitialRepoEncryption=true")
-		}
+		assert.NewCollecting(t).
+			True(loc.GetRequireInitialRepoEncryption(), "expected RequireInitialRepoEncryption=true")
 	})
 
 	t.Run("encryption not set", func(t *testing.T) {
 		t.Parallel()
 		shard := &multigresv1alpha1.Shard{}
 		loc := topo.GetBackupLocation(shard)
-		if loc.GetRequireInitialRepoEncryption() {
-			t.Error("expected RequireInitialRepoEncryption=false")
-		}
+		assert.NewCollecting(t).
+			False(loc.GetRequireInitialRepoEncryption(), "expected RequireInitialRepoEncryption=false")
 	})
 }

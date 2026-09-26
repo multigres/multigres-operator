@@ -16,11 +16,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestResourceWatcher_UnwatchedKinds tests error for unwatched resource kinds.
 func TestResourceWatcher_UnwatchedKinds(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -35,14 +38,10 @@ func TestResourceWatcher_UnwatchedKinds(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 	})
 
-	if err == nil {
-		t.Error("WaitForMatch() should error for unwatched kind")
-	}
+	c.Error(err, "WaitForMatch() should error for unwatched kind")
 
 	var unwatchedErr *testutil.ErrUnwatchedKinds
-	if !errors.As(err, &unwatchedErr) {
-		t.Errorf("Error should be ErrUnwatchedKinds, got: %T", err)
-	}
+	c.True(errors.As(err, &unwatchedErr), "Error should be ErrUnwatchedKinds, got: %T", err)
 
 	if len(unwatchedErr.Kinds) != 1 || unwatchedErr.Kinds[0] != "ConfigMap" {
 		t.Errorf("ErrUnwatchedKinds.Kinds = %v, want [ConfigMap]", unwatchedErr.Kinds)
@@ -52,6 +51,7 @@ func TestResourceWatcher_UnwatchedKinds(t *testing.T) {
 // TestResourceWatcher_WatchDuplicateKind tests that watching the same kind twice doesn't create duplicate handlers.
 func TestResourceWatcher_WatchDuplicateKind(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -73,27 +73,27 @@ func TestResourceWatcher_WatchDuplicateKind(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cm", Namespace: "default"},
 		Data:       map[string]string{"key": "value"},
 	}
-	if err := c.Create(ctx, cm); err != nil {
-		t.Fatalf("Failed to create ConfigMap: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, cm), "Failed to create ConfigMap")
 
 	// Wait for the event
 	watcher.SetCmpOpts(testutil.IgnoreMetaRuntimeFields())
-	if err := watcher.WaitForMatch(cm); err != nil {
-		t.Errorf("Failed to wait for ConfigMap: %v", err)
-	}
+	ck.NoError(watcher.WaitForMatch(cm), "Failed to wait for ConfigMap")
 
 	// Verify we got our ConfigMap event (there may be others from kube-system)
 	// The key test is that duplicate handler registration was prevented by watchResource
 	events := watcher.ForName("test-cm")
-	if len(events) != 1 {
-		t.Errorf("Expected 1 event for test-cm, got %d (duplicate handler may have been created)", len(events))
-	}
+	ck.Len(
+		events,
+		1,
+		"Expected 1 event for test-cm, got %d (duplicate handler may have been created)",
+		len(events),
+	)
 }
 
 // TestResourceWatcher_NonMatchingUpdate tests that updates which don't match expected spec keep waiting.
 func TestResourceWatcher_NonMatchingUpdate(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -108,9 +108,7 @@ func TestResourceWatcher_NonMatchingUpdate(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "test-svc", Namespace: "default"},
 		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 	}
-	if err := c.Create(ctx, svc); err != nil {
-		t.Fatalf("Failed to create Service: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc), "Failed to create Service")
 
 	// Start watcher after creation
 	watcher := testutil.NewResourceWatcher(t, ctx, mgr,
@@ -137,9 +135,7 @@ func TestResourceWatcher_NonMatchingUpdate(t *testing.T) {
 
 	// This should timeout because the service has port 80, not 8080
 	err := watcher.WaitForMatch(expected)
-	if err == nil {
-		t.Error("Expected timeout error, got nil")
-	}
+	ck.Error(err, "Expected timeout error, got nil")
 
 	// Error should be a timeout with diff information (we don't check exact message)
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -170,9 +166,7 @@ func TestResourceWatcher_NoEventsTimeout(t *testing.T) {
 	}
 
 	err := watcher.WaitForMatch(expected)
-	if err == nil {
-		t.Error("Expected timeout error, got nil")
-	}
+	assert.NewCollecting(t).Error(err, "Expected timeout error, got nil")
 
 	// We just verify we got an error (timeout), not checking exact message
 	t.Logf("Got expected timeout error: %v", err)
@@ -181,6 +175,7 @@ func TestResourceWatcher_NoEventsTimeout(t *testing.T) {
 // TestWaitForEventType_ExistingEvent tests WaitForEventType finding existing event.
 func TestWaitForEventType_ExistingEvent(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -197,22 +192,14 @@ func TestWaitForEventType_ExistingEvent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "test-svc-event", Namespace: "default"},
 		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 	}
-	if err := c.Create(ctx, svc); err != nil {
-		t.Fatalf("Failed to create Service: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc), "Failed to create Service")
 
 	// Wait for ADDED event
 	evt, err := watcher.WaitForEventType("Service", "ADDED")
-	if err != nil {
-		t.Fatalf("WaitForEventType() error = %v", err)
-	}
+	ck.Require().NoError(err, "WaitForEventType() error =")
 
-	if evt.Type != "ADDED" {
-		t.Errorf("Event type = %s, want ADDED", evt.Type)
-	}
-	if evt.Kind != "Service" {
-		t.Errorf("Event kind = %s, want Service", evt.Kind)
-	}
+	ck.Eq("ADDED", evt.Type, "Event type")
+	ck.Eq("Service", evt.Kind, "Event kind")
 }
 
 // TestWaitForEventType_Timeout tests WaitForEventType timeout.
@@ -232,9 +219,7 @@ func TestWaitForEventType_Timeout(t *testing.T) {
 
 	// Wait for an event type that won't happen
 	_, err := watcher.WaitForEventType("Service", "DELETED")
-	if err == nil {
-		t.Error("Expected timeout error, got nil")
-	}
+	assert.NewCollecting(t).Error(err, "Expected timeout error, got nil")
 
 	t.Logf("Got expected timeout: %v", err)
 }
@@ -261,9 +246,7 @@ func TestWaitForMatch_ContextCanceled(t *testing.T) {
 		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP},
 	}
 	err := watcher.WaitForMatch(svc)
-	if err == nil {
-		t.Error("Expected error when context is canceled")
-	}
+	assert.NewCollecting(t).Error(err, "Expected error when context is canceled")
 
 	t.Logf("Got expected error: %v", err)
 }

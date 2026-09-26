@@ -15,6 +15,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestResolver_PopulateClusterDefaults(t *testing.T) {
@@ -489,24 +491,22 @@ func TestResolver_PopulateClusterDefaults(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			r := NewResolver(
 				fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build(),
 				"default",
 			)
 
 			got := tc.input.DeepCopy()
-			if _, err := r.PopulateClusterDefaults(t.Context(), got); err != nil {
-				t.Fatalf("PopulateClusterDefaults failed: %v", err)
-			}
+			_, err := r.PopulateClusterDefaults(t.Context(), got)
+			c.Require().NoError(err, "PopulateClusterDefaults failed")
 
-			if diff := cmp.Diff(
+			c.EqDiffOpts(
 				tc.want,
 				got,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Diff",
+			)
 		})
 	}
 }
@@ -531,9 +531,8 @@ func TestResolver_PopulateClusterDefaults_ClientError(t *testing.T) {
 	}
 
 	_, err := r.PopulateClusterDefaults(t.Context(), input)
-	if err == nil || !errors.Is(err, errSim) {
-		t.Errorf("Expected simulated error, got %v", err)
-	}
+	assert.NewCollecting(t).
+		False(err == nil || !errors.Is(err, errSim), "Expected simulated error, got %v", err)
 }
 
 func TestResolver_ResolveGlobalTopo(t *testing.T) {
@@ -922,6 +921,7 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			if tc.cluster.Name == "" {
 				tc.cluster.Name = "test-cluster"
 			}
@@ -933,22 +933,16 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 
 			got, err := r.ResolveGlobalTopo(t.Context(), tc.cluster)
 			if tc.wantErr {
-				if err == nil {
-					t.Error("Expected error, got nil")
-				}
+				ck.Error(err, "Expected error, got nil")
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if diff := cmp.Diff(
+			ck.Require().NoError(err, "Unexpected error")
+			ck.EqDiffOpts(
 				tc.want,
 				got,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Diff",
+			)
 		})
 	}
 }
@@ -1116,30 +1110,28 @@ func TestResolver_ResolveMultiadmin(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build()
 			r := NewResolver(c, ns)
 
 			got, gotPlacement, err := r.ResolveMultiadmin(t.Context(), tc.cluster)
 			if tc.wantErr {
-				if err == nil {
-					t.Error("Expected error")
-				}
+				ck.Error(err, "Expected error")
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if diff := cmp.Diff(
+			ck.Require().NoError(err, "Unexpected error")
+			ck.EqDiffOpts(
 				tc.want,
 				got,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tc.wantPlacement, gotPlacement, cmpopts.EquateEmpty()); diff != "" {
-				t.Errorf("Placement diff (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Diff",
+			)
+			ck.EqDiffOpts(
+				tc.wantPlacement,
+				gotPlacement,
+				[]cmp.Option{cmpopts.EquateEmpty()},
+				"Placement diff",
+			)
 		})
 	}
 }
@@ -1158,22 +1150,17 @@ func TestResolver_ResolveCoreTemplate(t *testing.T) {
 	// 1. Implicit Fallback ("default" or "") -> Not Found -> Returns nil, nil (No Error)
 	// This covers: "if isImplicitFallback { return ... nil }"
 	t.Run("Implicit Fallback Missing", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tpl, err := r.ResolveCoreTemplate(t.Context(), "")
-		if err != nil {
-			t.Errorf("Expected nil error for implicit missing, got %v", err)
-		}
-		if tpl.Name != "" { // Empty struct
-			t.Errorf("Expected empty template, got %v", tpl)
-		}
+		c.NoError(err, "Expected nil error for implicit missing, got")
+		c.Eq("", tpl.Name, "Expected empty template, got %v", tpl)
 	})
 
 	// 2. Explicit Template ("custom") -> Not Found -> Returns Error
 	// This covers: "return nil, fmt.Errorf(...)"
 	t.Run("Explicit Template Missing", func(t *testing.T) {
 		_, err := r.ResolveCoreTemplate(t.Context(), "missing-custom")
-		if err == nil {
-			t.Error("Expected error for explicit missing template")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error for explicit missing template")
 	})
 }
 
@@ -1192,9 +1179,8 @@ func TestResolver_ClientErrors_Core(t *testing.T) {
 	r := NewResolver(c, "default")
 
 	_, err := r.ResolveCoreTemplate(t.Context(), "any")
-	if err == nil || !errors.Is(err, errSim) {
-		t.Errorf("Error mismatch: got %v, want %v", err, errSim)
-	}
+	assert.NewCollecting(t).
+		False(err == nil || !errors.Is(err, errSim), "Error mismatch: got %v, want %v", err, errSim)
 }
 
 func TestResolver_ResolveMultiadminWeb(t *testing.T) {
@@ -1294,27 +1280,22 @@ func TestResolver_ResolveMultiadminWeb(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build()
 			r := NewResolver(c, ns)
 
 			got, err := r.ResolveMultiadminWeb(t.Context(), tc.cluster)
 			if tc.wantErr {
-				if err == nil {
-					t.Error("Expected error")
-				}
+				ck.Error(err, "Expected error")
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if diff := cmp.Diff(
+			ck.Require().NoError(err, "Unexpected error")
+			ck.EqDiffOpts(
 				tc.want,
 				got,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Diff (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Diff",
+			)
 		})
 	}
 }
@@ -1339,9 +1320,7 @@ func TestResolveGlobalTopo_PVCDeletionPolicy(t *testing.T) {
 			},
 		}
 		got, err := r.ResolveGlobalTopo(t.Context(), cluster)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 		if got.PVCDeletionPolicy == nil ||
 			got.PVCDeletionPolicy.WhenDeleted != multigresv1alpha1.DeletePVCRetentionPolicy {
 			t.Errorf("Expected GlobalTopo PVCDeletionPolicy=Delete, got %v", got.PVCDeletionPolicy)
@@ -1362,9 +1341,7 @@ func TestResolveGlobalTopo_PVCDeletionPolicy(t *testing.T) {
 			},
 		}
 		got, err := r.ResolveGlobalTopo(t.Context(), cluster)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 		// mergeEtcdSpec should have applied this to the base
 		if got.Etcd.PVCDeletionPolicy == nil ||
 			got.Etcd.PVCDeletionPolicy.WhenDeleted != multigresv1alpha1.RetainPVCRetentionPolicy {

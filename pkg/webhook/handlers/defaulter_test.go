@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -17,6 +16,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestMultigresClusterDefaulter_Handle(t *testing.T) {
@@ -191,9 +192,8 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						},
 					},
 				}
-				if diff := cmp.Diff(want, &cluster.Spec, cmpopts.EquateEmpty()); diff != "" {
-					t.Errorf("Cluster mismatch (-want +got):\n%s", diff)
-				}
+				assert.NewCollecting(t).
+					EqDiffOpts(want, &cluster.Spec, []cmp.Option{cmpopts.EquateEmpty()}, "Cluster mismatch")
 			},
 		},
 		"Happy Path: Fallbacks -> Promotes to Explicit": {
@@ -489,9 +489,8 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 						},
 					},
 				}
-				if diff := cmp.Diff(want, cluster, cmpopts.EquateEmpty()); diff != "" {
-					t.Errorf("Cluster mismatch (-want +got):\n%s", diff)
-				}
+				assert.NewCollecting(t).
+					EqDiffOpts(want, cluster, []cmp.Option{cmpopts.EquateEmpty()}, "Cluster mismatch")
 			},
 		},
 	}
@@ -499,6 +498,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewAborting(t)
 
 			var res *resolver.Resolver
 			if !tc.nilResolver {
@@ -528,12 +528,14 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 			err := defaulter.Default(t.Context(), obj)
 
 			if tc.expectError != "" {
-				if err == nil {
-					t.Fatalf("Expected error containing %q, got nil", tc.expectError)
-				}
-				if !strings.Contains(err.Error(), tc.expectError) {
-					t.Fatalf("Expected error containing %q, got: %v", tc.expectError, err)
-				}
+				ck.Error(err, "Expected error containing %q, got nil", tc.expectError)
+				ck.StrContains(
+					err.Error(),
+					tc.expectError,
+					"Expected error containing %q, got: %v",
+					tc.expectError,
+					err,
+				)
 			} else if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}

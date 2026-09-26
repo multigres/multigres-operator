@@ -3,7 +3,6 @@ package multigrescluster
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,12 +11,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // A topology connection failure has to be visible in the cluster status, not
 // only in the logs, so an operator can see why the cluster is not becoming
 // ready and which Secret is missing.
 func TestMarkTopologyConnectFailed_SurfacesInStatus(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{
@@ -43,35 +45,37 @@ func TestMarkTopologyConnectFailed_SurfacesInStatus(t *testing.T) {
 	r.markTopologyFailed(context.Background(), cluster, "TopoConnectFailed", cause, testLogger{})
 
 	got := &multigresv1alpha1.MultigresCluster{}
-	if err := c.Get(
+	ck.Require().NoError(c.Get(
 		context.Background(),
 		client.ObjectKey{Namespace: "supabase", Name: "test-cluster"},
 		got,
-	); err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
+	), "Get() error =")
 
-	if got.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("phase = %q, want %q", got.Status.Phase, multigresv1alpha1.PhaseDegraded)
-	}
-	if !strings.Contains(got.Status.Message, "test-cluster-topo-client-tls") {
-		t.Errorf("status message does not name the Secret: %q", got.Status.Message)
-	}
+	ck.Eq(multigresv1alpha1.PhaseDegraded, got.Status.Phase, "phase")
+	ck.StrContains(
+		got.Status.Message,
+		"test-cluster-topo-client-tls",
+		"status message does not name the Secret",
+	)
 	var found bool
 	for _, cond := range got.Status.Conditions {
 		if cond.Type == conditionTopologyReady {
 			found = true
-			if cond.Status != metav1.ConditionFalse {
-				t.Errorf("%s status = %q, want False", conditionTopologyReady, cond.Status)
-			}
-			if !strings.Contains(cond.Message, "test-cluster-topo-client-tls") {
-				t.Errorf("condition message does not name the Secret: %q", cond.Message)
-			}
+			ck.Eq(
+				metav1.ConditionFalse,
+				cond.Status,
+				"%s status = %q, want False",
+				conditionTopologyReady,
+				cond.Status,
+			)
+			ck.StrContains(
+				cond.Message,
+				"test-cluster-topo-client-tls",
+				"condition message does not name the Secret",
+			)
 		}
 	}
-	if !found {
-		t.Errorf("no %s condition set", conditionTopologyReady)
-	}
+	ck.True(found, "no %s condition set", conditionTopologyReady)
 }
 
 type testLogger struct{}

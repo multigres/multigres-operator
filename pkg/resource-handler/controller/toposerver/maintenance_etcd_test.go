@@ -21,30 +21,27 @@ import (
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/client-go/tools/record"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // These tests launch disposable local etcd processes, never a configured
 // Kubernetes cluster. Prefer the same binary as envtest when available.
 func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 	t.Helper()
+	ck := assert.NewAborting(t)
 	binary := filepath.Join(os.Getenv("KUBEBUILDER_ASSETS"), "etcd")
 	if _, err := os.Stat(binary); err != nil {
 		var lookupErr error
 		binary, lookupErr = exec.LookPath("etcd")
-		if lookupErr != nil {
-			t.Fatal("integration test requires etcd or KUBEBUILDER_ASSETS")
-		}
+		ck.NoError(lookupErr, "integration test requires etcd or KUBEBUILDER_ASSETS")
 	}
 	allocateURL := func() string {
 		t.Helper()
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		url := "http://" + listener.Addr().String()
-		if err := listener.Close(); err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(listener.Close())
 		return url
 	}
 	endpoints, peers, cluster := make([]string, 3), make([]string, 3), make([]string, 3)
@@ -56,9 +53,7 @@ func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 	for i := range endpoints {
 		dir := t.TempDir()
 		logFile, err := os.Create(filepath.Join(dir, "etcd.log"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		cmd := exec.Command(
 			binary,
 			"--name",
@@ -104,9 +99,7 @@ func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 	c := &memberClients{clients: map[string]*clientv3.Client{}}
 	for _, ep := range endpoints {
 		cl, err := clientv3.New(clientv3.Config{Endpoints: []string{ep}, DialTimeout: time.Second})
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		c.clients[ep] = cl
 		if c.first == nil {
 			c.first = cl
@@ -126,6 +119,7 @@ func startMaintenanceEtcd(t *testing.T) (*memberClients, []string) {
 }
 
 func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {
+	ck := assert.NewAborting(t)
 	c, endpoints := startMaintenanceEtcd(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 	defer cancel()
@@ -133,9 +127,7 @@ func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {
 	var firstSize int64
 	for cycle := range 5 {
 		first, err := c.first.Put(ctx, "/maintenance-test/data", value)
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		for range 63 {
 			if _, err := c.first.Put(ctx, "/maintenance-test/data", value); err != nil {
 				t.Fatal(err)
@@ -151,15 +143,11 @@ func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {
 			if errors.Is(err, rpctypes.ErrCompacted) {
 				break
 			}
-			if err != nil || time.Now().After(deadline) {
-				t.Fatalf("history was not compacted: %v", err)
-			}
+			ck.False(err != nil || time.Now().After(deadline), "history was not compacted: %v", err)
 			time.Sleep(200 * time.Millisecond)
 		}
 		statuses, err := healthyMembers(ctx, c, endpoints)
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		s := statuses[endpoints[0]]
 		if cycle == 0 {
 			firstSize = s.DbSize
@@ -187,14 +175,12 @@ func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {
 		endpoints,
 		topoclient.NewDefaultTopoConfig(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(err)
 	defer func() { _ = store.Close() }()
 	owner := &multigresv1alpha1.MultigresCluster{}
 	register := func() {
 		t.Helper()
-		if err := topo.RegisterDatabaseFromSpec(
+		ck.NoError(topo.RegisterDatabaseFromSpec(
 			ctx,
 			store,
 			record.NewFakeRecorder(10),
@@ -203,15 +189,11 @@ func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {
 			[]string{"cell1"},
 			nil,
 			"",
-		); err != nil {
-			t.Fatal(err)
-		}
+		))
 	}
 	register()
 	before, err := c.first.Get(ctx, "/operator-test", clientv3.WithPrefix())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(err)
 	for range 5 {
 		register()
 		if _, err := healthyMembers(ctx, c, endpoints); err != nil {
@@ -219,53 +201,38 @@ func TestLiveEtcdCompactionAndMaintenance(t *testing.T) {
 		}
 	}
 	after, err := c.first.Get(ctx, "/operator-test", clientv3.WithPrefix())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.Header.Revision != after.Header.Revision {
-		t.Fatalf(
-			"no-op reconciles advanced etcd revision: %d -> %d",
-			before.Header.Revision,
-			after.Header.Revision,
-		)
-	}
+	ck.NoError(err)
+	ck.Eq(after.Header.Revision, before.Header.Revision, "no-op reconciles advanced etcd revision")
 
 	// Reclaim each member independently, transferring leadership first where
 	// needed and requiring healthy, linearizable reads between every operation.
 	for _, ep := range endpoints {
 		statuses, err := healthyMembers(ctx, c, endpoints)
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		s := statuses[ep]
 		if s.Header.MemberId == s.Leader {
 			for _, other := range endpoints {
 				if other != ep {
-					if err := c.MoveLeader(ctx, ep, statuses[other].Header.MemberId); err != nil {
-						t.Fatal(err)
-					}
+					ck.NoError(c.MoveLeader(ctx, ep, statuses[other].Header.MemberId))
 					break
 				}
 			}
 		}
-		if err := c.Defragment(ctx, ep); err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(c.Defragment(ctx, ep))
 		statuses, err = healthyMembers(ctx, c, endpoints)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if statuses[ep].DbSize >= s.DbSize {
-			t.Fatalf(
-				"defragmentation did not shrink %s: %d -> %d",
-				ep,
-				s.DbSize,
-				statuses[ep].DbSize,
-			)
-		}
+		ck.NoError(err)
+		ck.Less(
+			s.DbSize,
+			statuses[ep].DbSize,
+			"defragmentation did not shrink %s: %d ->",
+			ep,
+			s.DbSize,
+		)
 	}
 	got, err := c.first.Get(ctx, "/maintenance-test/data")
-	if err != nil || len(got.Kvs) != 1 || string(got.Kvs[0].Value) != value {
-		t.Fatalf("live data lost after maintenance: %v", err)
-	}
+	ck.False(
+		err != nil || len(got.Kvs) != 1 || string(got.Kvs[0].Value) != value,
+		"live data lost after maintenance: %v",
+		err,
+	)
 }

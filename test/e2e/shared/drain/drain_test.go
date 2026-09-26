@@ -26,6 +26,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 var cluster *framework.Cluster
@@ -42,11 +44,10 @@ func TestMain(m *testing.M) {
 
 // TestExternalPoolerDeletion verifies recovery after replica and primary deletion.
 func TestExternalPoolerDeletion(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
@@ -55,9 +56,7 @@ func TestExternalPoolerDeletion(t *testing.T) {
 	pool := cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"]
 	pool.ReplicasPerCell = &replicas
 	cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"] = pool
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	t.Log("waiting for the initial three-pooler shard to become healthy")
 	cluster.WaitForAllPodsReady(t, ns)
@@ -68,27 +67,22 @@ func TestExternalPoolerDeletion(t *testing.T) {
 	deleteAndWaitForReplacement(t, c, replica)
 	shard = waitForHealthyShard(t, c, ns, cr.Name)
 	primaryAfterReplica, _ := waitForPrimaryAndReplica(t, c, ns, cr.Name, shard)
-	if primaryAfterReplica.Name != primary.Name {
-		t.Fatalf("replica deletion changed primary from %q to %q", primary.Name, primaryAfterReplica.Name)
-	}
+	ck.Eq(primary.Name, primaryAfterReplica.Name, "replica deletion changed primary from")
 
 	t.Logf("deleting primary %q", primaryAfterReplica.Name)
 	deleteAndWaitForReplacement(t, c, primaryAfterReplica)
 	shard = waitForHealthyShard(t, c, ns, cr.Name)
 	primaryAfterFailover, _ := waitForPrimaryAndReplica(t, c, ns, cr.Name, shard)
-	if primaryAfterFailover.Name == primaryAfterReplica.Name {
-		t.Fatalf("primary %q was not replaced after deletion", primaryAfterReplica.Name)
-	}
+	ck.NotEq(primaryAfterReplica.Name, primaryAfterFailover.Name, "primary")
 	t.Logf("failover completed with primary %q", primaryAfterFailover.Name)
 }
 
 // TestGracefulScaleDown verifies that a pool can scale down while remaining healthy.
 func TestGracefulScaleDown(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
@@ -97,9 +91,7 @@ func TestGracefulScaleDown(t *testing.T) {
 	pool := cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"]
 	pool.ReplicasPerCell = &replicas
 	cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"] = pool
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	t.Log("waiting for the initial three-pooler shard to become healthy")
 	cluster.WaitForAllPodsReady(t, ns)
@@ -108,23 +100,17 @@ func TestGracefulScaleDown(t *testing.T) {
 	poolPodsBeforeScaleDown := listPoolPods(t, c, ns, cr.Name)
 
 	t.Log("scaling the pool from three poolers to two")
-	if err := c.Get(ctx, client.ObjectKeyFromObject(cr), cr); err != nil {
-		t.Fatalf("get MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Get(ctx, client.ObjectKeyFromObject(cr), cr), "get MultigresCluster")
 	replicas = 2
 	pool = cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"]
 	pool.ReplicasPerCell = &replicas
 	cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"] = pool
-	if err := c.Update(ctx, cr); err != nil {
-		t.Fatalf("scale down MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Update(ctx, cr), "scale down MultigresCluster")
 
 	waitForPoolPodCount(t, c, ns, cr.Name, 2)
 	shard = waitForHealthyShard(t, c, ns, cr.Name)
 	primaryAfterScaleDown, _ := waitForPrimaryAndReplica(t, c, ns, cr.Name, shard)
-	if primaryAfterScaleDown.Name != primary.Name {
-		t.Fatalf("scale-down changed primary from %q to %q", primary.Name, primaryAfterScaleDown.Name)
-	}
+	ck.Eq(primary.Name, primaryAfterScaleDown.Name, "scale-down changed primary from")
 	removed := removedPoolPod(t, poolPodsBeforeScaleDown, listPoolPods(t, c, ns, cr.Name))
 	probe := newMultiadminProbe(t, c, ns, cr.Name, primaryAfterScaleDown)
 	t.Cleanup(func() { _ = c.Delete(context.Background(), probe) })
@@ -141,24 +127,27 @@ func waitForHealthyShard(
 	var found *multigresv1alpha1.Shard
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		shards := &multigresv1alpha1.ShardList{}
-		if err := c.List(ctx, shards,
-			client.InNamespace(namespace),
-			client.MatchingLabels{metadata.LabelMultigresCluster: clusterName},
-		); err != nil || len(shards.Items) != 1 {
-			return false, nil
-		}
-		shard := &shards.Items[0]
-		if shard.Status.Phase != multigresv1alpha1.PhaseHealthy || !shard.Status.OrchReady {
-			return false, nil
-		}
-		found = shard
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for healthy shard: %v", err)
-	}
+	err := wait.PollUntilContextCancel(
+		ctx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			shards := &multigresv1alpha1.ShardList{}
+			if err := c.List(ctx, shards,
+				client.InNamespace(namespace),
+				client.MatchingLabels{metadata.LabelMultigresCluster: clusterName},
+			); err != nil || len(shards.Items) != 1 {
+				return false, nil
+			}
+			shard := &shards.Items[0]
+			if shard.Status.Phase != multigresv1alpha1.PhaseHealthy || !shard.Status.OrchReady {
+				return false, nil
+			}
+			found = shard
+			return true, nil
+		},
+	)
+	assert.NewAborting(t).NoError(err, "timed out waiting for healthy shard")
 	return found
 }
 
@@ -172,103 +161,112 @@ func waitForPrimaryAndReplica(
 	var primary, replica *corev1.Pod
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		freshShard := &multigresv1alpha1.Shard{}
-		if err := c.Get(ctx, client.ObjectKeyFromObject(shard), freshShard); err != nil {
-			return false, nil
-		}
-		pods := &corev1.PodList{}
-		if err := c.List(ctx, pods,
-			client.InNamespace(namespace),
-			client.MatchingLabels{
-				metadata.LabelMultigresCluster: clusterName,
-				metadata.LabelMultigresPool:    "default",
-			},
-		); err != nil {
-			return false, nil
-		}
-		primary, replica = nil, nil
-		for i := range pods.Items {
-			pod := &pods.Items[i]
-			if !podReady(pod) {
+	err := wait.PollUntilContextCancel(
+		ctx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			freshShard := &multigresv1alpha1.Shard{}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(shard), freshShard); err != nil {
 				return false, nil
 			}
-			switch freshShard.Status.PodRoles[pod.Name] {
-			case "PRIMARY":
-				primary = pod.DeepCopy()
-			case "REPLICA":
-				if replica == nil {
-					replica = pod.DeepCopy()
+			pods := &corev1.PodList{}
+			if err := c.List(ctx, pods,
+				client.InNamespace(namespace),
+				client.MatchingLabels{
+					metadata.LabelMultigresCluster: clusterName,
+					metadata.LabelMultigresPool:    "default",
+				},
+			); err != nil {
+				return false, nil
+			}
+			primary, replica = nil, nil
+			for i := range pods.Items {
+				pod := &pods.Items[i]
+				if !podReady(pod) {
+					return false, nil
+				}
+				switch freshShard.Status.PodRoles[pod.Name] {
+				case "PRIMARY":
+					primary = pod.DeepCopy()
+				case "REPLICA":
+					if replica == nil {
+						replica = pod.DeepCopy()
+					}
 				}
 			}
-		}
-		return primary != nil && replica != nil, nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for primary and replica: %v", err)
-	}
+			return primary != nil && replica != nil, nil
+		},
+	)
+	assert.NewAborting(t).NoError(err, "timed out waiting for primary and replica")
 	return primary, replica
 }
 
 func deleteAndWaitForReplacement(t testing.TB, c client.Client, pod *corev1.Pod) {
 	t.Helper()
+	ck := assert.NewAborting(t)
 	ctx := context.Background()
-	if err := c.Delete(ctx, pod); err != nil {
-		t.Fatalf("delete pod %q: %v", pod.Name, err)
-	}
+	ck.NoError(c.Delete(ctx, pod), "delete pod %q", pod.Name)
 
 	key := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(waitCtx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		replacement := &corev1.Pod{}
-		if err := c.Get(ctx, key, replacement); err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, nil
+	err := wait.PollUntilContextCancel(
+		waitCtx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			replacement := &corev1.Pod{}
+			if err := c.Get(ctx, key, replacement); err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, err
 			}
-			return false, err
-		}
-		return replacement.UID != pod.UID && replacement.DeletionTimestamp.IsZero() && podReady(replacement), nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for replacement of pod %q: %v", pod.Name, err)
-	}
+			return replacement.UID != pod.UID && replacement.DeletionTimestamp.IsZero() &&
+				podReady(replacement), nil
+		},
+	)
+	ck.NoError(err, "timed out waiting for replacement of pod %q", pod.Name)
 }
 
 func waitForPoolPodCount(t testing.TB, c client.Client, namespace, clusterName string, want int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		pods := &corev1.PodList{}
-		if err := c.List(ctx, pods,
-			client.InNamespace(namespace),
-			client.MatchingLabels{
-				metadata.LabelMultigresCluster: clusterName,
-				metadata.LabelMultigresPool:    "default",
-			},
-		); err != nil {
-			return false, err
-		}
-		if len(pods.Items) != want {
-			return false, nil
-		}
-		for i := range pods.Items {
-			if !pods.Items[i].DeletionTimestamp.IsZero() || !podReady(&pods.Items[i]) {
+	err := wait.PollUntilContextCancel(
+		ctx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			pods := &corev1.PodList{}
+			if err := c.List(ctx, pods,
+				client.InNamespace(namespace),
+				client.MatchingLabels{
+					metadata.LabelMultigresCluster: clusterName,
+					metadata.LabelMultigresPool:    "default",
+				},
+			); err != nil {
+				return false, err
+			}
+			if len(pods.Items) != want {
 				return false, nil
 			}
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for %d ready pool pods: %v", want, err)
-	}
+			for i := range pods.Items {
+				if !pods.Items[i].DeletionTimestamp.IsZero() || !podReady(&pods.Items[i]) {
+					return false, nil
+				}
+			}
+			return true, nil
+		},
+	)
+	assert.NewAborting(t).NoError(err, "timed out waiting for %d ready pool pods", want)
 }
 
 func listPoolPods(t testing.TB, c client.Client, namespace, clusterName string) []*corev1.Pod {
 	t.Helper()
 	pods := &corev1.PodList{}
-	if err := c.List(
+	assert.NewAborting(t).NoError(c.List(
 		context.Background(),
 		pods,
 		client.InNamespace(namespace),
@@ -276,9 +274,7 @@ func listPoolPods(t testing.TB, c client.Client, namespace, clusterName string) 
 			metadata.LabelMultigresCluster: clusterName,
 			metadata.LabelMultigresPool:    "default",
 		},
-	); err != nil {
-		t.Fatalf("list pool pods: %v", err)
-	}
+	), "list pool pods")
 	result := make([]*corev1.Pod, 0, len(pods.Items))
 	for i := range pods.Items {
 		result = append(result, pods.Items[i].DeepCopy())
@@ -299,9 +295,7 @@ func removedPoolPod(t testing.TB, before, after []*corev1.Pod) *corev1.Pod {
 			removed = append(removed, pod)
 		}
 	}
-	if len(removed) != 1 {
-		t.Fatalf("removed pool pods = %d, want 1", len(removed))
-	}
+	assert.NewAborting(t).Len(removed, 1, "removed pool pods = %d, want 1", len(removed))
 	return removed[0]
 }
 
@@ -315,25 +309,32 @@ func waitForCohortRemoval(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-		status, err := cohortProbeStatus(ctx, namespace, probeName)
-		if err != nil {
-			return false, nil
-		}
-		members := status.GetConsensusStatus().GetCurrentPosition().GetPosition().GetDecision().GetCohortMembers()
-		if len(members) != 2 {
-			return false, nil
-		}
-		for _, member := range members {
-			if member.GetName() == removedID {
+	err := wait.PollUntilContextCancel(
+		ctx,
+		2*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			status, err := cohortProbeStatus(ctx, namespace, probeName)
+			if err != nil {
 				return false, nil
 			}
-		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("cohort still contains removed pooler %q: %v", removedID, err)
-	}
+			members := status.GetConsensusStatus().
+				GetCurrentPosition().
+				GetPosition().
+				GetDecision().
+				GetCohortMembers()
+			if len(members) != 2 {
+				return false, nil
+			}
+			for _, member := range members {
+				if member.GetName() == removedID {
+					return false, nil
+				}
+			}
+			return true, nil
+		},
+	)
+	assert.NewAborting(t).NoError(err, "cohort still contains removed pooler %q", removedID)
 }
 
 func waitForPoolerShutdown(t testing.TB, namespace, probeName string, removed *corev1.Pod) {
@@ -342,21 +343,26 @@ func waitForPoolerShutdown(t testing.TB, namespace, probeName string, removed *c
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 2*time.Second, true, func(ctx context.Context) (bool, error) {
-		poolers, err := poolersProbeStatus(ctx, namespace, probeName)
-		if err != nil {
-			return false, nil
-		}
-		for _, pooler := range poolers.GetPoolers() {
-			if pooler.GetId().GetName() == removedID {
-				return pooler.GetLifecycleStatus().GetStatus() == clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN, nil
+	err := wait.PollUntilContextCancel(
+		ctx,
+		2*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			poolers, err := poolersProbeStatus(ctx, namespace, probeName)
+			if err != nil {
+				return false, nil
 			}
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("pooler %q did not reach LIFECYCLE_SHUTDOWN: %v", removedID, err)
-	}
+			for _, pooler := range poolers.GetPoolers() {
+				if pooler.GetId().GetName() == removedID {
+					return pooler.GetLifecycleStatus().
+						GetStatus() ==
+						clustermetadatapb.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN, nil
+				}
+			}
+			return false, nil
+		},
+	)
+	assert.NewAborting(t).NoError(err, "pooler %q did not reach LIFECYCLE_SHUTDOWN", removedID)
 }
 
 func newMultiadminProbe(
@@ -403,9 +409,7 @@ done`, body, host, host, host)
 			}},
 		},
 	}
-	if err := c.Create(context.Background(), probe); err != nil {
-		t.Fatalf("create cohort probe: %v", err)
-	}
+	assert.NewAborting(t).NoError(c.Create(context.Background(), probe), "create cohort probe")
 	return probe
 }
 
@@ -439,7 +443,10 @@ func poolerServiceID(t testing.TB, pod *corev1.Pod) string {
 	return ""
 }
 
-func cohortProbeStatus(ctx context.Context, namespace, podName string) (*multiadminpb.GetPoolerStatusResponse, error) {
+func cohortProbeStatus(
+	ctx context.Context,
+	namespace, podName string,
+) (*multiadminpb.GetPoolerStatusResponse, error) {
 	output, err := multiadminProbeOutput(ctx, namespace, podName)
 	if err != nil {
 		return nil, err
@@ -455,7 +462,10 @@ func cohortProbeStatus(ctx context.Context, namespace, podName string) (*multiad
 	return status, nil
 }
 
-func poolersProbeStatus(ctx context.Context, namespace, podName string) (*multiadminpb.GetPoolersResponse, error) {
+func poolersProbeStatus(
+	ctx context.Context,
+	namespace, podName string,
+) (*multiadminpb.GetPoolersResponse, error) {
 	output, err := multiadminProbeOutput(ctx, namespace, podName)
 	if err != nil {
 		return nil, err
@@ -472,7 +482,10 @@ func poolersProbeStatus(ctx context.Context, namespace, podName string) (*multia
 }
 
 func multiadminProbeOutput(ctx context.Context, namespace, podName string) (string, error) {
-	stream, err := cluster.Clientset.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{}).Stream(ctx)
+	stream, err := cluster.Clientset.CoreV1().
+		Pods(namespace).
+		GetLogs(podName, &corev1.PodLogOptions{}).
+		Stream(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -493,7 +506,9 @@ func parseProbeResponse(output, startMarker, endMarker string) ([]byte, error) {
 			continue
 		}
 		httpResponse, err := http.ReadResponse(
-			bufio.NewReader(strings.NewReader(strings.TrimSpace(response[start+len(startMarker):]))),
+			bufio.NewReader(
+				strings.NewReader(strings.TrimSpace(response[start+len(startMarker):])),
+			),
 			&http.Request{Method: http.MethodPost},
 		)
 		if err != nil {

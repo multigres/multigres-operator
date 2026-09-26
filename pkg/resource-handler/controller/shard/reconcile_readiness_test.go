@@ -12,17 +12,16 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestReconcilePoolerReadiness(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
-	if err := corev1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add Pod scheme: %v", err)
-	}
-	if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add Shard scheme: %v", err)
-	}
+	ck.NoError(corev1.AddToScheme(scheme), "add Pod scheme")
+	ck.NoError(multigresv1alpha1.AddToScheme(scheme), "add Shard scheme")
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -51,35 +50,23 @@ func TestReconcilePoolerReadiness(t *testing.T) {
 		Build()
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
-	if err := r.reconcilePoolerReadiness(t.Context(), shard, map[string]posture.Readiness{
+	ck.NoError(r.reconcilePoolerReadiness(t.Context(), shard, map[string]posture.Readiness{
 		pod.Name: {Ready: true, Reason: "DataPlaneReady", Message: "ready"},
-	}); err != nil {
-		t.Fatalf("reconcile readiness: %v", err)
-	}
+	}), "reconcile readiness")
 
 	updated := &corev1.Pod{}
-	if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated); err != nil {
-		t.Fatalf("get updated pod: %v", err)
-	}
+	ck.NoError(c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated), "get updated pod")
 	condition := readinessCondition(updated.Status.Conditions)
-	if condition == nil ||
+	ck.False(condition == nil ||
 		condition.Status != corev1.ConditionTrue ||
-		condition.Reason != "DataPlaneReady" {
-		t.Fatalf("readiness condition = %#v, want true DataPlaneReady", condition)
-	}
+		condition.Reason != "DataPlaneReady", "readiness condition = %#v, want true DataPlaneReady", condition)
 
-	if err := r.reconcilePoolerReadiness(t.Context(), shard, nil); err != nil {
-		t.Fatalf("reconcile missing observation: %v", err)
-	}
-	if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated); err != nil {
-		t.Fatalf("get unready pod: %v", err)
-	}
+	ck.NoError(r.reconcilePoolerReadiness(t.Context(), shard, nil), "reconcile missing observation")
+	ck.NoError(c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated), "get unready pod")
 	condition = readinessCondition(updated.Status.Conditions)
-	if condition == nil ||
+	ck.False(condition == nil ||
 		condition.Status != corev1.ConditionFalse ||
-		condition.Reason != "ObservationUnavailable" {
-		t.Fatalf("readiness condition = %#v, want false ObservationUnavailable", condition)
-	}
+		condition.Reason != "ObservationUnavailable", "readiness condition = %#v, want false ObservationUnavailable", condition)
 }
 
 func readinessCondition(conditions []corev1.PodCondition) *corev1.PodCondition {

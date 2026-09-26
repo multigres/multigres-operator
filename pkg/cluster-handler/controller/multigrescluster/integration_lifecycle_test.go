@@ -20,6 +20,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestMultigresCluster_Lifecycle(t *testing.T) {
@@ -27,6 +29,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 
 	t.Run("TableGroup Long Name Hashing", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, _ := setupIntegration(t)
 		// Name length math: 25 (cluster) + 8 (db) + 25 (tg) + 2 (hyphens) = 60 chars.
 		longClusterName := "valid-cluster-name-123456" // 25 chars
@@ -59,9 +62,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(t.Context(), cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.Require().NoError(k8sClient.Create(t.Context(), cluster), "Failed to create cluster")
 
 		// Verify the TableGroup DOES exist (hashed)
 		tgName := nameutil.JoinWithConstraints(
@@ -75,7 +76,11 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 		// We just want to wait for it to exist
 		found := false
 		for i := 0; i < 20; i++ {
-			err := k8sClient.Get(t.Context(), client.ObjectKey{Name: tgName, Namespace: testNamespace}, expectedTG)
+			err := k8sClient.Get(
+				t.Context(),
+				client.ObjectKey{Name: tgName, Namespace: testNamespace},
+				expectedTG,
+			)
 			if err == nil {
 				found = true
 				break
@@ -85,19 +90,23 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 		}
 
-		if !found {
-			t.Errorf("Expected TableGroup %s to be created using hashing, but it was not found after timeout", tgName)
-		}
+		c.True(
+			found,
+			"Expected TableGroup %s to be created using hashing, but it was not found after timeout",
+			tgName,
+		)
 
 		// Ensure Cluster exists
 		fetchedCluster := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), fetchedCluster); err != nil {
-			t.Error("Cluster should exist")
-		}
+		c.NoError(
+			k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), fetchedCluster),
+			"Cluster should exist",
+		)
 	})
 
 	t.Run("Annotation Limit (Bombing)", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, watcher := setupIntegration(t)
 		// 250 chars is near limit (256). If controller appends to this value, it might fail.
 		longAnnotation := strings.Repeat("a", 250)
@@ -112,9 +121,7 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
-		if err := k8sClient.Create(t.Context(), cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.Require().NoError(k8sClient.Create(t.Context(), cluster), "Failed to create cluster")
 
 		// Verify Multiadmin Deployment created successfully WITH annotation
 		deploy := &appsv1.Deployment{
@@ -127,7 +134,9 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(resolver.DefaultAdminReplicas),
 				Selector: &metav1.LabelSelector{
-					MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "short-annot-bomb", "multiadmin", "")),
+					MatchLabels: metadata.GetSelectorLabels(
+						clusterLabels(t, "short-annot-bomb", "multiadmin", ""),
+					),
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
@@ -212,13 +221,15 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				},
 			},
 		}
-		if err := watcher.WaitForMatch(deploy); err != nil {
-			t.Errorf("Multiadmin deployment failed to create with massive annotation: %v", err)
-		}
+		c.NoError(
+			watcher.WaitForMatch(deploy),
+			"Multiadmin deployment failed to create with massive annotation",
+		)
 	})
 
 	t.Run("Mutability (Image Update)", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, watcher := setupIntegration(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "mut-test", Namespace: testNamespace},
@@ -227,14 +238,11 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
-		if err := k8sClient.Create(t.Context(), cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.Require().NoError(k8sClient.Create(t.Context(), cluster), "Failed to create cluster")
 
 		// Wait for v1
 		deploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
-
 				Name:            "mut-test-multiadmin",
 				Namespace:       testNamespace,
 				Labels:          clusterLabels(t, "mut-test", "multiadmin", ""),
@@ -243,7 +251,9 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(resolver.DefaultAdminReplicas),
 				Selector: &metav1.LabelSelector{
-					MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "mut-test", "multiadmin", "")),
+					MatchLabels: metadata.GetSelectorLabels(
+						clusterLabels(t, "mut-test", "multiadmin", ""),
+					),
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
@@ -325,18 +335,14 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				},
 			},
 		}
-		if err := watcher.WaitForMatch(deploy); err != nil {
-			t.Fatalf("Failed to wait for initial deployment v1: %v", err)
-		}
+		c.Require().
+			NoError(watcher.WaitForMatch(deploy), "Failed to wait for initial deployment v1")
 
 		// Update Image
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().
+			NoError(k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
 		cluster.Spec.Images.Multiadmin = "admin:v2"
-		if err := k8sClient.Update(t.Context(), cluster); err != nil {
-			t.Fatalf("Failed to update cluster: %v", err)
-		}
+		c.Require().NoError(k8sClient.Update(t.Context(), cluster), "Failed to update cluster")
 
 		// Verify v2
 		deployV2 := &appsv1.Deployment{
@@ -349,7 +355,9 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 			Spec: appsv1.DeploymentSpec{
 				Replicas: ptr.To(resolver.DefaultAdminReplicas),
 				Selector: &metav1.LabelSelector{
-					MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "mut-test", "multiadmin", "")),
+					MatchLabels: metadata.GetSelectorLabels(
+						clusterLabels(t, "mut-test", "multiadmin", ""),
+					),
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
@@ -431,9 +439,6 @@ func TestMultigresCluster_Lifecycle(t *testing.T) {
 				},
 			},
 		}
-		if err := watcher.WaitForMatch(deployV2); err != nil {
-			t.Errorf("Deployment failed to update to v2: %v", err)
-		}
+		c.NoError(watcher.WaitForMatch(deployV2), "Deployment failed to update to v2")
 	})
-
 }

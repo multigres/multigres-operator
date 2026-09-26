@@ -21,6 +21,8 @@ import (
 
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 type reconcileTestCase struct {
@@ -71,48 +73,39 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
+				ck := assert.NewCollecting(t)
 				// Verify Multiorch Deployment was created (with cell suffix)
 				moDeploy := &appsv1.Deployment{}
 				hashedMoName := buildHashedMultiorchName(shard, "zone1")
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMoName, Namespace: "default"},
-					moDeploy); err != nil {
-					t.Errorf("Multiorch Deployment should exist: %v", err)
-				}
+					moDeploy), "Multiorch Deployment should exist")
 
 				// Verify Multiorch Service was created (with cell suffix)
 				moSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMoName, Namespace: "default"},
-					moSvc); err != nil {
-					t.Errorf("Multiorch Service should exist: %v", err)
-				}
+					moSvc), "Multiorch Service should exist")
 
 				// Verify Pool Pod and PVC were created
 				podName := BuildPoolPodName(shard, "primary", "zone1", 0)
 				pod := &corev1.Pod{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: podName, Namespace: "default"},
-					pod); err != nil {
-					t.Errorf("Pool Pod should exist: %v", err)
-				}
+					pod), "Pool Pod should exist")
 
 				pvcName := BuildPoolDataPVCName(shard, "primary", "zone1", 0)
 				pvc := &corev1.PersistentVolumeClaim{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: pvcName, Namespace: "default"},
-					pvc); err != nil {
-					t.Errorf("Pool PVC should exist: %v", err)
-				}
+					pvc), "Pool PVC should exist")
 
 				// Verify Pool headless Service was created (with cell suffix)
 				hashedHeadless := buildHashedPoolHeadlessServiceName(shard, "primary", "zone1")
 				poolSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedHeadless, Namespace: "default"},
-					poolSvc); err != nil {
-					t.Errorf("Pool headless Service should exist: %v", err)
-				}
+					poolSvc), "Pool headless Service should exist")
 			},
 		},
 		"create resources for Shard with multiple pools": {
@@ -149,38 +142,33 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
+				ck := assert.NewCollecting(t)
 				// Verify replica pool pods
 				for i := 0; i < 2; i++ {
 					podName := BuildPoolPodName(shard, "replica", "zone1", i)
-					if err := c.Get(
+					ck.NoError(c.Get(
 						t.Context(),
 						types.NamespacedName{Name: podName, Namespace: "default"},
 						&corev1.Pod{},
-					); err != nil {
-						t.Errorf("Replica pool Pod %d should exist: %v", i, err)
-					}
+					), "Replica pool Pod %d should exist", i)
 				}
 
 				// Verify read-pool pods
 				for i := 0; i < 3; i++ {
 					podName := BuildPoolPodName(shard, "read-pool", "zone1", i)
-					if err := c.Get(
+					ck.NoError(c.Get(
 						t.Context(),
 						types.NamespacedName{Name: podName, Namespace: "default"},
 						&corev1.Pod{},
-					); err != nil {
-						t.Errorf("read-pool Pod %d should exist: %v", i, err)
-					}
+					), "read-pool Pod %d should exist", i)
 				}
 
 				// Verify both headless services
 				hashReplicaHeadless := buildHashedPoolHeadlessServiceName(shard, "replica", "zone1")
 				replicaSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashReplicaHeadless, Namespace: "default"},
-					replicaSvc); err != nil {
-					t.Errorf("Replica pool headless Service should exist: %v", err)
-				}
+					replicaSvc), "Replica pool headless Service should exist")
 
 				hashReadPoolHeadless := buildHashedPoolHeadlessServiceName(
 					shard,
@@ -188,11 +176,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					"zone1",
 				)
 				readPoolSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashReadPoolHeadless, Namespace: "default"},
-					readPoolSvc); err != nil {
-					t.Errorf("read-pool headless Service should exist: %v", err)
-				}
+					readPoolSvc), "read-pool headless Service should exist")
 			},
 		},
 		"Multiorch infers cells from pools when not specified": {
@@ -221,22 +207,19 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
+				ck := assert.NewCollecting(t)
 				// Multiorch should be deployed to both zone1 and zone2
 				hashedMo1 := buildHashedMultiorchName(shard, "zone1")
 				mo1 := &appsv1.Deployment{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo1, Namespace: "default"},
-					mo1); err != nil {
-					t.Errorf("Multiorch Deployment for zone1 should exist: %v", err)
-				}
+					mo1), "Multiorch Deployment for zone1 should exist")
 
 				hashedMo2 := buildHashedMultiorchName(shard, "zone2")
 				mo2 := &appsv1.Deployment{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo2, Namespace: "default"},
-					mo2); err != nil {
-					t.Errorf("Multiorch Deployment for zone2 should exist: %v", err)
-				}
+					mo2), "Multiorch Deployment for zone2 should exist")
 			},
 		},
 		"create one shard-wide backup PVC for all active cells including pool-only cells": {
@@ -278,27 +261,22 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
+				ck := assert.NewCollecting(t)
 				// Verify Multiorch Deployment was ONLY created for zone1
 				hashedMo1 := buildHashedMultiorchName(shard, "zone1")
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo1, Namespace: "default"},
-					&appsv1.Deployment{}); err != nil {
-					t.Errorf("Multiorch Deployment for zone1 should exist: %v", err)
-				}
+					&appsv1.Deployment{}), "Multiorch Deployment for zone1 should exist")
 				hashedMo2 := buildHashedMultiorchName(shard, "zone2")
-				if err := c.Get(t.Context(),
+				ck.Error(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMo2, Namespace: "default"},
-					&appsv1.Deployment{}); err == nil {
-					t.Errorf("Multiorch Deployment for zone2 should NOT exist")
-				}
+					&appsv1.Deployment{}), "Multiorch Deployment for zone2 should NOT exist")
 
 				// All poolers share one backup PVC, even across cells.
 				hashedPvc := buildHashedBackupPVCName(shard)
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedPvc, Namespace: "default"},
-					&corev1.PersistentVolumeClaim{}); err != nil {
-					t.Errorf("Shard-wide backup PVC should exist: %v", err)
-				}
+					&corev1.PersistentVolumeClaim{}), "Shard-wide backup PVC should exist")
 			},
 		},
 		"error when Multiorch and pools have no cells specified": {
@@ -381,46 +359,39 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, shard *multigresv1alpha1.Shard) {
+				ck := assert.NewCollecting(t)
 				// Verify Pods for zone1
 				for i := 0; i < 2; i++ {
 					podName := BuildPoolPodName(shard, "primary", "zone1", i)
-					if err := c.Get(
+					ck.NoError(c.Get(
 						t.Context(),
 						types.NamespacedName{Name: podName, Namespace: "default"},
 						&corev1.Pod{},
-					); err != nil {
-						t.Errorf("Zone1 Pod %d should exist: %v", i, err)
-					}
+					), "Zone1 Pod %d should exist", i)
 				}
 
 				// Verify Pods for zone2
 				for i := 0; i < 2; i++ {
 					podName := BuildPoolPodName(shard, "primary", "zone2", i)
-					if err := c.Get(
+					ck.NoError(c.Get(
 						t.Context(),
 						types.NamespacedName{Name: podName, Namespace: "default"},
 						&corev1.Pod{},
-					); err != nil {
-						t.Errorf("Zone2 Pod %d should exist: %v", i, err)
-					}
+					), "Zone2 Pod %d should exist", i)
 				}
 
 				// Verify headless Services for both cells
 				hashSvc1 := buildHashedPoolHeadlessServiceName(shard, "primary", "zone1")
 				svc1 := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.Require().NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashSvc1, Namespace: "default"},
-					svc1); err != nil {
-					t.Fatalf("Headless Service for zone1 should exist: %v", err)
-				}
+					svc1), "Headless Service for zone1 should exist")
 
 				hashSvc2 := buildHashedPoolHeadlessServiceName(shard, "primary", "zone2")
 				svc2 := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.Require().NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashSvc2, Namespace: "default"},
-					svc2); err != nil {
-					t.Fatalf("Headless Service for zone2 should exist: %v", err)
-				}
+					svc2), "Headless Service for zone2 should exist")
 			},
 		},
 		"update existing resources": {
@@ -476,13 +447,11 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				// Verify scale up to 5 pods
 				for i := 0; i < 5; i++ {
 					podName := BuildPoolPodName(shard, "primary", "zone1", i)
-					if err := c.Get(
+					assert.NewCollecting(t).NoError(c.Get(
 						t.Context(),
 						types.NamespacedName{Name: podName, Namespace: "default"},
 						&corev1.Pod{},
-					); err != nil {
-						t.Errorf("Zone1 Pod %d should exist: %v", i, err)
-					}
+					), "Zone1 Pod %d should exist", i)
 				}
 			},
 		},
@@ -544,11 +513,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 				// Verify Multiorch Deployment was NOT created
 				moDeploy := &appsv1.Deployment{}
 				hashedMoName := buildHashedMultiorchName(shard, "zone1")
-				if err := c.Get(t.Context(),
+				assert.NewCollecting(t).Error(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedMoName, Namespace: "default"},
-					moDeploy); err == nil {
-					t.Errorf("Multiorch Deployment should NOT exist")
-				}
+					moDeploy), "Multiorch Deployment should NOT exist")
 			},
 		},
 
@@ -1105,9 +1072,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			}
 			if !shardInExisting {
 				err := fakeClient.Create(t.Context(), tc.shard)
-				if err != nil {
-					t.Fatalf("Failed to create Shard: %v", err)
-				}
+				assert.NewAborting(t).NoError(err, "Failed to create Shard")
 			}
 
 			// Check headers
@@ -1184,6 +1149,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 }
 
 func TestShardReconciler_ReconcileNotFound(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -1210,12 +1176,8 @@ func TestShardReconciler_ReconcileNotFound(t *testing.T) {
 	}
 
 	result, err := reconciler.Reconcile(t.Context(), req)
-	if err != nil {
-		t.Errorf("Reconcile() should not error on NotFound, got: %v", err)
-	}
-	if result.RequeueAfter > 0 {
-		t.Errorf("Reconcile() should not requeue on NotFound")
-	}
+	c.NoError(err, "Reconcile() should not error on NotFound, got")
+	c.LessOrEqual(0, result.RequeueAfter, "Reconcile() should not requeue on NotFound")
 }
 
 func TestShardReconciler_UpdateStatus(t *testing.T) {
@@ -1226,6 +1188,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
 	t.Run("all_replicas_ready_status", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-shard-ready",
@@ -1295,47 +1258,34 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Recorder: record.NewFakeRecorder(100),
 		}
 
-		if err := r.updateStatus(context.Background(), shard, renderedConfig{}); err != nil {
-			t.Fatalf("updateStatus failed: %v", err)
-		}
+		c.Require().
+			NoError(r.updateStatus(context.Background(), shard, renderedConfig{}), "updateStatus failed")
 
 		updatedShard := &multigresv1alpha1.Shard{}
-		if err := fakeClient.Get(
+		c.Require().NoError(fakeClient.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(shard),
 			updatedShard,
-		); err != nil {
-			t.Fatalf("Failed to get Shard: %v", err)
-		}
+		), "Failed to get Shard")
 
 		foundTrue := false
 		for _, cond := range updatedShard.Status.Conditions {
 			if cond.Type == "Available" {
-				if cond.Status != metav1.ConditionFalse {
-					t.Errorf("Condition status = %s, want %s", cond.Status, metav1.ConditionFalse)
-				}
-				if cond.Reason != "NotAllPodsReady" {
-					t.Errorf("Condition reason = %s, want %s", cond.Reason, "NotAllPodsReady")
-				}
+				c.Eq(metav1.ConditionFalse, cond.Status, "Condition status")
+				c.Eq("NotAllPodsReady", cond.Reason, "Condition reason")
 				foundTrue = true
 			}
 		}
-		if !foundTrue {
-			t.Errorf("Condition %s not found", "Available")
-		}
-		if updatedShard.Status.PoolsReady {
-			t.Error("PoolsReady should be false when 1/3 pools are ready")
-		}
-		if updatedShard.Status.Phase != multigresv1alpha1.PhaseProgressing {
-			t.Errorf(
-				"Expected Phase to be %s, got %s",
-				multigresv1alpha1.PhaseProgressing,
-				updatedShard.Status.Phase,
-			)
-		}
+		c.True(foundTrue, "Condition %s not found", "Available")
+		c.False(
+			updatedShard.Status.PoolsReady,
+			"PoolsReady should be false when 1/3 pools are ready",
+		)
+		c.Eq(multigresv1alpha1.PhaseProgressing, updatedShard.Status.Phase, "Expected Phase to be")
 	})
 
 	t.Run("status_with_multiple_pools", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-shard-multi",
@@ -1411,25 +1361,21 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			Recorder: record.NewFakeRecorder(100),
 		}
 
-		if err := r.updateStatus(context.Background(), shard, renderedConfig{}); err != nil {
-			t.Fatalf("updateStatus failed: %v", err)
-		}
+		c.Require().
+			NoError(r.updateStatus(context.Background(), shard, renderedConfig{}), "updateStatus failed")
 
 		updatedShard := &multigresv1alpha1.Shard{}
-		if err := fakeClient.Get(
+		c.Require().NoError(fakeClient.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(shard),
 			updatedShard,
-		); err != nil {
-			t.Fatalf("Failed to get Shard: %v", err)
-		}
+		), "Failed to get Shard")
 
-		if !updatedShard.Status.PoolsReady {
-			t.Error("PoolsReady should be true when all pools are ready")
-		}
+		c.True(updatedShard.Status.PoolsReady, "PoolsReady should be true when all pools are ready")
 	})
 
 	t.Run("multi_cell_pool_aggregates_across_cells", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-shard-multicell",
@@ -1522,28 +1468,25 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 		pools, err := r.updatePoolsStatus(
 			context.Background(), shard, cellsSet, "", "",
 		)
-		if err != nil {
-			t.Fatalf("updatePoolsStatus failed: %v", err)
-		}
+		c.Require().NoError(err, "updatePoolsStatus failed")
 		totalPods, readyPods := pools.totalPods, pools.readyPods
 
 		// Verify aggregate: desired for primary is 3 pods per cell * 2 cells = 6 pods
-		if totalPods != 6 {
-			t.Errorf("totalPods = %d, want 6", totalPods)
-		}
-		if readyPods != 5 {
-			t.Errorf("readyPods = %d, want 5", readyPods)
-		}
+		c.Eq(6, totalPods, "totalPods")
+		c.Eq(5, readyPods, "readyPods")
 
 		// Verify both cells are tracked
-		if !cellsSet["zone1"] || !cellsSet["zone2"] {
-			t.Errorf("cellsSet = %v, want both zone1 and zone2", cellsSet)
-		}
+		c.False(
+			!cellsSet["zone1"] || !cellsSet["zone2"],
+			"cellsSet = %v, want both zone1 and zone2",
+			cellsSet,
+		)
 	})
 }
 
 func TestScaleDownPodSelection(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 	r := &ShardReconciler{}
 
 	shard := &multigresv1alpha1.Shard{
@@ -1585,28 +1528,35 @@ func TestScaleDownPodSelection(t *testing.T) {
 
 	// 1. All ready, 1 is primary. Should pick 2 (highest index and not primary)
 	selected := r.selectPodToDrain(context.Background(), pods, shard)
-	if selected == nil || selected.Name != "pod-2" {
-		t.Errorf("Expected pod-2 to be selected, got %v", selected)
-	}
+	c.False(
+		selected == nil || selected.Name != "pod-2",
+		"Expected pod-2 to be selected, got %v",
+		selected,
+	)
 
 	// 2. Pod 0 is NOT ready. Should pick 0.
 	pods[0].Status.Conditions[0].Status = corev1.ConditionFalse
 	selected = r.selectPodToDrain(context.Background(), pods, shard)
-	if selected == nil || selected.Name != "pod-0" {
-		t.Errorf("Expected pod-0 (not ready) to be selected, got %v", selected)
-	}
+	c.False(
+		selected == nil || selected.Name != "pod-0",
+		"Expected pod-0 (not ready) to be selected, got %v",
+		selected,
+	)
 
 	// 3. Delete pod Roles, shouldn't panic, falls back to highest index
 	shard.Status.PodRoles = nil
 	pods[0].Status.Conditions[0].Status = corev1.ConditionTrue
 	selected = r.selectPodToDrain(context.Background(), pods, shard)
-	if selected == nil || selected.Name != "pod-2" {
-		t.Errorf("Expected pod-2 (highest index) to be selected, got %v", selected)
-	}
+	c.False(
+		selected == nil || selected.Name != "pod-2",
+		"Expected pod-2 (highest index) to be selected, got %v",
+		selected,
+	)
 }
 
 func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -1679,13 +1629,9 @@ func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 			pod.Finalizers = []string{"kubernetes.io/test"}
 		}
 
-		if err := c.Create(context.Background(), pod); err != nil {
-			t.Fatalf("failed to create pod: %v", err)
-		}
+		ck.Require().NoError(c.Create(context.Background(), pod), "failed to create pod")
 		if i == 2 {
-			if err := c.Delete(t.Context(), pod); err != nil {
-				t.Fatal(err)
-			}
+			ck.Require().NoError(c.Delete(t.Context(), pod))
 		}
 	}
 
@@ -1698,9 +1644,7 @@ func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 		poolSpec,
 		&shardRolloutTracker{},
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ck.Require().NoError(err, "unexpected error")
 
 	// 2. Extra pod with DeletionTimestamp should have drain requested by handleExternalDeletion
 	var extraPod corev1.Pod
@@ -1712,16 +1656,13 @@ func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 		},
 		&extraPod,
 	)
-	if err != nil {
-		t.Fatalf("failed to get extra pod: %v", err)
-	}
+	ck.Require().NoError(err, "failed to get extra pod")
 
-	if extraPod.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-		t.Errorf(
-			"Expected extra internally deleted pod to be marked for drain, got %v",
-			extraPod.Annotations[metadata.AnnotationDrainState],
-		)
-	}
+	ck.Eq(
+		metadata.DrainStateRequested,
+		extraPod.Annotations[metadata.AnnotationDrainState],
+		"Expected extra internally deleted pod to be marked for drain, got",
+	)
 }
 
 func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
@@ -1773,6 +1714,7 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 
 	t.Run("blocks drain when pool has non-ready pod", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := shardObj.DeepCopy()
 		shard.Status.PodRoles = map[string]string{
 			podName0: "PRIMARY",
@@ -1807,36 +1749,27 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			2, // effectiveReplicas: no maintenance surge in this test
 			false,
 		)
-		if err != nil {
-			t.Fatalf("handleScaleDown returned error: %v", err)
-		}
+		ck.Require().NoError(err, "handleScaleDown returned error")
 
-		if actionTaken {
-			t.Error("Expected no action taken (health gate should block)")
-		}
+		ck.False(actionTaken, "Expected no action taken (health gate should block)")
 
 		// Pod-2 should NOT have drain annotation
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: podName2, Namespace: "default"},
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != "" {
-			t.Errorf(
-				"Expected no drain annotation (health gate should block), got %q",
-				updated.Annotations[metadata.AnnotationDrainState],
-			)
-		}
+		), "failed to get pod")
+		ck.Eq(
+			"",
+			updated.Annotations[metadata.AnnotationDrainState],
+			"Expected no drain annotation (health gate should block), got",
+		)
 
 		// Verify ScaleDownBlocked event was emitted
 		select {
 		case event := <-rec.Events:
-			if !strings.Contains(event, "ScaleDownBlocked") {
-				t.Errorf("Expected ScaleDownBlocked event, got %q", event)
-			}
+			ck.StrContains(event, "ScaleDownBlocked", "Expected ScaleDownBlocked event, got")
 		default:
 			t.Error("Expected ScaleDownBlocked event to be emitted")
 		}
@@ -1844,6 +1777,7 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 
 	t.Run("allows drain when all pods are healthy", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := shardObj.DeepCopy()
 		shard.Status.PodRoles = map[string]string{
 			podName0: "PRIMARY",
@@ -1878,34 +1812,27 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			2, // effectiveReplicas: no maintenance surge in this test
 			false,
 		)
-		if err != nil {
-			t.Fatalf("handleScaleDown returned error: %v", err)
-		}
+		ck.Require().NoError(err, "handleScaleDown returned error")
 
-		if !actionTaken {
-			t.Error("Expected action taken (drain should proceed)")
-		}
+		ck.True(actionTaken, "Expected action taken (drain should proceed)")
 
 		// Pod-2 SHOULD have drain annotation
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: podName2, Namespace: "default"},
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf(
-				"Expected drain annotation %q, got %q",
-				metadata.DrainStateRequested,
-				updated.Annotations[metadata.AnnotationDrainState],
-			)
-		}
+		), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"Expected drain annotation",
+		)
 	})
 
 	t.Run("shard tracker blocks a second pool scale-down", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := shardObj.DeepCopy()
 		shard.Status.PodRoles = map[string]string{
 			podName0: "PRIMARY",
@@ -1934,26 +1861,17 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			t.Context(), shard, poolName, multigresv1alpha1.PoolSpec{},
 			existingPods, 2, 2, false, tracker,
 		)
-		if err != nil {
-			t.Fatalf("handleScaleDown returned error: %v", err)
-		}
-		if actionTaken {
-			t.Fatal("expected the shard-wide tracker to block a second drain")
-		}
+		ck.Require().NoError(err, "handleScaleDown returned error")
+		ck.Require().False(actionTaken, "expected the shard-wide tracker to block a second drain")
 		updated := &corev1.Pod{}
-		if err := c.Get(t.Context(), client.ObjectKeyFromObject(pods[2]), updated); err != nil {
-			t.Fatalf("get extra pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != "" {
-			t.Errorf(
-				"drain state = %q, want empty",
-				updated.Annotations[metadata.AnnotationDrainState],
-			)
-		}
+		ck.Require().
+			NoError(c.Get(t.Context(), client.ObjectKeyFromObject(pods[2]), updated), "get extra pod")
+		ck.Eq("", updated.Annotations[metadata.AnnotationDrainState], "drain state")
 	})
 
 	t.Run("unhealthy extra pod does not block its own removal", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := shardObj.DeepCopy()
 		shard.Status.PodRoles = map[string]string{
 			podName0: "PRIMARY",
@@ -1991,35 +1909,31 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			2, // effectiveReplicas: no maintenance surge in this test
 			false,
 		)
-		if err != nil {
-			t.Fatalf("handleScaleDown returned error: %v", err)
-		}
+		ck.Require().NoError(err, "handleScaleDown returned error")
 
-		if !actionTaken {
-			t.Error("Expected action taken (unhealthy extra pod should not block its own removal)")
-		}
+		ck.True(
+			actionTaken,
+			"Expected action taken (unhealthy extra pod should not block its own removal)",
+		)
 
 		// Pod-2 SHOULD have drain annotation despite being unhealthy
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: podName2, Namespace: "default"},
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf(
-				"Expected drain annotation %q, got %q",
-				metadata.DrainStateRequested,
-				updated.Annotations[metadata.AnnotationDrainState],
-			)
-		}
+		), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"Expected drain annotation",
+		)
 	})
 }
 
 func TestRollingUpdateOrder(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -2083,12 +1997,9 @@ func TestRollingUpdateOrder(t *testing.T) {
 				},
 			},
 		}
-		if err := c.Create(context.Background(), pod); err != nil {
-			t.Fatalf("failed to create pod: %v", err)
-		}
-		if err := c.Status().Update(context.Background(), pod); err != nil {
-			t.Fatalf("failed to set pod status: %v", err)
-		}
+		ck.Require().NoError(c.Create(context.Background(), pod), "failed to create pod")
+		ck.Require().
+			NoError(c.Status().Update(context.Background(), pod), "failed to set pod status")
 	}
 
 	observeHealthyDisruption(t, r, shardObj, "primary", "zone1")
@@ -2102,35 +2013,27 @@ func TestRollingUpdateOrder(t *testing.T) {
 		poolSpec,
 		&shardRolloutTracker{},
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ck.Require().NoError(err, "unexpected error")
 
 	// Check that EXACTLY ONE REPLICA has drain-requested annotation. Pod 1 is PRIMARY.
 	// So either Pod 0 or Pod 2 should be marked for drain, not Pod 1.
 	drainCount := 0
 	for i := 0; i < 3; i++ {
 		var pod corev1.Pod
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{
 				Name:      BuildPoolPodName(shardObj, "primary", "zone1", i),
 				Namespace: "default",
 			},
 			&pod,
-		); err != nil {
-			t.Fatalf("pod %d should still exist: %v", i, err)
-		}
+		), "pod %d should still exist", i)
 		if pod.Annotations[metadata.AnnotationDrainState] == metadata.DrainStateRequested {
 			drainCount++
-			if i == 1 {
-				t.Errorf("Primary pod was marked for drain before replicas!")
-			}
+			ck.NotEq(1, i, "Primary pod was marked for drain before replicas!")
 		}
 	}
-	if drainCount != 1 {
-		t.Errorf("Expected exactly 1 pod to have drain-requested annotation, got %d", drainCount)
-	}
+	ck.Eq(1, drainCount, "Expected exactly 1 pod to have drain-requested annotation, got")
 }
 
 // TestRollingUpdateWaitsForSiblingCell verifies that a pool does not start
@@ -2141,6 +2044,7 @@ func TestRollingUpdateOrder(t *testing.T) {
 // once.
 func TestRollingUpdateWaitsForSiblingCell(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -2219,36 +2123,30 @@ func TestRollingUpdateWaitsForSiblingCell(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 	for _, pod := range []*corev1.Pod{zone1Pod, zone2Pod} {
-		if err := c.Create(context.Background(), pod); err != nil {
-			t.Fatalf("failed to create pod %s: %v", pod.Name, err)
-		}
-		if err := c.Status().Update(context.Background(), pod); err != nil {
-			t.Fatalf("failed to set status for pod %s: %v", pod.Name, err)
-		}
+		ck.Require().
+			NoError(c.Create(context.Background(), pod), "failed to create pod %s", pod.Name)
+		ck.Require().
+			NoError(c.Status().Update(context.Background(), pod), "failed to set status for pod %s", pod.Name)
 	}
 
-	if err := r.reconcilePoolPods(
+	ck.Require().NoError(r.reconcilePoolPods(
 		context.Background(),
 		shardObj,
 		"pool-2",
 		"zone2",
 		poolSpec,
 		&shardRolloutTracker{},
-	); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	), "unexpected error")
 
 	var updated corev1.Pod
-	if err := c.Get(
+	ck.Require().NoError(c.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(zone2Pod),
 		&updated,
-	); err != nil {
-		t.Fatalf("failed to get pod: %v", err)
-	}
-	if updated.Annotations[metadata.AnnotationDrainState] != "" {
-		t.Error(
-			"pool-2 should not drain its drifted pod while pool-1's pod in zone1 is not Ready",
-		)
-	}
+	), "failed to get pod")
+	ck.Eq(
+		"",
+		updated.Annotations[metadata.AnnotationDrainState],
+		"pool-2 should not drain its drifted pod while pool-1's pod in zone1 is not Ready",
+	)
 }

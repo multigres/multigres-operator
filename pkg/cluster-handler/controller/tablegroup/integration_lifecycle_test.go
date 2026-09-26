@@ -21,6 +21,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestTableGroup_Lifecycle(t *testing.T) {
@@ -47,13 +49,11 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			testutil.WithCRDPaths("../../../../config/crd/bases"),
 		)
 
-		if err := (&tablegroup.TableGroupReconciler{
+		assert.NewAborting(t).NoError((&tablegroup.TableGroupReconciler{
 			Client:   mgr.GetClient(),
 			Scheme:   mgr.GetScheme(),
 			Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
-		}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}); err != nil {
-			t.Fatal(err)
-		}
+		}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}))
 
 		watcher := testutil.NewResourceWatcher(t, t.Context(), mgr,
 			testutil.WithCmpOpts(testutil.IgnoreMetaRuntimeFields()),
@@ -65,6 +65,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 
 	t.Run("Pruning and Same-Name Replacement", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, watcher := setup(t)
 		ctx := t.Context()
 
@@ -110,9 +111,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		// Begin with two desired children so removing one from the spec later has
 		// to go through the same graceful-deletion path used in production.
 		setTestPostgresPasswordSecretRef(tg)
-		if err := k8sClient.Create(ctx, tg); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(ctx, tg))
 
 		// The expected Shards describe the child specs TableGroup owns. Metadata
 		// and status are intentionally ignored because those are filled by the
@@ -178,15 +177,13 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 
 		// Compare only spec fields because the controller owns metadata and status.
 		watcher.SetCmpOpts(testutil.CompareSpecOnly()...)
-		if err := watcher.WaitForMatch(shard1, shard2); err != nil {
-			t.Fatalf("Failed to create initial shards: %v", err)
-		}
+		c.Require().NoError(watcher.WaitForMatch(shard1, shard2), "Failed to create initial shards")
 
 		// Removing a child from the desired spec should not delete the Shard
 		// immediately. The parent first asks the child to drain by preserving the
 		// object and adding PendingDeletion.
 		// Retry because the controller may update status or finalizers concurrently.
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		c.Require().NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(tg), tg); err != nil {
 				return err
 			}
@@ -200,9 +197,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				},
 			}
 			return k8sClient.Update(ctx, tg)
-		}); err != nil {
-			t.Fatal(err)
-		}
+		}))
 
 		// The shard controller is not running in this test. Once the parent has
 		// asked for a drain, the test simulates the child controller's
@@ -242,7 +237,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		// Re-adding the same logical shard while the old object is draining must
 		// not resurrect or update that object. Cleanup remains the active
 		// lifecycle until the child reports ReadyForDeletion and is deleted.
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		c.Require().NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(tg), tg); err != nil {
 				return err
 			}
@@ -263,9 +258,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				},
 			}
 			return k8sClient.Update(ctx, tg)
-		}); err != nil {
-			t.Fatal(err)
-		}
+		}))
 
 		waitForTableGroup(t, ctx, k8sClient, client.ObjectKeyFromObject(tg),
 			15*time.Second, func(g *multigresv1alpha1.TableGroup) bool {
@@ -274,25 +267,20 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 					g.Status.Message == "Waiting for shard cleanup to finish"
 			})
 
-		if err := k8sClient.Get(
+		c.Require().NoError(k8sClient.Get(
 			ctx,
 			client.ObjectKey{Name: deleteMeName, Namespace: "default"},
 			&deleteMe,
-		); err != nil {
-			t.Fatalf("Failed to get draining shard after re-add: %v", err)
-		}
-		if got := string(deleteMe.UID); got != oldDeleteMeUID {
-			t.Fatalf("Draining shard was replaced before cleanup: got UID %s, want %s",
-				got, oldDeleteMeUID)
-		}
-		if deleteMe.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-			t.Fatal("Draining shard lost PendingDeletion after same-name re-add")
-		}
+		), "Failed to get draining shard after re-add")
+		c.Require().
+			Eq(oldDeleteMeUID, string(deleteMe.UID), "Draining shard was replaced before cleanup: got UID")
+		c.Require().
+			NotEq("", deleteMe.Annotations[multigresv1alpha1.AnnotationPendingDeletion], "Draining shard lost PendingDeletion after same-name re-add")
 		if got := deleteMe.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 1 {
 			t.Fatalf("Draining shard was updated during cleanup: replicas = %v, want 1", got)
 		}
 
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		c.Require().NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			latest := &multigresv1alpha1.Shard{}
 			if err := k8sClient.Get(
 				ctx,
@@ -309,14 +297,10 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 				LastTransitionTime: metav1.Now(),
 			})
 			return k8sClient.Status().Update(ctx, latest)
-		}); err != nil {
-			t.Fatalf("Failed to set ReadyForDeletion condition: %v", err)
-		}
+		}), "Failed to set ReadyForDeletion condition")
 
 		// Deletion is only valid after the child has acknowledged the drain.
-		if err := watcher.WaitForDeletion(shard2); err != nil {
-			t.Errorf("Shard 'delete-me' was not pruned: %v", err)
-		}
+		c.NoError(watcher.WaitForDeletion(shard2), "Shard 'delete-me' was not pruned")
 
 		waitCtx, waitCancel = context.WithTimeout(ctx, 15*time.Second)
 		defer waitCancel()
@@ -354,6 +338,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 
 	t.Run("Enforcement (Revert Manual Changes)", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, watcher := setup(t)
 		ctx := t.Context()
 
@@ -393,9 +378,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		// desired shape.
 		setTestPostgresPasswordSecretRef(tg)
 
-		if err := k8sClient.Create(ctx, tg); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(ctx, tg))
 
 		// Compare only spec fields because the controller owns metadata and status.
 		watcher.SetCmpOpts(testutil.CompareSpecOnly()...)
@@ -429,14 +412,12 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			},
 		}
 		setTestShardPostgresPasswordSecretRef(goodShard)
-		if err := watcher.WaitForMatch(goodShard); err != nil {
-			t.Fatalf("Initial shard creation failed: %v", err)
-		}
+		c.Require().NoError(watcher.WaitForMatch(goodShard), "Initial shard creation failed")
 
 		// Mutate the child directly, as an out-of-band actor might. The retry is
 		// for resourceVersion conflicts with the controller's own writes.
 		latestShard := &multigresv1alpha1.Shard{}
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		c.Require().NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			if err := k8sClient.Get(
 				ctx,
 				client.ObjectKeyFromObject(goodShard),
@@ -446,14 +427,13 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			}
 			latestShard.Spec.Multiorch.Replicas = ptr.To(int32(99))
 			return k8sClient.Update(ctx, latestShard)
-		}); err != nil {
-			t.Fatal(err)
-		}
+		}))
 
 		// Assert the desired spec again rather than trying to observe the bad
 		// intermediate state; the controller may repair it before the watch sees it.
-		if err := watcher.WaitForMatch(goodShard); err != nil {
-			t.Errorf("Controller failed to revert manual shard change: %v", err)
-		}
+		c.NoError(
+			watcher.WaitForMatch(goodShard),
+			"Controller failed to revert manual shard change",
+		)
 	})
 }

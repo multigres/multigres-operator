@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestSetCondition(t *testing.T) {
@@ -91,32 +93,28 @@ func TestSetCondition(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			conditions := make([]metav1.Condition, len(tc.existing))
 			copy(conditions, tc.existing)
 
 			SetCondition(&conditions, tc.condition)
 
-			if len(conditions) != len(tc.want) {
-				t.Fatalf("got %d conditions, want %d", len(conditions), len(tc.want))
-			}
+			c.Require().Len(conditions, len(tc.want), "got %d conditions, want", len(conditions))
 			for i, got := range conditions {
 				want := tc.want[i]
-				if got.Type != want.Type {
-					t.Errorf("[%d] type = %s, want %s", i, got.Type, want.Type)
-				}
-				if got.Status != want.Status {
-					t.Errorf("[%d] status = %s, want %s", i, got.Status, want.Status)
-				}
-				if got.Reason != want.Reason {
-					t.Errorf("[%d] reason = %s, want %s", i, got.Reason, want.Reason)
-				}
+				c.Eq(want.Type, got.Type, "[%d] type = %s, want", i, got.Type)
+				c.Eq(want.Status, got.Status, "[%d] status = %s, want", i, got.Status)
+				c.Eq(want.Reason, got.Reason, "[%d] reason = %s, want", i, got.Reason)
 				if want.LastTransitionTime.IsZero() && !got.LastTransitionTime.IsZero() {
 					// The "preserves transition time" case: original was zero,
 					// SetCondition should have kept the existing (zero) time.
-					if name == "preserves transition time when status unchanged" {
-						t.Errorf("[%d] expected preserved zero transition time, got %v",
-							i, got.LastTransitionTime)
-					}
+					c.NotEq(
+						"preserves transition time when status unchanged",
+						name,
+						"[%d] expected preserved zero transition time, got %v",
+						i,
+						got.LastTransitionTime,
+					)
 				}
 			}
 		})
@@ -169,9 +167,8 @@ func TestIsConditionTrue(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := IsConditionTrue(tc.conditions, tc.condType); got != tc.want {
-				t.Errorf("IsConditionTrue() = %v, want %v", got, tc.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.want, IsConditionTrue(tc.conditions, tc.condType), "IsConditionTrue()")
 		})
 	}
 }
@@ -222,9 +219,8 @@ func TestIsConditionFalse(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := IsConditionFalse(tc.conditions, tc.condType); got != tc.want {
-				t.Errorf("IsConditionFalse() = %v, want %v", got, tc.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.want, IsConditionFalse(tc.conditions, tc.condType), "IsConditionFalse()")
 		})
 	}
 }

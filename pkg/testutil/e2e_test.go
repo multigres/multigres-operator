@@ -15,6 +15,8 @@ import (
 
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // ---------------------------------------------------------------------------
@@ -22,25 +24,14 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestDefaultE2EOpts(t *testing.T) {
+	c := assert.NewCollecting(t)
 	o := defaultE2EOpts()
-	if !o.parallel {
-		t.Error("parallel should be true by default")
-	}
-	if o.clusterWaitTime != 5*time.Minute {
-		t.Errorf("clusterWaitTime = %v, want 5m", o.clusterWaitTime)
-	}
-	if o.kindConfigPath != "" {
-		t.Errorf("kindConfigPath = %q, want empty", o.kindConfigPath)
-	}
-	if len(o.images) != 0 {
-		t.Errorf("images = %v, want empty", o.images)
-	}
-	if len(o.setupFuncs) != 0 {
-		t.Errorf("setupFuncs should be empty")
-	}
-	if len(o.finishFuncs) != 0 {
-		t.Errorf("finishFuncs should be empty")
-	}
+	c.True(o.parallel, "parallel should be true by default")
+	c.Eq(5*time.Minute, o.clusterWaitTime, "clusterWaitTime")
+	c.Eq("", o.kindConfigPath, "kindConfigPath")
+	c.Empty(o.images, "images")
+	c.Empty(o.setupFuncs, "setupFuncs should be empty")
+	c.Empty(o.finishFuncs, "finishFuncs should be empty")
 }
 
 // ---------------------------------------------------------------------------
@@ -50,33 +41,24 @@ func TestDefaultE2EOpts(t *testing.T) {
 func TestWithSequential(t *testing.T) {
 	o := defaultE2EOpts()
 	WithSequential()(o)
-	if o.parallel {
-		t.Error("parallel should be false after WithSequential")
-	}
+	assert.NewCollecting(t).False(o.parallel, "parallel should be false after WithSequential")
 }
 
 func TestWithE2EKindConfig(t *testing.T) {
 	o := defaultE2EOpts()
 	WithE2EKindConfig("/path/to/config.yaml")(o)
-	if o.kindConfigPath != "/path/to/config.yaml" {
-		t.Errorf("kindConfigPath = %q, want %q", o.kindConfigPath, "/path/to/config.yaml")
-	}
+	assert.NewCollecting(t).Eq("/path/to/config.yaml", o.kindConfigPath, "kindConfigPath")
 }
 
 func TestWithImage(t *testing.T) {
+	c := assert.NewCollecting(t)
 	o := defaultE2EOpts()
 	WithImage("img1:latest")(o)
 	WithImage("img2:v2")(o)
 
-	if len(o.images) != 2 {
-		t.Fatalf("len(images) = %d, want 2", len(o.images))
-	}
-	if o.images[0] != "img1:latest" {
-		t.Errorf("images[0] = %q, want %q", o.images[0], "img1:latest")
-	}
-	if o.images[1] != "img2:v2" {
-		t.Errorf("images[1] = %q, want %q", o.images[1], "img2:v2")
-	}
+	c.Require().Len(o.images, 2, "len(images) = %d, want 2", len(o.images))
+	c.Eq("img1:latest", o.images[0], "images[0]")
+	c.Eq("img2:v2", o.images[1], "images[1]")
 }
 
 func TestWithSetup(t *testing.T) {
@@ -84,9 +66,7 @@ func TestWithSetup(t *testing.T) {
 	WithSetup(func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 		return ctx, nil
 	})(o)
-	if len(o.setupFuncs) != 1 {
-		t.Errorf("len(setupFuncs) = %d, want 1", len(o.setupFuncs))
-	}
+	assert.NewCollecting(t).Len(o.setupFuncs, 1, "len(setupFuncs) = %d, want 1", len(o.setupFuncs))
 }
 
 func TestWithFinish(t *testing.T) {
@@ -94,17 +74,14 @@ func TestWithFinish(t *testing.T) {
 	WithFinish(func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 		return ctx, nil
 	})(o)
-	if len(o.finishFuncs) != 1 {
-		t.Errorf("len(finishFuncs) = %d, want 1", len(o.finishFuncs))
-	}
+	assert.NewCollecting(t).
+		Len(o.finishFuncs, 1, "len(finishFuncs) = %d, want 1", len(o.finishFuncs))
 }
 
 func TestWithClusterWait(t *testing.T) {
 	o := defaultE2EOpts()
 	WithClusterWait(10 * time.Minute)(o)
-	if o.clusterWaitTime != 10*time.Minute {
-		t.Errorf("clusterWaitTime = %v, want 10m", o.clusterWaitTime)
-	}
+	assert.NewCollecting(t).Eq(10*time.Minute, o.clusterWaitTime, "clusterWaitTime")
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +99,10 @@ func TestSanitizeE2EName(t *testing.T) {
 		{"Test Foo Bar", "test-foo-bar"},
 		{"UPPER", "upper"},
 		// Truncated to 50 chars
-		{"a-very-long-name-that-exceeds-fifty-characters-and-should-be-truncated", "a-very-long-name-that-exceeds-fifty-characters-and"},
+		{
+			"a-very-long-name-that-exceeds-fifty-characters-and-should-be-truncated",
+			"a-very-long-name-that-exceeds-fifty-characters-and",
+		},
 		// Trailing dashes stripped
 		{"-leading-and-trailing-", "leading-and-trailing"},
 	}
@@ -130,9 +110,8 @@ func TestSanitizeE2EName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			got := sanitizeE2EName(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeE2EName(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tt.want, got, "sanitizeE2EName(%q) = %q, want", tt.input, got)
 		})
 	}
 }
@@ -206,9 +185,7 @@ func TestIsPodReady(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := isPodReady(tt.pod)
-			if got != tt.want {
-				t.Errorf("isPodReady() = %v, want %v", got, tt.want)
-			}
+			assert.NewCollecting(t).Eq(tt.want, got, "isPodReady()")
 		})
 	}
 }
@@ -269,9 +246,7 @@ func TestSelectorFromDeployment(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := selectorFromDeployment(tt.dep)
-			if got != tt.want {
-				t.Errorf("selectorFromDeployment() = %q, want %q", got, tt.want)
-			}
+			assert.NewCollecting(t).Eq(tt.want, got, "selectorFromDeployment()")
 		})
 	}
 }
@@ -281,14 +256,11 @@ func TestSelectorFromDeployment(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInt64Ptr(t *testing.T) {
+	c := assert.NewCollecting(t)
 	p := int64Ptr(42)
-	if *p != 42 {
-		t.Errorf("int64Ptr(42) = %d, want 42", *p)
-	}
+	c.Eq(42, *p, "int64Ptr(42)")
 	p2 := int64Ptr(0)
-	if *p2 != 0 {
-		t.Errorf("int64Ptr(0) = %d, want 0", *p2)
-	}
+	c.Eq(0, *p2, "int64Ptr(0)")
 }
 
 // ---------------------------------------------------------------------------
@@ -297,29 +269,20 @@ func TestInt64Ptr(t *testing.T) {
 
 func TestDefaultOperatorPreset_FromEnv(t *testing.T) {
 	t.Setenv("OPERATOR_IMG", "my-registry/my-operator:v1.2.3")
+	c := assert.NewCollecting(t)
 
 	p := DefaultOperatorPreset()
-	if p.Image != "my-registry/my-operator:v1.2.3" {
-		t.Errorf("Image = %q, want %q", p.Image, "my-registry/my-operator:v1.2.3")
-	}
-	if p.Namespace != "multigres-operator" {
-		t.Errorf("Namespace = %q, want %q", p.Namespace, "multigres-operator")
-	}
-	if p.DeploymentName != "multigres-operator-controller-manager" {
-		t.Errorf("DeploymentName = %q, want %q", p.DeploymentName, "multigres-operator-controller-manager")
-	}
-	if p.ReadyTimeout != 3*time.Minute {
-		t.Errorf("ReadyTimeout = %v, want 3m", p.ReadyTimeout)
-	}
+	c.Eq("my-registry/my-operator:v1.2.3", p.Image, "Image")
+	c.Eq("multigres-operator", p.Namespace, "Namespace")
+	c.Eq("multigres-operator-controller-manager", p.DeploymentName, "DeploymentName")
+	c.Eq(3*time.Minute, p.ReadyTimeout, "ReadyTimeout")
 }
 
 func TestDefaultOperatorPreset_Fallback(t *testing.T) {
 	t.Setenv("OPERATOR_IMG", "")
 
 	p := DefaultOperatorPreset()
-	if p.Image != "ghcr.io/multigres/multigres-operator:dev" {
-		t.Errorf("Image = %q, want fallback %q", p.Image, "ghcr.io/multigres/multigres-operator:dev")
-	}
+	assert.NewCollecting(t).Eq("ghcr.io/multigres/multigres-operator:dev", p.Image, "Image")
 }
 
 // ---------------------------------------------------------------------------
@@ -327,14 +290,11 @@ func TestDefaultOperatorPreset_Fallback(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMultigresImages(t *testing.T) {
-	if len(MultigresImages) != 4 {
-		t.Errorf("len(MultigresImages) = %d, want 4", len(MultigresImages))
-	}
+	c := assert.NewCollecting(t)
+	c.Len(MultigresImages, 4, "len(MultigresImages) = %d, want 4", len(MultigresImages))
 	// Verify all entries are non-empty
 	for i, img := range MultigresImages {
-		if img == "" {
-			t.Errorf("MultigresImages[%d] is empty", i)
-		}
+		c.NotEq("", img, "MultigresImages[%d] is empty", i)
 	}
 }
 
@@ -346,9 +306,7 @@ func TestTestClusterAccessors(t *testing.T) {
 	tc := &TestCluster{
 		clusterName: "test-cluster-123",
 	}
-	if tc.ClusterName() != "test-cluster-123" {
-		t.Errorf("ClusterName() = %q, want %q", tc.ClusterName(), "test-cluster-123")
-	}
+	assert.NewCollecting(t).Eq("test-cluster-123", tc.ClusterName(), "ClusterName()")
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +340,7 @@ func TestPortForwardResultStop(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOptionsCompose(t *testing.T) {
+	c := assert.NewCollecting(t)
 	o := defaultE2EOpts()
 	opts := []E2EOption{
 		WithSequential(),
@@ -394,18 +353,10 @@ func TestOptionsCompose(t *testing.T) {
 		opt(o)
 	}
 
-	if o.parallel {
-		t.Error("parallel should be false")
-	}
-	if len(o.images) != 2 {
-		t.Fatalf("len(images) = %d, want 2", len(o.images))
-	}
-	if o.kindConfigPath != "/kind.yaml" {
-		t.Errorf("kindConfigPath = %q", o.kindConfigPath)
-	}
-	if o.clusterWaitTime != 7*time.Minute {
-		t.Errorf("clusterWaitTime = %v", o.clusterWaitTime)
-	}
+	c.False(o.parallel, "parallel should be false")
+	c.Require().Len(o.images, 2, "len(images) = %d, want 2", len(o.images))
+	c.Eq("/kind.yaml", o.kindConfigPath, "kindConfigPath =")
+	c.Eq(7*time.Minute, o.clusterWaitTime, "clusterWaitTime =")
 }
 
 // ---------------------------------------------------------------------------
@@ -413,25 +364,19 @@ func TestOptionsCompose(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTestCluster_NilAccessors(t *testing.T) {
+	c := assert.NewCollecting(t)
 	// Accessors should not panic even with nil fields — they just return nil.
 	tc := &TestCluster{
 		clusterName: "x",
 	}
-	if tc.Env() != nil {
-		t.Error("Env() should be nil")
-	}
-	if tc.Config() != nil {
-		t.Error("Config() should be nil")
-	}
-	if tc.RESTConfig() != nil {
-		t.Error("RESTConfig() should be nil")
-	}
-	if tc.Clientset() != nil {
-		t.Error("Clientset() should be nil")
-	}
+	c.Nil(tc.Env(), "Env() should be nil")
+	c.Nil(tc.Config(), "Config() should be nil")
+	c.Nil(tc.RESTConfig(), "RESTConfig() should be nil")
+	c.Nil(tc.Clientset(), "Clientset() should be nil")
 }
 
 func TestTestCluster_WithConfig(t *testing.T) {
+	c := assert.NewCollecting(t)
 	cfg := envconf.New()
 	testEnv := env.NewWithConfig(cfg)
 	tc := &TestCluster{
@@ -439,15 +384,9 @@ func TestTestCluster_WithConfig(t *testing.T) {
 		cfg:         cfg,
 		env:         testEnv,
 	}
-	if tc.Config() != cfg {
-		t.Error("Config() should return the assigned config")
-	}
-	if tc.KubeconfigFile() != cfg.KubeconfigFile() {
-		t.Errorf("KubeconfigFile() = %q, want %q", tc.KubeconfigFile(), cfg.KubeconfigFile())
-	}
-	if tc.Env() == nil {
-		t.Error("Env() should not be nil")
-	}
+	c.Eq(cfg, tc.Config(), "Config() should return the assigned config")
+	c.Eq(cfg.KubeconfigFile(), tc.KubeconfigFile(), "KubeconfigFile()")
+	c.NotNil(tc.Env(), "Env() should not be nil")
 	// KlientClient() requires a real kubeconfig — tested via e2e tests only.
 }
 
@@ -467,9 +406,7 @@ func TestRunFinish(t *testing.T) {
 			return ctx, nil
 		},
 	})
-	if !called {
-		t.Error("runFinish did not call the func")
-	}
+	assert.NewCollecting(t).True(called, "runFinish did not call the func")
 }
 
 func TestRunFinish_Empty(t *testing.T) {
@@ -510,9 +447,8 @@ func TestClusterCleanupAction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := clusterCleanupAction(tt.policy, tt.failed)
-			if got != tt.want {
-				t.Errorf("clusterCleanupAction(%q, %v) = %d, want %d", tt.policy, tt.failed, got, tt.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tt.want, got, "clusterCleanupAction(%q, %v) = %d, want", tt.policy, tt.failed, got)
 		})
 	}
 }
@@ -557,5 +493,7 @@ func TestMaybeDestroyCluster_OnFailurePassingTest(t *testing.T) {
 }
 
 // Ensure unused imports are consumed.
-var _ = os.Getenv
-var _ = ptr.To[int32]
+var (
+	_ = os.Getenv
+	_ = ptr.To[int32]
+)

@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestStepComputeStatus pins the status aggregation branches. Status must come
@@ -137,6 +139,7 @@ func TestStepComputeStatus(t *testing.T) {
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 
 			tg := &multigresv1alpha1.TableGroup{
 				ObjectMeta: metav1.ObjectMeta{
@@ -189,68 +192,32 @@ func TestStepComputeStatus(t *testing.T) {
 				t.Fatalf("stepComputeStatus returned error: %v", err)
 			}
 			res, err := stepPatchStatus(t.Context(), rc)
-			if err != nil {
-				t.Fatalf("stepPatchStatus returned error: %v", err)
-			}
+			ck.Require().NoError(err, "stepPatchStatus returned error")
 			// A successful status update never requeues on its own.
-			if res.result.RequeueAfter != 0 {
-				t.Errorf("expected no requeue, got %+v", res.result)
-			}
+			ck.Eq(0, res.result.RequeueAfter, "expected no requeue, got %+v", res.result)
 
 			updated := &multigresv1alpha1.TableGroup{}
-			if err := c.Get(
+			ck.Require().NoError(c.Get(
 				t.Context(),
 				types.NamespacedName{Name: tgName, Namespace: namespace},
 				updated,
-			); err != nil {
-				t.Fatalf("failed to get tablegroup: %v", err)
-			}
+			), "failed to get tablegroup")
 
-			if got := updated.Status.Phase; got != tc.wantPhase {
-				t.Errorf("Phase mismatch: got %q, want %q", got, tc.wantPhase)
-			}
-			if got := updated.Status.TotalShards; got != tc.wantTotal {
-				t.Errorf("TotalShards mismatch: got %d, want %d", got, tc.wantTotal)
-			}
-			if got := updated.Status.ReadyShards; got != tc.wantReady {
-				t.Errorf("ReadyShards mismatch: got %d, want %d", got, tc.wantReady)
-			}
-			if got := updated.Status.Message; got != tc.wantMessage {
-				t.Errorf("Message mismatch: got %q, want %q", got, tc.wantMessage)
-			}
+			ck.Eq(tc.wantPhase, updated.Status.Phase, "Phase mismatch: got")
+			ck.Eq(tc.wantTotal, updated.Status.TotalShards, "TotalShards mismatch: got")
+			ck.Eq(tc.wantReady, updated.Status.ReadyShards, "ReadyShards mismatch: got")
+			ck.Eq(tc.wantMessage, updated.Status.Message, "Message mismatch: got")
 
 			cond := meta.FindStatusCondition(updated.Status.Conditions, "Available")
-			if cond == nil {
-				t.Fatal("expected an Available condition to be set")
-			}
-			if cond.Status != tc.wantAvailable {
-				t.Errorf(
-					"Available condition status mismatch: got %q, want %q",
-					cond.Status,
-					tc.wantAvailable,
-				)
-			}
-			if cond.Reason != tc.wantReason {
-				t.Errorf(
-					"Available condition reason mismatch: got %q, want %q",
-					cond.Reason,
-					tc.wantReason,
-				)
-			}
-			if cond.Message != tc.wantCondMsg {
-				t.Errorf(
-					"Available condition message mismatch: got %q, want %q",
-					cond.Message,
-					tc.wantCondMsg,
-				)
-			}
-			if cond.ObservedGeneration != tg.Generation {
-				t.Errorf(
-					"Available condition observedGeneration mismatch: got %d, want %d",
-					cond.ObservedGeneration,
-					tg.Generation,
-				)
-			}
+			ck.Require().NotNil(cond, "expected an Available condition to be set")
+			ck.Eq(tc.wantAvailable, cond.Status, "Available condition status mismatch: got")
+			ck.Eq(tc.wantReason, cond.Reason, "Available condition reason mismatch: got")
+			ck.Eq(tc.wantCondMsg, cond.Message, "Available condition message mismatch: got")
+			ck.Eq(
+				tg.Generation,
+				cond.ObservedGeneration,
+				"Available condition observedGeneration mismatch: got",
+			)
 		})
 	}
 }
@@ -260,6 +227,7 @@ func TestStepComputeStatus(t *testing.T) {
 // status.
 func TestStepComputeStatus_IgnoresUndesiredOrphans(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	tg := &multigresv1alpha1.TableGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: "tg", Namespace: "default", Generation: 1},
@@ -292,29 +260,19 @@ func TestStepComputeStatus_IgnoresUndesiredOrphans(t *testing.T) {
 		appliedGeneration: map[string]int64{"desired": 1},
 	}
 
-	if _, err := stepComputeStatus(t.Context(), rc); err != nil {
-		t.Fatalf("stepComputeStatus returned error: %v", err)
-	}
+	_, err := stepComputeStatus(t.Context(), rc)
+	c.Require().NoError(err, "stepComputeStatus returned error")
 
-	if got := tg.Status.Phase; got != multigresv1alpha1.PhaseHealthy {
-		t.Errorf(
-			"Phase mismatch: got %q, want %q (orphan must not count)",
-			got,
-			multigresv1alpha1.PhaseHealthy,
-		)
-	}
-	if got := tg.Status.ReadyShards; got != 1 {
-		t.Errorf("ReadyShards mismatch: got %d, want 1", got)
-	}
-	if got := tg.Status.TotalShards; got != 1 {
-		t.Errorf("TotalShards mismatch: got %d, want 1", got)
-	}
+	c.Eq(multigresv1alpha1.PhaseHealthy, tg.Status.Phase, "Phase mismatch: got")
+	c.Eq(1, tg.Status.ReadyShards, "ReadyShards mismatch: got")
+	c.Eq(1, tg.Status.TotalShards, "TotalShards mismatch: got")
 }
 
 // TestStepComputeStatus_PendingDeletionPreventsHealthy verifies that pending
 // cleanup keeps the parent Progressing even when all desired children are ready.
 func TestStepComputeStatus_PendingDeletionPreventsHealthy(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	tg := &multigresv1alpha1.TableGroup{
 		ObjectMeta: metav1.ObjectMeta{Name: "tg", Namespace: "default", Generation: 2},
@@ -348,43 +306,26 @@ func TestStepComputeStatus_PendingDeletionPreventsHealthy(t *testing.T) {
 		pendingDeletion:   true,
 	}
 
-	if _, err := stepComputeStatus(t.Context(), rc); err != nil {
-		t.Fatalf("stepComputeStatus returned error: %v", err)
-	}
+	_, err := stepComputeStatus(t.Context(), rc)
+	c.Require().NoError(err, "stepComputeStatus returned error")
 
-	if got := tg.Status.Phase; got != multigresv1alpha1.PhaseProgressing {
-		t.Errorf("Phase mismatch: got %q, want %q", got, multigresv1alpha1.PhaseProgressing)
-	}
-	if got, want := tg.Status.Message, "Waiting for shard cleanup to finish"; got != want {
-		t.Errorf("Message mismatch: got %q, want %q", got, want)
-	}
-	if got := tg.Status.ReadyShards; got != 1 {
-		t.Errorf("ReadyShards mismatch: got %d, want 1", got)
-	}
+	c.Eq(multigresv1alpha1.PhaseProgressing, tg.Status.Phase, "Phase mismatch: got")
+	got, want := tg.Status.Message, "Waiting for shard cleanup to finish"
+	assert.NewCollecting(t).Eq(want, got, "Message mismatch: got")
+	c.Eq(1, tg.Status.ReadyShards, "ReadyShards mismatch: got")
 
 	cond := meta.FindStatusCondition(tg.Status.Conditions, "Available")
-	if cond == nil {
-		t.Fatal("expected an Available condition to be set")
-	}
-	if cond.Status != metav1.ConditionFalse {
-		t.Errorf("Available status mismatch: got %q, want %q", cond.Status, metav1.ConditionFalse)
-	}
-	if cond.Reason != "CleanupPending" {
-		t.Errorf("Available reason mismatch: got %q, want CleanupPending", cond.Reason)
-	}
-	if cond.ObservedGeneration != tg.Generation {
-		t.Errorf(
-			"Available observedGeneration mismatch: got %d, want %d",
-			cond.ObservedGeneration,
-			tg.Generation,
-		)
-	}
+	c.Require().NotNil(cond, "expected an Available condition to be set")
+	c.Eq(metav1.ConditionFalse, cond.Status, "Available status mismatch: got")
+	c.Eq("CleanupPending", cond.Reason, "Available reason mismatch: got")
+	c.Eq(tg.Generation, cond.ObservedGeneration, "Available observedGeneration mismatch: got")
 }
 
 // TestStepComputeStatus_IgnoresChildUntilSpecChangeObserved verifies that a
 // just-changed child is not ready until its observed generation catches up.
 func TestStepComputeStatus_IgnoresChildUntilSpecChangeObserved(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	newTG := func() *multigresv1alpha1.TableGroup {
 		return &multigresv1alpha1.TableGroup{
@@ -417,16 +358,12 @@ func TestStepComputeStatus_IgnoresChildUntilSpecChangeObserved(t *testing.T) {
 	if _, err := stepComputeStatus(t.Context(), changed); err != nil {
 		t.Fatalf("stepComputeStatus returned error: %v", err)
 	}
-	if got := changed.tg.Status.Phase; got != multigresv1alpha1.PhaseProgressing {
-		t.Errorf(
-			"Phase mismatch after spec change: got %q, want %q",
-			got,
-			multigresv1alpha1.PhaseProgressing,
-		)
-	}
-	if got := changed.tg.Status.ReadyShards; got != 0 {
-		t.Errorf("ReadyShards mismatch after spec change: got %d, want 0", got)
-	}
+	c.Eq(
+		multigresv1alpha1.PhaseProgressing,
+		changed.tg.Status.Phase,
+		"Phase mismatch after spec change: got",
+	)
+	c.Eq(0, changed.tg.Status.ReadyShards, "ReadyShards mismatch after spec change: got")
 
 	// Once applied and observed generations match, the child counts as ready.
 	caughtUp := &reconcileContext{
@@ -435,17 +372,12 @@ func TestStepComputeStatus_IgnoresChildUntilSpecChangeObserved(t *testing.T) {
 		activeShardNames:  map[string]bool{"desired": true},
 		appliedGeneration: map[string]int64{"desired": 1},
 	}
-	if _, err := stepComputeStatus(t.Context(), caughtUp); err != nil {
-		t.Fatalf("stepComputeStatus returned error: %v", err)
-	}
-	if got := caughtUp.tg.Status.Phase; got != multigresv1alpha1.PhaseHealthy {
-		t.Errorf(
-			"Phase mismatch once observed: got %q, want %q",
-			got,
-			multigresv1alpha1.PhaseHealthy,
-		)
-	}
-	if got := caughtUp.tg.Status.ReadyShards; got != 1 {
-		t.Errorf("ReadyShards mismatch once observed: got %d, want 1", got)
-	}
+	_, err := stepComputeStatus(t.Context(), caughtUp)
+	c.Require().NoError(err, "stepComputeStatus returned error")
+	c.Eq(
+		multigresv1alpha1.PhaseHealthy,
+		caughtUp.tg.Status.Phase,
+		"Phase mismatch once observed: got",
+	)
+	c.Eq(1, caughtUp.tg.Status.ReadyShards, "ReadyShards mismatch once observed: got")
 }

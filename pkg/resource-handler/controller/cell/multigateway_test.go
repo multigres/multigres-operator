@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,6 +17,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildMultigatewayDeployment(t *testing.T) {
@@ -1475,9 +1476,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 				return
 			}
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildMultigatewayDeployment() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildMultigatewayDeployment() mismatch")
 		})
 	}
 }
@@ -1503,9 +1502,8 @@ func TestBuildCellNodeSelector(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			cell := &multigresv1alpha1.Cell{Spec: tc.spec}
-			if diff := cmp.Diff(tc.want, buildCellNodeSelector(cell)); diff != "" {
-				t.Errorf("buildCellNodeSelector() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).
+				EqDiff(tc.want, buildCellNodeSelector(cell), "buildCellNodeSelector() mismatch")
 		})
 	}
 }
@@ -1531,6 +1529,7 @@ func TestBuildMultigatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			cell := &multigresv1alpha1.Cell{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "test-cell",
@@ -1557,9 +1556,7 @@ func TestBuildMultigatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 			}
 
 			deploy, err := BuildMultigatewayDeployment(cell, scheme)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			c.NoError(err, "unexpected error")
 
 			if got := deploy.Spec.Template.Annotations[metadata.AnnotationProjectRef]; got != tc.want {
 				t.Fatalf("annotation %q = %q, want %q", metadata.AnnotationProjectRef, got, tc.want)
@@ -1571,15 +1568,15 @@ func TestBuildMultigatewayDeployment_ProjectRefAnnotation(t *testing.T) {
 				metadata.LabelAppManagedBy: metadata.ManagedByMultigres,
 			}
 			for key, want := range assertedLabels {
-				if got := deploy.Spec.Template.Labels[key]; got != want {
-					t.Fatalf("label %q = %q, want %q", key, got, want)
-				}
+				got := deploy.Spec.Template.Labels[key]
+				c.Eq(want, got, "label %q = %q, want", key, got)
 			}
 		})
 	}
 }
 
 func TestBuildMultigatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T) {
+	c := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -1618,9 +1615,7 @@ func TestBuildMultigatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing
 	}
 
 	deploy, err := BuildMultigatewayDeployment(cell, scheme)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.NoError(err, "unexpected error")
 
 	if _, ok := deploy.Spec.Template.Annotations[metadata.AnnotationPrometheusScrape]; ok {
 		t.Fatalf("annotation %q should be omitted", metadata.AnnotationPrometheusScrape)
@@ -1631,9 +1626,7 @@ func TestBuildMultigatewayDeployment_OmitsPrometheusScrapeAnnotations(t *testing
 	if _, ok := deploy.Spec.Template.Annotations[metadata.AnnotationPrometheusPath]; ok {
 		t.Fatalf("annotation %q should be omitted", metadata.AnnotationPrometheusPath)
 	}
-	if got := deploy.Spec.Template.Annotations["custom-annotation"]; got != "keep-me" {
-		t.Fatalf("custom annotation = %q, want %q", got, "keep-me")
-	}
+	c.Eq("keep-me", deploy.Spec.Template.Annotations["custom-annotation"], "custom annotation")
 }
 
 func TestBuildMultigatewayService(t *testing.T) {
@@ -1959,14 +1952,13 @@ func TestBuildMultigatewayService(t *testing.T) {
 				return
 			}
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildMultigatewayService() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildMultigatewayService() mismatch")
 		})
 	}
 }
 
 func TestBuildMultigatewayDeployment_Observability(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -1991,12 +1983,8 @@ func TestBuildMultigatewayDeployment_Observability(t *testing.T) {
 		},
 	}
 	deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
-	if err != nil {
-		t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
-	}
-	if len(deploy.Spec.Template.Spec.Volumes) == 0 {
-		t.Errorf("expected volumes to contain otel config")
-	}
+	c.Require().NoError(err, "BuildMultigatewayDeployment failed")
+	c.NotEmpty(deploy.Spec.Template.Spec.Volumes, "expected volumes to contain otel config")
 	env := deploy.Spec.Template.Spec.Containers[0].Env
 	assertMultigatewayEnvVar(
 		t,
@@ -2014,9 +2002,8 @@ func assertMultigatewayEnvVar(t *testing.T, envVars []corev1.EnvVar, name, want 
 	t.Helper()
 	for _, envVar := range envVars {
 		if envVar.Name == name {
-			if envVar.Value != want {
-				t.Fatalf("env var %q = %q, want %q", name, envVar.Value, want)
-			}
+			assert.NewAborting(t).
+				Eq(want, envVar.Value, "env var %q = %q, want", name, envVar.Value)
 			return
 		}
 	}
@@ -2027,9 +2014,7 @@ func assertMultigatewayResourceAttribute(t *testing.T, envVars []corev1.EnvVar, 
 	t.Helper()
 	for _, envVar := range envVars {
 		if envVar.Name == "OTEL_RESOURCE_ATTRIBUTES" {
-			if !strings.Contains(envVar.Value, want) {
-				t.Fatalf("OTEL_RESOURCE_ATTRIBUTES = %q, want it to contain %q", envVar.Value, want)
-			}
+			assert.NewAborting(t).StrContains(envVar.Value, want, "OTEL_RESOURCE_ATTRIBUTES")
 			return
 		}
 	}
@@ -2041,6 +2026,7 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
 	t.Run("internalTLS and certCommonName independently enable both TLS modes", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cellObj := &multigresv1alpha1.Cell{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-tls",
@@ -2063,9 +2049,7 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			},
 		}
 		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
-		if err != nil {
-			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
-		}
+		c.Require().NoError(err, "BuildMultigatewayDeployment failed")
 
 		// Verify TLS volume exists
 		var foundVol bool
@@ -2076,12 +2060,11 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 				if v.Secret == nil {
 					t.Error("TLS volume should use a Secret source")
 				} else {
-					if v.Secret.SecretName != multigresv1alpha1.CertSecretName {
-						t.Errorf(
-							"TLS volume secretName = %q, want %q",
-							v.Secret.SecretName, multigresv1alpha1.CertSecretName,
-						)
-					}
+					c.Eq(
+						multigresv1alpha1.CertSecretName,
+						v.Secret.SecretName,
+						"TLS volume secretName",
+					)
 					if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
 						t.Errorf(
 							"TLS volume defaultMode = %v, want 0444",
@@ -2096,19 +2079,12 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 					t.Error("internal TLS volume should use a Secret source")
 				} else {
 					wantSecretName := "multigateway.test-cluster.default.multigres.internal"
-					if v.Secret.SecretName != wantSecretName {
-						t.Errorf(
-							"internal TLS volume secretName = %q, want %q",
-							v.Secret.SecretName, wantSecretName,
-						)
-					}
-					if strings.Contains(v.Secret.SecretName, cellObj.Spec.CertCommonName) {
-						t.Errorf(
-							"internal TLS volume secretName %q must not contain public CertCommonName %q",
-							v.Secret.SecretName,
-							cellObj.Spec.CertCommonName,
-						)
-					}
+					c.Eq(wantSecretName, v.Secret.SecretName, "internal TLS volume secretName")
+					c.NotStrContains(
+						v.Secret.SecretName,
+						cellObj.Spec.CertCommonName,
+						"internal TLS volume secretName",
+					)
 					if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
 						t.Errorf(
 							"internal TLS volume defaultMode = %v, want 0444",
@@ -2118,12 +2094,12 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 				}
 			}
 		}
-		if !foundVol {
-			t.Errorf("expected TLS volume %q in pod spec", tlsVolumeName)
-		}
-		if !foundInternalVol {
-			t.Errorf("expected internal TLS volume %q in pod spec", internalTLSVolumeName)
-		}
+		c.True(foundVol, "expected TLS volume %q in pod spec", tlsVolumeName)
+		c.True(
+			foundInternalVol,
+			"expected internal TLS volume %q in pod spec",
+			internalTLSVolumeName,
+		)
 
 		// Verify TLS volumeMount exists
 		container := deploy.Spec.Template.Spec.Containers[0]
@@ -2132,32 +2108,21 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 		for _, m := range container.VolumeMounts {
 			if m.Name == tlsVolumeName {
 				foundMount = true
-				if m.MountPath != tlsMountPath {
-					t.Errorf("TLS mount path = %q, want %q", m.MountPath, tlsMountPath)
-				}
-				if !m.ReadOnly {
-					t.Error("TLS mount should be readOnly")
-				}
+				c.Eq(tlsMountPath, m.MountPath, "TLS mount path")
+				c.True(m.ReadOnly, "TLS mount should be readOnly")
 			}
 			if m.Name == internalTLSVolumeName {
 				foundInternalMount = true
-				if m.MountPath != internalTLSMountPath {
-					t.Errorf(
-						"internal TLS mount path = %q, want %q",
-						m.MountPath, internalTLSMountPath,
-					)
-				}
-				if !m.ReadOnly {
-					t.Error("internal TLS mount should be readOnly")
-				}
+				c.Eq(internalTLSMountPath, m.MountPath, "internal TLS mount path")
+				c.True(m.ReadOnly, "internal TLS mount should be readOnly")
 			}
 		}
-		if !foundMount {
-			t.Errorf("expected TLS volumeMount %q in container", tlsVolumeName)
-		}
-		if !foundInternalMount {
-			t.Errorf("expected internal TLS volumeMount %q in container", internalTLSVolumeName)
-		}
+		c.True(foundMount, "expected TLS volumeMount %q in container", tlsVolumeName)
+		c.True(
+			foundInternalMount,
+			"expected internal TLS volumeMount %q in container",
+			internalTLSVolumeName,
+		)
 
 		// Verify TLS args are appended
 		args := container.Args
@@ -2176,24 +2141,15 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			"--pg-tls-key-file", tlsKeyFile,
 		}
 		// The TLS args should be appended as a group.
-		if len(args) < len(wantArgs) {
-			t.Fatalf("expected at least %d args, got %d", len(wantArgs), len(args))
-		}
+		c.Require().GreaterOrEqual(len(wantArgs), len(args), "expected at least")
 		tailArgs := args[len(args)-len(wantArgs):]
-		if diff := cmp.Diff(wantArgs, tailArgs); diff != "" {
-			t.Errorf("TLS args mismatch (-want +got):\n%s", diff)
-		}
+		c.EqDiff(wantArgs, tailArgs, "TLS args mismatch")
 		serverName := tailArgs[len(wantArgs)-6]
-		if strings.Contains(serverName, cellObj.Spec.CertCommonName) {
-			t.Errorf(
-				"multipooler gRPC server name %q must not contain public CertCommonName %q",
-				serverName,
-				cellObj.Spec.CertCommonName,
-			)
-		}
+		c.NotStrContains(serverName, cellObj.Spec.CertCommonName, "multipooler gRPC server name")
 	})
 
 	t.Run("internalTLS enables internal TLS without certCommonName", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cellObj := &multigresv1alpha1.Cell{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-no-public-tls",
@@ -2215,19 +2171,12 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			},
 		}
 		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
-		if err != nil {
-			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
-		}
+		c.Require().NoError(err, "BuildMultigatewayDeployment failed")
 
 		var foundInternalVol bool
 		for _, v := range deploy.Spec.Template.Spec.Volumes {
-			if v.Name == tlsVolumeName ||
-				(v.Secret != nil && v.Secret.SecretName == multigresv1alpha1.CertSecretName) {
-				t.Errorf(
-					"public generated-certs TLS volume %q should not be present when CertCommonName is empty",
-					v.Name,
-				)
-			}
+			c.False(v.Name == tlsVolumeName ||
+				(v.Secret != nil && v.Secret.SecretName == multigresv1alpha1.CertSecretName), "public generated-certs TLS volume %q should not be present when CertCommonName is empty", v.Name)
 			if v.Name == internalTLSVolumeName {
 				foundInternalVol = true
 				if v.Secret == nil {
@@ -2235,12 +2184,7 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 					continue
 				}
 				wantSecretName := "multigateway.test-cluster.default.multigres.internal"
-				if v.Secret.SecretName != wantSecretName {
-					t.Errorf(
-						"internal TLS volume secretName = %q, want %q",
-						v.Secret.SecretName, wantSecretName,
-					)
-				}
+				c.Eq(wantSecretName, v.Secret.SecretName, "internal TLS volume secretName")
 				if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
 					t.Errorf(
 						"internal TLS volume defaultMode = %v, want 0444",
@@ -2249,43 +2193,34 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 				}
 			}
 		}
-		if !foundInternalVol {
-			t.Errorf("expected internal TLS volume %q in pod spec", internalTLSVolumeName)
-		}
+		c.True(
+			foundInternalVol,
+			"expected internal TLS volume %q in pod spec",
+			internalTLSVolumeName,
+		)
 
 		container := deploy.Spec.Template.Spec.Containers[0]
 		var foundInternalMount bool
 		for _, m := range container.VolumeMounts {
-			if m.Name == tlsVolumeName {
-				t.Errorf(
-					"public TLS volumeMount %q should not be present when CertCommonName is empty",
-					tlsVolumeName,
-				)
-			}
+			c.NotEq(tlsVolumeName, m.Name, "public TLS volumeMount")
 			if m.Name == internalTLSVolumeName {
 				foundInternalMount = true
-				if m.MountPath != internalTLSMountPath {
-					t.Errorf(
-						"internal TLS mount path = %q, want %q",
-						m.MountPath, internalTLSMountPath,
-					)
-				}
-				if !m.ReadOnly {
-					t.Error("internal TLS mount should be readOnly")
-				}
+				c.Eq(internalTLSMountPath, m.MountPath, "internal TLS mount path")
+				c.True(m.ReadOnly, "internal TLS mount should be readOnly")
 			}
 		}
-		if !foundInternalMount {
-			t.Errorf("expected internal TLS volumeMount %q in container", internalTLSVolumeName)
-		}
+		c.True(
+			foundInternalMount,
+			"expected internal TLS volumeMount %q in container",
+			internalTLSVolumeName,
+		)
 
 		for _, arg := range container.Args {
-			if arg == "--pg-tls-cert-file" || arg == "--pg-tls-key-file" {
-				t.Errorf(
-					"public PostgreSQL TLS arg %q should not be present when CertCommonName is empty",
-					arg,
-				)
-			}
+			c.False(
+				arg == "--pg-tls-cert-file" || arg == "--pg-tls-key-file",
+				"public PostgreSQL TLS arg %q should not be present when CertCommonName is empty",
+				arg,
+			)
 		}
 
 		wantInternalArgs := []string{
@@ -2300,20 +2235,13 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			"multipooler.test-cluster.default.multigres.internal",
 			"--multipooler-grpc-require-tls",
 		}
-		if len(container.Args) < len(wantInternalArgs) {
-			t.Fatalf(
-				"expected at least %d args, got %d",
-				len(wantInternalArgs),
-				len(container.Args),
-			)
-		}
+		c.Require().GreaterOrEqual(len(wantInternalArgs), len(container.Args), "expected at least")
 		tailArgs := container.Args[len(container.Args)-len(wantInternalArgs):]
-		if diff := cmp.Diff(wantInternalArgs, tailArgs); diff != "" {
-			t.Errorf("internal TLS args mismatch (-want +got):\n%s", diff)
-		}
+		c.EqDiff(wantInternalArgs, tailArgs, "internal TLS args mismatch")
 	})
 
 	t.Run("certCommonName enables public TLS without internalTLS", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cellObj := &multigresv1alpha1.Cell{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-public-tls-only",
@@ -2333,9 +2261,7 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			},
 		}
 		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
-		if err != nil {
-			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
-		}
+		c.Require().NoError(err, "BuildMultigatewayDeployment failed")
 
 		internalSecretName := "multigateway.test-cluster.default.multigres.internal"
 		var foundPublicVolume bool
@@ -2345,13 +2271,11 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 				if volume.Secret == nil {
 					t.Error("public TLS volume should use a Secret source")
 				} else {
-					if volume.Secret.SecretName != multigresv1alpha1.CertSecretName {
-						t.Errorf(
-							"public TLS volume secretName = %q, want %q",
-							volume.Secret.SecretName,
-							multigresv1alpha1.CertSecretName,
-						)
-					}
+					c.Eq(
+						multigresv1alpha1.CertSecretName,
+						volume.Secret.SecretName,
+						"public TLS volume secretName",
+					)
 					if volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != 0o444 {
 						t.Errorf(
 							"public TLS volume defaultMode = %v, want 0444",
@@ -2360,52 +2284,34 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 					}
 				}
 			}
-			if volume.Name == internalTLSVolumeName ||
-				(volume.Secret != nil && volume.Secret.SecretName == internalSecretName) {
-				t.Errorf(
-					"internal TLS secret volume %q should not be present when InternalTLS is nil",
-					volume.Name,
-				)
-			}
+			c.False(volume.Name == internalTLSVolumeName ||
+				(volume.Secret != nil && volume.Secret.SecretName == internalSecretName), "internal TLS secret volume %q should not be present when InternalTLS is nil", volume.Name)
 		}
-		if !foundPublicVolume {
-			t.Errorf("expected public generated-certs TLS volume %q in pod spec", tlsVolumeName)
-		}
+		c.True(
+			foundPublicVolume,
+			"expected public generated-certs TLS volume %q in pod spec",
+			tlsVolumeName,
+		)
 
 		container := deploy.Spec.Template.Spec.Containers[0]
 		var foundPublicMount bool
 		for _, mount := range container.VolumeMounts {
 			if mount.Name == tlsVolumeName {
 				foundPublicMount = true
-				if mount.MountPath != tlsMountPath {
-					t.Errorf("public TLS mount path = %q, want %q", mount.MountPath, tlsMountPath)
-				}
-				if !mount.ReadOnly {
-					t.Error("public TLS mount should be readOnly")
-				}
+				c.Eq(tlsMountPath, mount.MountPath, "public TLS mount path")
+				c.True(mount.ReadOnly, "public TLS mount should be readOnly")
 			}
-			if mount.Name == internalTLSVolumeName {
-				t.Errorf(
-					"internal TLS volumeMount %q should not be present when InternalTLS is nil",
-					internalTLSVolumeName,
-				)
-			}
+			c.NotEq(internalTLSVolumeName, mount.Name, "internal TLS volumeMount")
 		}
-		if !foundPublicMount {
-			t.Errorf("expected public TLS volumeMount %q in container", tlsVolumeName)
-		}
+		c.True(foundPublicMount, "expected public TLS volumeMount %q in container", tlsVolumeName)
 
 		wantPublicArgs := []string{
 			"--pg-tls-cert-file", tlsCertFile,
 			"--pg-tls-key-file", tlsKeyFile,
 		}
-		if len(container.Args) < len(wantPublicArgs) {
-			t.Fatalf("expected at least %d args, got %d", len(wantPublicArgs), len(container.Args))
-		}
+		c.Require().GreaterOrEqual(len(wantPublicArgs), len(container.Args), "expected at least")
 		tailArgs := container.Args[len(container.Args)-len(wantPublicArgs):]
-		if diff := cmp.Diff(wantPublicArgs, tailArgs); diff != "" {
-			t.Errorf("public PostgreSQL TLS args mismatch (-want +got):\n%s", diff)
-		}
+		c.EqDiff(wantPublicArgs, tailArgs, "public PostgreSQL TLS args mismatch")
 
 		internalTLSArgNames := map[string]struct{}{
 			"--grpc-cert":                    {},
@@ -2419,9 +2325,8 @@ func TestBuildMultigatewayDeployment_TLS(t *testing.T) {
 			"--multipooler-grpc-require-tls": {},
 		}
 		for _, arg := range container.Args {
-			if _, found := internalTLSArgNames[arg]; found {
-				t.Errorf("internal TLS arg %q should not be present when InternalTLS is nil", arg)
-			}
+			_, found := internalTLSArgNames[arg]
+			c.False(found, "internal TLS arg %q should not be present when InternalTLS is nil", arg)
 		}
 	})
 }
@@ -2449,29 +2354,29 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 	gatewayArgs := func(t *testing.T, cellObj *multigresv1alpha1.Cell) []string {
 		t.Helper()
 		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
-		if err != nil {
-			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "BuildMultigatewayDeployment failed")
 		return deploy.Spec.Template.Spec.Containers[0].Args
 	}
 
 	t.Run("default resolved cell emits --buffer-enabled only", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		// A Cell resolved from a default MultigresCluster carries
 		// buffer.enabled: true and nothing else.
 		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
 			Enabled: ptr.To(true),
 		}))
-		if !slices.Contains(args, "--buffer-enabled=true") {
-			t.Errorf("expected --buffer-enabled=true in args, got %v", args)
-		}
+		c.Contains(args, "--buffer-enabled=true", "expected --buffer-enabled=true in args, got")
 		for _, arg := range args {
-			if strings.HasPrefix(arg, "--buffer-") && arg != "--buffer-enabled=true" {
-				t.Errorf("unexpected buffer flag %q for default config", arg)
-			}
+			c.False(
+				strings.HasPrefix(arg, "--buffer-") && arg != "--buffer-enabled=true",
+				"unexpected buffer flag %q for default config",
+				arg,
+			)
 		}
 	})
 
 	t.Run("explicit values land verbatim", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		args := gatewayArgs(t, buildCell(&multigresv1alpha1.GatewayBufferConfig{
 			Enabled:                 ptr.To(true),
 			Window:                  &metav1.Duration{Duration: 20 * time.Second},
@@ -2489,20 +2394,16 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 			"--buffer-drain-concurrency", "4",
 		}
 		idx := slices.Index(args, "--buffer-enabled=true")
-		if idx < 0 || len(args) < idx+len(want) {
-			t.Fatalf("buffer args missing or truncated, got %v", args)
-		}
-		if diff := cmp.Diff(want, args[idx:idx+len(want)]); diff != "" {
-			t.Errorf("buffer args mismatch (-want +got):\n%s", diff)
-		}
+		c.Require().
+			False(idx < 0 || len(args) < idx+len(want), "buffer args missing or truncated, got %v", args)
+		c.EqDiff(want, args[idx:idx+len(want)], "buffer args mismatch")
 	})
 
 	t.Run("nil buffer emits no buffer flags", func(t *testing.T) {
 		// Legacy Cell CRs written before this field existed.
 		for _, arg := range gatewayArgs(t, buildCell(nil)) {
-			if strings.HasPrefix(arg, "--buffer-") {
-				t.Errorf("unexpected buffer flag %q for nil buffer config", arg)
-			}
+			assert.NewCollecting(t).
+				False(strings.HasPrefix(arg, "--buffer-"), "unexpected buffer flag %q for nil buffer config", arg)
 		}
 	})
 
@@ -2511,9 +2412,8 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 			Enabled: ptr.To(false),
 			Window:  &metav1.Duration{Duration: 20 * time.Second},
 		}))
-		if !slices.Contains(args, "--buffer-enabled=false") {
-			t.Errorf("expected --buffer-enabled=false when disabled, got %v", args)
-		}
+		assert.NewCollecting(t).
+			Contains(args, "--buffer-enabled=false", "expected --buffer-enabled=false when disabled, got")
 	})
 }
 
@@ -2545,43 +2445,41 @@ func TestBuildMultigatewayDeployment_TopoClientTLS(t *testing.T) {
 	}
 
 	t.Run("presents the client certificate when the reference carries it", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		cell := baseCell()
 		secret := multigresv1alpha1.TopoClientCertSecretName("test-cluster")
 		cell.Spec.GlobalTopoServer.CASecret = secret
 		cell.Spec.GlobalTopoServer.ClientCertSecret = secret
 
 		got, err := BuildMultigatewayDeployment(cell, scheme)
-		if err != nil {
-			t.Fatalf("BuildMultigatewayDeployment() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildMultigatewayDeployment() error =")
 		c := got.Spec.Template.Spec.Containers[0]
-		if !slices.Contains(c.Args, "--topo-etcd-tls-cert") {
-			t.Errorf("missing topo client TLS flags: %v", c.Args)
-		}
+		ck.Contains(c.Args, "--topo-etcd-tls-cert", "missing topo client TLS flags")
 		var mounted bool
 		for _, m := range c.VolumeMounts {
 			if m.Name == multigresv1alpha1.TopoClientTLSVolumeName {
 				mounted = true
 			}
 		}
-		if !mounted {
-			t.Error("multigateway does not mount the topo client certificate")
-		}
+		ck.True(mounted, "multigateway does not mount the topo client certificate")
 	})
 
 	t.Run("renders unchanged when the reference carries no credential", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		got, err := BuildMultigatewayDeployment(baseCell(), scheme)
-		if err != nil {
-			t.Fatalf("BuildMultigatewayDeployment() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildMultigatewayDeployment() error =")
 		c := got.Spec.Template.Spec.Containers[0]
-		if slices.Contains(c.Args, "--topo-etcd-tls-cert") {
-			t.Error("topo TLS flag present with no credential on the reference")
-		}
+		ck.NotContains(
+			c.Args,
+			"--topo-etcd-tls-cert",
+			"topo TLS flag present with no credential on the reference",
+		)
 		for _, v := range got.Spec.Template.Spec.Volumes {
-			if v.Name == multigresv1alpha1.TopoClientTLSVolumeName {
-				t.Error("topo client volume present with no credential on the reference")
-			}
+			ck.NotEq(
+				multigresv1alpha1.TopoClientTLSVolumeName,
+				v.Name,
+				"topo client volume present with no credential on the reference",
+			)
 		}
 	})
 }

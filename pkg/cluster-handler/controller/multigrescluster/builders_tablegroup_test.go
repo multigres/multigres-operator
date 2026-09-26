@@ -11,6 +11,8 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildTableGroup(t *testing.T) {
@@ -31,6 +33,7 @@ func TestBuildTableGroup(t *testing.T) {
 	globalTopoRef := multigresv1alpha1.GlobalTopoServerRef{}
 
 	t.Run("Success", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tgCfg := &multigresv1alpha1.TableGroupConfig{
 			Name: "tg-1",
 		}
@@ -39,9 +42,7 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 
 		got, err := BuildTableGroup(cluster, dbCfg, tgCfg, resolvedShards, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
+		c.Require().NoError(err, "BuildTableGroup() error =")
 
 		// Calculate expected hash: md5("my-cluster", "my-db", "tg-1") -> "d5708433"
 		expectedName := name.JoinWithConstraints(
@@ -50,55 +51,41 @@ func TestBuildTableGroup(t *testing.T) {
 			"my-db",
 			"tg-1",
 		)
-		if got.Name != expectedName {
-			t.Errorf("Name = %v, want %v", got.Name, expectedName)
-		}
-		if got.Labels["multigres.com/database"] != "my-db" {
-			t.Errorf("Label[database] = %v, want my-db", got.Labels["multigres.com/database"])
-		}
+		c.Eq(expectedName, got.Name, "Name")
+		c.Eq("my-db", got.Labels["multigres.com/database"], "Label[database]")
 
 		// Verify OwnerReference
-		if len(got.OwnerReferences) != 1 {
-			t.Errorf("OwnerReferences count = %v, want 1", len(got.OwnerReferences))
-		}
+		c.Len(
+			got.OwnerReferences,
+			1,
+			"OwnerReferences count = %v, want 1",
+			len(got.OwnerReferences),
+		)
 	})
 
 	t.Run("CustomPostgresSuperuser", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := *cluster
 		c.Spec.PostgresSuperuser = "admin"
 		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-superuser"}
 		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.PostgresSuperuser != "admin" {
-			t.Errorf(
-				"PostgresSuperuser = %q, want %q",
-				got.Spec.PostgresSuperuser,
-				"admin",
-			)
-		}
+		ck.Require().NoError(err, "BuildTableGroup() error =")
+		ck.Eq("admin", got.Spec.PostgresSuperuser, "PostgresSuperuser")
 	})
 
 	t.Run("Propagates InternalTLS", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		c := cluster.DeepCopy()
 		c.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)}
 		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-internal-tls"}
 
 		got, err := BuildTableGroup(c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.InternalTLS != c.Spec.InternalTLS {
-			t.Fatalf(
-				"InternalTLS = %#v, want propagated pointer %#v",
-				got.Spec.InternalTLS,
-				c.Spec.InternalTLS,
-			)
-		}
+		ck.NoError(err, "BuildTableGroup() error =")
+		ck.Eq(c.Spec.InternalTLS, got.Spec.InternalTLS, "InternalTLS")
 	})
 
 	t.Run("PostgresPasswordSecretRef", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := *cluster
 		c.Spec.PostgresPasswordSecretRef = multigresv1alpha1.PostgresPasswordSecretRef{
 			Name: "multigres-admin-password",
@@ -106,26 +93,17 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-password"}
 		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.PostgresPasswordSecretRef.Name != "multigres-admin-password" {
-			t.Errorf(
-				"PostgresPasswordSecretRef.Name = %q, want %q",
-				got.Spec.PostgresPasswordSecretRef.Name,
-				"multigres-admin-password",
-			)
-		}
-		if got.Spec.PostgresPasswordSecretRef.Key != "current" {
-			t.Errorf(
-				"PostgresPasswordSecretRef.Key = %q, want %q",
-				got.Spec.PostgresPasswordSecretRef.Key,
-				"current",
-			)
-		}
+		ck.Require().NoError(err, "BuildTableGroup() error =")
+		ck.Eq(
+			"multigres-admin-password",
+			got.Spec.PostgresPasswordSecretRef.Name,
+			"PostgresPasswordSecretRef.Name",
+		)
+		ck.Eq("current", got.Spec.PostgresPasswordSecretRef.Key, "PostgresPasswordSecretRef.Key")
 	})
 
 	t.Run("PostgresInitSecretsRef propagated when set", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := *cluster
 		c.Spec.PostgresInitSecretsRef = &multigresv1alpha1.PostgresInitSecretsRef{
 			Name: "multigres-init-secrets",
@@ -133,42 +111,33 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-init-secrets"}
 		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.PostgresInitSecretsRef == nil {
-			t.Fatal("PostgresInitSecretsRef = nil, want propagated ref")
-		}
-		if got.Spec.PostgresInitSecretsRef.Name != "multigres-init-secrets" {
-			t.Errorf(
-				"PostgresInitSecretsRef.Name = %q, want %q",
-				got.Spec.PostgresInitSecretsRef.Name,
-				"multigres-init-secrets",
-			)
-		}
-		if got.Spec.PostgresInitSecretsRef.Key != "init-secrets.json" {
-			t.Errorf(
-				"PostgresInitSecretsRef.Key = %q, want %q",
-				got.Spec.PostgresInitSecretsRef.Key,
-				"init-secrets.json",
-			)
-		}
+		ck.Require().NoError(err, "BuildTableGroup() error =")
+		ck.Require().
+			NotNil(got.Spec.PostgresInitSecretsRef, "PostgresInitSecretsRef = nil, want propagated ref")
+		ck.Eq(
+			"multigres-init-secrets",
+			got.Spec.PostgresInitSecretsRef.Name,
+			"PostgresInitSecretsRef.Name",
+		)
+		ck.Eq(
+			"init-secrets.json",
+			got.Spec.PostgresInitSecretsRef.Key,
+			"PostgresInitSecretsRef.Key",
+		)
 	})
 
 	t.Run("PostgresInitSecretsRef nil when unset", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := *cluster
 		c.Spec.PostgresInitSecretsRef = nil
 		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-no-init-secrets"}
 		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.PostgresInitSecretsRef != nil {
-			t.Errorf("PostgresInitSecretsRef = %+v, want nil", got.Spec.PostgresInitSecretsRef)
-		}
+		ck.Require().NoError(err, "BuildTableGroup() error =")
+		ck.Nil(got.Spec.PostgresInitSecretsRef, "PostgresInitSecretsRef")
 	})
 
 	t.Run("Name Truncation", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		longName := strings.Repeat("a", 250) // Very long name
 		tgCfg := &multigresv1alpha1.TableGroupConfig{
 			Name: multigresv1alpha1.TableGroupName(longName),
@@ -176,21 +145,16 @@ func TestBuildTableGroup(t *testing.T) {
 		resolvedShards := []multigresv1alpha1.ShardResolvedSpec{}
 
 		got, err := BuildTableGroup(cluster, dbCfg, tgCfg, resolvedShards, globalTopoRef, scheme)
-		if err != nil {
-			t.Errorf("BuildTableGroup() error = %v, want nil", err)
-		}
+		c.NoError(err, "BuildTableGroup() error")
 		// Should be truncated to 253 chars
-		if len(got.Name) > 253 {
-			t.Errorf("Expected name length <= 253, got %d", len(got.Name))
-		}
+		c.LessOrEqual(253, len(got.Name), "Expected name length <= 253, got")
 		// Confirm it ends with a hash (8 chars)
 		// and has the truncation mark "---"
-		if !strings.Contains(got.Name, "---") {
-			t.Errorf("Expected truncation mark '---', got %s", got.Name)
-		}
+		c.StrContains(got.Name, "---", "Expected truncation mark '---', got")
 	})
 
 	t.Run("CellTopologyLabels ZoneID", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "my-cluster",
@@ -209,18 +173,17 @@ func TestBuildTableGroup(t *testing.T) {
 			globalTopoRef,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
-		if got.Spec.CellTopologyLabels["az-cell"]["topology.k8s.aws/zone-id"] != "use1-az1" {
-			t.Errorf(
-				"expected topology.k8s.aws/zone-id=use1-az1, got %v",
-				got.Spec.CellTopologyLabels["az-cell"],
-			)
-		}
+		ck.Require().NoError(err, "BuildTableGroup() error =")
+		ck.Eq(
+			"use1-az1",
+			got.Spec.CellTopologyLabels["az-cell"]["topology.k8s.aws/zone-id"],
+			"expected topology.k8s.aws/zone-id=use1-az1, got %v",
+			got.Spec.CellTopologyLabels["az-cell"],
+		)
 	})
 
 	t.Run("CellTopologyLabels ZoneID only", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "my-cluster",
@@ -241,16 +204,18 @@ func TestBuildTableGroup(t *testing.T) {
 			globalTopoRef,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildTableGroup() error =")
 		labels := got.Spec.CellTopologyLabels["both-cell"]
-		if labels["topology.k8s.aws/zone-id"] != "use1-az1" {
-			t.Errorf("expected topology.k8s.aws/zone-id=use1-az1, got %v", labels)
-		}
+		ck.Eq(
+			"use1-az1",
+			labels["topology.k8s.aws/zone-id"],
+			"expected topology.k8s.aws/zone-id=use1-az1, got %v",
+			labels,
+		)
 	})
 
 	t.Run("CellTopologyLabels Region", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		regionCluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "my-cluster",
@@ -274,19 +239,14 @@ func TestBuildTableGroup(t *testing.T) {
 			globalTopoRef,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
+		c.Require().NoError(err, "BuildTableGroup() error =")
 		labels, ok := got.Spec.CellTopologyLabels["region-cell"]
-		if !ok {
-			t.Fatal("Expected CellTopologyLabels to contain region-cell")
-		}
-		if labels["topology.kubernetes.io/region"] != "us-east-1" {
-			t.Errorf(
-				"Expected region label us-east-1, got %s",
-				labels["topology.kubernetes.io/region"],
-			)
-		}
+		c.Require().True(ok, "Expected CellTopologyLabels to contain region-cell")
+		c.Eq(
+			"us-east-1",
+			labels["topology.kubernetes.io/region"],
+			"Expected region label us-east-1, got",
+		)
 	})
 
 	t.Run("ControllerRefError", func(t *testing.T) {
@@ -302,12 +262,11 @@ func TestBuildTableGroup(t *testing.T) {
 			globalTopoRef,
 			emptyScheme,
 		)
-		if err == nil {
-			t.Error("Expected error due to missing scheme types, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to missing scheme types, got nil")
 	})
 
 	t.Run("Propagates explicit project ref annotation", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		clusterWithProjectRef := cluster.DeepCopy()
 		clusterWithProjectRef.Annotations = map[string]string{
 			metadata.AnnotationProjectRef: "proj_123",
@@ -323,17 +282,14 @@ func TestBuildTableGroup(t *testing.T) {
 			globalTopoRef,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildTableGroup() error = %v", err)
-		}
+		c.NoError(err, "BuildTableGroup() error =")
 
-		if got.Annotations[metadata.AnnotationProjectRef] != "proj_123" {
-			t.Fatalf(
-				"annotation %q = %q, want %q",
-				metadata.AnnotationProjectRef,
-				got.Annotations[metadata.AnnotationProjectRef],
-				"proj_123",
-			)
-		}
+		c.Eq(
+			"proj_123",
+			got.Annotations[metadata.AnnotationProjectRef],
+			"annotation %q = %q, want",
+			metadata.AnnotationProjectRef,
+			got.Annotations[metadata.AnnotationProjectRef],
+		)
 	})
 }

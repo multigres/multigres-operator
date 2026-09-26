@@ -8,6 +8,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestPgBackRestPoolDNSNames(t *testing.T) {
@@ -27,9 +29,7 @@ func TestPgBackRestPoolDNSNames(t *testing.T) {
 
 	t.Run("no pools yields no DNS names", func(t *testing.T) {
 		shard := baseShard()
-		if got := pgBackRestPoolDNSNames(shard); len(got) != 0 {
-			t.Errorf("expected no DNS names, got %v", got)
-		}
+		assert.NewCollecting(t).Empty(pgBackRestPoolDNSNames(shard), "expected no DNS names, got")
 	})
 
 	t.Run("single pool, single cell yields a scoped wildcard for that svc", func(t *testing.T) {
@@ -79,9 +79,8 @@ func TestPgBackRestPoolDNSNames(t *testing.T) {
 			"empty": {},
 		}
 
-		if got := pgBackRestPoolDNSNames(shard); len(got) != 0 {
-			t.Errorf("expected no DNS names for a pool with no cells, got %v", got)
-		}
+		assert.NewCollecting(t).
+			Empty(pgBackRestPoolDNSNames(shard), "expected no DNS names for a pool with no cells, got")
 	})
 }
 
@@ -89,17 +88,14 @@ func TestPgBackRestPoolDNSNames(t *testing.T) {
 // elements, ignoring order.
 func assertSameStringSet(t *testing.T, got, want []string) {
 	t.Helper()
+	c := assert.NewAborting(t)
 	gotSorted := append([]string(nil), got...)
 	wantSorted := append([]string(nil), want...)
 	sort.Strings(gotSorted)
 	sort.Strings(wantSorted)
 
-	if len(gotSorted) != len(wantSorted) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
+	c.Len(gotSorted, len(wantSorted), "got %v, want %v", got, want)
 	for i := range gotSorted {
-		if gotSorted[i] != wantSorted[i] {
-			t.Fatalf("got %v, want %v", got, want)
-		}
+		c.Eq(wantSorted[i], gotSorted[i], "got %v, want %v", got, want)
 	}
 }

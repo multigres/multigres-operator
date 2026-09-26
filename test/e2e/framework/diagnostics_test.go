@@ -5,6 +5,8 @@ package framework
 import (
 	"bytes"
 	"testing"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestSafeDiagnosticName(t *testing.T) {
@@ -22,15 +24,16 @@ func TestSafeDiagnosticName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := safeDiagnosticName(tt.input); got != tt.want {
-				t.Fatalf("safeDiagnosticName(%q) = %q, want %q", tt.input, got, tt.want)
-			}
+			got := safeDiagnosticName(tt.input)
+			assert.NewAborting(t).
+				Eq(tt.want, got, "safeDiagnosticName(%q) = %q, want", tt.input, got)
 		})
 	}
 }
 
 func TestResourceStatusOutputExcludesSpecAndAnnotations(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 	input := []byte(`{
 		"items": [{
 			"apiVersion": "multigres.com/v1alpha1",
@@ -46,20 +49,20 @@ func TestResourceStatusOutputExcludesSpecAndAnnotations(t *testing.T) {
 		}]
 	}`)
 	output, err := resourceStatusOutput(input)
-	if err != nil {
-		t.Fatalf("resourceStatusOutput: %v", err)
-	}
+	c.Require().NoError(err, "resourceStatusOutput")
 	for _, excluded := range [][]byte{
 		[]byte(`"spec"`),
 		[]byte(`"annotations"`),
 		[]byte("do-not-copy"),
 		[]byte("private"),
 	} {
-		if bytes.Contains(output, excluded) {
-			t.Errorf("output contains excluded context %q: %s", excluded, output)
-		}
+		c.False(
+			bytes.Contains(output, excluded),
+			"output contains excluded context %q: %s",
+			excluded,
+			output,
+		)
 	}
-	if !bytes.Contains(output, []byte(`"pooler-0": "PRIMARY"`)) {
-		t.Fatalf("output does not contain pod role status: %s", output)
-	}
+	c.Require().
+		True(bytes.Contains(output, []byte(`"pooler-0": "PRIMARY"`)), "output does not contain pod role status: %s", output)
 }

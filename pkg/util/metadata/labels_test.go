@@ -3,9 +3,9 @@ package metadata_test
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildStandardLabels(t *testing.T) {
@@ -41,9 +41,7 @@ func TestBuildStandardLabels(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := metadata.BuildStandardLabels(tc.clusterName, tc.componentName)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildStandardLabels() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildStandardLabels() mismatch")
 		})
 	}
 }
@@ -108,9 +106,7 @@ func TestMergeLabels(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := metadata.MergeLabels(tc.standardLabels, tc.customLabels)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("MergeLabels() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "MergeLabels() mismatch")
 		})
 	}
 }
@@ -119,41 +115,34 @@ func TestAddMultigresLabels(t *testing.T) {
 	t.Run("AddCellLabel", func(t *testing.T) {
 		labels := map[string]string{"app.kubernetes.io/name": "multigres"}
 		metadata.AddCellLabel(labels, "zone1")
-		if labels["multigres.com/cell"] != "zone1" {
-			t.Errorf("AddCellLabel failed")
-		}
+		assert.NewCollecting(t).Eq("zone1", labels["multigres.com/cell"], "AddCellLabel failed")
 	})
 
 	t.Run("AddClusterLabel", func(t *testing.T) {
 		labels := map[string]string{"app.kubernetes.io/name": "multigres"}
 		metadata.AddClusterLabel(labels, "prod-cluster")
-		if labels["multigres.com/cluster"] != "prod-cluster" {
-			t.Errorf("AddClusterLabel failed")
-		}
+		assert.NewCollecting(t).
+			Eq("prod-cluster", labels["multigres.com/cluster"], "AddClusterLabel failed")
 	})
 
 	t.Run("AddShardLabel", func(t *testing.T) {
 		labels := map[string]string{"app.kubernetes.io/name": "multigres"}
 		metadata.AddShardLabel(labels, "shard-0")
-		if labels["multigres.com/shard"] != "shard-0" {
-			t.Errorf("AddShardLabel failed")
-		}
+		assert.NewCollecting(t).Eq("shard-0", labels["multigres.com/shard"], "AddShardLabel failed")
 	})
 
 	t.Run("AddDatabaseLabel", func(t *testing.T) {
 		labels := map[string]string{"app.kubernetes.io/name": "multigres"}
 		metadata.AddDatabaseLabel(labels, "proddb")
-		if labels["multigres.com/database"] != "proddb" {
-			t.Errorf("AddDatabaseLabel failed")
-		}
+		assert.NewCollecting(t).
+			Eq("proddb", labels["multigres.com/database"], "AddDatabaseLabel failed")
 	})
 
 	t.Run("AddTableGroupLabel", func(t *testing.T) {
 		labels := map[string]string{"app.kubernetes.io/name": "multigres"}
 		metadata.AddTableGroupLabel(labels, "orders")
-		if labels["multigres.com/tablegroup"] != "orders" {
-			t.Errorf("AddTableGroupLabel failed")
-		}
+		assert.NewCollecting(t).
+			Eq("orders", labels["multigres.com/tablegroup"], "AddTableGroupLabel failed")
 	})
 }
 
@@ -300,9 +289,7 @@ func TestLabelOperations_ComplexScenarios(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := tc.setupFunc()
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("Label operations mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "Label operations mismatch")
 		})
 	}
 }
@@ -349,9 +336,7 @@ func TestAddExtraLabels(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.addFunc(tt.initial)
-			if diff := cmp.Diff(tt.expected, tt.initial); diff != "" {
-				t.Errorf("Labels mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tt.expected, tt.initial, "Labels mismatch")
 		})
 	}
 }
@@ -370,7 +355,5 @@ func TestGetSelectorLabels(t *testing.T) {
 	}
 
 	got := metadata.GetSelectorLabels(labels)
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("GetSelectorLabels() mismatch (-want +got):\n%s", diff)
-	}
+	assert.NewCollecting(t).EqDiff(want, got, "GetSelectorLabels() mismatch")
 }

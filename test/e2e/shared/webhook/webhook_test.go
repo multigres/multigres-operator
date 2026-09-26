@@ -8,6 +8,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestWebhookRejections verifies that the admission rules correctly reject
@@ -24,11 +26,10 @@ func TestWebhookRejections(t *testing.T) {
 
 func testRemoveCell(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	// Create cluster with 2 cells so we can try removing one.
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
@@ -36,9 +37,7 @@ func testRemoveCell(t *testing.T) {
 		Name:   "zone-b",
 		Region: "us-central1",
 	})
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Get live CR and remove the second cell.
@@ -50,11 +49,10 @@ func testRemoveCell(t *testing.T) {
 
 func testRemovePool(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	// Create cluster with 2 pools.
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
@@ -67,9 +65,7 @@ func testRemovePool(t *testing.T) {
 			Size: "1Gi",
 		},
 	}
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Get live CR and remove the extra pool.

@@ -25,6 +25,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func setupFixtures(
@@ -103,6 +105,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				"Normal Synced Successfully reconciled TableGroup",
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 				// The name is the md5 hash of test-cluster, db1, tg1, shard-0.
 				shardNameFull := name.JoinWithConstraints(
@@ -113,18 +116,15 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					"shard-0",
 				)
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: shardNameFull, Namespace: namespace},
 					shard,
-				); err != nil {
-					t.Fatalf("Shard %s not created: %v", shardNameFull, err)
-				}
-				if got, want := shard.Spec.DatabaseName, multigresv1alpha1.DatabaseName(
+				), "Shard %s not created", shardNameFull)
+				got, want := shard.Spec.DatabaseName, multigresv1alpha1.DatabaseName(
 					dbName,
-				); got != want {
-					t.Errorf("Shard DB name mismatch got %q, want %q", got, want)
-				}
+				)
+				ck.Eq(want, got, "Shard DB name mismatch got")
 			},
 		},
 
@@ -165,17 +165,15 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				"Normal Synced Successfully reconciled TableGroup",
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if got, want := updatedTG.Status.ReadyShards, int32(1); got != want {
-					t.Errorf("ReadyShards mismatch got %d, want %d", got, want)
-				}
+				), "failed to get tablegroup")
+				got, want := updatedTG.Status.ReadyShards, int32(1)
+				ck.Eq(want, got, "ReadyShards mismatch got")
 			},
 		},
 		"Status: Partial Ready (Not all shards ready)": {
@@ -196,20 +194,19 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if got, want := updatedTG.Status.ReadyShards, int32(0); got != want {
-					t.Errorf("ReadyShards mismatch got %d, want %d", got, want)
-				}
-				if meta.IsStatusConditionTrue(updatedTG.Status.Conditions, "Available") {
-					t.Error("TableGroup should NOT be Available")
-				}
+				), "failed to get tablegroup")
+				got, want := updatedTG.Status.ReadyShards, int32(0)
+				ck.Eq(want, got, "ReadyShards mismatch got")
+				ck.False(
+					meta.IsStatusConditionTrue(updatedTG.Status.Conditions, "Available"),
+					"TableGroup should NOT be Available",
+				)
 			},
 		},
 		"Status: Shard Not Ready (False Condition)": {
@@ -241,17 +238,15 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if got, want := updatedTG.Status.ReadyShards, int32(0); got != want {
-					t.Errorf("ReadyShards mismatch got %d, want %d", got, want)
-				}
+				), "failed to get tablegroup")
+				got, want := updatedTG.Status.ReadyShards, int32(0)
+				ck.Eq(want, got, "ReadyShards mismatch got")
 			},
 		},
 		"Status: Degraded Shard": {
@@ -280,17 +275,15 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if got, want := updatedTG.Status.Phase, multigresv1alpha1.PhaseDegraded; got != want {
-					t.Errorf("Phase mismatch got %q, want %q", got, want)
-				}
+				), "failed to get tablegroup")
+				got, want := updatedTG.Status.Phase, multigresv1alpha1.PhaseDegraded
+				ck.Eq(want, got, "Phase mismatch got")
 			},
 		},
 		"Status: Zero Shards (Vacuously True)": {
@@ -300,17 +293,17 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if !meta.IsStatusConditionTrue(updatedTG.Status.Conditions, "Available") {
-					t.Error("Zero shard TableGroup should be Available")
-				}
+				), "failed to get tablegroup")
+				ck.True(
+					meta.IsStatusConditionTrue(updatedTG.Status.Conditions, "Available"),
+					"Zero shard TableGroup should be Available",
+				)
 			},
 		},
 
@@ -345,6 +338,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				shard := &multigresv1alpha1.Shard{}
 				shardName := name.JoinWithConstraints(
 					name.DefaultConstraints,
@@ -353,16 +347,12 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					tgLabelName,
 					"shard-0",
 				)
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardName, Namespace: namespace},
 					shard,
-				); err != nil {
-					t.Fatal(err)
-				}
-				if *shard.Spec.Multiorch.Replicas != 5 {
-					t.Errorf("Shard replicas not updated")
-				}
+				))
+				ck.Eq(5, *shard.Spec.Multiorch.Replicas, "Shard replicas not updated")
 			},
 		},
 		"Success: Early Return on Deletion": {
@@ -378,15 +368,14 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 			validate: func(t testing.TB, c client.Client) {
 				shardNameFull := fmt.Sprintf("%s-%s", tgName, "shard-0")
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				err := c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardNameFull, Namespace: namespace},
 					shard,
-				); !apierrors.IsNotFound(
+				)
+				assert.NewCollecting(t).True(apierrors.IsNotFound(
 					err,
-				) {
-					t.Errorf("Expected Shard %s to NOT be created", shardNameFull)
-				}
+				), "Expected Shard %s to NOT be created", shardNameFull)
 			},
 		},
 		"Success: Prune Orphan Shard (Sets PendingDeletion)": {
@@ -418,6 +407,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				"Normal PendingDeletion Marked Shard",
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				shardName := name.JoinWithConstraints(
 					name.DefaultConstraints,
 					clusterName,
@@ -426,16 +416,16 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					"shard-0",
 				)
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardName, Namespace: namespace},
 					shard,
-				); err != nil {
-					t.Fatalf("Shard should still exist: %v", err)
-				}
-				if shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-					t.Error("Expected PendingDeletion annotation to be set")
-				}
+				), "Shard should still exist")
+				ck.NotEq(
+					"",
+					shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+					"Expected PendingDeletion annotation to be set",
+				)
 			},
 		},
 
@@ -478,13 +468,11 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					"shard-0",
 				)
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				assert.NewAborting(t).NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardName, Namespace: namespace},
 					shard,
-				); err != nil {
-					t.Fatalf("Shard should still exist while draining: %v", err)
-				}
+				), "Shard should still exist while draining")
 			},
 		},
 
@@ -538,13 +526,13 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					"shard-0",
 				)
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				err := c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardName, Namespace: namespace},
 					shard,
-				); !apierrors.IsNotFound(err) {
-					t.Errorf("Expected Shard %s to be deleted", shardName)
-				}
+				)
+				assert.NewCollecting(t).
+					True(apierrors.IsNotFound(err), "Expected Shard %s to be deleted", shardName)
 			},
 		},
 
@@ -587,6 +575,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				"Normal PendingDeletion Marked Shard",
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				shardName := name.JoinWithConstraints(
 					name.DefaultConstraints,
 					clusterName,
@@ -595,16 +584,16 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					"shard-0",
 				)
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardName, Namespace: namespace},
 					shard,
-				); err != nil {
-					t.Fatalf("Shard should exist: %v", err)
-				}
-				if shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-					t.Error("Expected PendingDeletion annotation to be set on Shard")
-				}
+				), "Shard should exist")
+				ck.NotEq(
+					"",
+					shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+					"Expected PendingDeletion annotation to be set on Shard",
+				)
 			},
 		},
 		"Success: Handle Pending Deletion (Child Already Terminating)": {
@@ -641,6 +630,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 			},
 			expectedResult: ptr.To(ctrl.Result{RequeueAfter: 5 * time.Second}),
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				shardName := name.JoinWithConstraints(
 					name.DefaultConstraints,
 					clusterName,
@@ -649,31 +639,27 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 					"shard-0",
 				)
 				shard := &multigresv1alpha1.Shard{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: shardName, Namespace: namespace},
 					shard,
-				); err != nil {
-					t.Fatalf("terminating Shard should still be visible: %v", err)
-				}
-				if got := shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; got != "" {
-					t.Errorf("terminating Shard should not be restamped, got %q", got)
-				}
+				), "terminating Shard should still be visible")
+				ck.Eq(
+					"",
+					shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+					"terminating Shard should not be restamped, got",
+				)
 
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get TableGroup: %v", err)
-				}
-				if meta.IsStatusConditionTrue(
+				), "failed to get TableGroup")
+				ck.False(meta.IsStatusConditionTrue(
 					updatedTG.Status.Conditions,
 					multigresv1alpha1.ConditionReadyForDeletion,
-				) {
-					t.Error("TableGroup should wait for terminating child Shard to disappear")
-				}
+				), "TableGroup should wait for terminating child Shard to disappear")
 			},
 		},
 		"Success: Handle Pending Deletion (All Shards Ready For Deletion)": {
@@ -721,20 +707,17 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				"Normal ReadyForDeletion TableGroup test-tg marked ready for deletion",
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				updatedTG := &multigresv1alpha1.TableGroup{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					updatedTG,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if !meta.IsStatusConditionTrue(
+				), "failed to get tablegroup")
+				ck.True(meta.IsStatusConditionTrue(
 					updatedTG.Status.Conditions,
 					multigresv1alpha1.ConditionReadyForDeletion,
-				) {
-					t.Error("TableGroup should be ReadyForDeletion")
-				}
+				), "TableGroup should be ReadyForDeletion")
 			},
 		},
 	}
@@ -742,6 +725,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			if tc.preReconcileUpdate != nil {
 				tc.preReconcileUpdate(t, tc.tableGroup)
@@ -778,9 +762,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 			}
 
 			result, err := reconciler.Reconcile(t.Context(), req)
-			if err != nil {
-				t.Errorf("Unexpected error from Reconcile: %v", err)
-			}
+			c.NoError(err, "Unexpected error from Reconcile")
 			if tc.expectedResult != nil && result != *tc.expectedResult {
 				t.Errorf(
 					"Unexpected result from Reconcile: got %+v, want %+v",
@@ -804,13 +786,12 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 							break
 						}
 					}
-					if !found {
-						t.Errorf(
-							"Expected event containing %q not found. Got events: %v",
-							want,
-							gotEvents,
-						)
-					}
+					c.True(
+						found,
+						"Expected event containing %q not found. Got events: %v",
+						want,
+						gotEvents,
+					)
 				}
 			}
 
@@ -823,6 +804,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 
 func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -912,13 +894,11 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 		shardName,
 	)
 	shard := &multigresv1alpha1.Shard{}
-	if err := c.Get(
+	ck.Require().NoError(c.Get(
 		t.Context(),
 		types.NamespacedName{Name: fullShardName, Namespace: namespace},
 		shard,
-	); err != nil {
-		t.Fatalf("default 0-inf Shard was not created: %v", err)
-	}
+	), "default 0-inf Shard was not created")
 
 	if got, want := shard.Spec.DatabaseName, multigresv1alpha1.DatabaseName(dbName); got != want {
 		t.Errorf("Shard DatabaseName mismatch: got %q, want %q", got, want)
@@ -956,13 +936,11 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 	}
 
 	updatedTG := &multigresv1alpha1.TableGroup{}
-	if err := c.Get(
+	ck.Require().NoError(c.Get(
 		t.Context(),
 		types.NamespacedName{Name: tgName, Namespace: namespace},
 		updatedTG,
-	); err != nil {
-		t.Fatalf("failed to get TableGroup: %v", err)
-	}
+	), "failed to get TableGroup")
 
 	if got, want := updatedTG.Status.Phase, multigresv1alpha1.PhaseHealthy; got != want {
 		t.Errorf("TableGroup phase mismatch: got %q, want %q", got, want)
@@ -970,12 +948,12 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 	if got, want := updatedTG.Status.ReadyShards, int32(1); got != want {
 		t.Errorf("ReadyShards mismatch: got %d, want %d", got, want)
 	}
-	if got, want := updatedTG.Status.TotalShards, int32(1); got != want {
-		t.Errorf("TotalShards mismatch: got %d, want %d", got, want)
-	}
-	if !meta.IsStatusConditionTrue(updatedTG.Status.Conditions, "Available") {
-		t.Error("default 0-inf TableGroup should be Available after its shard is healthy")
-	}
+	got, want := updatedTG.Status.TotalShards, int32(1)
+	ck.Eq(want, got, "TotalShards mismatch: got")
+	ck.True(
+		meta.IsStatusConditionTrue(updatedTG.Status.Conditions, "Available"),
+		"default 0-inf TableGroup should be Available after its shard is healthy",
+	)
 }
 
 func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
@@ -1256,6 +1234,7 @@ func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			if tc.preReconcileUpdate != nil {
 				tc.preReconcileUpdate(t, tc.tableGroup)
@@ -1291,9 +1270,7 @@ func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
 			}
 
 			_, err := reconciler.Reconcile(t.Context(), req)
-			if err == nil {
-				t.Error("Expected error from Reconcile, got nil")
-			}
+			c.Error(err, "Expected error from Reconcile, got nil")
 
 			if len(tc.expectedEvents) > 0 {
 				close(fakeRecorder.Events)
@@ -1310,13 +1287,12 @@ func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
 							break
 						}
 					}
-					if !found {
-						t.Errorf(
-							"Expected event containing %q not found. Got events: %v",
-							want,
-							gotEvents,
-						)
-					}
+					c.True(
+						found,
+						"Expected event containing %q not found. Got events: %v",
+						want,
+						gotEvents,
+					)
 				}
 			}
 		})
@@ -1342,9 +1318,7 @@ func TestTableGroupReconciler_Reconcile_BuildFailure(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: baseTG.Name, Namespace: baseTG.Namespace},
 	}
 	_, err := r.Reconcile(t.Context(), req)
-	if err == nil {
-		t.Fatal("Expected Reconcile to fail due to Build error")
-	}
+	assert.NewAborting(t).Error(err, "Expected Reconcile to fail due to Build error")
 	if err.Error() != "failed to build shard: no kind is registered for the type v1alpha1.TableGroup" {
 		t.Logf("Got error: %v", err)
 	}
@@ -1444,6 +1418,7 @@ func TestTableGroupReconciler_ReadsChildShardsOnce(t *testing.T) {
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 
 			if tc.preReconcileUpdate != nil {
 				tc.preReconcileUpdate(t, tc.tableGroup)
@@ -1490,16 +1465,14 @@ func TestTableGroupReconciler_ReadsChildShardsOnce(t *testing.T) {
 				},
 			}
 
-			if _, err := reconciler.Reconcile(t.Context(), req); err != nil {
-				t.Fatalf("unexpected error from Reconcile: %v", err)
-			}
+			_, err := reconciler.Reconcile(t.Context(), req)
+			ck.Require().NoError(err, "unexpected error from Reconcile")
 
-			if got := shardListCount.Load(); got != 1 {
-				t.Errorf(
-					"expected exactly one List of child Shards per reconcile, got %d",
-					got,
-				)
-			}
+			ck.Eq(
+				1,
+				shardListCount.Load(),
+				"expected exactly one List of child Shards per reconcile, got",
+			)
 		})
 	}
 }
@@ -1582,6 +1555,7 @@ func TestTableGroupReconciler_PendingDeletionUpgradeCompatibility(t *testing.T) 
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 
 			// No desired Shards, so the seeded child is an orphan.
 			tg := baseTG.DeepCopy()
@@ -1641,22 +1615,19 @@ func TestTableGroupReconciler_PendingDeletionUpgradeCompatibility(t *testing.T) 
 			}
 
 			got, err := reconciler.Reconcile(t.Context(), req)
-			if err != nil {
-				t.Fatalf("unexpected error from Reconcile: %v", err)
-			}
+			ck.Require().NoError(err, "unexpected error from Reconcile")
 
-			if got != tc.wantResult {
-				t.Errorf("unexpected reconcile result: got %+v, want %+v", got, tc.wantResult)
-			}
+			ck.Eq(tc.wantResult, got, "unexpected reconcile result: got")
 
 			// The annotation must never be re-stamped.
-			if patches := shardPatchCount.Load(); patches != 0 {
-				t.Errorf(
-					"handshake double-driven: expected zero Patch calls on the child Shard "+
-						"(annotation already set by a prior version), got %d",
-					patches,
-				)
-			}
+			patches := shardPatchCount.Load()
+			ck.Eq(
+				0,
+				patches,
+				"handshake double-driven: expected zero Patch calls on the child Shard "+
+					"(annotation already set by a prior version), got %d",
+				patches,
+			)
 
 			fetched := &multigresv1alpha1.Shard{}
 			getErr := c.Get(
@@ -1674,27 +1645,26 @@ func TestTableGroupReconciler_PendingDeletionUpgradeCompatibility(t *testing.T) 
 						getErr,
 					)
 				}
-				if deletes := shardDeleteCount.Load(); deletes != 1 {
-					t.Errorf(
-						"expected exactly one Delete of the child Shard, got %d",
-						deletes,
-					)
-				}
+				ck.Eq(
+					1,
+					shardDeleteCount.Load(),
+					"expected exactly one Delete of the child Shard, got",
+				)
 				return
 			}
 
 			// While it's still draining the child should stay put and keep its
 			// original annotation.
-			if getErr != nil {
-				t.Fatalf("expected orphan child Shard to still exist while draining: %v", getErr)
-			}
-			if deletes := shardDeleteCount.Load(); deletes != 0 {
-				t.Errorf(
-					"handshake double-driven: expected no Delete of the child Shard while it "+
-						"is still draining, got %d",
-					deletes,
-				)
-			}
+			ck.Require().
+				NoError(getErr, "expected orphan child Shard to still exist while draining")
+			deletes := shardDeleteCount.Load()
+			ck.Eq(
+				0,
+				deletes,
+				"handshake double-driven: expected no Delete of the child Shard while it "+
+					"is still draining, got %d",
+				deletes,
+			)
 			if got := fetched.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; got !=
 				priorVersionTimestamp {
 				t.Errorf(
@@ -1713,6 +1683,7 @@ func TestTableGroupReconciler_PendingDeletionUpgradeCompatibility(t *testing.T) 
 // the pending cleanup requeue.
 func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1784,21 +1755,16 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 	got, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: tgName, Namespace: namespace},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error from Reconcile: %v", err)
-	}
-	if want := (ctrl.Result{RequeueAfter: 5 * time.Second}); got != want {
-		t.Fatalf("unexpected reconcile result: got %+v, want %+v", got, want)
-	}
+	ck.Require().NoError(err, "unexpected error from Reconcile")
+	ck.Require().
+		Eq((ctrl.Result{RequeueAfter: 5 * time.Second}), got, "unexpected reconcile result: got")
 
 	updatedTG := &multigresv1alpha1.TableGroup{}
-	if err := c.Get(
+	ck.Require().NoError(c.Get(
 		t.Context(),
 		types.NamespacedName{Name: tgName, Namespace: namespace},
 		updatedTG,
-	); err != nil {
-		t.Fatalf("failed to get tablegroup: %v", err)
-	}
+	), "failed to get tablegroup")
 
 	if got, want := updatedTG.Status.Phase, multigresv1alpha1.PhaseProgressing; got != want {
 		t.Errorf("Phase mismatch while cleanup is pending: got %q, want %q", got, want)
@@ -1817,31 +1783,15 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 	}
 
 	cond := meta.FindStatusCondition(updatedTG.Status.Conditions, "Available")
-	if cond == nil {
-		t.Fatal("expected an Available condition to be set")
-	}
-	if cond.Status != metav1.ConditionFalse {
-		t.Errorf("Available status mismatch: got %q, want %q", cond.Status, metav1.ConditionFalse)
-	}
-	if cond.Reason != "CleanupPending" {
-		t.Errorf("Available reason mismatch: got %q, want CleanupPending", cond.Reason)
-	}
-	if cond.Message != "Waiting for shard cleanup to finish" {
-		t.Errorf("Available message mismatch: got %q", cond.Message)
-	}
-	if cond.ObservedGeneration != tg.Generation {
-		t.Errorf(
-			"Available observedGeneration mismatch: got %d, want %d",
-			cond.ObservedGeneration,
-			tg.Generation,
-		)
-	}
+	ck.Require().NotNil(cond, "expected an Available condition to be set")
+	ck.Eq(metav1.ConditionFalse, cond.Status, "Available status mismatch: got")
+	ck.Eq("CleanupPending", cond.Reason, "Available reason mismatch: got")
+	ck.Eq("Waiting for shard cleanup to finish", cond.Message, "Available message mismatch: got")
+	ck.Eq(tg.Generation, cond.ObservedGeneration, "Available observedGeneration mismatch: got")
 
 	close(recorder.Events)
 	for evt := range recorder.Events {
-		if strings.Contains(evt, "Synced") {
-			t.Errorf("unexpected Synced event while cleanup is still pending: %q", evt)
-		}
+		ck.NotStrContains(evt, "Synced", "unexpected Synced event while cleanup is still pending")
 	}
 }
 
@@ -1851,6 +1801,7 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 // full-reconcile assertion, since the PhaseChange gating spans the whole chain.
 func TestTableGroupReconciler_SteadyStateDoesNotFlap(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1919,25 +1870,19 @@ func TestTableGroupReconciler_SteadyStateDoesNotFlap(t *testing.T) {
 	}
 
 	got, err := reconciler.Reconcile(t.Context(), req)
-	if err != nil {
-		t.Fatalf("unexpected error from Reconcile: %v", err)
-	}
+	ck.Require().NoError(err, "unexpected error from Reconcile")
 
 	// Nothing changed, so we shouldn't get a requeue.
-	if got != (ctrl.Result{}) {
-		t.Errorf("unexpected reconcile result: got %+v, want empty ctrl.Result{}", got)
-	}
+	ck.Eq((ctrl.Result{}), got, "unexpected reconcile result: got")
 
 	// The status stays Healthy because it comes from the child's observed
 	// .Status, not the empty-status desired object.
 	updatedTG := &multigresv1alpha1.TableGroup{}
-	if err := c.Get(
+	ck.Require().NoError(c.Get(
 		t.Context(),
 		types.NamespacedName{Name: tgName, Namespace: namespace},
 		updatedTG,
-	); err != nil {
-		t.Fatalf("failed to get tablegroup: %v", err)
-	}
+	), "failed to get tablegroup")
 
 	if got, want := updatedTG.Status.Phase, multigresv1alpha1.PhaseHealthy; got != want {
 		t.Errorf(
@@ -1955,8 +1900,10 @@ func TestTableGroupReconciler_SteadyStateDoesNotFlap(t *testing.T) {
 	// Phase didn't change, so there should be no PhaseChange event.
 	close(recorder.Events)
 	for evt := range recorder.Events {
-		if strings.Contains(evt, "PhaseChange") {
-			t.Errorf("unexpected spurious PhaseChange event emitted in steady state: %q", evt)
-		}
+		ck.NotStrContains(
+			evt,
+			"PhaseChange",
+			"unexpected spurious PhaseChange event emitted in steady state",
+		)
 	}
 }

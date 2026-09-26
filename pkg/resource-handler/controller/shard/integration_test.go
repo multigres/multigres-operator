@@ -16,7 +16,6 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	cm "github.com/multigres/multigres/go/pb/clustermetadata"
 	md "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
-	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -36,6 +35,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestSetupWithManager(t *testing.T) {
@@ -53,15 +54,13 @@ func TestSetupWithManager(t *testing.T) {
 		),
 	)
 
-	if err := (&shardcontroller.ShardReconciler{
+	assert.NewAborting(t).NoError((&shardcontroller.ShardReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("shard-controller"),
 	}).SetupWithManager(mgr, controller.Options{
 		SkipNameValidation: ptr.To(true),
-	}); err != nil {
-		t.Fatalf("Failed to create controller, %v", err)
-	}
+	}), "Failed to create controller")
 }
 
 func setTestPostgresPasswordSecretRef(shard *multigresv1alpha1.Shard) {
@@ -90,9 +89,9 @@ func createTestPostgresPasswordSecret(
 			"password": []byte("postgres"),
 		},
 	}
-	if err := c.Create(ctx, secret); client.IgnoreAlreadyExists(err) != nil {
-		t.Fatalf("Failed to create postgres password Secret: %v", err)
-	}
+	err := c.Create(ctx, secret)
+	assert.NewAborting(t).
+		NoError(client.IgnoreAlreadyExists(err), "Failed to create postgres password Secret: %v", err)
 }
 
 func createTestPostgresInitSecretsSecret(
@@ -108,12 +107,14 @@ func createTestPostgresInitSecretsSecret(
 			Namespace: namespace,
 		},
 		Data: map[string][]byte{
-			key: []byte(`{"roles":{"app":"app-password"},"database_settings":{"testdb":{"work_mem":"64MB"}}}`),
+			key: []byte(
+				`{"roles":{"app":"app-password"},"database_settings":{"testdb":{"work_mem":"64MB"}}}`,
+			),
 		},
 	}
-	if err := c.Create(ctx, secret); client.IgnoreAlreadyExists(err) != nil {
-		t.Fatalf("Failed to create postgres init-secrets Secret: %v", err)
-	}
+	err := c.Create(ctx, secret)
+	assert.NewAborting(t).
+		NoError(client.IgnoreAlreadyExists(err), "Failed to create postgres init-secrets Secret: %v", err)
 }
 
 func TestShardReconciliation(t *testing.T) {
@@ -172,8 +173,11 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
-						Type:       multigresv1alpha1.BackupTypeFilesystem,
-						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Path:    "/backups",
+							Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
+						},
 					},
 				},
 			},
@@ -181,19 +185,36 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Deployment for zone-a
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-shard-multiorch-zone-a",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						Name:      "test-shard-multiorch-zone-a",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"test-shard-multiorch-zone-a",
+							"multiorch",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "test-shard"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a")),
+							MatchLabels: metadata.GetSelectorLabels(
+								shardLabels(
+									t,
+									"test-shard-multiorch-zone-a",
+									"multiorch",
+									"zone-a",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a"),
+								Labels: shardLabels(
+									t,
+									"test-shard-multiorch-zone-a",
+									"multiorch",
+									"zone-a",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -254,9 +275,14 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Service for zone-a
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-shard-multiorch-zone-a",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						Name:      "test-shard-multiorch-zone-a",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"test-shard-multiorch-zone-a",
+							"multiorch",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "test-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -265,25 +291,44 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "http", 15300),
 							tcpServicePort(t, "grpc", 15370),
 						},
-						Selector: metadata.GetSelectorLabels(shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(t, "test-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						),
 					},
 				},
 				// Multiorch Deployment for zone-b
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-shard-multiorch-zone-b",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "test-shard-multiorch-zone-b", "multiorch", "zone-b"),
+						Name:      "test-shard-multiorch-zone-b",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"test-shard-multiorch-zone-b",
+							"multiorch",
+							"zone-b",
+						),
 						OwnerReferences: shardOwnerRefs(t, "test-shard"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "test-shard-multiorch-zone-b", "multiorch", "zone-b")),
+							MatchLabels: metadata.GetSelectorLabels(
+								shardLabels(
+									t,
+									"test-shard-multiorch-zone-b",
+									"multiorch",
+									"zone-b",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: shardLabels(t, "test-shard-multiorch-zone-b", "multiorch", "zone-b"),
+								Labels: shardLabels(
+									t,
+									"test-shard-multiorch-zone-b",
+									"multiorch",
+									"zone-b",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -344,9 +389,14 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Service for zone-b
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-shard-multiorch-zone-b",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "test-shard-multiorch-zone-b", "multiorch", "zone-b"),
+						Name:      "test-shard-multiorch-zone-b",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"test-shard-multiorch-zone-b",
+							"multiorch",
+							"zone-b",
+						),
 						OwnerReferences: shardOwnerRefs(t, "test-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -355,14 +405,21 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "http", 15300),
 							tcpServicePort(t, "grpc", 15370),
 						},
-						Selector: metadata.GetSelectorLabels(shardLabels(t, "test-shard-multiorch-zone-b", "multiorch", "zone-b")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(t, "test-shard-multiorch-zone-b", "multiorch", "zone-b"),
+						),
 					},
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-shard-pool-primary-zone-a-headless",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "test-shard-pool-primary-zone-a", "shard-pool", "zone-a"),
+						Name:      "test-shard-pool-primary-zone-a-headless",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"test-shard-pool-primary-zone-a",
+							"shard-pool",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "test-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -374,7 +431,14 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "postgres", 5432),
 							tcpServicePort(t, "metrics", 9187),
 						},
-						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "test-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"test-shard-pool-primary-zone-a",
+								"shard-pool",
+								"zone-a",
+							),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -427,27 +491,47 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
-						Type:       multigresv1alpha1.BackupTypeFilesystem,
-						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Path:    "/backups",
+							Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
+						},
 					},
 				},
 			},
 			wantResources: []client.Object{
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "init-secrets-shard-multiorch-zone-a",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						Name:      "init-secrets-shard-multiorch-zone-a",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"init-secrets-shard-multiorch-zone-a",
+							"multiorch",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "init-secrets-shard"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a")),
+							MatchLabels: metadata.GetSelectorLabels(
+								shardLabels(
+									t,
+									"init-secrets-shard-multiorch-zone-a",
+									"multiorch",
+									"zone-a",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a"),
+								Labels: shardLabels(
+									t,
+									"init-secrets-shard-multiorch-zone-a",
+									"multiorch",
+									"zone-a",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -507,9 +591,14 @@ func TestShardReconciliation(t *testing.T) {
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "init-secrets-shard-multiorch-zone-a",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						Name:      "init-secrets-shard-multiorch-zone-a",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"init-secrets-shard-multiorch-zone-a",
+							"multiorch",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "init-secrets-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -518,14 +607,26 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "http", 15300),
 							tcpServicePort(t, "grpc", 15370),
 						},
-						Selector: metadata.GetSelectorLabels(shardLabels(t, "init-secrets-shard-multiorch-zone-a", "multiorch", "zone-a")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"init-secrets-shard-multiorch-zone-a",
+								"multiorch",
+								"zone-a",
+							),
+						),
 					},
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "init-secrets-shard-pool-primary-zone-a-headless",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "init-secrets-shard-pool-primary-zone-a", "shard-pool", "zone-a"),
+						Name:      "init-secrets-shard-pool-primary-zone-a-headless",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"init-secrets-shard-pool-primary-zone-a",
+							"shard-pool",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "init-secrets-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -537,7 +638,14 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "postgres", 5432),
 							tcpServicePort(t, "metrics", 9187),
 						},
-						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "init-secrets-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"init-secrets-shard-pool-primary-zone-a",
+								"shard-pool",
+								"zone-a",
+							),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -590,8 +698,11 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
-						Type:       multigresv1alpha1.BackupTypeFilesystem,
-						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Path:    "/backups",
+							Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
+						},
 					},
 				},
 			},
@@ -599,19 +710,36 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Deployment for zone-a
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "delete-policy-shard-multiorch-zone-a",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "delete-policy-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						Name:      "delete-policy-shard-multiorch-zone-a",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"delete-policy-shard-multiorch-zone-a",
+							"multiorch",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "delete-policy-shard"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "delete-policy-shard-multiorch-zone-a", "multiorch", "zone-a")),
+							MatchLabels: metadata.GetSelectorLabels(
+								shardLabels(
+									t,
+									"delete-policy-shard-multiorch-zone-a",
+									"multiorch",
+									"zone-a",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: shardLabels(t, "delete-policy-shard-multiorch-zone-a", "multiorch", "zone-a"),
+								Labels: shardLabels(
+									t,
+									"delete-policy-shard-multiorch-zone-a",
+									"multiorch",
+									"zone-a",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -672,9 +800,14 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Service for zone-a
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "delete-policy-shard-multiorch-zone-a",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "delete-policy-shard-multiorch-zone-a", "multiorch", "zone-a"),
+						Name:      "delete-policy-shard-multiorch-zone-a",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"delete-policy-shard-multiorch-zone-a",
+							"multiorch",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "delete-policy-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -683,14 +816,26 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "http", 15300),
 							tcpServicePort(t, "grpc", 15370),
 						},
-						Selector: metadata.GetSelectorLabels(shardLabels(t, "delete-policy-shard-multiorch-zone-a", "multiorch", "zone-a")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"delete-policy-shard-multiorch-zone-a",
+								"multiorch",
+								"zone-a",
+							),
+						),
 					},
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "delete-policy-shard-pool-primary-zone-a-headless",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "delete-policy-shard-pool-primary-zone-a", "shard-pool", "zone-a"),
+						Name:      "delete-policy-shard-pool-primary-zone-a-headless",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"delete-policy-shard-pool-primary-zone-a",
+							"shard-pool",
+							"zone-a",
+						),
 						OwnerReferences: shardOwnerRefs(t, "delete-policy-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -702,7 +847,14 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "postgres", 5432),
 							tcpServicePort(t, "metrics", 9187),
 						},
-						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "delete-policy-shard-pool-primary-zone-a", "shard-pool", "zone-a")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"delete-policy-shard-pool-primary-zone-a",
+								"shard-pool",
+								"zone-a",
+							),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -751,8 +903,11 @@ func TestShardReconciliation(t *testing.T) {
 						},
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
-						Type:       multigresv1alpha1.BackupTypeFilesystem,
-						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Path:    "/backups",
+							Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
+						},
 					},
 				},
 			},
@@ -760,19 +915,36 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Deployment for zone1
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "multi-cell-shard-multiorch-zone1",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "multi-cell-shard-multiorch-zone1", "multiorch", "zone1"),
+						Name:      "multi-cell-shard-multiorch-zone1",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"multi-cell-shard-multiorch-zone1",
+							"multiorch",
+							"zone1",
+						),
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-multiorch-zone1", "multiorch", "zone1")),
+							MatchLabels: metadata.GetSelectorLabels(
+								shardLabels(
+									t,
+									"multi-cell-shard-multiorch-zone1",
+									"multiorch",
+									"zone1",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: shardLabels(t, "multi-cell-shard-multiorch-zone1", "multiorch", "zone1"),
+								Labels: shardLabels(
+									t,
+									"multi-cell-shard-multiorch-zone1",
+									"multiorch",
+									"zone1",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -833,9 +1005,14 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Service for zone1
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "multi-cell-shard-multiorch-zone1",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "multi-cell-shard-multiorch-zone1", "multiorch", "zone1"),
+						Name:      "multi-cell-shard-multiorch-zone1",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"multi-cell-shard-multiorch-zone1",
+							"multiorch",
+							"zone1",
+						),
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -844,25 +1021,49 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "http", 15300),
 							tcpServicePort(t, "grpc", 15370),
 						},
-						Selector: metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-multiorch-zone1", "multiorch", "zone1")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"multi-cell-shard-multiorch-zone1",
+								"multiorch",
+								"zone1",
+							),
+						),
 					},
 				},
 				// Multiorch Deployment for zone2
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "multi-cell-shard-multiorch-zone2",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "multi-cell-shard-multiorch-zone2", "multiorch", "zone2"),
+						Name:      "multi-cell-shard-multiorch-zone2",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"multi-cell-shard-multiorch-zone2",
+							"multiorch",
+							"zone2",
+						),
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(1)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-multiorch-zone2", "multiorch", "zone2")),
+							MatchLabels: metadata.GetSelectorLabels(
+								shardLabels(
+									t,
+									"multi-cell-shard-multiorch-zone2",
+									"multiorch",
+									"zone2",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: shardLabels(t, "multi-cell-shard-multiorch-zone2", "multiorch", "zone2"),
+								Labels: shardLabels(
+									t,
+									"multi-cell-shard-multiorch-zone2",
+									"multiorch",
+									"zone2",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -923,9 +1124,14 @@ func TestShardReconciliation(t *testing.T) {
 				// Multiorch Service for zone2
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "multi-cell-shard-multiorch-zone2",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "multi-cell-shard-multiorch-zone2", "multiorch", "zone2"),
+						Name:      "multi-cell-shard-multiorch-zone2",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"multi-cell-shard-multiorch-zone2",
+							"multiorch",
+							"zone2",
+						),
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -934,15 +1140,27 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "http", 15300),
 							tcpServicePort(t, "grpc", 15370),
 						},
-						Selector: metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-multiorch-zone2", "multiorch", "zone2")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"multi-cell-shard-multiorch-zone2",
+								"multiorch",
+								"zone2",
+							),
+						),
 					},
 				},
 				// Headless Service for zone1
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "multi-cell-shard-pool-primary-zone1-headless",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "multi-cell-shard-pool-primary-zone1", "shard-pool", "zone1"),
+						Name:      "multi-cell-shard-pool-primary-zone1-headless",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"multi-cell-shard-pool-primary-zone1",
+							"shard-pool",
+							"zone1",
+						),
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -954,16 +1172,28 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "postgres", 5432),
 							tcpServicePort(t, "metrics", 9187),
 						},
-						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-pool-primary-zone1", "shard-pool", "zone1")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"multi-cell-shard-pool-primary-zone1",
+								"shard-pool",
+								"zone1",
+							),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
 				// Headless Service for zone2
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "multi-cell-shard-pool-primary-zone2-headless",
-						Namespace:       "default",
-						Labels:          shardLabels(t, "multi-cell-shard-pool-primary-zone2", "shard-pool", "zone2"),
+						Name:      "multi-cell-shard-pool-primary-zone2-headless",
+						Namespace: "default",
+						Labels: shardLabels(
+							t,
+							"multi-cell-shard-pool-primary-zone2",
+							"shard-pool",
+							"zone2",
+						),
 						OwnerReferences: shardOwnerRefs(t, "multi-cell-shard"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -975,7 +1205,14 @@ func TestShardReconciliation(t *testing.T) {
 							tcpServicePort(t, "postgres", 5432),
 							tcpServicePort(t, "metrics", 9187),
 						},
-						Selector:                 metadata.GetSelectorLabels(shardLabels(t, "multi-cell-shard-pool-primary-zone2", "shard-pool", "zone2")),
+						Selector: metadata.GetSelectorLabels(
+							shardLabels(
+								t,
+								"multi-cell-shard-pool-primary-zone2",
+								"shard-pool",
+								"zone2",
+							),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -986,6 +1223,7 @@ func TestShardReconciliation(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			ctx := t.Context()
 			mgr := testutil.SetUpEnvtestManager(t, scheme,
 				testutil.WithCRDPaths(
@@ -1023,7 +1261,11 @@ func TestShardReconciliation(t *testing.T) {
 						return
 					case <-ticker.C:
 						podList := &corev1.PodList{}
-						if err := k8sClient.List(ctx, podList, client.InNamespace(tc.shard.Namespace)); err != nil {
+						if err := k8sClient.List(
+							ctx,
+							podList,
+							client.InNamespace(tc.shard.Namespace),
+						); err != nil {
 							continue
 						}
 						for i := range podList.Items {
@@ -1053,12 +1295,9 @@ func TestShardReconciliation(t *testing.T) {
 				Scheme:   mgr.GetScheme(),
 				Recorder: mgr.GetEventRecorderFor("shard-controller"),
 			}
-			if err := shardReconciler.SetupWithManager(mgr, controller.Options{
-				// Needed for the parallel test runs
+			ck.Require().NoError(shardReconciler.SetupWithManager(mgr, controller.Options{
 				SkipNameValidation: ptr.To(true),
-			}); err != nil {
-				t.Fatalf("Failed to create controller, %v", err)
-			}
+			}), "Failed to create controller")
 
 			setTestPostgresPasswordSecretRef(tc.shard)
 			createTestPostgresPasswordSecret(t, ctx, k8sClient, tc.shard.Namespace)
@@ -1067,11 +1306,17 @@ func TestShardReconciliation(t *testing.T) {
 				if key == "" {
 					key = shardcontroller.PostgresInitSecretsFileName
 				}
-				createTestPostgresInitSecretsSecret(t, ctx, k8sClient, tc.shard.Namespace, ref.Name, key)
+				createTestPostgresInitSecretsSecret(
+					t,
+					ctx,
+					k8sClient,
+					tc.shard.Namespace,
+					ref.Name,
+					key,
+				)
 			}
-			if err := k8sClient.Create(ctx, tc.shard); err != nil {
-				t.Fatalf("Failed to create the initial item, %v", err)
-			}
+			ck.Require().
+				NoError(k8sClient.Create(ctx, tc.shard), "Failed to create the initial item")
 
 			// Patch wantResources with hashed names
 			for _, obj := range tc.wantResources {
@@ -1146,9 +1391,7 @@ func TestShardReconciliation(t *testing.T) {
 			// ones the controller creates. These test shards have no
 			// PostgresConfigRef, so the ref content is empty.
 			_, hashes, err := shardcontroller.RenderPostgresConfig(tc.shard, "")
-			if err != nil {
-				t.Fatalf("Failed to render postgres config hash: %v", err)
-			}
+			ck.Require().NoError(err, "Failed to render postgres config hash")
 			if tc.shard.Annotations == nil {
 				tc.shard.Annotations = map[string]string{}
 			}
@@ -1164,34 +1407,47 @@ func TestShardReconciliation(t *testing.T) {
 						replicas = *poolSpec.ReplicasPerCell
 					}
 					for i := 0; i < int(replicas); i++ {
-						pod, err := shardcontroller.BuildPoolPod(tc.shard, string(poolName), string(cellName), poolSpec, i, mgr.GetScheme())
-						if err != nil {
-							t.Fatalf("Failed to build pod: %v", err)
-						}
+						pod, err := shardcontroller.BuildPoolPod(
+							tc.shard,
+							string(poolName),
+							string(cellName),
+							poolSpec,
+							i,
+							mgr.GetScheme(),
+						)
+						ck.Require().NoError(err, "Failed to build pod")
 						filteredResources = append(filteredResources, pod)
 
-						pvc, err := shardcontroller.BuildPoolDataPVC(tc.shard, string(poolName), string(cellName), poolSpec, i, shardcontroller.ShouldDeletePVCOnShardRemoval(tc.shard, poolSpec), mgr.GetScheme())
-						if err != nil {
-							t.Fatalf("Failed to build pvc: %v", err)
-						}
+						pvc, err := shardcontroller.BuildPoolDataPVC(
+							tc.shard,
+							string(poolName),
+							string(cellName),
+							poolSpec,
+							i,
+							shardcontroller.ShouldDeletePVCOnShardRemoval(tc.shard, poolSpec),
+							mgr.GetScheme(),
+						)
+						ck.Require().NoError(err, "Failed to build pvc")
 						filteredResources = append(filteredResources, pvc)
 					}
 
 					// Shared backup PVC is per-shard, not per-pod or per-cell.
-					if tc.shard.Spec.Backup != nil && tc.shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeFilesystem && !backupPVCAdded {
-						backupPVC, err := shardcontroller.BuildSharedBackupPVC(tc.shard, shardcontroller.ShouldDeleteShardLevelPVCOnRemoval(tc.shard), mgr.GetScheme())
-						if err != nil {
-							t.Fatalf("Failed to build backup pvc: %v", err)
-						}
+					if tc.shard.Spec.Backup != nil &&
+						tc.shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeFilesystem &&
+						!backupPVCAdded {
+						backupPVC, err := shardcontroller.BuildSharedBackupPVC(
+							tc.shard,
+							shardcontroller.ShouldDeleteShardLevelPVCOnRemoval(tc.shard),
+							mgr.GetScheme(),
+						)
+						ck.Require().NoError(err, "Failed to build backup pvc")
 						filteredResources = append(filteredResources, backupPVC)
 						backupPVCAdded = true
 					}
 				}
 			}
 
-			if err := watcher.WaitForMatch(filteredResources...); err != nil {
-				t.Errorf("Resources mismatch:\n%v", err)
-			}
+			ck.NoError(watcher.WaitForMatch(filteredResources...), "Resources mismatch:\n")
 		})
 	}
 }
@@ -1249,7 +1505,12 @@ func tcpPort(t testing.TB, name string, port int32) corev1.ContainerPort {
 // tcpServicePort creates a TCP service port with named target
 func tcpServicePort(t testing.TB, name string, port int32) corev1.ServicePort {
 	t.Helper()
-	return corev1.ServicePort{Name: name, Port: port, TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP}
+	return corev1.ServicePort{
+		Name:       name,
+		Port:       port,
+		TargetPort: intstr.FromString(name),
+		Protocol:   corev1.ProtocolTCP,
+	}
 }
 
 // multipoolerPorts returns the standard multipooler container ports
@@ -1264,6 +1525,7 @@ func multipoolerPorts(t testing.TB) []corev1.ContainerPort {
 
 func TestReconcileDeletions(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1278,15 +1540,13 @@ func TestReconcileDeletions(t *testing.T) {
 	)
 
 	// Setup controller with manager
-	if err := (&shardcontroller.ShardReconciler{
+	c.NoError((&shardcontroller.ShardReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("shard-controller"),
 	}).SetupWithManager(mgr, controller.Options{
 		SkipNameValidation: ptr.To(true),
-	}); err != nil {
-		t.Fatalf("Failed to create controller, %v", err)
-	}
+	}), "Failed to create controller")
 
 	ctx := t.Context()
 	k8sClient := mgr.GetClient()
@@ -1333,17 +1593,18 @@ func TestReconcileDeletions(t *testing.T) {
 				},
 			},
 			Backup: &multigresv1alpha1.BackupConfig{
-				Type:       multigresv1alpha1.BackupTypeFilesystem,
-				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups", Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
+				Type: multigresv1alpha1.BackupTypeFilesystem,
+				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+					Path:    "/backups",
+					Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
+				},
 			},
 		},
 	}
 
 	setTestPostgresPasswordSecretRef(shard)
 	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
-	if err := k8sClient.Create(ctx, shard); err != nil {
-		t.Fatalf("Failed to create Shard: %v", err)
-	}
+	c.NoError(k8sClient.Create(ctx, shard), "Failed to create Shard")
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1356,24 +1617,27 @@ func TestReconcileDeletions(t *testing.T) {
 	// We use polling to avoid strict content matching on Data
 	pollFound := false
 	for i := 0; i < 20; i++ {
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: shardcontroller.PgHbaConfigMapName("test-shard-deletion-reconcile"), Namespace: "default"}, cm)
+		err := k8sClient.Get(
+			ctx,
+			types.NamespacedName{
+				Name:      shardcontroller.PgHbaConfigMapName("test-shard-deletion-reconcile"),
+				Namespace: "default",
+			},
+			cm,
+		)
 		if err == nil {
 			pollFound = true
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if !pollFound {
-		t.Fatalf("ConfigMap not initially created")
-	}
+	c.True(pollFound, "ConfigMap not initially created")
 
 	// 2. Delete ConfigMap
 	// We need to fetch it first to get UID/ResourceVersion for proper deletion if needed,
 	// strictly speaking not needed for k8s deletion by name if we construct it,
 	// but better to be safe with client usage.
-	if err := k8sClient.Delete(ctx, cm); err != nil {
-		t.Fatalf("Failed to delete ConfigMap: %v", err)
-	}
+	c.NoError(k8sClient.Delete(ctx, cm), "Failed to delete ConfigMap")
 
 	// 3. Wait for ConfigMap to be recreated
 	// Since the controller watches ConfigMaps, the deletion event should trigger Reconcile.
@@ -1391,7 +1655,14 @@ func TestReconcileDeletions(t *testing.T) {
 		default:
 		}
 
-		err := k8sClient.Get(ctx, types.NamespacedName{Name: shardcontroller.PgHbaConfigMapName("test-shard-deletion-reconcile"), Namespace: "default"}, cm)
+		err := k8sClient.Get(
+			ctx,
+			types.NamespacedName{
+				Name:      shardcontroller.PgHbaConfigMapName("test-shard-deletion-reconcile"),
+				Namespace: "default",
+			},
+			cm,
+		)
 		if err == nil {
 			found = true
 			break
@@ -1399,13 +1670,12 @@ func TestReconcileDeletions(t *testing.T) {
 		time.Sleep(interval)
 	}
 
-	if !found {
-		t.Fatalf("ConfigMap was not recreated")
-	}
+	c.True(found, "ConfigMap was not recreated")
 }
 
 func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -1419,15 +1689,13 @@ func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
 		),
 	)
 
-	if err := (&shardcontroller.ShardReconciler{
+	c.Require().NoError((&shardcontroller.ShardReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("shard-controller"),
 	}).SetupWithManager(mgr, controller.Options{
 		SkipNameValidation: ptr.To(true),
-	}); err != nil {
-		t.Fatalf("Failed to create controller, %v", err)
-	}
+	}), "Failed to create controller")
 
 	ctx := t.Context()
 	k8sClient := mgr.GetClient()
@@ -1481,11 +1749,9 @@ func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
 
 	setTestPostgresPasswordSecretRef(shard)
 	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
-	if err := k8sClient.Create(ctx, shard); err != nil {
-		t.Fatalf("Failed to create Shard: %v", err)
-	}
+	c.Require().NoError(k8sClient.Create(ctx, shard), "Failed to create Shard")
 
-	require.Eventually(t, func() bool {
+	c.Require().EventuallyTrue(10*time.Second, 100*time.Millisecond, func() bool {
 		events := &corev1.EventList{}
 		if err := k8sClient.List(ctx, events, client.InNamespace(shard.Namespace)); err != nil {
 			return false
@@ -1498,25 +1764,21 @@ func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
 			}
 		}
 		return false
-	}, 10*time.Second, 100*time.Millisecond,
-		"expected a ConfigError event for the dangling init-secrets reference")
+	}, "expected a ConfigError event for the dangling init-secrets reference")
 
 	podList := &corev1.PodList{}
-	if err := k8sClient.List(ctx, podList,
+	c.Require().NoError(k8sClient.List(ctx, podList,
 		client.InNamespace(shard.Namespace),
 		client.MatchingLabels{
 			"multigres.com/cluster": "test-cluster",
 			"multigres.com/shard":   "0",
 		},
-	); err != nil {
-		t.Fatalf("Failed to list pods: %v", err)
-	}
-	if len(podList.Items) != 0 {
-		t.Errorf(
-			"expected no pool pods for shard with dangling PostgresInitSecretsRef, got %d",
-			len(podList.Items),
-		)
-	}
+	), "Failed to list pods")
+	c.Empty(
+		podList.Items,
+		"expected no pool pods for shard with dangling PostgresInitSecretsRef, got %d",
+		len(podList.Items),
+	)
 }
 
 // TestReloadVsRestartRollout drives a real reconcile against envtest and proves
@@ -1554,6 +1816,7 @@ func testReloadVsRestartRollout(
 	blockedReason string,
 ) {
 	t.Helper()
+	c := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -1627,22 +1890,18 @@ func testReloadVsRestartRollout(
 		blocked:       make(chan string, 1),
 		started:       make(chan string, 1),
 	}
-	if err := (&shardcontroller.ShardReconciler{
+	c.NoError((&shardcontroller.ShardReconciler{
 		Client:          mgr.GetClient(),
 		APIReader:       mgr.GetAPIReader(),
 		Scheme:          mgr.GetScheme(),
 		Recorder:        recorder,
 		PoolerClients:   poolerclient.Static(rpc),
 		CreateTopoStore: topoFactory,
-	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}); err != nil {
-		t.Fatalf("Failed to create controller: %v", err)
-	}
+	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}), "Failed to create controller")
 
 	setTestPostgresPasswordSecretRef(shard)
 	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
-	if err := k8sClient.Create(ctx, shard); err != nil {
-		t.Fatalf("Failed to create Shard: %v", err)
-	}
+	c.NoError(k8sClient.Create(ctx, shard), "Failed to create Shard")
 
 	// Keep pool pods Ready in the background so the controller does not block.
 	go markPoolPodsReady(ctx, k8sClient, clusterName)
@@ -1654,7 +1913,7 @@ func testReloadVsRestartRollout(
 
 	// Wait for every desired member before testing either configuration change.
 	var original corev1.PodList
-	require.Eventually(t, func() bool {
+	c.EventuallyTrue(30*time.Second, 200*time.Millisecond, func() bool {
 		if err := mgr.GetClient().List(
 			ctx,
 			&original,
@@ -1670,7 +1929,7 @@ func testReloadVsRestartRollout(
 			}
 		}
 		return true
-	}, 30*time.Second, 200*time.Millisecond, "wait for the complete ready cohort")
+	}, "wait for the complete ready cohort")
 	// Multipoolers register only after their pods exist. Registering before
 	// the controller cache sees them lets dead-pooler cleanup mark them shut down.
 	registerPoolers()
@@ -1681,29 +1940,23 @@ func testReloadVsRestartRollout(
 	waitForConfigMapContains(t, ctx, k8sClient, shardName, "work_mem = '8MB'")
 	// Reaching the reload RPC proves the controller processed the pool rollout
 	// decision, not merely the earlier ConfigMap write.
-	require.Eventually(t, func() bool {
+	c.EventuallyTrue(30*time.Second, 100*time.Millisecond, func() bool {
 		for _, call := range rpc.GetCallLog() {
 			if strings.HasPrefix(call, "ReloadConfig") {
 				return true
 			}
 		}
 		return false
-	}, 30*time.Second, 100*time.Millisecond, "reload-only change did not reach ReloadConfig")
+	}, "reload-only change did not reach ReloadConfig")
 
 	assertUnchanged := func() {
 		t.Helper()
 		for _, orig := range original.Items {
 			var got corev1.Pod
-			require.NoError(t, mgr.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(&orig), &got))
-			require.Equal(t, orig.UID, got.UID, "pod %s was recreated", orig.Name)
-			require.Empty(
-				t,
-				got.Annotations[metadata.AnnotationDrainState],
-				"pod %s was drained",
-				orig.Name,
-			)
-			require.Equal(
-				t,
+			c.NoError(mgr.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(&orig), &got))
+			c.EqDeep(orig.UID, got.UID, "pod %s was recreated", orig.Name)
+			c.Empty(got.Annotations[metadata.AnnotationDrainState], "pod %s was drained", orig.Name)
+			c.EqDeep(
 				orig.Annotations[metadata.AnnotationSpecHash],
 				got.Annotations[metadata.AnnotationSpecHash],
 			)
@@ -1716,39 +1969,36 @@ func testReloadVsRestartRollout(
 	if blockedReason != "" {
 		// Observe an actual failed preflight, not merely the absence of a drain
 		// before the controller processes the config update.
-		require.Eventually(t, func() bool {
+		c.EventuallyTrue(40*time.Second, 200*time.Millisecond, func() bool {
 			select {
 			case message := <-recorder.blocked:
 				return strings.Contains(message, blockedReason)
 			default:
 				return false
 			}
-		}, 40*time.Second, 200*time.Millisecond, "did not observe a blocked disruption: %s", blockedReason)
+		}, "did not observe a blocked disruption: %s", blockedReason)
 		assertUnchanged()
 		return
 	}
 	// A drain can advance through all annotations between polling intervals in
 	// envtest. Observe its initiation directly instead of racing pod deletion.
-	require.Eventually(t, func() bool {
+	c.EventuallyTrue(40*time.Second, 100*time.Millisecond, func() bool {
 		select {
 		case message := <-recorder.started:
 			return strings.Contains(message, "Initiated drain for drifted replica pod")
 		default:
 			return false
 		}
-	}, 40*time.Second, 100*time.Millisecond, "restart change did not initiate a replica drain")
+	}, "restart change did not initiate a replica drain")
 	var pods corev1.PodList
-	require.NoError(
-		t,
-		k8sClient.List(ctx, &pods, client.InNamespace(shard.Namespace), poolSelector),
-	)
+	c.NoError(k8sClient.List(ctx, &pods, client.InNamespace(shard.Namespace), poolSelector))
 	draining := 0
 	for _, pod := range pods.Items {
 		if pod.Annotations[metadata.AnnotationDrainState] != "" {
 			draining++
 		}
 	}
-	require.LessOrEqual(t, draining, 1, "restart initiated overlapping drains")
+	c.LessOrEqual(1, draining, "restart initiated overlapping drains")
 }
 
 // Observe preflight events without depending on the API event broadcaster's
@@ -1789,8 +2039,9 @@ func rolloutDataPlane(
 	missingStatus bool,
 ) (*rpcclient.FakeClient, func(*multigresv1alpha1.Shard) (topoclient.Store, error), func()) {
 	t.Helper()
+	c := assert.NewAborting(t)
 	store, factory := memorytopo.NewServerAndFactory(t.Context(), "zone1")
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	t.Cleanup(func() { c.NoError(store.Close()) })
 	ids := make([]*cm.ID, replicas)
 	for i := range ids {
 		ids[i] = &cm.ID{
@@ -1858,7 +2109,7 @@ func rolloutDataPlane(
 			), nil
 		}, func() {
 			for _, pooler := range poolers {
-				require.NoError(t, store.RegisterMultipooler(t.Context(), pooler, false))
+				c.NoError(store.RegisterMultipooler(t.Context(), pooler, false))
 			}
 		}
 }
@@ -1922,7 +2173,7 @@ func setInlineConfig(
 	shardName, key, val string,
 ) {
 	t.Helper()
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	assert.NewAborting(t).NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		s := &multigresv1alpha1.Shard{}
 		if err := c.Get(
 			ctx,
@@ -1937,9 +2188,7 @@ func setInlineConfig(
 		}
 		s.Spec.PostgresConfig[key] = val
 		return c.Patch(ctx, s, client.MergeFrom(base))
-	}); err != nil {
-		t.Fatalf("update shard inline config %s=%s: %v", key, val, err)
-	}
+	}), "update shard inline config %s=%s", key, val)
 }
 
 func waitForConfigMapContains(

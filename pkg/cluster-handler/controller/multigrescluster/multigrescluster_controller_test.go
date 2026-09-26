@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,6 +33,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/name"
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // ============================================================================
@@ -67,6 +68,7 @@ func runReconcileTest(t *testing.T, tests map[string]reconcileTestCase) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			// Default to all standard templates if existingObjects is nil
 			objects := tc.existingObjects
@@ -108,29 +110,23 @@ func runReconcileTest(t *testing.T, tests map[string]reconcileTestCase) {
 					check,
 				)
 				if apierrors.IsNotFound(err) {
-					if err := baseClient.Create(t.Context(), cluster); err != nil {
-						t.Fatalf("failed to create initial cluster: %v", err)
-					}
+					c.Require().
+						NoError(baseClient.Create(t.Context(), cluster), "failed to create initial cluster")
 
 					if shouldDelete {
 						// Simulate deletion workflow
-						if err := baseClient.Get(
+						c.Require().NoError(baseClient.Get(
 							t.Context(),
 							types.NamespacedName{Name: cluster.Name, Namespace: cluster.Namespace},
 							cluster,
-						); err != nil {
-							t.Fatalf("failed to refresh cluster before delete: %v", err)
-						}
-						if err := baseClient.Delete(t.Context(), cluster); err != nil {
-							t.Fatalf("failed to set deletion timestamp: %v", err)
-						}
-						if err := baseClient.Get(
+						), "failed to refresh cluster before delete")
+						c.Require().
+							NoError(baseClient.Delete(t.Context(), cluster), "failed to set deletion timestamp")
+						c.Require().NoError(baseClient.Get(
 							t.Context(),
 							types.NamespacedName{Name: cluster.Name, Namespace: cluster.Namespace},
 							cluster,
-						); err != nil {
-							t.Fatalf("failed to refresh cluster after deletion: %v", err)
-						}
+						), "failed to refresh cluster after deletion")
 					}
 				}
 			}
@@ -197,13 +193,12 @@ func runReconcileTest(t *testing.T, tests map[string]reconcileTestCase) {
 							break
 						}
 					}
-					if !found {
-						t.Errorf(
-							"Expected event containing %q not found. Got events: %v",
-							want,
-							gotEvents,
-						)
-					}
+					c.True(
+						found,
+						"Expected event containing %q not found. Got events: %v",
+						want,
+						gotEvents,
+					)
 				}
 			}
 
@@ -364,6 +359,7 @@ func TestHandleDeletionReleasesPoolerClient(t *testing.T) {
 	}
 
 	t.Run("after successful cleanup", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		forgotten := make(chan types.NamespacedName, 1)
 		r := &MultigresClusterReconciler{
 			Client:   fake.NewClientBuilder().WithScheme(setupScheme()).Build(),
@@ -373,20 +369,18 @@ func TestHandleDeletionReleasesPoolerClient(t *testing.T) {
 			}),
 		}
 
-		if _, err := r.handleDeletion(t.Context(), cluster.DeepCopy()); err != nil {
-			t.Fatalf("handleDeletion() error = %v", err)
-		}
+		_, err := r.handleDeletion(t.Context(), cluster.DeepCopy())
+		c.NoError(err, "handleDeletion() error =")
 		select {
 		case got := <-forgotten:
-			if got != clusterKey {
-				t.Fatalf("forgot cluster %v, want %v", got, clusterKey)
-			}
+			c.Eq(clusterKey, got, "forgot cluster")
 		default:
 			t.Fatal("pooler client cache was not notified")
 		}
 	})
 
 	t.Run("not when cleanup fails", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		baseClient := fake.NewClientBuilder().WithScheme(setupScheme()).Build()
 		failingClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 			OnList: testutil.FailObjListAfterNCalls(0, errors.New("list failed")),
@@ -400,12 +394,9 @@ func TestHandleDeletionReleasesPoolerClient(t *testing.T) {
 			}),
 		}
 
-		if _, err := r.handleDeletion(t.Context(), cluster.DeepCopy()); err == nil {
-			t.Fatal("handleDeletion() error = nil, want cleanup error")
-		}
-		if forgotten {
-			t.Fatal("pooler client cache notified after failed cleanup")
-		}
+		_, err := r.handleDeletion(t.Context(), cluster.DeepCopy())
+		c.Error(err, "handleDeletion() error = nil, want cleanup error")
+		c.False(forgotten, "pooler client cache notified after failed cleanup")
 	})
 }
 
@@ -465,6 +456,7 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			cluster := newCluster()
 			forgotten := false
 			r := &MultigresClusterReconciler{
@@ -479,31 +471,22 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 			}
 
 			result, err := r.handleDeletion(t.Context(), cluster.DeepCopy())
-			if err != nil {
-				t.Fatalf("handleDeletion() error = %v", err)
-			}
-			if result.RequeueAfter != childDeletionRequeueDelay {
-				t.Fatalf(
-					"RequeueAfter = %v, want %v",
-					result.RequeueAfter,
-					childDeletionRequeueDelay,
-				)
-			}
-			if forgotten {
-				t.Fatal("pooler client cache notified while children remain")
-			}
+			c.NoError(err, "handleDeletion() error =")
+			c.Eq(childDeletionRequeueDelay, result.RequeueAfter, "RequeueAfter")
+			c.False(forgotten, "pooler client cache notified while children remain")
 
 			got := &multigresv1alpha1.MultigresCluster{}
-			if err := r.Get(t.Context(), clusterKey, got); err != nil {
-				t.Fatalf("failed to get cluster: %v", err)
-			}
-			if !slices.Contains(got.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
-				t.Fatal("cluster cleanup finalizer removed while children remain")
-			}
+			c.NoError(r.Get(t.Context(), clusterKey, got), "failed to get cluster")
+			c.Contains(
+				got.Finalizers,
+				multigresv1alpha1.FinalizerClusterCleanup,
+				"cluster cleanup finalizer removed while children remain",
+			)
 		})
 	}
 
 	t.Run("no children", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		cluster := newCluster()
 		r := &MultigresClusterReconciler{
 			Client: fake.NewClientBuilder().
@@ -518,22 +501,14 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 		})
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := r.Get(t.Context(), clusterKey, fetched); err != nil {
-			t.Fatalf("failed to get cluster: %v", err)
-		}
+		c.NoError(r.Get(t.Context(), clusterKey, fetched), "failed to get cluster")
 
 		result, err := r.handleDeletion(t.Context(), fetched)
-		if err != nil {
-			t.Fatalf("handleDeletion() error = %v", err)
-		}
-		if result.RequeueAfter != 0 {
-			t.Fatalf("RequeueAfter = %v, want 0", result.RequeueAfter)
-		}
+		c.NoError(err, "handleDeletion() error =")
+		c.Eq(0, result.RequeueAfter, "RequeueAfter")
 		select {
 		case got := <-forgotten:
-			if got != clusterKey {
-				t.Fatalf("forgot cluster %v, want %v", got, clusterKey)
-			}
+			c.Eq(clusterKey, got, "forgot cluster")
 		default:
 			t.Fatal("pooler client cache was not notified")
 		}
@@ -542,9 +517,11 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 		err = r.Get(t.Context(), clusterKey, got)
 		switch {
 		case err == nil:
-			if slices.Contains(got.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
-				t.Fatal("cluster cleanup finalizer not removed")
-			}
+			c.NotContains(
+				got.Finalizers,
+				multigresv1alpha1.FinalizerClusterCleanup,
+				"cluster cleanup finalizer not removed",
+			)
 		case apierrors.IsNotFound(err):
 		default:
 			t.Fatalf("failed to get cluster: %v", err)
@@ -553,6 +530,7 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 }
 
 func TestReconcileNotFoundReleasesPoolerClient(t *testing.T) {
+	c := assert.NewAborting(t)
 	key := types.NamespacedName{Name: "missing", Namespace: "test-ns"}
 	forgotten := make(chan types.NamespacedName, 1)
 	r := &MultigresClusterReconciler{
@@ -562,14 +540,11 @@ func TestReconcileNotFoundReleasesPoolerClient(t *testing.T) {
 		}),
 	}
 
-	if _, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key}); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
+	_, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key})
+	c.NoError(err, "Reconcile() error =")
 	select {
 	case got := <-forgotten:
-		if got != key {
-			t.Fatalf("forgot cluster %v, want %v", got, key)
-		}
+		c.Eq(key, got, "forgot cluster")
 	default:
 		t.Fatal("pooler client cache was not notified for missing cluster")
 	}
@@ -590,6 +565,7 @@ func TestMultigresClusterReconciler_Lifecycle(t *testing.T) {
 		"Create: Full Cluster Creation - Verify Images and Wiring": {
 			expectedEvents: []string{"Normal Synced Successfully reconciled MultigresCluster"},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 				// Verify Cell (Basic wiring check)
 				cell := &multigresv1alpha1.Cell{}
@@ -598,18 +574,15 @@ func TestMultigresClusterReconciler_Lifecycle(t *testing.T) {
 					clusterName,
 					"zone-a",
 				)
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: cellName, Namespace: namespace},
 					cell,
-				); err != nil {
-					t.Fatalf("Expected Cell %s to exist: %v", cellName, err)
-				}
-				if got, want := cell.Spec.Images.Multigateway, multigresv1alpha1.ImageRef(
+				), "Expected Cell %s to exist", cellName)
+				got, want := cell.Spec.Images.Multigateway, multigresv1alpha1.ImageRef(
 					"gateway:latest",
-				); got != want {
-					t.Errorf("Cell image mismatch got %q, want %q", got, want)
-				}
+				)
+				ck.Eq(want, got, "Cell image mismatch got")
 			},
 		},
 
@@ -706,18 +679,20 @@ func TestMultigresClusterReconciler_Lifecycle(t *testing.T) {
 				"Normal PendingDeletion Marked TableGroup",
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				tg := &multigresv1alpha1.TableGroup{}
 				err := c.Get(
 					t.Context(),
 					types.NamespacedName{Name: clusterName + "-orphan-tg", Namespace: namespace},
 					tg,
 				)
-				if err != nil {
-					t.Fatalf("Expected orphan TG to still exist with PendingDeletion, got: %v", err)
-				}
-				if tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-					t.Error("Expected orphan TableGroup to have PendingDeletion annotation")
-				}
+				ck.Require().
+					NoError(err, "Expected orphan TG to still exist with PendingDeletion, got")
+				ck.NotEq(
+					"",
+					tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+					"Expected orphan TableGroup to have PendingDeletion annotation",
+				)
 			},
 		},
 		"Object Not Found (Clean Exit)": {
@@ -805,31 +780,28 @@ func TestMultigresClusterReconciler_Lifecycle(t *testing.T) {
 			existingObjects: []client.Object{coreTpl, cellTpl, shardTpl},
 			expectedEvents:  []string{"Normal Synced Successfully reconciled MultigresCluster"},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				cell := &multigresv1alpha1.Cell{}
 				cellName := name.JoinWithConstraints(
 					name.DefaultConstraints,
 					clusterName,
 					"zone-a",
 				)
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: cellName, Namespace: namespace},
 					cell,
-				); err != nil {
-					t.Fatalf("Expected Cell %s to exist: %v", cellName, err)
-				}
-				if cell.Spec.GlobalTopoServer.Address != "http://external:2379" {
-					t.Errorf(
-						"Expected external address http://external:2379, got %s",
-						cell.Spec.GlobalTopoServer.Address,
-					)
-				}
-				if cell.Spec.GlobalTopoServer.RootPath != "/custom/root" {
-					t.Errorf(
-						"Expected external root path /custom/root, got %s",
-						cell.Spec.GlobalTopoServer.RootPath,
-					)
-				}
+				), "Expected Cell %s to exist", cellName)
+				ck.Eq(
+					"http://external:2379",
+					cell.Spec.GlobalTopoServer.Address,
+					"Expected external address http://external:2379, got",
+				)
+				ck.Eq(
+					"/custom/root",
+					cell.Spec.GlobalTopoServer.RootPath,
+					"Expected external root path /custom/root, got",
+				)
 			},
 		},
 		"Success: Early Return on Deletion": {
@@ -1098,6 +1070,7 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 	}
 
 	t.Run("CoreTemplate matches only referencing and nil-status clusters", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tpl := &multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "prod-core", Namespace: "default"},
 		}
@@ -1107,24 +1080,24 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 		for _, req := range requests {
 			names[req.Name] = true
 		}
-		if !names["cluster-core"] {
-			t.Error("Expected cluster-core (references prod-core) to be enqueued")
-		}
-		if !names["cluster-nil"] {
-			t.Error("Expected cluster-nil (nil status) to be enqueued")
-		}
-		if names["cluster-shard"] {
-			t.Error("cluster-shard should not be enqueued for CoreTemplate change")
-		}
-		if names["cluster-other"] {
-			t.Error("cluster-other (different namespace) should not be enqueued")
-		}
-		if len(requests) != 2 {
-			t.Errorf("Expected 2 requests, got %d: %v", len(requests), names)
-		}
+		c.False(
+			!names["cluster-core"],
+			"Expected cluster-core (references prod-core) to be enqueued",
+		)
+		c.False(!names["cluster-nil"], "Expected cluster-nil (nil status) to be enqueued")
+		c.False(
+			names["cluster-shard"],
+			"cluster-shard should not be enqueued for CoreTemplate change",
+		)
+		c.False(
+			names["cluster-other"],
+			"cluster-other (different namespace) should not be enqueued",
+		)
+		c.Len(requests, 2, "Expected 2 requests, got %d: %v", len(requests), names)
 	})
 
 	t.Run("ShardTemplate matches only referencing and nil-status clusters", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		tpl := &multigresv1alpha1.ShardTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "prod-shard", Namespace: "default"},
 		}
@@ -1134,18 +1107,13 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 		for _, req := range requests {
 			names[req.Name] = true
 		}
-		if !names["cluster-shard"] {
-			t.Error("Expected cluster-shard to be enqueued")
-		}
-		if !names["cluster-nil"] {
-			t.Error("Expected cluster-nil (nil status) to be enqueued")
-		}
-		if names["cluster-core"] {
-			t.Error("cluster-core should not be enqueued for ShardTemplate change")
-		}
-		if len(requests) != 2 {
-			t.Errorf("Expected 2 requests, got %d: %v", len(requests), names)
-		}
+		c.False(!names["cluster-shard"], "Expected cluster-shard to be enqueued")
+		c.False(!names["cluster-nil"], "Expected cluster-nil (nil status) to be enqueued")
+		c.False(
+			names["cluster-core"],
+			"cluster-core should not be enqueued for ShardTemplate change",
+		)
+		c.Len(requests, 2, "Expected 2 requests, got %d: %v", len(requests), names)
 	})
 
 	t.Run("Unmatched template enqueues only nil-status clusters", func(t *testing.T) {
@@ -1154,9 +1122,8 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 		}
 		requests := r.enqueueRequestsFromTemplate(context.Background(), tpl)
 
-		if len(requests) != 1 {
-			t.Errorf("Expected 1 request (nil-status cluster only), got %d", len(requests))
-		}
+		assert.NewCollecting(t).
+			Len(requests, 1, "Expected 1 request (nil-status cluster only), got %d", len(requests))
 		if len(requests) == 1 && requests[0].Name != "cluster-nil" {
 			t.Errorf("Expected cluster-nil, got %s", requests[0].Name)
 		}
@@ -1167,9 +1134,7 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "not-a-template", Namespace: "default"},
 		}
 		requests := r.enqueueRequestsFromTemplate(context.Background(), unknown)
-		if requests != nil {
-			t.Errorf("Expected nil for unknown object type, got %v", requests)
-		}
+		assert.NewCollecting(t).Nil(requests, "Expected nil for unknown object type, got")
 	})
 
 	t.Run("List error returns empty", func(t *testing.T) {
@@ -1183,9 +1148,8 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "prod-core", Namespace: "default"},
 		}
 		requests := r.enqueueRequestsFromTemplate(context.Background(), tpl)
-		if len(requests) != 0 {
-			t.Errorf("Expected 0 requests on list error, got %d", len(requests))
-		}
+		assert.NewCollecting(t).
+			Empty(requests, "Expected 0 requests on list error, got %d", len(requests))
 	})
 }
 
@@ -1202,9 +1166,8 @@ func TestTemplateKindFromObject(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := templateKindFromObject(tt.obj); got != tt.want {
-				t.Errorf("templateKindFromObject() = %q, want %q", got, tt.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tt.want, templateKindFromObject(tt.obj), "templateKindFromObject()")
 		})
 	}
 }
@@ -1236,15 +1199,15 @@ func TestReferencesTemplate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := referencesTemplate(tt.rt, tt.kind, tt.tpl); got != tt.want {
-				t.Errorf("referencesTemplate() = %v, want %v", got, tt.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tt.want, referencesTemplate(tt.rt, tt.kind, tt.tpl), "referencesTemplate()")
 		})
 	}
 }
 
 func TestCollectResolvedTemplates(t *testing.T) {
 	t.Run("All template refs populated", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				TemplateDefaults: multigresv1alpha1.TemplateDefaults{
@@ -1279,17 +1242,11 @@ func TestCollectResolvedTemplates(t *testing.T) {
 		rt := collectResolvedTemplates(cluster)
 
 		wantCore := []multigresv1alpha1.TemplateRef{"admin-core", "default-core", "gts-core"}
-		if !slices.Equal(rt.CoreTemplates, wantCore) {
-			t.Errorf("CoreTemplates = %v, want %v", rt.CoreTemplates, wantCore)
-		}
+		c.EqDiff(wantCore, rt.CoreTemplates, "CoreTemplates")
 		wantCell := []multigresv1alpha1.TemplateRef{"cell-ha", "cell-std", "default-cell"}
-		if !slices.Equal(rt.CellTemplates, wantCell) {
-			t.Errorf("CellTemplates = %v, want %v", rt.CellTemplates, wantCell)
-		}
+		c.EqDiff(wantCell, rt.CellTemplates, "CellTemplates")
 		wantShard := []multigresv1alpha1.TemplateRef{"default-shard", "shard-prod"}
-		if !slices.Equal(rt.ShardTemplates, wantShard) {
-			t.Errorf("ShardTemplates = %v, want %v", rt.ShardTemplates, wantShard)
-		}
+		c.EqDiff(wantShard, rt.ShardTemplates, "ShardTemplates")
 	})
 
 	t.Run("Duplicates are deduplicated", func(t *testing.T) {
@@ -1338,6 +1295,7 @@ func TestCollectResolvedTemplates(t *testing.T) {
 	})
 
 	t.Run("No templates (pure inline)", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Cells: []multigresv1alpha1.CellConfig{
@@ -1348,15 +1306,9 @@ func TestCollectResolvedTemplates(t *testing.T) {
 
 		rt := collectResolvedTemplates(cluster)
 
-		if len(rt.CoreTemplates) != 0 {
-			t.Errorf("CoreTemplates should be empty, got %v", rt.CoreTemplates)
-		}
-		if len(rt.CellTemplates) != 0 {
-			t.Errorf("CellTemplates should be empty, got %v", rt.CellTemplates)
-		}
-		if len(rt.ShardTemplates) != 0 {
-			t.Errorf("ShardTemplates should be empty, got %v", rt.ShardTemplates)
-		}
+		c.Empty(rt.CoreTemplates, "CoreTemplates should be empty, got")
+		c.Empty(rt.CellTemplates, "CellTemplates should be empty, got")
+		c.Empty(rt.ShardTemplates, "ShardTemplates should be empty, got")
 	})
 
 	t.Run("MultiadminWeb templateRef included", func(t *testing.T) {
@@ -1378,6 +1330,7 @@ func TestCollectResolvedTemplates(t *testing.T) {
 
 func TestCollectTrackingLabels(t *testing.T) {
 	t.Run("All template kinds referenced", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				TemplateDefaults: multigresv1alpha1.TemplateDefaults{
@@ -1390,15 +1343,9 @@ func TestCollectTrackingLabels(t *testing.T) {
 
 		labels := collectTrackingLabels(cluster)
 
-		if labels[metadata.LabelUsesCoreTemplate] != "true" {
-			t.Error("Expected uses-core-template=true")
-		}
-		if labels[metadata.LabelUsesCellTemplate] != "true" {
-			t.Error("Expected uses-cell-template=true")
-		}
-		if labels[metadata.LabelUsesShardTemplate] != "true" {
-			t.Error("Expected uses-shard-template=true")
-		}
+		c.Eq("true", labels[metadata.LabelUsesCoreTemplate], "Expected uses-core-template=true")
+		c.Eq("true", labels[metadata.LabelUsesCellTemplate], "Expected uses-cell-template=true")
+		c.Eq("true", labels[metadata.LabelUsesShardTemplate], "Expected uses-shard-template=true")
 	})
 
 	t.Run("No templates (pure inline)", func(t *testing.T) {
@@ -1412,12 +1359,12 @@ func TestCollectTrackingLabels(t *testing.T) {
 
 		labels := collectTrackingLabels(cluster)
 
-		if len(labels) != 0 {
-			t.Errorf("Expected no tracking labels for inline-only cluster, got %v", labels)
-		}
+		assert.NewCollecting(t).
+			Empty(labels, "Expected no tracking labels for inline-only cluster, got")
 	})
 
 	t.Run("Only cell template from per-cell ref", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Cells: []multigresv1alpha1.CellConfig{
@@ -1431,15 +1378,13 @@ func TestCollectTrackingLabels(t *testing.T) {
 		if _, ok := labels[metadata.LabelUsesCoreTemplate]; ok {
 			t.Error("Unexpected uses-core-template label")
 		}
-		if labels[metadata.LabelUsesCellTemplate] != "true" {
-			t.Error("Expected uses-cell-template=true")
-		}
-		if _, ok := labels[metadata.LabelUsesShardTemplate]; ok {
-			t.Error("Unexpected uses-shard-template label")
-		}
+		c.Eq("true", labels[metadata.LabelUsesCellTemplate], "Expected uses-cell-template=true")
+		_, ok := labels[metadata.LabelUsesShardTemplate]
+		c.False(ok, "Unexpected uses-shard-template label")
 	})
 
 	t.Run("Only shard template from per-shard ref", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			Spec: multigresv1alpha1.MultigresClusterSpec{
 				Databases: []multigresv1alpha1.DatabaseConfig{
@@ -1461,12 +1406,9 @@ func TestCollectTrackingLabels(t *testing.T) {
 		if _, ok := labels[metadata.LabelUsesCoreTemplate]; ok {
 			t.Error("Unexpected uses-core-template label")
 		}
-		if _, ok := labels[metadata.LabelUsesCellTemplate]; ok {
-			t.Error("Unexpected uses-cell-template label")
-		}
-		if labels[metadata.LabelUsesShardTemplate] != "true" {
-			t.Error("Expected uses-shard-template=true")
-		}
+		_, ok := labels[metadata.LabelUsesCellTemplate]
+		c.False(ok, "Unexpected uses-cell-template label")
+		c.Eq("true", labels[metadata.LabelUsesShardTemplate], "Expected uses-shard-template=true")
 	})
 
 	t.Run("Core from GlobalTopoServer templateRef", func(t *testing.T) {
@@ -1480,9 +1422,8 @@ func TestCollectTrackingLabels(t *testing.T) {
 
 		labels := collectTrackingLabels(cluster)
 
-		if labels[metadata.LabelUsesCoreTemplate] != "true" {
-			t.Error("Expected uses-core-template=true from GlobalTopoServer ref")
-		}
+		assert.NewCollecting(t).
+			Eq("true", labels[metadata.LabelUsesCoreTemplate], "Expected uses-core-template=true from GlobalTopoServer ref")
 	})
 
 	t.Run("Core from MultiadminWeb templateRef", func(t *testing.T) {
@@ -1496,9 +1437,8 @@ func TestCollectTrackingLabels(t *testing.T) {
 
 		labels := collectTrackingLabels(cluster)
 
-		if labels[metadata.LabelUsesCoreTemplate] != "true" {
-			t.Error("Expected uses-core-template=true from MultiadminWeb ref")
-		}
+		assert.NewCollecting(t).
+			Eq("true", labels[metadata.LabelUsesCoreTemplate], "Expected uses-core-template=true from MultiadminWeb ref")
 	})
 }
 
@@ -1525,9 +1465,8 @@ func TestReconciler_PatchTrackingLabelsError(t *testing.T) {
 		context.Background(),
 		ctrl.Request{NamespacedName: types.NamespacedName{Name: clusterName, Namespace: namespace}},
 	)
-	if err == nil || !strings.Contains(err.Error(), "failed to patch tracking labels") {
-		t.Errorf("Expected patch error, got %v", err)
-	}
+	assert.NewCollecting(t).
+		False(err == nil || !strings.Contains(err.Error(), "failed to patch tracking labels"), "Expected patch error, got %v", err)
 }
 
 func TestReconciler_TopologyFailure(t *testing.T) {
@@ -1552,12 +1491,12 @@ func TestReconciler_TopologyFailure(t *testing.T) {
 		context.Background(),
 		ctrl.Request{NamespacedName: types.NamespacedName{Name: clusterName, Namespace: namespace}},
 	)
-	if err == nil || !strings.Contains(err.Error(), "failed to open topology store") {
-		t.Errorf("Expected topology reconcile error, got %v", err)
-	}
+	assert.NewCollecting(t).
+		False(err == nil || !strings.Contains(err.Error(), "failed to open topology store"), "Expected topology reconcile error, got %v", err)
 }
 
 func TestReconciler_TopologyRequeueWhenUnavailable(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := setupScheme()
 	coreTpl, cellTpl, shardTpl, baseCluster, clusterName, namespace := setupFixtures(t)
 	baseCluster.CreationTimestamp = metav1.Now() // Trigger grace period
@@ -1580,12 +1519,8 @@ func TestReconciler_TopologyRequeueWhenUnavailable(t *testing.T) {
 		context.Background(),
 		ctrl.Request{NamespacedName: types.NamespacedName{Name: clusterName, Namespace: namespace}},
 	)
-	if err != nil {
-		t.Errorf("Expected nil error, got %v", err)
-	}
-	if res.RequeueAfter == 0 {
-		t.Errorf("Expected RequeueAfter > 0")
-	}
+	c.NoError(err, "Expected nil error, got")
+	c.NotEq(0, res.RequeueAfter, "Expected RequeueAfter > 0")
 }
 
 func TestReconciler_TopologyErrorWhenUnavailableExpired(t *testing.T) {
@@ -1610,7 +1545,6 @@ func TestReconciler_TopologyErrorWhenUnavailableExpired(t *testing.T) {
 		context.Background(),
 		ctrl.Request{NamespacedName: types.NamespacedName{Name: clusterName, Namespace: namespace}},
 	)
-	if err == nil || !strings.Contains(err.Error(), "topology server unavailable") {
-		t.Errorf("Expected topology unavailable error, got %v", err)
-	}
+	assert.NewCollecting(t).
+		False(err == nil || !strings.Contains(err.Error(), "topology server unavailable"), "Expected topology unavailable error, got %v", err)
 }

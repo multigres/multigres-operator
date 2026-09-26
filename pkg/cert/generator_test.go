@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/multigres/testkit/assert"
 )
 
 func TestGenerator_Logic(t *testing.T) {
@@ -26,17 +26,13 @@ func TestGenerator_Logic(t *testing.T) {
 			return nil
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			tb.Fatalf("failed to parse certificate: %v", err)
-		}
+		assert.NewAborting(tb).NoError(err, "failed to parse certificate")
 		return cert
 	}
 
 	// Fixtures
 	caArtifacts, err := GenerateCA("")
-	if err != nil {
-		t.Fatalf("setup failed: GenerateCA error = %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "setup failed: GenerateCA error =")
 
 	type input struct {
 		ca         *CAArtifacts
@@ -52,13 +48,11 @@ func TestGenerator_Logic(t *testing.T) {
 	}{
 		"Happy Path: Generate CA": {
 			validate: func(tb testing.TB, _ *ServerArtifacts) {
+				c := assert.NewCollecting(tb)
 				cert := decodeCert(tb, caArtifacts.CertPEM)
-				if !cert.IsCA {
-					tb.Error("Expected CA cert to have IsCA=true")
-				}
-				if got, want := cert.Subject.CommonName, "Multigres Operator CA"; got != want {
-					tb.Errorf("CommonName mismatch: got %q, want %q", got, want)
-				}
+				c.True(cert.IsCA, "Expected CA cert to have IsCA=true")
+				got, want := cert.Subject.CommonName, "Multigres Operator CA"
+				c.Eq(want, got, "CommonName mismatch: got")
 			},
 		},
 		"Happy Path: Generate Server Cert": {
@@ -68,23 +62,21 @@ func TestGenerator_Logic(t *testing.T) {
 				dnsNames:   []string{"test-svc", "test-svc.ns.svc"},
 			},
 			validate: func(tb testing.TB, arts *ServerArtifacts) {
+				c := assert.NewCollecting(tb)
 				cert := decodeCert(tb, arts.CertPEM)
-				if cert.IsCA {
-					tb.Error("Expected server cert to NOT be CA")
-				}
-				if got, want := cert.Subject.CommonName, "test-svc.ns.svc"; got != want {
-					tb.Errorf("CN mismatch: got %q, want %q", got, want)
-				}
-				if diff := cmp.Diff(
-					cert.DNSNames,
+				c.False(cert.IsCA, "Expected server cert to NOT be CA")
+				got, want := cert.Subject.CommonName, "test-svc.ns.svc"
+				c.Eq(want, got, "CN mismatch: got")
+				c.EqDiff(
 					[]string{"test-svc", "test-svc.ns.svc"},
-				); diff != "" {
-					tb.Errorf("DNSNames mismatch (-got +want):\n%s", diff)
-				}
+					cert.DNSNames,
+					"DNSNames mismatch",
+				)
 				// Verify chain
-				if err := cert.CheckSignatureFrom(caArtifacts.Cert); err != nil {
-					tb.Errorf("Signature verification failed: %v", err)
-				}
+				c.NoError(
+					cert.CheckSignatureFrom(caArtifacts.Cert),
+					"Signature verification failed",
+				)
 				// Verify default ExtKeyUsage is ServerAuth only
 				if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
 					tb.Errorf("Expected default ExtKeyUsage [ServerAuth], got %v", cert.ExtKeyUsage)
@@ -115,22 +107,20 @@ func TestGenerator_Logic(t *testing.T) {
 				},
 			},
 			validate: func(tb testing.TB, arts *ServerArtifacts) {
+				c := assert.NewCollecting(tb)
 				cert := decodeCert(tb, arts.CertPEM)
-				if len(cert.ExtKeyUsage) != 2 {
-					tb.Fatalf("Expected 2 ExtKeyUsages, got %d", len(cert.ExtKeyUsage))
-				}
-				if cert.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
-					tb.Errorf(
-						"Expected first ExtKeyUsage to be ServerAuth, got %v",
-						cert.ExtKeyUsage[0],
-					)
-				}
-				if cert.ExtKeyUsage[1] != x509.ExtKeyUsageClientAuth {
-					tb.Errorf(
-						"Expected second ExtKeyUsage to be ClientAuth, got %v",
-						cert.ExtKeyUsage[1],
-					)
-				}
+				c.Require().
+					Len(cert.ExtKeyUsage, 2, "Expected 2 ExtKeyUsages, got %d", len(cert.ExtKeyUsage))
+				c.Eq(
+					x509.ExtKeyUsageServerAuth,
+					cert.ExtKeyUsage[0],
+					"Expected first ExtKeyUsage to be ServerAuth, got",
+				)
+				c.Eq(
+					x509.ExtKeyUsageClientAuth,
+					cert.ExtKeyUsage[1],
+					"Expected second ExtKeyUsage to be ClientAuth, got",
+				)
 			},
 		},
 		"Happy Path: Single ExtKeyUsage Override": {
@@ -160,6 +150,7 @@ func TestGenerator_Logic(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			// Skip execution for CA-only test case
 			if name == "Happy Path: Generate CA" {
@@ -173,14 +164,10 @@ func TestGenerator_Logic(t *testing.T) {
 				tc.input.dnsNames,
 				tc.input.opts...)
 			if tc.wantErr {
-				if err == nil {
-					t.Error("Expected error, got nil")
-				}
+				c.Error(err, "Expected error, got nil")
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+			c.Require().NoError(err, "Unexpected error")
 
 			if tc.validate != nil {
 				tc.validate(t, arts)
@@ -249,22 +236,15 @@ func TestParseCA_Logic(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			got, err := ParseCA(tc.certBytes, tc.keyBytes)
 			if tc.wantErr != "" {
-				if err == nil {
-					t.Fatal("Expected error, got nil")
-				}
-				if !strings.Contains(err.Error(), tc.wantErr) {
-					t.Errorf("Error mismatch. Got %q, want substring %q", err.Error(), tc.wantErr)
-				}
+				c.Require().Error(err, "Expected error, got nil")
+				c.StrContains(err.Error(), tc.wantErr, "Error mismatch. Got")
 			} else {
-				if err != nil {
-					t.Fatalf("Unexpected error: %v", err)
-				}
-				if got == nil {
-					t.Fatal("Expected artifacts, got nil")
-				}
+				c.Require().NoError(err, "Unexpected error")
+				c.Require().NotNil(got, "Expected artifacts, got nil")
 			}
 		})
 	}
@@ -287,17 +267,18 @@ func TestGenerator_EntropyFailures(t *testing.T) {
 	defer func() { randReader = oldReader }()
 
 	t.Run("GenerateServerCert: serial number failure", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		ca, err := GenerateCA("")
-		if err != nil {
-			t.Fatalf("GenerateCA failed: %v", err)
-		}
+		c.Require().NoError(err, "GenerateCA failed")
 
 		randReader = errorReader{}
 		defer func() { randReader = oldReader }()
 		_, err = GenerateServerCert(ca, "foo", nil)
-		if err == nil || !strings.Contains(err.Error(), "failed to generate serial number") {
-			t.Errorf("Expected serial number error, got %v", err)
-		}
+		c.False(
+			err == nil || !strings.Contains(err.Error(), "failed to generate serial number"),
+			"Expected serial number error, got %v",
+			err,
+		)
 	})
 }
 
@@ -314,9 +295,8 @@ func TestGenerator_MockFailures(t *testing.T) {
 		}
 
 		_, err := GenerateCA("")
-		if err == nil || !strings.Contains(err.Error(), "failed to parse generated CA") {
-			t.Errorf("Expected parse error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to parse generated CA"), "Expected parse error, got %v", err)
 	})
 
 	t.Run("GenerateCA: Marshal Key Failure", func(t *testing.T) {
@@ -326,9 +306,8 @@ func TestGenerator_MockFailures(t *testing.T) {
 		}
 
 		_, err := GenerateCA("")
-		if err == nil || !strings.Contains(err.Error(), "failed to marshal CA key") {
-			t.Errorf("Expected marshal error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to marshal CA key"), "Expected marshal error, got %v", err)
 	})
 }
 
@@ -347,8 +326,7 @@ func TestGenerator_MockFailures_ServerCert(t *testing.T) {
 		}
 
 		_, err := GenerateServerCert(ca, "foo", nil)
-		if err == nil || !strings.Contains(err.Error(), "failed to marshal server key") {
-			t.Errorf("Expected marshal error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to marshal server key"), "Expected marshal error, got %v", err)
 	})
 }

@@ -7,6 +7,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestSetTimeout verifies SetTimeout updates the timeout field.
@@ -21,9 +23,7 @@ func TestSetTimeout(t *testing.T) {
 	newTimeout := 20 * time.Second
 	watcher.SetTimeout(newTimeout)
 
-	if watcher.timeout != newTimeout {
-		t.Errorf("SetTimeout() timeout = %v, want %v", watcher.timeout, newTimeout)
-	}
+	assert.NewCollecting(t).Eq(newTimeout, watcher.timeout, "SetTimeout() timeout")
 }
 
 // TestResetTimeout verifies ResetTimeout restores default (5 seconds).
@@ -38,9 +38,7 @@ func TestResetTimeout(t *testing.T) {
 	watcher.ResetTimeout()
 
 	expectedDefault := 5 * time.Second
-	if watcher.timeout != expectedDefault {
-		t.Errorf("ResetTimeout() timeout = %v, want %v (default)", watcher.timeout, expectedDefault)
-	}
+	assert.NewCollecting(t).Eq(expectedDefault, watcher.timeout, "ResetTimeout() timeout")
 }
 
 // TestSetCmpOpts verifies SetCmpOpts updates the cmpOpts field.
@@ -55,9 +53,8 @@ func TestSetCmpOpts(t *testing.T) {
 	newOpts := []cmp.Option{IgnoreMetaRuntimeFields(), IgnoreStatus()}
 	watcher.SetCmpOpts(newOpts...)
 
-	if len(watcher.cmpOpts) != 2 {
-		t.Errorf("SetCmpOpts() cmpOpts length = %d, want 2", len(watcher.cmpOpts))
-	}
+	assert.NewCollecting(t).
+		Len(watcher.cmpOpts, 2, "SetCmpOpts() cmpOpts length = %d, want 2", len(watcher.cmpOpts))
 }
 
 // TestResetCmpOpts verifies ResetCmpOpts clears the cmpOpts field.
@@ -71,9 +68,7 @@ func TestResetCmpOpts(t *testing.T) {
 
 	watcher.ResetCmpOpts()
 
-	if watcher.cmpOpts != nil {
-		t.Errorf("ResetCmpOpts() cmpOpts = %v, want nil", watcher.cmpOpts)
-	}
+	assert.NewCollecting(t).Nil(watcher.cmpOpts, "ResetCmpOpts() cmpOpts")
 }
 
 // TestWithTimeout verifies WithTimeout option.
@@ -89,9 +84,7 @@ func TestWithTimeout(t *testing.T) {
 	opt := WithTimeout(customTimeout)
 	opt(watcher)
 
-	if watcher.timeout != customTimeout {
-		t.Errorf("WithTimeout() set timeout = %v, want %v", watcher.timeout, customTimeout)
-	}
+	assert.NewCollecting(t).Eq(customTimeout, watcher.timeout, "WithTimeout() set timeout")
 }
 
 // TestWithCmpOpts verifies WithCmpOpts option.
@@ -107,9 +100,8 @@ func TestWithCmpOpts(t *testing.T) {
 	option := WithCmpOpts(opts...)
 	option(watcher)
 
-	if len(watcher.cmpOpts) != 2 {
-		t.Errorf("WithCmpOpts() set cmpOpts length = %d, want 2", len(watcher.cmpOpts))
-	}
+	assert.NewCollecting(t).
+		Len(watcher.cmpOpts, 2, "WithCmpOpts() set cmpOpts length = %d, want 2", len(watcher.cmpOpts))
 }
 
 // TestWithExtraResource verifies WithExtraResource option.
@@ -126,12 +118,8 @@ func TestWithExtraResource(t *testing.T) {
 	option := WithExtraResource(configMap, secret)
 	option(watcher)
 
-	if len(watcher.extraResources) != 2 {
-		t.Errorf(
-			"WithExtraResource() set extraResources length = %d, want 2",
-			len(watcher.extraResources),
-		)
-	}
+	assert.NewCollecting(t).
+		Len(watcher.extraResources, 2, "WithExtraResource() set extraResources length = %d, want 2", len(watcher.extraResources))
 }
 
 // TestWithExtraResource_Duplicates verifies duplicate kinds are handled.
@@ -153,12 +141,8 @@ func TestWithExtraResource_Duplicates(t *testing.T) {
 	opt2(watcher)
 
 	// Both are added to extraResources slice
-	if len(watcher.extraResources) != 2 {
-		t.Errorf(
-			"WithExtraResource() called twice set extraResources length = %d, want 2",
-			len(watcher.extraResources),
-		)
-	}
+	assert.NewCollecting(t).
+		Len(watcher.extraResources, 2, "WithExtraResource() called twice set extraResources length = %d, want 2", len(watcher.extraResources))
 
 	// Note: watchResource() deduplicates by checking watchedKinds map,
 	// so the second ConfigMap won't create duplicate event handlers.

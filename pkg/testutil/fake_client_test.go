@@ -9,6 +9,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestFakeClientWithFailures_Get(t *testing.T) {
@@ -85,9 +87,7 @@ func TestFakeClientWithFailures_Get(t *testing.T) {
 			result := &corev1.Pod{}
 			err := fakeClient.Get(context.Background(), tc.key, result)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Get() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Get() error")
 		})
 	}
 }
@@ -151,9 +151,7 @@ func TestFakeClientWithFailures_Create(t *testing.T) {
 
 			err := fakeClient.Create(context.Background(), tc.obj)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Create() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Create() error")
 		})
 	}
 }
@@ -200,9 +198,7 @@ func TestFakeClientWithFailures_Update(t *testing.T) {
 
 			err := fakeClient.Update(context.Background(), pod)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Update() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Update() error")
 		})
 	}
 }
@@ -255,9 +251,7 @@ func TestFakeClientWithFailures_Delete(t *testing.T) {
 
 			err := fakeClient.Delete(context.Background(), pod)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Delete() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Delete() error")
 		})
 	}
 }
@@ -305,9 +299,7 @@ func TestFakeClientWithFailures_StatusUpdate(t *testing.T) {
 
 			err := fakeClient.Status().Update(context.Background(), pod)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Status().Update() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Status().Update() error")
 		})
 	}
 }
@@ -357,9 +349,7 @@ func TestFakeClientWithFailures_List(t *testing.T) {
 			podList := &corev1.PodList{}
 			err := fakeClient.List(context.Background(), podList)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("List() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "List() error")
 		})
 	}
 }
@@ -407,9 +397,7 @@ func TestFakeClientWithFailures_Patch(t *testing.T) {
 			patch := client.MergeFrom(pod.DeepCopy())
 			err := fakeClient.Patch(context.Background(), pod, patch)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Patch() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Patch() error")
 		})
 	}
 }
@@ -462,9 +450,7 @@ func TestFakeClientWithFailures_DeleteAllOf(t *testing.T) {
 				client.InNamespace("default"),
 			)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("DeleteAllOf() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "DeleteAllOf() error")
 		})
 	}
 }
@@ -513,9 +499,7 @@ func TestFakeClientWithFailures_StatusPatch(t *testing.T) {
 			patch := client.MergeFrom(pod.DeepCopy())
 			err := fakeClient.Status().Patch(context.Background(), pod, patch)
 
-			if (err != nil) != tc.wantErr {
-				t.Errorf("Status().Patch() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			assert.NewCollecting(t).ErrorWhen(tc.wantErr, err, "Status().Patch() error")
 		})
 	}
 }
@@ -567,9 +551,8 @@ func TestHelperFunctions_ObjectMatchers(t *testing.T) {
 			fn := tc.setupFn()
 			err := fn(pod)
 
-			if err != tc.wantErr {
-				t.Errorf("Expected error %v, got %v", tc.wantErr, err)
-			}
+			assert.NewCollecting(t).
+				False(err != tc.wantErr, "Expected error %v, got %v", tc.wantErr, err)
 		})
 	}
 }
@@ -626,9 +609,8 @@ func TestHelperFunctions_KeyMatchers(t *testing.T) {
 			fn := tc.setupFn()
 			err := fn(tc.key)
 
-			if err != tc.wantErr {
-				t.Errorf("Expected error %v, got %v", tc.wantErr, err)
-			}
+			assert.NewCollecting(t).
+				False(err != tc.wantErr, "Expected error %v, got %v", tc.wantErr, err)
 		})
 	}
 }
@@ -802,9 +784,8 @@ func TestHelperFunctions_AlwaysFail(t *testing.T) {
 			fn := AlwaysFail(tc.wantErr)
 			err := fn(tc.input)
 
-			if err != tc.wantErr {
-				t.Errorf("Expected error %v, got %v", tc.wantErr, err)
-			}
+			assert.NewCollecting(t).
+				False(err != tc.wantErr, "Expected error %v, got %v", tc.wantErr, err)
 		})
 	}
 }
@@ -816,9 +797,8 @@ func TestHelperFunctions_Panic(t *testing.T) {
 		t.Parallel()
 
 		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("Expected panic when meta.Accessor fails on nil")
-			}
+			assert.NewCollecting(t).
+				NotNil(recover(), "Expected panic when meta.Accessor fails on nil")
 		}()
 
 		fn := FailOnObjectName("test", ErrInjected)
@@ -829,9 +809,8 @@ func TestHelperFunctions_Panic(t *testing.T) {
 		t.Parallel()
 
 		defer func() {
-			if r := recover(); r == nil {
-				t.Errorf("Expected panic when meta.Accessor fails on nil")
-			}
+			assert.NewCollecting(t).
+				NotNil(recover(), "Expected panic when meta.Accessor fails on nil")
 		}()
 
 		fn := FailOnNamespace("default", ErrInjected)

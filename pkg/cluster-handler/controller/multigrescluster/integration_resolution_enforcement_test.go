@@ -14,6 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestMultigresCluster_ResolutionLogic validates the "4-Level Override Chain"
@@ -23,6 +25,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 
 	t.Run("4-Level Override Precedence", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		k8sClient, watcher := setupIntegration(t)
 
 		// 1. Setup Templates
@@ -30,23 +33,23 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		smallTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "small", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				},
 			},
 		}
 		// "Large" Template -> Replicas: 5
 		largeTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "large", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))}},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
+				},
 			},
 		}
 
-		if err := k8sClient.Create(t.Context(), smallTpl); err != nil {
-			t.Fatal(err)
-		}
-		if err := k8sClient.Create(t.Context(), largeTpl); err != nil {
-			t.Fatal(err)
-		}
+		ck.Require().NoError(k8sClient.Create(t.Context(), smallTpl))
+		ck.Require().NoError(k8sClient.Create(t.Context(), largeTpl))
 
 		// 2. Create Cluster with various levels of overrides
 		clusterName := "precedence-test"
@@ -74,7 +77,11 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						ZoneID:       "use1-az3",
 						CellTemplate: "large",
 						Overrides: &multigresv1alpha1.CellOverrides{
-							Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))}},
+							Multigateway: &multigresv1alpha1.MultigatewaySpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(3)),
+								},
+							},
 						},
 					},
 
@@ -83,7 +90,11 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Name:   "zone-d",
 						ZoneID: "use1-az4",
 						Spec: &multigresv1alpha1.CellInlineSpec{
-							Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))}},
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(9)),
+								},
+							},
 						},
 					},
 				},
@@ -92,9 +103,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(t.Context(), cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		ck.Require().NoError(k8sClient.Create(t.Context(), cluster), "Failed to create cluster")
 
 		// 3. Verify Results
 		// Use CompareSpecOnly to avoid needing to construct OwnerRefs/UIDs manually
@@ -165,14 +174,17 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		}
 
 		for _, tc := range cases {
-			if err := watcher.WaitForMatch(makeExpected(tc.zone, tc.wantReplicas, allCells)); err != nil {
-				t.Errorf("Precedence failed for %s: %v", tc.zone, err)
-			}
+			ck.NoError(
+				watcher.WaitForMatch(makeExpected(tc.zone, tc.wantReplicas, allCells)),
+				"Precedence failed for %s",
+				tc.zone,
+			)
 		}
 	})
 
 	t.Run("Implicit Namespace Defaulting", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, watcher := setupIntegration(t)
 		clusterName := "implicit-default-test"
 
@@ -188,9 +200,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(t.Context(), cluster); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(t.Context(), cluster))
 
 		// We expect the "default" template (created in setupIntegration) to be used.
 		// That template has Replicas: 1.
@@ -238,13 +248,15 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 			},
 		}
 
-		if err := watcher.WaitForMatch(wantCell); err != nil {
-			t.Error("Failed to implicitly resolve namespace 'default' template")
-		}
+		c.NoError(
+			watcher.WaitForMatch(wantCell),
+			"Failed to implicitly resolve namespace 'default' template",
+		)
 	})
 
 	t.Run("List Replacement Logic (Cells)", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		k8sClient, watcher := setupIntegration(t)
 
 		// Setup ShardTemplate
@@ -257,9 +269,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				},
 			},
 		}
-		if err := k8sClient.Create(t.Context(), tpl); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(t.Context(), tpl))
 
 		// Create cluster
 		clusterName := "list-replace-test"
@@ -297,9 +307,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(t.Context(), cluster); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(t.Context(), cluster))
 
 		// Verify by checking the TableGroup (since Shard controller isn't running)
 		// We expect the resolved Spec in TableGroup to have the correct list.
@@ -348,7 +356,9 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 							// VERIFICATION: Only zone-c should be present
 							Cells: []multigresv1alpha1.CellName{"zone-c"},
 							StatelessSpec: multigresv1alpha1.StatelessSpec{
-								Replicas:  ptr.To(int32(1)),                // From implicit defaults
+								Replicas: ptr.To(
+									int32(1),
+								), // From implicit defaults
 								Resources: resolver.DefaultResourcesOrch(), // FIX: Expect defaults
 							},
 						},
@@ -370,8 +380,13 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						},
 						PVCDeletionPolicy: nil, // Shard-level is nil
 						Backup: &multigresv1alpha1.BackupConfig{
-							Type:       multigresv1alpha1.BackupTypeFilesystem,
-							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+							Type: multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+								Path: resolver.DefaultBackupPath,
+								Storage: multigresv1alpha1.StorageSpec{
+									Size: resolver.DefaultBackupStorageSize,
+								},
+							},
 						},
 					},
 				},
@@ -380,8 +395,13 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 					WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 				},
 				Backup: &multigresv1alpha1.BackupConfig{
-					Type:       multigresv1alpha1.BackupTypeFilesystem,
-					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+					Type: multigresv1alpha1.BackupTypeFilesystem,
+					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+						Path: resolver.DefaultBackupPath,
+						Storage: multigresv1alpha1.StorageSpec{
+							Size: resolver.DefaultBackupStorageSize,
+						},
+					},
 				},
 				TopologyPruning:   &multigresv1alpha1.TopologyPruningConfig{Enabled: ptr.To(true)},
 				DurabilityPolicy:  "AT_LEAST_2",
@@ -390,9 +410,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		}
 		setTestTableGroupPostgresPasswordSecretRef(wantTG)
 
-		if err := watcher.WaitForMatch(wantTG); err != nil {
-			t.Errorf("List replacement failed: %v", err)
-		}
+		c.NoError(watcher.WaitForMatch(wantTG), "List replacement failed")
 	})
 }
 
@@ -400,6 +418,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 // enforces the desired state, including reverting manual changes (immutability).
 func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 	k8sClient, watcher := setupIntegration(t)
 	clusterName := "enforcement-test"
 
@@ -410,7 +429,11 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 				{
 					Name: "zone-a", ZoneID: "use1-az1",
 					Spec: &multigresv1alpha1.CellInlineSpec{
-						Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(2))}},
+						Multigateway: multigresv1alpha1.MultigatewaySpec{
+							StatelessSpec: multigresv1alpha1.StatelessSpec{
+								Replicas: ptr.To(int32(2)),
+							},
+						},
 					},
 				},
 			},
@@ -419,9 +442,7 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 
 	setTestPostgresPasswordSecretRef(cluster)
 
-	if err := k8sClient.Create(t.Context(), cluster); err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(k8sClient.Create(t.Context(), cluster))
 
 	watcher.SetCmpOpts(testutil.CompareSpecOnly()...)
 
@@ -469,28 +490,20 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 		},
 	}
 
-	if err := watcher.WaitForMatch(wantCell); err != nil {
-		t.Fatal("Initial cell creation failed")
-	}
+	c.Require().NoError(watcher.WaitForMatch(wantCell), "Initial cell creation failed")
 
 	// 2. Tamper (Scale up manually)
 	cellKey := client.ObjectKey{Name: wantCell.Name, Namespace: wantCell.Namespace}
 	cell := &multigresv1alpha1.Cell{}
-	if err := k8sClient.Get(t.Context(), cellKey, cell); err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(k8sClient.Get(t.Context(), cellKey, cell))
 	cell.Spec.Multigateway.Replicas = ptr.To(int32(100))
-	if err := k8sClient.Update(t.Context(), cell); err != nil {
-		t.Fatal("Failed to tamper with cell")
-	}
+	c.Require().NoError(k8sClient.Update(t.Context(), cell), "Failed to tamper with cell")
 
 	// 3. Verify Reversion
 	// We wait for the object to match 'wantCell' again.
 	// Since client.Update succeeded, the object *was* changed. The fact that it matches
 	// wantCell (2 replicas) afterwards proves the controller reverted it.
-	if err := watcher.WaitForMatch(wantCell); err != nil {
-		t.Errorf("Controller failed to revert manual change: %v", err)
-	}
+	c.NoError(watcher.WaitForMatch(wantCell), "Controller failed to revert manual change")
 }
 
 // TestMultigresCluster_V1Alpha1Constraints verifies strict v1alpha1 validations
@@ -540,8 +553,11 @@ func TestMultigresCluster_V1Alpha1Constraints(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cluster := &multigresv1alpha1.MultigresCluster{
-				ObjectMeta: metav1.ObjectMeta{Name: strings.ToLower(strings.ReplaceAll(tc.name, " ", "-")), Namespace: testNamespace},
-				Spec:       tc.clusterSpec,
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      strings.ToLower(strings.ReplaceAll(tc.name, " ", "-")),
+					Namespace: testNamespace,
+				},
+				Spec: tc.clusterSpec,
 			}
 			setTestPostgresPasswordSecretRef(cluster)
 			err := k8sClient.Create(t.Context(), cluster)
@@ -558,6 +574,7 @@ func TestMultigresCluster_V1Alpha1Constraints(t *testing.T) {
 // ShardTemplates (specifically PVCDeletionPolicy) are correctly applied.
 func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 	k8sClient, watcher := setupIntegration(t)
 
 	// 1. Create a ShardTemplate with specific PVC Policy
@@ -571,9 +588,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 			},
 		},
 	}
-	if err := k8sClient.Create(t.Context(), tpl); err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(k8sClient.Create(t.Context(), tpl))
 
 	// 2. Create Cluster using this template in Defaults
 	clusterName := "template-policy-test"
@@ -604,9 +619,7 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 
 	setTestPostgresPasswordSecretRef(cluster)
 
-	if err := k8sClient.Create(t.Context(), cluster); err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(k8sClient.Create(t.Context(), cluster))
 
 	// 3. Verify TableGroup has the correct Resolved Shard Spec
 	watcher.SetCmpOpts(testutil.CompareSpecOnly()...)
@@ -652,7 +665,9 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{"zone-a"},
 						StatelessSpec: multigresv1alpha1.StatelessSpec{
-							Replicas:  ptr.To(int32(1)),                // From implicit defaults in resolver
+							Replicas: ptr.To(
+								int32(1),
+							), // From implicit defaults in resolver
 							Resources: resolver.DefaultResourcesOrch(), // Defaults
 						},
 					},
@@ -678,8 +693,13 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Backup: &multigresv1alpha1.BackupConfig{
-						Type:       multigresv1alpha1.BackupTypeFilesystem,
-						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+						Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+							Path: resolver.DefaultBackupPath,
+							Storage: multigresv1alpha1.StorageSpec{
+								Size: resolver.DefaultBackupStorageSize,
+							},
+						},
 					},
 				},
 			},
@@ -689,8 +709,11 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 				WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 			},
 			Backup: &multigresv1alpha1.BackupConfig{
-				Type:       multigresv1alpha1.BackupTypeFilesystem,
-				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+				Type: multigresv1alpha1.BackupTypeFilesystem,
+				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+					Path:    resolver.DefaultBackupPath,
+					Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize},
+				},
 			},
 			TopologyPruning:   &multigresv1alpha1.TopologyPruningConfig{Enabled: ptr.To(true)},
 			DurabilityPolicy:  "AT_LEAST_2",
@@ -699,7 +722,5 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 	}
 	setTestTableGroupPostgresPasswordSecretRef(wantTG)
 
-	if err := watcher.WaitForMatch(wantTG); err != nil {
-		t.Errorf("Template override validation failed: %v", err)
-	}
+	c.NoError(watcher.WaitForMatch(wantTG), "Template override validation failed")
 }

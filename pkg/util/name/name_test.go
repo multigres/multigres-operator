@@ -19,6 +19,8 @@ package name
 import (
 	"strings"
 	"testing"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestJoin checks determinism and uniqueness.
@@ -74,13 +76,13 @@ func TestJoin(t *testing.T) {
 		},
 	}
 	for _, test := range table {
-		if got := JoinWithConstraints(
+		got := JoinWithConstraints(
 			DefaultConstraints,
 			test.a...) == JoinWithConstraints(
 			DefaultConstraints,
-			test.b...); got != test.shouldEqual {
-			t.Errorf("JoinWithConstraints: %s: got %v; want %v", test.name, got, test.shouldEqual)
-		}
+			test.b...)
+		assert.NewCollecting(t).
+			Eq(test.shouldEqual, got, "JoinWithConstraints: %s: got %v; want", test.name, got)
 	}
 }
 
@@ -88,9 +90,8 @@ func TestJoin(t *testing.T) {
 func TestJoinHash(t *testing.T) {
 	parts := []string{"hello", "world"}
 	want := "hello-world-344ce285"
-	if got := JoinWithConstraints(DefaultConstraints, parts...); got != want {
-		t.Fatalf("JoinWithConstraints(%v) = %q, want %q", parts, got, want)
-	}
+	got := JoinWithConstraints(DefaultConstraints, parts...)
+	assert.NewAborting(t).Eq(want, got, "JoinWithConstraints(%v) = %q, want", parts, got)
 }
 
 func TestJoinWithConstraints(t *testing.T) {
@@ -145,6 +146,7 @@ func TestJoinWithConstraints(t *testing.T) {
 // TestJoinWithConstraintsMaxLength checks that values are truncated to fit
 // within the max length.
 func TestJoinWithConstraintsMaxLength(t *testing.T) {
+	c := assert.NewCollecting(t)
 	cons := Constraints{
 		MaxLength:      25,
 		ValidFirstChar: isLowercaseAlphanumeric,
@@ -152,18 +154,14 @@ func TestJoinWithConstraintsMaxLength(t *testing.T) {
 
 	// The total length after truncation should be equal to MaxLength.
 	out := JoinWithConstraints(cons, strings.Repeat("a", 20), strings.Repeat("b", 20))
-	if len(out) != cons.MaxLength {
-		t.Errorf("len(%q) = %v; want %v", out, len(out), cons.MaxLength)
-	}
+	c.Len(out, cons.MaxLength, "len(%q) = %v; want", out, len(out))
 
 	// The outputs should still be unique thanks to the hash suffix,
 	// even if the truncated portion is the same because the difference between
 	// inputs is at the end that gets cut off.
 	out1 := JoinWithConstraints(cons, strings.Repeat("a", 20), strings.Repeat("b", 100)+"1")
 	out2 := JoinWithConstraints(cons, strings.Repeat("a", 20), strings.Repeat("b", 100)+"2")
-	if out1 == out2 {
-		t.Errorf("got same output for two different inputs: %v", out1)
-	}
+	c.NotEq(out2, out1, "got same output for two different inputs")
 }
 
 // TestJoinWithConstraintsTransform checks that outputs are still
@@ -180,9 +178,7 @@ func TestJoinWithConstraintsTransform(t *testing.T) {
 	// transformation.
 	out1 := JoinWithConstraints(cons, "disallowed_symbol")
 	out2 := JoinWithConstraints(cons, "disallowed/symbol")
-	if out1 == out2 {
-		t.Errorf("got same output for two different inputs: %v", out1)
-	}
+	assert.NewCollecting(t).NotEq(out2, out1, "got same output for two different inputs")
 }
 
 // TestCollisionPrevention verifies that the naming scheme prevents the collision
@@ -195,9 +191,8 @@ func TestCollisionPrevention(t *testing.T) {
 	name2 := JoinWithConstraints(DefaultConstraints, "production", "db-app", "sales")
 
 	// These should produce different names despite appearing identical before hashing
-	if name1 == name2 {
-		t.Errorf("collision detected: both scenarios produced the same name %q", name1)
-	}
+	assert.NewCollecting(t).
+		NotEq(name2, name1, "collision detected: both scenarios produced the same name")
 
 	// Verify both start with similar visible parts but have different hashes
 	t.Logf("Scenario 1 name: %s", name1)
@@ -250,9 +245,7 @@ func TestMultigresResourceNaming(t *testing.T) {
 				// Check that it has a hash at the end (8 hex chars after last hyphen)
 				parts := strings.Split(got, "-")
 				lastPart := parts[len(parts)-1]
-				if len(lastPart) != hashLength {
-					t.Errorf("expected hash suffix of length %d, got %q", hashLength, lastPart)
-				}
+				assert.NewCollecting(t).Len(lastPart, hashLength, "expected hash suffix of length")
 			}
 
 			t.Logf("Generated name: %s", got)
@@ -262,17 +255,24 @@ func TestMultigresResourceNaming(t *testing.T) {
 
 // TestServiceConstraints verifies that service constraints work correctly.
 func TestServiceConstraints(t *testing.T) {
+	c := assert.NewCollecting(t)
 	parts := []string{"production", "gateway"}
 	got := JoinWithConstraints(ServiceConstraints, parts...)
 
-	if len(got) > 63 {
-		t.Errorf("service name %q exceeds 63 character limit (got %d)", got, len(got))
-	}
+	c.LessOrEqual(
+		63,
+		len(got),
+		"service name %q exceeds 63 character limit (got %d)",
+		got,
+		len(got),
+	)
 
 	// Should start with a lowercase letter
-	if !isLowercaseLetter(rune(got[0])) {
-		t.Errorf("service name %q does not start with lowercase letter", got)
-	}
+	c.True(
+		isLowercaseLetter(rune(got[0])),
+		"service name %q does not start with lowercase letter",
+		got,
+	)
 
 	t.Logf("Service name: %s (length: %d)", got, len(got))
 }
@@ -280,9 +280,7 @@ func TestServiceConstraints(t *testing.T) {
 // TestInvalidConstraintsPanic verifies that invalid constraints cause a panic.
 func TestInvalidConstraintsPanic(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("expected panic for invalid constraints")
-		}
+		assert.NewCollecting(t).NotNil(recover(), "expected panic for invalid constraints")
 	}()
 
 	invalidCons := Constraints{
@@ -296,7 +294,5 @@ func TestInvalidConstraintsPanic(t *testing.T) {
 // TestEmptyParts verifies handling of empty input.
 func TestEmptyParts(t *testing.T) {
 	got := JoinWithConstraints(DefaultConstraints)
-	if got != "" {
-		t.Errorf("expected empty string for empty parts, got %q", got)
-	}
+	assert.NewCollecting(t).Eq("", got, "expected empty string for empty parts, got")
 }

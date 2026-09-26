@@ -8,27 +8,29 @@ import (
 	"testing"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestApplyImageOverrides(t *testing.T) {
 	t.Setenv(postgresImageEnv, "example.test/postgres:custom")
 	t.Setenv(multigatewayImageEnv, "example.test/multigres:gateway")
+	c := assert.NewAborting(t)
 
 	cluster := &multigresv1alpha1.MultigresCluster{}
 	applyImageOverrides(cluster)
 
-	if got := string(cluster.Spec.Images.Postgres); got != "example.test/postgres:custom" {
-		t.Fatalf("postgres image = %q", got)
-	}
-	if got := string(cluster.Spec.Images.Multigateway); got != "example.test/multigres:gateway" {
-		t.Fatalf("multigateway image = %q", got)
-	}
-	if cluster.Spec.Images.Multiadmin != "" {
-		t.Fatalf("unset multiadmin override unexpectedly changed to %q", cluster.Spec.Images.Multiadmin)
-	}
+	c.Eq("example.test/postgres:custom", string(cluster.Spec.Images.Postgres), "postgres image =")
+	c.Eq(
+		"example.test/multigres:gateway",
+		string(cluster.Spec.Images.Multigateway),
+		"multigateway image =",
+	)
+	c.Eq("", cluster.Spec.Images.Multiadmin, "unset multiadmin override unexpectedly changed to")
 }
 
 func TestRuntimeImagesUsesOverridesAndDeduplicates(t *testing.T) {
+	c := assert.NewAborting(t)
 	const multigresNightly = "ghcr.io/multigres/multigres:nightly-sha-abcdef0"
 	t.Setenv(multiadminImageEnv, multigresNightly)
 	t.Setenv(multiorchImageEnv, multigresNightly)
@@ -36,12 +38,13 @@ func TestRuntimeImagesUsesOverridesAndDeduplicates(t *testing.T) {
 	t.Setenv(multigatewayImageEnv, multigresNightly)
 
 	images := runtimeImages()
-	if got := count(images, multigresNightly); got != 1 {
-		t.Fatalf("nightly multigres image occurs %d times in %v", got, images)
-	}
-	if slices.Contains(images, multigresv1alpha1.DefaultMultiadminImage) {
-		t.Fatalf("default multigres image retained despite complete override: %v", images)
-	}
+	got := count(images, multigresNightly)
+	c.Eq(1, got, "nightly multigres image occurs %d times in %v", got, images)
+	c.NotContains(
+		images,
+		multigresv1alpha1.DefaultMultiadminImage,
+		"default multigres image retained despite complete override",
+	)
 }
 
 func count(values []string, target string) int {
@@ -88,9 +91,7 @@ func TestRuntimeImagesUsesCommittedDefaults(t *testing.T) {
 			want = slices.Compact(want)
 			got := runtimeImages()
 			slices.Sort(got)
-			if !slices.Equal(got, want) {
-				t.Fatalf("runtimeImages() = %v, want %v", got, want)
-			}
+			assert.NewAborting(t).EqDiff(want, got, "runtimeImages()")
 		})
 	}
 }

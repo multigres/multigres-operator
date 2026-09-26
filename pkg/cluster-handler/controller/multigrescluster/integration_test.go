@@ -27,6 +27,8 @@ import (
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // ============================================================================
@@ -46,6 +48,7 @@ func canonicalGlobalRoot(clusterName string) string {
 // It returns a ready-to-use K8s Client and a ResourceWatcher.
 func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 	t.Helper()
+	c := assert.NewAborting(t)
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -93,11 +96,9 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 		},
 	}
 
-	if err := reconciler.SetupWithManager(mgr, controller.Options{
+	c.NoError(reconciler.SetupWithManager(mgr, controller.Options{
 		SkipNameValidation: ptr.To(true),
-	}); err != nil {
-		t.Fatalf("Failed to create controller: %v", err)
-	}
+	}), "Failed to create controller")
 
 	k8sClient := mgr.GetClient()
 
@@ -115,7 +116,9 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 		&multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				},
 			},
 		},
 		&multigresv1alpha1.ShardTemplate{
@@ -125,9 +128,13 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 	}
 
 	for _, obj := range defaults {
-		if err := k8sClient.Create(t.Context(), obj); client.IgnoreAlreadyExists(err) != nil {
-			t.Fatalf("Failed to create default template %s: %v", obj.GetName(), err)
-		}
+		err := k8sClient.Create(t.Context(), obj)
+		c.NoError(
+			client.IgnoreAlreadyExists(err),
+			"Failed to create default template %s: %v",
+			obj.GetName(),
+			err,
+		)
 	}
 
 	return k8sClient, watcher
@@ -230,9 +237,17 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Spec: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 					},
 					Cells: []multigresv1alpha1.CellConfig{
-						{Name: "zone-a", ZoneID: "use1-az1", Spec: &multigresv1alpha1.CellInlineSpec{
-							Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
-						}},
+						{
+							Name:   "zone-a",
+							ZoneID: "use1-az1",
+							Spec: &multigresv1alpha1.CellInlineSpec{
+								Multigateway: multigresv1alpha1.MultigatewaySpec{
+									StatelessSpec: multigresv1alpha1.StatelessSpec{
+										Replicas: ptr.To(int32(1)),
+									},
+								},
+							},
+						},
 					},
 					Databases: []multigresv1alpha1.DatabaseConfig{
 						{
@@ -245,12 +260,18 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 									Shards: []multigresv1alpha1.ShardConfig{{
 										Name: "0-inf",
 										Spec: &multigresv1alpha1.ShardInlineSpec{
-											Multiorch: multigresv1alpha1.MultiorchSpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+											Multiorch: multigresv1alpha1.MultiorchSpec{
+												StatelessSpec: multigresv1alpha1.StatelessSpec{
+													Replicas: ptr.To(int32(1)),
+												},
+											},
 											Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 												"primary": {
 													ReplicasPerCell: ptr.To(int32(3)),
 													Type:            "readWrite",
-													Cells:           []multigresv1alpha1.CellName{"zone-a"},
+													Cells: []multigresv1alpha1.CellName{
+														"zone-a",
+													},
 												},
 											},
 										},
@@ -272,10 +293,12 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.TopoServerSpec{
 						Etcd: &multigresv1alpha1.EtcdSpec{
-							Image:     "etcd:latest",
-							Replicas:  ptr.To(resolver.DefaultEtcdReplicas),
-							RootPath:  "/multigres/default/test-cluster/global",
-							Storage:   multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize},
+							Image:    "etcd:latest",
+							Replicas: ptr.To(resolver.DefaultEtcdReplicas),
+							RootPath: "/multigres/default/test-cluster/global",
+							Storage: multigresv1alpha1.StorageSpec{
+								Size: resolver.DefaultEtcdStorageSize,
+							},
 							Resources: resolver.DefaultResourcesEtcd(),
 						},
 						PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -293,9 +316,13 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						OwnerReferences: clusterOwnerRefs(t, clusterName),
 					},
 					Spec: appsv1.DeploymentSpec{
-						Replicas: ptr.To(resolver.DefaultAdminReplicas), // Matches default in test input
+						Replicas: ptr.To(
+							resolver.DefaultAdminReplicas,
+						), // Matches default in test input
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, clusterName, "multiadmin", "")),
+							MatchLabels: metadata.GetSelectorLabels(
+								clusterLabels(t, clusterName, "multiadmin", ""),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
@@ -305,7 +332,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								},
 							},
 							Spec: corev1.PodSpec{
-								ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
+								ImagePullSecrets: []corev1.LocalObjectReference{
+									{Name: "pull-secret"},
+								},
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin",
@@ -391,7 +420,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(resolver.DefaultMultiadminWebReplicas), // Defaults
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, clusterName, "multiadmin-web", "")),
+							MatchLabels: metadata.GetSelectorLabels(
+								clusterLabels(t, clusterName, "multiadmin-web", ""),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
@@ -401,7 +432,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								},
 							},
 							Spec: corev1.PodSpec{
-								ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
+								ImagePullSecrets: []corev1.LocalObjectReference{
+									{Name: "pull-secret"},
+								},
 								Containers: []corev1.Container{
 									{
 										Name:  "multiadmin-web",
@@ -416,8 +449,14 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 										Resources: resolver.DefaultResourcesAdminWeb(),
 										Env: []corev1.EnvVar{
 											{Name: "HOSTNAME", Value: "::"},
-											{Name: "MULTIADMIN_API_URL", Value: "http://" + clusterName + "-multiadmin:18000"},
-											{Name: "POSTGRES_HOST", Value: clusterName + "-multigateway"},
+											{
+												Name:  "MULTIADMIN_API_URL",
+												Value: "http://" + clusterName + "-multiadmin:18000",
+											},
+											{
+												Name:  "POSTGRES_HOST",
+												Value: clusterName + "-multigateway",
+											},
 											{Name: "POSTGRES_PORT", Value: "5432"},
 											{Name: "POSTGRES_DATABASE", Value: "postgres"},
 											{Name: "POSTGRES_USER", Value: "postgres"},
@@ -583,15 +622,26 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 										Type:            "readWrite",
 										Cells:           []multigresv1alpha1.CellName{"zone-a"},
 										// FIX: Expect defaults for pool resources
-										Storage:     multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize},
-										Postgres:    multigresv1alpha1.ContainerConfig{Resources: resolver.DefaultResourcesPostgres()},
-										Multipooler: multigresv1alpha1.ContainerConfig{Resources: resolver.DefaultResourcesPooler()},
+										Storage: multigresv1alpha1.StorageSpec{
+											Size: resolver.DefaultEtcdStorageSize,
+										},
+										Postgres: multigresv1alpha1.ContainerConfig{
+											Resources: resolver.DefaultResourcesPostgres(),
+										},
+										Multipooler: multigresv1alpha1.ContainerConfig{
+											Resources: resolver.DefaultResourcesPooler(),
+										},
 									},
 								},
 								PVCDeletionPolicy: nil, // Shard-level policy is nil (inherited)
 								Backup: &multigresv1alpha1.BackupConfig{
-									Type:       multigresv1alpha1.BackupTypeFilesystem,
-									Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+									Type: multigresv1alpha1.BackupTypeFilesystem,
+									Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+										Path: resolver.DefaultBackupPath,
+										Storage: multigresv1alpha1.StorageSpec{
+											Size: resolver.DefaultBackupStorageSize,
+										},
+									},
 								},
 							},
 						},
@@ -600,10 +650,17 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
-							Type:       multigresv1alpha1.BackupTypeFilesystem,
-							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+							Type: multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+								Path: resolver.DefaultBackupPath,
+								Storage: multigresv1alpha1.StorageSpec{
+									Size: resolver.DefaultBackupStorageSize,
+								},
+							},
 						},
-						TopologyPruning:   &multigresv1alpha1.TopologyPruningConfig{Enabled: ptr.To(true)},
+						TopologyPruning: &multigresv1alpha1.TopologyPruningConfig{
+							Enabled: ptr.To(true),
+						},
 						DurabilityPolicy:  "AT_LEAST_2",
 						PostgresSuperuser: "postgres",
 					},
@@ -644,10 +701,12 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.TopoServerSpec{
 						Etcd: &multigresv1alpha1.EtcdSpec{
-							Image:     "etcd:default",
-							Replicas:  ptr.To(resolver.DefaultEtcdReplicas),
-							RootPath:  "/multigres/default/minimal-cluster/global",
-							Storage:   multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize},
+							Image:    "etcd:default",
+							Replicas: ptr.To(resolver.DefaultEtcdReplicas),
+							RootPath: "/multigres/default/minimal-cluster/global",
+							Storage: multigresv1alpha1.StorageSpec{
+								Size: resolver.DefaultEtcdStorageSize,
+							},
 							Resources: resolver.DefaultResourcesEtcd(),
 						},
 						PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -667,7 +726,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(resolver.DefaultAdminReplicas),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "minimal-cluster", "multiadmin", "")),
+							MatchLabels: metadata.GetSelectorLabels(
+								clusterLabels(t, "minimal-cluster", "multiadmin", ""),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
@@ -762,7 +823,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(resolver.DefaultMultiadminWebReplicas),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "minimal-cluster", "multiadmin-web", "")),
+							MatchLabels: metadata.GetSelectorLabels(
+								clusterLabels(t, "minimal-cluster", "multiadmin-web", ""),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
@@ -786,8 +849,14 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 										Resources: resolver.DefaultResourcesAdminWeb(),
 										Env: []corev1.EnvVar{
 											{Name: "HOSTNAME", Value: "::"},
-											{Name: "MULTIADMIN_API_URL", Value: "http://minimal-cluster-multiadmin:18000"},
-											{Name: "POSTGRES_HOST", Value: "minimal-cluster-multigateway"},
+											{
+												Name:  "MULTIADMIN_API_URL",
+												Value: "http://minimal-cluster-multiadmin:18000",
+											},
+											{
+												Name:  "POSTGRES_HOST",
+												Value: "minimal-cluster-multigateway",
+											},
 											{Name: "POSTGRES_PORT", Value: "5432"},
 											{Name: "POSTGRES_DATABASE", Value: "postgres"},
 											{Name: "POSTGRES_USER", Value: "postgres"},
@@ -952,7 +1021,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 										Cells: []multigresv1alpha1.CellName{"zone-a"},
 										// Single-cell pool defaults to 2 (AT_LEAST_2 minimum).
 										ReplicasPerCell: ptr.To(int32(2)),
-										Storage:         multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize}, // "1Gi"
+										Storage: multigresv1alpha1.StorageSpec{
+											Size: resolver.DefaultEtcdStorageSize,
+										}, // "1Gi"
 										Postgres: multigresv1alpha1.ContainerConfig{
 											Resources: resolver.DefaultResourcesPostgres(),
 										},
@@ -963,8 +1034,13 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								},
 								PVCDeletionPolicy: nil, // Shard-level is nil
 								Backup: &multigresv1alpha1.BackupConfig{
-									Type:       multigresv1alpha1.BackupTypeFilesystem,
-									Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+									Type: multigresv1alpha1.BackupTypeFilesystem,
+									Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+										Path: resolver.DefaultBackupPath,
+										Storage: multigresv1alpha1.StorageSpec{
+											Size: resolver.DefaultBackupStorageSize,
+										},
+									},
 								},
 							},
 						},
@@ -973,10 +1049,17 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
-							Type:       multigresv1alpha1.BackupTypeFilesystem,
-							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+							Type: multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+								Path: resolver.DefaultBackupPath,
+								Storage: multigresv1alpha1.StorageSpec{
+									Size: resolver.DefaultBackupStorageSize,
+								},
+							},
 						},
-						TopologyPruning:   &multigresv1alpha1.TopologyPruningConfig{Enabled: ptr.To(true)},
+						TopologyPruning: &multigresv1alpha1.TopologyPruningConfig{
+							Enabled: ptr.To(true),
+						},
 						DurabilityPolicy:  "AT_LEAST_2",
 						PostgresSuperuser: "postgres",
 					},
@@ -1012,10 +1095,12 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					},
 					Spec: multigresv1alpha1.TopoServerSpec{
 						Etcd: &multigresv1alpha1.EtcdSpec{
-							Image:     "etcd:default",
-							Replicas:  ptr.To(resolver.DefaultEtcdReplicas),
-							RootPath:  "/multigres/default/lazy-cluster/global",
-							Storage:   multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize},
+							Image:    "etcd:default",
+							Replicas: ptr.To(resolver.DefaultEtcdReplicas),
+							RootPath: "/multigres/default/lazy-cluster/global",
+							Storage: multigresv1alpha1.StorageSpec{
+								Size: resolver.DefaultEtcdStorageSize,
+							},
 							Resources: resolver.DefaultResourcesEtcd(),
 						},
 						PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -1035,7 +1120,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(resolver.DefaultAdminReplicas),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "lazy-cluster", "multiadmin", "")),
+							MatchLabels: metadata.GetSelectorLabels(
+								clusterLabels(t, "lazy-cluster", "multiadmin", ""),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
@@ -1130,7 +1217,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(resolver.DefaultMultiadminWebReplicas),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(clusterLabels(t, "lazy-cluster", "multiadmin-web", "")),
+							MatchLabels: metadata.GetSelectorLabels(
+								clusterLabels(t, "lazy-cluster", "multiadmin-web", ""),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
@@ -1154,8 +1243,14 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 										Resources: resolver.DefaultResourcesAdminWeb(),
 										Env: []corev1.EnvVar{
 											{Name: "HOSTNAME", Value: "::"},
-											{Name: "MULTIADMIN_API_URL", Value: "http://lazy-cluster-multiadmin:18000"},
-											{Name: "POSTGRES_HOST", Value: "lazy-cluster-multigateway"},
+											{
+												Name:  "MULTIADMIN_API_URL",
+												Value: "http://lazy-cluster-multiadmin:18000",
+											},
+											{
+												Name:  "POSTGRES_HOST",
+												Value: "lazy-cluster-multigateway",
+											},
 											{Name: "POSTGRES_PORT", Value: "5432"},
 											{Name: "POSTGRES_DATABASE", Value: "postgres"},
 											{Name: "POSTGRES_USER", Value: "postgres"},
@@ -1320,7 +1415,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 										Cells: []multigresv1alpha1.CellName{"zone-a"},
 										// Single-cell pool defaults to 2 (AT_LEAST_2 minimum).
 										ReplicasPerCell: ptr.To(int32(2)),
-										Storage:         multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize}, // "1Gi"
+										Storage: multigresv1alpha1.StorageSpec{
+											Size: resolver.DefaultEtcdStorageSize,
+										}, // "1Gi"
 										Postgres: multigresv1alpha1.ContainerConfig{
 											Resources: resolver.DefaultResourcesPostgres(),
 										},
@@ -1331,8 +1428,13 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								},
 								PVCDeletionPolicy: nil,
 								Backup: &multigresv1alpha1.BackupConfig{
-									Type:       multigresv1alpha1.BackupTypeFilesystem,
-									Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+									Type: multigresv1alpha1.BackupTypeFilesystem,
+									Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+										Path: resolver.DefaultBackupPath,
+										Storage: multigresv1alpha1.StorageSpec{
+											Size: resolver.DefaultBackupStorageSize,
+										},
+									},
 								},
 							},
 						},
@@ -1341,10 +1443,17 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
-							Type:       multigresv1alpha1.BackupTypeFilesystem,
-							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+							Type: multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
+								Path: resolver.DefaultBackupPath,
+								Storage: multigresv1alpha1.StorageSpec{
+									Size: resolver.DefaultBackupStorageSize,
+								},
+							},
 						},
-						TopologyPruning:   &multigresv1alpha1.TopologyPruningConfig{Enabled: ptr.To(true)},
+						TopologyPruning: &multigresv1alpha1.TopologyPruningConfig{
+							Enabled: ptr.To(true),
+						},
 						DurabilityPolicy:  "AT_LEAST_2",
 						PostgresSuperuser: "postgres",
 					},
@@ -1356,16 +1465,26 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			k8sClient, watcher := setupIntegration(t)
 
 			// Patch wantResources with hashed names
 			for _, obj := range tc.wantResources {
 				if cell, ok := obj.(*multigresv1alpha1.Cell); ok {
-					hashedName := nameutil.JoinWithConstraints(nameutil.DefaultConstraints, tc.cluster.Name, string(cell.Spec.Name))
+					hashedName := nameutil.JoinWithConstraints(
+						nameutil.DefaultConstraints,
+						tc.cluster.Name,
+						string(cell.Spec.Name),
+					)
 					cell.Name = hashedName
 				}
 				if tg, ok := obj.(*multigresv1alpha1.TableGroup); ok {
-					hashedName := nameutil.JoinWithConstraints(nameutil.DefaultConstraints, tc.cluster.Name, string(tg.Spec.DatabaseName), string(tg.Spec.TableGroupName))
+					hashedName := nameutil.JoinWithConstraints(
+						nameutil.DefaultConstraints,
+						tc.cluster.Name,
+						string(tg.Spec.DatabaseName),
+						string(tg.Spec.TableGroupName),
+					)
 					tg.Name = hashedName
 					setTestTableGroupPostgresPasswordSecretRef(tg)
 				}
@@ -1373,15 +1492,11 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 
 			// Create Cluster
 			setTestPostgresPasswordSecretRef(tc.cluster)
-			if err := k8sClient.Create(t.Context(), tc.cluster); err != nil {
-				t.Fatalf("Failed to create the initial cluster, %v", err)
-			}
+			c.Require().
+				NoError(k8sClient.Create(t.Context(), tc.cluster), "Failed to create the initial cluster")
 
 			// Assert Resources
-			if err := watcher.WaitForMatch(tc.wantResources...); err != nil {
-				t.Errorf("Resources mismatch:\n%v", err)
-			}
-
+			c.NoError(watcher.WaitForMatch(tc.wantResources...), "Resources mismatch:\n")
 		})
 	}
 }

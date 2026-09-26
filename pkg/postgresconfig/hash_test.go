@@ -1,6 +1,10 @@
 package postgresconfig
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/multigres/testkit/assert"
+)
 
 // baseConf is a minimal rendered postgresql.conf covering a restart param
 // (shared_buffers, postmaster), a couple of reload params (work_mem/user,
@@ -12,6 +16,7 @@ max_wal_size = '1GB'			# sighup
 `
 
 func TestSplitHashesReloadOnlyChangeLeavesRestartHash(t *testing.T) {
+	c := assert.NewCollecting(t)
 	_, base := StampAndSplit(baseConf)
 
 	// Change only work_mem (a reload-safe/user param).
@@ -21,19 +26,16 @@ work_mem = '8MB'
 max_wal_size = '1GB'			# sighup
 `)
 
-	if changed.RestartHash != base.RestartHash {
-		t.Errorf(
-			"restart-hash moved on a reload-only change: %s -> %s",
-			base.RestartHash,
-			changed.RestartHash,
-		)
-	}
-	if changed.ReloadHash == base.ReloadHash {
-		t.Errorf("reload-hash did not move on a work_mem change (still %s)", base.ReloadHash)
-	}
+	c.Eq(base.RestartHash, changed.RestartHash, "restart-hash moved on a reload-only change")
+	c.NotEq(
+		base.ReloadHash,
+		changed.ReloadHash,
+		"reload-hash did not move on a work_mem change (still",
+	)
 }
 
 func TestSplitHashesRestartChangeMovesRestartHash(t *testing.T) {
+	c := assert.NewCollecting(t)
 	_, base := StampAndSplit(baseConf)
 
 	// Change shared_buffers (a postmaster/restart param).
@@ -43,22 +45,16 @@ work_mem = '4MB'
 max_wal_size = '1GB'			# sighup
 `)
 
-	if changed.RestartHash == base.RestartHash {
-		t.Errorf(
-			"restart-hash did not move on a shared_buffers change (still %s)",
-			base.RestartHash,
-		)
-	}
-	if changed.ReloadHash != base.ReloadHash {
-		t.Errorf(
-			"reload-hash moved on a restart-only change: %s -> %s",
-			base.ReloadHash,
-			changed.ReloadHash,
-		)
-	}
+	c.NotEq(
+		base.RestartHash,
+		changed.RestartHash,
+		"restart-hash did not move on a shared_buffers change (still",
+	)
+	c.Eq(base.ReloadHash, changed.ReloadHash, "reload-hash moved on a restart-only change")
 }
 
 func TestSplitHashesCosmeticEditsMoveNeither(t *testing.T) {
+	c := assert.NewCollecting(t)
 	_, base := StampAndSplit(baseConf)
 
 	// Reordered, differently commented, extra blank lines, different inline
@@ -72,20 +68,8 @@ work_mem = '4MB'
 shared_buffers = '128MB'
 `)
 
-	if cosmetic.RestartHash != base.RestartHash {
-		t.Errorf(
-			"restart-hash moved on a cosmetic-only edit: %s -> %s",
-			base.RestartHash,
-			cosmetic.RestartHash,
-		)
-	}
-	if cosmetic.ReloadHash != base.ReloadHash {
-		t.Errorf(
-			"reload-hash moved on a cosmetic-only edit: %s -> %s",
-			base.ReloadHash,
-			cosmetic.ReloadHash,
-		)
-	}
+	c.Eq(base.RestartHash, cosmetic.RestartHash, "restart-hash moved on a cosmetic-only edit")
+	c.Eq(base.ReloadHash, cosmetic.ReloadHash, "reload-hash moved on a cosmetic-only edit")
 }
 
 func TestSplitHashesLastWins(t *testing.T) {
@@ -96,9 +80,7 @@ work_mem = '8MB'
 `)
 	_, single := StampAndSplit(`work_mem = '8MB'
 `)
-	if dup.ReloadHash != single.ReloadHash {
-		t.Errorf("last-wins not honored: dup=%s single=%s", dup.ReloadHash, single.ReloadHash)
-	}
+	assert.NewCollecting(t).Eq(single.ReloadHash, dup.ReloadHash, "last-wins not honored: dup")
 }
 
 // TestSplitHashesValueFormatting documents how the reload-hash treats value
@@ -132,9 +114,9 @@ func TestSplitHashesValueFormatting(t *testing.T) {
 
 	// Internal whitespace: token-based hashing treats '4 MB' as distinct from
 	// '4MB'. This documents the known (harmless) redundant-reload behavior.
-	if s, q := reloadHashOf("work_mem = '4 MB'\n"), reloadHashOf("work_mem = '4MB'\n"); s == q {
-		t.Errorf("expected '4 MB' to hash differently from '4MB' under token-based comparison")
-	}
+	s, q := reloadHashOf("work_mem = '4 MB'\n"), reloadHashOf("work_mem = '4MB'\n")
+	assert.NewCollecting(t).
+		NotEq(q, s, "expected '4 MB' to hash differently from '4MB' under token-based comparison")
 }
 
 func TestStripInlineComment(t *testing.T) {
@@ -162,9 +144,8 @@ func TestStripInlineComment(t *testing.T) {
 		{"'just a test ''", "'just a test ''"},
 	}
 	for _, tt := range tests {
-		if got := stripInlineComment(tt.in); got != tt.want {
-			t.Errorf("stripInlineComment(%q) = %q, want %q", tt.in, got, tt.want)
-		}
+		got := stripInlineComment(tt.in)
+		assert.NewCollecting(t).Eq(tt.want, got, "stripInlineComment(%q) = %q, want", tt.in, got)
 	}
 }
 
@@ -183,12 +164,12 @@ log_line_prefix = '%h %m [%p] '		# ok, for contrast
 	// Deterministic: the same malformed input always hashes the same way.
 	r1, s1 := StampAndSplit(malformed)
 	r2, s2 := StampAndSplit(malformed)
-	if s1.ReloadHash != s2.ReloadHash || s1.RestartHash != s2.RestartHash || r1 != r2 {
-		t.Errorf("split of malformed config is not deterministic")
-	}
+	assert.NewCollecting(t).
+		False(s1.ReloadHash != s2.ReloadHash || s1.RestartHash != s2.RestartHash || r1 != r2, "split of malformed config is not deterministic")
 }
 
 func TestReloadSettings(t *testing.T) {
+	c := assert.NewCollecting(t)
 	rendered := `# rendered
 shared_buffers = '128MB'		# postmaster → restart, excluded
 work_mem = '32MB'			# user → reload
@@ -199,19 +180,12 @@ cron.database_name = 'postgres'		# namespaced → restart, excluded
 	_, split := StampAndSplit(rendered)
 	got := split.ReloadSettings
 
-	if got["work_mem"] != "32MB" {
-		t.Errorf("work_mem = %q, want 32MB (unquoted)", got["work_mem"])
-	}
-	if got["max_wal_size"] != "1024MB" {
-		t.Errorf("max_wal_size = %q, want 1024MB", got["max_wal_size"])
-	}
-	if got["log_line_prefix"] != "%h %m [%p] " {
-		t.Errorf("log_line_prefix = %q, want unquoted verbatim", got["log_line_prefix"])
-	}
+	c.Eq("32MB", got["work_mem"], "work_mem")
+	c.Eq("1024MB", got["max_wal_size"], "max_wal_size")
+	c.Eq("%h %m [%p] ", got["log_line_prefix"], "log_line_prefix")
 	if _, ok := got["shared_buffers"]; ok {
 		t.Error("shared_buffers (postmaster) must be excluded from reload settings")
 	}
-	if _, ok := got["cron.database_name"]; ok {
-		t.Error("cron.database_name (namespaced→restart) must be excluded")
-	}
+	_, ok := got["cron.database_name"]
+	c.False(ok, "cron.database_name (namespaced→restart) must be excluded")
 }

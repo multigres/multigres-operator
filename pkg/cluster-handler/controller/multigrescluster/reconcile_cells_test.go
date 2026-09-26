@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestReconcileCells_ErrorPaths(t *testing.T) {
@@ -42,9 +44,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to missing global topo, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to missing global topo, got nil")
 	})
 
 	t.Run("Error: Resolve Cell Failed", func(t *testing.T) {
@@ -75,9 +75,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to missing cell template, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to missing cell template, got nil")
 	})
 
 	t.Run("Error: List Existing Cells Failed", func(t *testing.T) {
@@ -101,9 +99,8 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil || err.Error() != "failed to list existing cells: list error" {
-			t.Errorf("Expected 'list error', got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || err.Error() != "failed to list existing cells: list error", "Expected 'list error', got %v", err)
 	})
 
 	t.Run("Error: Patch Cell Failed", func(t *testing.T) {
@@ -135,9 +132,8 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil || err.Error() != "failed to apply cell 'zone-a': patch error" {
-			t.Errorf("Expected 'patch error', got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || err.Error() != "failed to apply cell 'zone-a': patch error", "Expected 'patch error', got %v", err)
 	})
 
 	t.Run("Error: Set PendingDeletion on Orphaned Cell Failed", func(t *testing.T) {
@@ -175,10 +171,8 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil ||
-			err.Error() != "failed to set PendingDeletion on cell 'test-zone-orphan': patch error" {
-			t.Errorf("Expected PendingDeletion patch error, got %v", err)
-		}
+		assert.NewCollecting(t).False(err == nil ||
+			err.Error() != "failed to set PendingDeletion on cell 'test-zone-orphan': patch error", "Expected PendingDeletion patch error, got %v", err)
 	})
 
 	t.Run("Error: Build Cell Failed", func(t *testing.T) {
@@ -207,9 +201,8 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to build failure (scheme mismatch), got nil")
-		}
+		assert.NewCollecting(t).
+			Error(err, "Expected error due to build failure (scheme mismatch), got nil")
 	})
 }
 
@@ -217,6 +210,7 @@ func TestReconcileCells_HappyPath(t *testing.T) {
 	scheme := setupScheme()
 
 	t.Run("Happy Path: Create Cells and Mark Orphan PendingDeletion", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -250,31 +244,25 @@ func TestReconcileCells_HappyPath(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err != nil {
-			t.Fatalf("Expected happy path success, got %v", err)
-		}
-		if !pending {
-			t.Error("Expected pending=true for orphan cell pending deletion")
-		}
+		ck.Require().NoError(err, "Expected happy path success, got")
+		ck.True(pending, "Expected pending=true for orphan cell pending deletion")
 
 		// Verify "zone-new" created and orphan has PendingDeletion annotation
 		cells := &multigresv1alpha1.CellList{}
-		if err := c.List(context.Background(), cells); err != nil {
-			t.Fatal(err)
-		}
+		ck.Require().NoError(c.List(context.Background(), cells))
 		foundNew := false
 		for _, cell := range cells.Items {
 			if cell.Spec.Name == "zone-new" {
 				foundNew = true
 			}
 			if cell.Spec.Name == "zone-old" {
-				if cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-					t.Error("Expected orphan cell 'zone-old' to have PendingDeletion annotation")
-				}
+				ck.NotEq(
+					"",
+					cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+					"Expected orphan cell 'zone-old' to have PendingDeletion annotation",
+				)
 			}
 		}
-		if !foundNew {
-			t.Error("Expected new cell 'zone-new' to be created")
-		}
+		ck.True(foundNew, "Expected new cell 'zone-new' to be created")
 	})
 }

@@ -199,8 +199,8 @@ github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFd
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/multigres/multigres v0.0.0-20260922224147-66eca2b74a7c h1:Ot2hpAKz2l2vHtlX1lp7GjxMSPMWZJpIKgs9/c3qOxg=
 github.com/multigres/multigres v0.0.0-20260922224147-66eca2b74a7c/go.mod h1:Ov2hrkOguWSkCS2QIhAdguFeG5GlZ3v4WGqIdqkQ7Tg=
-github.com/multigres/testkit v0.1.0 h1:i6DiCFZ9mVhEopBwakMmel5NTde1VErEPGtnoXn9CdU=
-github.com/multigres/testkit v0.1.0/go.mod h1:3ONhsV/PNOUke7PID5HPlnxTLyQCcfOQ/JfLCRkSLOY=
+github.com/multigres/testkit v0.2.0 h1:fy2GGA5kv8Nl8t9I04Q8u5Rct9hYUI431vhycUEKMFw=
+github.com/multigres/testkit v0.2.0/go.mod h1:3ONhsV/PNOUke7PID5HPlnxTLyQCcfOQ/JfLCRkSLOY=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/onsi/ginkgo/v2 v2.27.4 h1:fcEcQW/A++6aZAZQNUmNjvA9PSOzefMJBerHJ4t8v8Y=

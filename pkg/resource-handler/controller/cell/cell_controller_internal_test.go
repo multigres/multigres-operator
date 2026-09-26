@@ -21,6 +21,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestReconcileMultigatewayDeployment_InvalidScheme tests the error path when BuildMultigatewayDeployment fails.
@@ -51,9 +53,8 @@ func TestReconcileMultigatewayDeployment_InvalidScheme(t *testing.T) {
 	}
 
 	err := reconciler.reconcileMultigatewayDeployment(context.Background(), cell)
-	if err == nil {
-		t.Error("reconcileMultigatewayDeployment() should error with invalid scheme")
-	}
+	assert.NewCollecting(t).
+		Error(err, "reconcileMultigatewayDeployment() should error with invalid scheme")
 }
 
 // TestReconcileMultigatewayService_InvalidScheme tests the error path when BuildMultigatewayService fails.
@@ -81,9 +82,8 @@ func TestReconcileMultigatewayService_InvalidScheme(t *testing.T) {
 	}
 
 	err := reconciler.reconcileMultigatewayService(context.Background(), cell)
-	if err == nil {
-		t.Error("reconcileMultigatewayService() should error with invalid scheme")
-	}
+	assert.NewCollecting(t).
+		Error(err, "reconcileMultigatewayService() should error with invalid scheme")
 }
 
 // TestUpdateStatus_MultigatewayDeploymentNotFound tests the NotFound path in updateStatus.
@@ -116,12 +116,8 @@ func TestUpdateStatus_MultigatewayDeploymentNotFound(t *testing.T) {
 
 	// Call updateStatus when Multigateway Deployment doesn't exist yet
 	err := reconciler.updateStatus(context.Background(), cell)
-	if err != nil {
-		t.Errorf(
-			"updateStatus() should not error when Multigateway Deployment not found, got: %v",
-			err,
-		)
-	}
+	assert.NewCollecting(t).
+		NoError(err, "updateStatus() should not error when Multigateway Deployment not found, got")
 }
 
 // TestReconcileMultigatewayDeployment_PatchError tests error path on Patch Multigateway Deployment.
@@ -163,9 +159,8 @@ func TestReconcileMultigatewayDeployment_PatchError(t *testing.T) {
 	}
 
 	err := reconciler.reconcileMultigatewayDeployment(context.Background(), cell)
-	if err == nil {
-		t.Error("reconcileMultigatewayDeployment() should error on Patch failure")
-	}
+	assert.NewCollecting(t).
+		Error(err, "reconcileMultigatewayDeployment() should error on Patch failure")
 }
 
 // TestReconcileMultigatewayService_PatchError tests error path on Patch Multigateway Service.
@@ -207,9 +202,8 @@ func TestReconcileMultigatewayService_PatchError(t *testing.T) {
 	}
 
 	err := reconciler.reconcileMultigatewayService(context.Background(), cell)
-	if err == nil {
-		t.Error("reconcileMultigatewayService() should error on Patch failure")
-	}
+	assert.NewCollecting(t).
+		Error(err, "reconcileMultigatewayService() should error on Patch failure")
 }
 
 // TestUpdateStatus_GetError tests error path on Get Multigateway Deployment (not NotFound).
@@ -250,13 +244,12 @@ func TestUpdateStatus_GetError(t *testing.T) {
 	}
 
 	err := reconciler.updateStatus(context.Background(), cell)
-	if err == nil {
-		t.Error("updateStatus() should error on Get failure")
-	}
+	assert.NewCollecting(t).Error(err, "updateStatus() should error on Get failure")
 }
 
 // TestSetConditions_ZeroReplicas tests setConditions when deployments have zero replicas.
 func TestSetConditions_ZeroReplicas(t *testing.T) {
+	c := assert.NewCollecting(t)
 	reconciler := &CellReconciler{
 		Recorder: record.NewFakeRecorder(100),
 	}
@@ -282,31 +275,18 @@ func TestSetConditions_ZeroReplicas(t *testing.T) {
 	reconciler.setConditions(cell, mgDeploy)
 	conditions := cell.Status.Conditions
 
-	if len(conditions) != 2 {
-		t.Fatalf("setConditions() should set 2 conditions, got %d", len(conditions))
-	}
+	c.Require().
+		Len(conditions, 2, "setConditions() should set 2 conditions, got %d", len(conditions))
 
 	availCond := conditions[0]
-	if availCond.Type != "Available" {
-		t.Errorf("Condition type = %s, want Available", availCond.Type)
-	}
-	if availCond.Status != metav1.ConditionFalse {
-		t.Errorf("Condition status = %s, want False (zero replicas)", availCond.Status)
-	}
-	if availCond.Reason != "MultigatewayUnavailable" {
-		t.Errorf("Condition reason = %s, want MultigatewayUnavailable", availCond.Reason)
-	}
+	c.Eq("Available", availCond.Type, "Condition type")
+	c.Eq(metav1.ConditionFalse, availCond.Status, "Condition status")
+	c.Eq("MultigatewayUnavailable", availCond.Reason, "Condition reason")
 
 	readyCond := conditions[1]
-	if readyCond.Type != "Ready" {
-		t.Errorf("Condition type = %s, want Ready", readyCond.Type)
-	}
-	if readyCond.Status != metav1.ConditionFalse {
-		t.Errorf("Condition status = %s, want False", readyCond.Status)
-	}
-	if readyCond.Reason != "MultigatewayNotReady" {
-		t.Errorf("Condition reason = %s, want MultigatewayNotReady", readyCond.Reason)
-	}
+	c.Eq("Ready", readyCond.Type, "Condition type")
+	c.Eq(metav1.ConditionFalse, readyCond.Status, "Condition status")
+	c.Eq("MultigatewayNotReady", readyCond.Reason, "Condition reason")
 }
 
 // TestSetupWithManager tests the manager setup function.
@@ -324,9 +304,7 @@ func TestSetupWithManager(t *testing.T) {
 			Scheme:  scheme,
 			Metrics: metricsserver.Options{BindAddress: "0"},
 		})
-		if err != nil {
-			t.Fatalf("Failed to create manager: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "Failed to create manager")
 		return mgr
 	}
 
@@ -337,9 +315,7 @@ func TestSetupWithManager(t *testing.T) {
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
-		if err := r.SetupWithManager(mgr); err != nil {
-			t.Errorf("SetupWithManager() error = %v", err)
-		}
+		assert.NewCollecting(t).NoError(r.SetupWithManager(mgr), "SetupWithManager() error =")
 	})
 
 	t.Run("with options", func(t *testing.T) {
@@ -349,16 +325,15 @@ func TestSetupWithManager(t *testing.T) {
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
-		if err := r.SetupWithManager(mgr, controller.Options{
+		assert.NewCollecting(t).NoError(r.SetupWithManager(mgr, controller.Options{
 			MaxConcurrentReconciles: 1,
 			SkipNameValidation:      ptr.To(true),
-		}); err != nil {
-			t.Errorf("SetupWithManager() with opts error = %v", err)
-		}
+		}), "SetupWithManager() with opts error =")
 	})
 }
 
 func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -419,10 +394,7 @@ func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	if err := reconciler.updateStatus(context.Background(), cell); err != nil {
-		t.Fatalf("updateStatus() unexpected error: %v", err)
-	}
-	if cell.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("expected PhaseDegraded, got %q", cell.Status.Phase)
-	}
+	c.Require().
+		NoError(reconciler.updateStatus(context.Background(), cell), "updateStatus() unexpected error")
+	c.Eq(multigresv1alpha1.PhaseDegraded, cell.Status.Phase, "expected PhaseDegraded, got")
 }

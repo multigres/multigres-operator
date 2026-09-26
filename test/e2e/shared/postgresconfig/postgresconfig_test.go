@@ -14,6 +14,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestPostgresConfigManagement exercises the whole PostgreSQL-config feature
@@ -25,11 +27,10 @@ import (
 // through the gateway, so it proves the setting took effect in the running
 // server — not merely that a ConfigMap has the right text.
 func TestPostgresConfigManagement(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	// Legacy postgresConfigRef ConfigMap: sets seq_page_cost (a key the operator's
@@ -42,14 +43,10 @@ func TestPostgresConfigManagement(t *testing.T) {
 			"custom.conf": "seq_page_cost = '2.5'\nwork_mem = '64MB'",
 		},
 	}
-	if err := c.Create(ctx, refCM); err != nil {
-		t.Fatalf("create ref ConfigMap: %v", err)
-	}
+	ck.NoError(c.Create(ctx, refCM), "create ref ConfigMap")
 
 	cr := configCluster(ns)
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	// Wait for Postgres to come up and serve queries.
 	framework.WaitForPod(t, c, ns, "postgres")
@@ -86,19 +83,16 @@ func TestPostgresConfigManagement(t *testing.T) {
 	})
 
 	t.Run("operator renders a per-shard ConfigMap", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		cms := &corev1.ConfigMapList{}
-		if err := c.List(ctx, cms, client.InNamespace(ns)); err != nil {
-			t.Fatalf("list ConfigMaps: %v", err)
-		}
+		ck.Require().NoError(c.List(ctx, cms, client.InNamespace(ns)), "list ConfigMaps")
 		found := false
 		for i := range cms.Items {
 			if strings.HasSuffix(cms.Items[i].Name, "-postgres-config") {
 				found = true
 			}
 		}
-		if !found {
-			t.Error("expected an operator-rendered <shard>-postgres-config ConfigMap")
-		}
+		ck.True(found, "expected an operator-rendered <shard>-postgres-config ConfigMap")
 	})
 
 	// A reload-safe change (work_mem, user context) must take effect in the
@@ -111,15 +105,14 @@ func TestPostgresConfigManagement(t *testing.T) {
 	// the in-place reload is exercised without a concurrent rolling restart
 	// recreating the pods out from under it.
 	t.Run("reload-safe change applies without recreating pods", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		// Ensure the initial config rollout has fully settled before changing
 		// work_mem, so the in-place reload runs on a stable cluster rather than
 		// racing the primary-last restart still converging the initial config.
 		framework.WaitForShardConfigSettled(t, c, ns)
 
 		before := poolPodUIDs(t, ctx, c, ns)
-		if len(before) == 0 {
-			t.Fatal("no pool pods found before reload-safe change")
-		}
+		ck.Require().NotEmpty(before, "no pool pods found before reload-safe change")
 
 		live := framework.GetCluster(t, c, ns, cr.Name)
 		live.Spec.Databases[0].TableGroups[0].Shards[0].Spec.PostgresConfig["work_mem"] = "32MB"
@@ -135,13 +128,20 @@ func TestPostgresConfigManagement(t *testing.T) {
 		// The pods must be the very same objects — a reload-safe change must not
 		// recreate them. Stable UIDs prove Postgres was never restarted.
 		after := poolPodUIDs(t, ctx, c, ns)
-		if len(after) != len(before) {
-			t.Errorf("pool pod set changed across a reload-safe change: before=%v after=%v", before, after)
-		}
+		ck.Len(
+			after,
+			len(before),
+			"pool pod set changed across a reload-safe change: before=%v after=",
+			before,
+		)
 		for name, uid := range before {
-			if after[name] != uid {
-				t.Errorf("pool pod %s was recreated by a reload-safe change: UID %s -> %s", name, uid, after[name])
-			}
+			ck.Eq(
+				uid,
+				after[name],
+				"pool pod %s was recreated by a reload-safe change: UID %s ->",
+				name,
+				uid,
+			)
 		}
 	})
 
@@ -161,6 +161,7 @@ func TestPostgresConfigManagement(t *testing.T) {
 	// PostgreSQL default (0.01). Runs BEFORE the restart subtest, on a settled
 	// cluster, so the in-place reload is not raced by a concurrent rolling restart.
 	t.Run("removing a reload-safe setting reverts it in place", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		framework.WaitForShardConfigSettled(t, c, ns)
 
 		// Add cpu_tuple_cost via the inline map and confirm it reloads in.
@@ -172,16 +173,17 @@ func TestPostgresConfigManagement(t *testing.T) {
 		framework.WaitForPsqlValue(t, cluster, ns, gw, "SHOW cpu_tuple_cost", "0.05")
 
 		before := poolPodUIDs(t, ctx, c, ns)
-		if len(before) == 0 {
-			t.Fatal("no pool pods found before the removal")
-		}
+		ck.Require().NotEmpty(before, "no pool pods found before the removal")
 
 		// Now REMOVE it entirely; it must revert to the default (0.01) in place.
 		// This is the marker's job: the removal leaves every other expected setting
 		// unchanged, so only the moved marker forces the pooler to wait for the
 		// kubelet-synced file before confirming the reload.
 		live = framework.GetCluster(t, c, ns, cr.Name)
-		delete(live.Spec.Databases[0].TableGroups[0].Shards[0].Spec.PostgresConfig, "cpu_tuple_cost")
+		delete(
+			live.Spec.Databases[0].TableGroups[0].Shards[0].Spec.PostgresConfig,
+			"cpu_tuple_cost",
+		)
 		framework.PatchCluster(t, c, live, framework.MustMarshal(map[string]any{
 			"spec": map[string]any{"databases": live.Spec.Databases},
 		}))
@@ -189,13 +191,20 @@ func TestPostgresConfigManagement(t *testing.T) {
 
 		// The removal was applied by an in-place reload — no pod recreation.
 		after := poolPodUIDs(t, ctx, c, ns)
-		if len(after) != len(before) {
-			t.Errorf("pool pod set changed across a reload-safe removal: before=%v after=%v", before, after)
-		}
+		ck.Len(
+			after,
+			len(before),
+			"pool pod set changed across a reload-safe removal: before=%v after=",
+			before,
+		)
 		for name, uid := range before {
-			if after[name] != uid {
-				t.Errorf("pool pod %s was recreated by a reload-safe removal: UID %s -> %s", name, uid, after[name])
-			}
+			ck.Eq(
+				uid,
+				after[name],
+				"pool pod %s was recreated by a reload-safe removal: UID %s ->",
+				name,
+				uid,
+			)
 		}
 	})
 

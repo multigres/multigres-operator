@@ -8,6 +8,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestCEL_EtcdMaintenance(t *testing.T) {
@@ -30,6 +32,7 @@ func TestCEL_EtcdMaintenance(t *testing.T) {
 		{"large-quota", map[string]any{"quotaBackendBytes": int64(9 << 30)}, "less than or equal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			ck := assert.NewCollecting(t)
 			obj := &unstructured.Unstructured{
 				Object: map[string]any{
 					"apiVersion": "multigres.com/v1alpha1",
@@ -45,20 +48,15 @@ func TestCEL_EtcdMaintenance(t *testing.T) {
 			}
 			err := c.Create(t.Context(), obj)
 			if tc.wantError != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
-					t.Fatalf("expected %q, got %v", tc.wantError, err)
-				}
+				ck.Require().
+					False(err == nil || !strings.Contains(err.Error(), tc.wantError), "expected %q, got %v", tc.wantError, err)
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			ck.Require().NoError(err)
 			t.Cleanup(func() { _ = c.Delete(t.Context(), obj) })
 			stored := &unstructured.Unstructured{}
 			stored.SetGroupVersionKind(obj.GroupVersionKind())
-			if err := c.Get(t.Context(), client.ObjectKeyFromObject(obj), stored); err != nil {
-				t.Fatal(err)
-			}
+			ck.Require().NoError(c.Get(t.Context(), client.ObjectKeyFromObject(obj), stored))
 			for key, want := range tc.config {
 				got, found, err := unstructured.NestedFieldNoCopy(
 					stored.Object,
@@ -67,9 +65,14 @@ func TestCEL_EtcdMaintenance(t *testing.T) {
 					"maintenance",
 					key,
 				)
-				if err != nil || !found || got != want {
-					t.Errorf("%s: got %v, want %v (err %v)", key, got, want, err)
-				}
+				ck.False(
+					err != nil || !found || got != want,
+					"%s: got %v, want %v (err %v)",
+					key,
+					got,
+					want,
+					err,
+				)
 			}
 		})
 	}

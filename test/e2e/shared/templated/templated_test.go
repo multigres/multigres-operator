@@ -8,6 +8,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestTemplatedCluster applies the template CRs from config/samples/templates/
@@ -15,32 +17,23 @@ import (
 // verifies the full resource tree, pod health, and psql connectivity.
 func TestTemplatedCluster(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	// Create templates first — the cluster CR references them.
 	coreTmpl := framework.MustLoadCoreTemplate("config/samples/templates/core.yaml", ns)
-	if err := c.Create(ctx, coreTmpl); err != nil {
-		t.Fatalf("create CoreTemplate: %v", err)
-	}
+	ck.NoError(c.Create(ctx, coreTmpl), "create CoreTemplate")
 	cellTmpl := framework.MustLoadCellTemplate("config/samples/templates/cell.yaml", ns)
-	if err := c.Create(ctx, cellTmpl); err != nil {
-		t.Fatalf("create CellTemplate: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cellTmpl), "create CellTemplate")
 	shardTmpl := framework.MustLoadShardTemplate("config/samples/templates/shard.yaml", ns)
-	if err := c.Create(ctx, shardTmpl); err != nil {
-		t.Fatalf("create ShardTemplate: %v", err)
-	}
+	ck.NoError(c.Create(ctx, shardTmpl), "create ShardTemplate")
 
 	// Create the cluster referencing the templates.
 	cr := framework.MustLoadCluster("config/samples/templated-cluster.yaml", ns)
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	// Verify child CRDs.
 	framework.WaitForCRDCount(t, c, ns,

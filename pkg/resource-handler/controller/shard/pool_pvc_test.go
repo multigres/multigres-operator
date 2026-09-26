@@ -9,27 +9,22 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildPoolDataPVC_BasicStructure(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	pool := newTestPoolSpec()
 
 	pvc, err := BuildPoolDataPVC(shard, "main", "z1", pool, 0, false, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if pvc.Namespace != "default" {
-		t.Errorf("namespace = %q, want %q", pvc.Namespace, "default")
-	}
+	c.Eq("default", pvc.Namespace, "namespace")
 
-	if len(pvc.OwnerReferences) != 0 {
-		t.Fatalf(
-			"expected 0 owner references with deleteOnShardRemoval=false, got %d",
-			len(pvc.OwnerReferences),
-		)
-	}
+	c.Require().
+		Empty(pvc.OwnerReferences, "expected 0 owner references with deleteOnShardRemoval=false, got %d", len(pvc.OwnerReferences))
 
 	expectedLabels := map[string]string{
 		"app.kubernetes.io/component": PoolComponentName,
@@ -39,28 +34,24 @@ func TestBuildPoolDataPVC_BasicStructure(t *testing.T) {
 		"multigres.com/shard":         "0-inf",
 	}
 	for k, want := range expectedLabels {
-		if got := pvc.Labels[k]; got != want {
-			t.Errorf("label %q = %q, want %q", k, got, want)
-		}
+		got := pvc.Labels[k]
+		c.Eq(want, got, "label %q = %q, want", k, got)
 	}
 }
 
 func TestBuildPoolDataPVC_StorageDefaults(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pool := multigresv1alpha1.PoolSpec{
 		Storage: multigresv1alpha1.StorageSpec{},
 	}
 
 	pvc, err := BuildPoolDataPVC(newTestShard(), "main", "z1", pool, 0, false, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	// Default size
 	got := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	want := resource.MustParse(DefaultDataVolumeSize)
-	if got.Cmp(want) != 0 {
-		t.Errorf("storage size = %s, want %s", got.String(), want.String())
-	}
+	c.Eq(0, got.Cmp(want), "storage size = %s, want %s", got.String(), want.String())
 
 	// Default access mode
 	if len(pvc.Spec.AccessModes) != 1 || pvc.Spec.AccessModes[0] != corev1.ReadWriteOnce {
@@ -74,6 +65,7 @@ func TestBuildPoolDataPVC_StorageDefaults(t *testing.T) {
 }
 
 func TestBuildPoolDataPVC_CustomStorage(t *testing.T) {
+	c := assert.NewCollecting(t)
 	pool := multigresv1alpha1.PoolSpec{
 		Storage: multigresv1alpha1.StorageSpec{
 			Class:       "fast-ssd",
@@ -83,16 +75,12 @@ func TestBuildPoolDataPVC_CustomStorage(t *testing.T) {
 	}
 
 	pvc, err := BuildPoolDataPVC(newTestShard(), "main", "z1", pool, 0, false, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	// Custom size
 	got := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	want := resource.MustParse("50Gi")
-	if got.Cmp(want) != 0 {
-		t.Errorf("storage size = %s, want %s", got.String(), want.String())
-	}
+	c.Eq(0, got.Cmp(want), "storage size = %s, want %s", got.String(), want.String())
 
 	// Custom access mode
 	if len(pvc.Spec.AccessModes) != 1 || pvc.Spec.AccessModes[0] != corev1.ReadWriteMany {
@@ -120,9 +108,7 @@ func TestBuildPoolDataPVC_NameConsistency(t *testing.T) {
 		}
 	}
 
-	if dataPVCRef != pvc.Name {
-		t.Errorf("pod references PVC %q but BuildPoolDataPVC created %q", dataPVCRef, pvc.Name)
-	}
+	assert.NewCollecting(t).Eq(pvc.Name, dataPVCRef, "pod references PVC")
 }
 
 func TestBuildPoolDataPVCName_MatchesPodReference(t *testing.T) {
@@ -165,59 +151,45 @@ func TestBuildPoolDataPVCName_MatchesPodReference(t *testing.T) {
 				}
 			}
 
-			if pvcName != podPVCRef {
-				t.Errorf("BuildPoolDataPVCName() = %q, pod references %q", pvcName, podPVCRef)
-			}
+			assert.NewCollecting(t).Eq(podPVCRef, pvcName, "BuildPoolDataPVCName()")
 		})
 	}
 }
 
 func TestBuildPoolDataPVC_OwnerRefWithDeletePolicy(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	pool := newTestPoolSpec()
 
 	pvc, err := BuildPoolDataPVC(shard, "main", "z1", pool, 0, true, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if len(pvc.OwnerReferences) != 1 {
-		t.Fatalf(
-			"expected 1 owner reference with deleteOnShardRemoval=true, got %d",
-			len(pvc.OwnerReferences),
-		)
-	}
+	c.Require().
+		Len(pvc.OwnerReferences, 1, "expected 1 owner reference with deleteOnShardRemoval=true, got %d", len(pvc.OwnerReferences))
 
 	ref := pvc.OwnerReferences[0]
-	if ref.Name != shard.Name {
-		t.Errorf("ownerRef name = %q, want %q", ref.Name, shard.Name)
-	}
-	if ref.UID != shard.UID {
-		t.Errorf("ownerRef UID = %q, want %q", ref.UID, shard.UID)
-	}
-	if ref.Controller == nil || !*ref.Controller {
-		t.Error("ownerRef Controller should be true")
-	}
+	c.Eq(shard.Name, ref.Name, "ownerRef name")
+	c.Eq(shard.UID, ref.UID, "ownerRef UID")
+	c.False(ref.Controller == nil || !*ref.Controller, "ownerRef Controller should be true")
 }
 
 func TestBuildPoolDataPVC_NoOwnerRefWithRetainPolicy(t *testing.T) {
+	c := assert.NewAborting(t)
 	shard := newTestShard()
 	pool := newTestPoolSpec()
 
 	pvc, err := BuildPoolDataPVC(shard, "main", "z1", pool, 0, false, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.NoError(err, "unexpected error")
 
-	if len(pvc.OwnerReferences) != 0 {
-		t.Fatalf(
-			"expected 0 owner references with deleteOnShardRemoval=false, got %d",
-			len(pvc.OwnerReferences),
-		)
-	}
+	c.Empty(
+		pvc.OwnerReferences,
+		"expected 0 owner references with deleteOnShardRemoval=false, got %d",
+		len(pvc.OwnerReferences),
+	)
 }
 
 func TestBuildSharedBackupPVC_OwnerRefWithDeletePolicy(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := newTestShard()
 	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeFilesystem,
@@ -227,24 +199,17 @@ func TestBuildSharedBackupPVC_OwnerRefWithDeletePolicy(t *testing.T) {
 	}
 
 	pvc, err := BuildSharedBackupPVC(shard, true, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if len(pvc.OwnerReferences) != 1 {
-		t.Fatalf(
-			"expected 1 owner reference with deleteOnShardRemoval=true, got %d",
-			len(pvc.OwnerReferences),
-		)
-	}
+	c.Require().
+		Len(pvc.OwnerReferences, 1, "expected 1 owner reference with deleteOnShardRemoval=true, got %d", len(pvc.OwnerReferences))
 
 	ref := pvc.OwnerReferences[0]
-	if ref.Name != shard.Name {
-		t.Errorf("ownerRef name = %q, want %q", ref.Name, shard.Name)
-	}
+	c.Eq(shard.Name, ref.Name, "ownerRef name")
 }
 
 func TestBuildSharedBackupPVC_NoOwnerRefWithRetainPolicy(t *testing.T) {
+	c := assert.NewAborting(t)
 	shard := newTestShard()
 	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeFilesystem,
@@ -254,19 +219,17 @@ func TestBuildSharedBackupPVC_NoOwnerRefWithRetainPolicy(t *testing.T) {
 	}
 
 	pvc, err := BuildSharedBackupPVC(shard, false, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.NoError(err, "unexpected error")
 
-	if len(pvc.OwnerReferences) != 0 {
-		t.Fatalf(
-			"expected 0 owner references with deleteOnShardRemoval=false, got %d",
-			len(pvc.OwnerReferences),
-		)
-	}
+	c.Empty(
+		pvc.OwnerReferences,
+		"expected 0 owner references with deleteOnShardRemoval=false, got %d",
+		len(pvc.OwnerReferences),
+	)
 }
 
 func TestBuildShardPodDisruptionBudget(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-shard",
@@ -283,46 +246,28 @@ func TestBuildShardPodDisruptionBudget(t *testing.T) {
 	}
 
 	pdb, err := BuildShardPodDisruptionBudget(shard, testScheme())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
-	if pdb.Namespace != "default" {
-		t.Errorf("namespace = %q, want %q", pdb.Namespace, "default")
-	}
+	c.Eq("default", pdb.Namespace, "namespace")
 
 	// Three desired members preserve two available members.
 	if pdb.Spec.MinAvailable == nil || pdb.Spec.MinAvailable.IntValue() != 2 {
 		t.Errorf("minAvailable = %v, want 2", pdb.Spec.MinAvailable)
 	}
-	if pdb.Spec.MaxUnavailable != nil {
-		t.Errorf("maxUnavailable = %v, want nil", pdb.Spec.MaxUnavailable)
-	}
+	c.Nil(pdb.Spec.MaxUnavailable, "maxUnavailable")
 
 	// Selector should match all pool pods in the shard, not one pool or cell.
-	if pdb.Spec.Selector == nil {
-		t.Fatal("selector is nil")
-	}
+	c.Require().NotNil(pdb.Spec.Selector, "selector is nil")
 	sel := pdb.Spec.Selector.MatchLabels
 	if _, ok := sel["multigres.com/cell"]; ok {
 		t.Errorf("selector must not be scoped to a cell: %#v", sel)
 	}
-	if _, ok := sel["multigres.com/pool"]; ok {
-		t.Errorf("selector must not be scoped to a pool: %#v", sel)
-	}
-	if sel["multigres.com/shard"] != "0-inf" {
-		t.Errorf("selector shard = %q, want %q", sel["multigres.com/shard"], "0-inf")
-	}
-	if sel["app.kubernetes.io/component"] != PoolComponentName {
-		t.Errorf(
-			"selector component = %q, want %q",
-			sel["app.kubernetes.io/component"],
-			PoolComponentName,
-		)
-	}
+	_, ok := sel["multigres.com/pool"]
+	c.False(ok, "selector must not be scoped to a pool: %#v", sel)
+	c.Eq("0-inf", sel["multigres.com/shard"], "selector shard")
+	c.Eq(PoolComponentName, sel["app.kubernetes.io/component"], "selector component")
 
 	// Owner reference
-	if len(pdb.OwnerReferences) != 1 {
-		t.Fatalf("expected 1 owner reference, got %d", len(pdb.OwnerReferences))
-	}
+	c.Require().
+		Len(pdb.OwnerReferences, 1, "expected 1 owner reference, got %d", len(pdb.OwnerReferences))
 }

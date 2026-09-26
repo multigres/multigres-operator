@@ -3,12 +3,13 @@ package toposerver
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildContainerPorts(t *testing.T) {
@@ -47,9 +48,7 @@ func TestBuildContainerPorts(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := buildContainerPorts(tc.toposerver)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildContainerPorts() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "buildContainerPorts() mismatch")
 		})
 	}
 }
@@ -87,9 +86,7 @@ func TestBuildHeadlessServicePorts(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := buildHeadlessServicePorts(tc.toposerver)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildHeadlessServicePorts() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "buildHeadlessServicePorts() mismatch")
 		})
 	}
 }
@@ -121,9 +118,7 @@ func TestBuildClientServicePorts(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := buildClientServicePorts(tc.toposerver)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildClientServicePorts() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "buildClientServicePorts() mismatch")
 		})
 	}
 }

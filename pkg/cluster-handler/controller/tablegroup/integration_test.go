@@ -21,6 +21,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestSetupWithManager(t *testing.T) {
@@ -37,15 +39,13 @@ func TestSetupWithManager(t *testing.T) {
 		),
 	)
 
-	if err := (&tablegroup.TableGroupReconciler{
+	assert.NewAborting(t).NoError((&tablegroup.TableGroupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
 	}).SetupWithManager(mgr, controller.Options{
 		SkipNameValidation: ptr.To(true),
-	}); err != nil {
-		t.Fatalf("Failed to create controller, %v", err)
-	}
+	}), "Failed to create controller")
 }
 
 func TestSetupWithManager_Failure(t *testing.T) {
@@ -63,15 +63,13 @@ func TestSetupWithManager_Failure(t *testing.T) {
 		),
 	)
 
-	if err := (&tablegroup.TableGroupReconciler{
+	assert.NewAborting(t).Error((&tablegroup.TableGroupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
 	}).SetupWithManager(mgr, controller.Options{
 		SkipNameValidation: ptr.To(true),
-	}); err == nil {
-		t.Fatal("Expected SetupWithManager to fail due to missing type in scheme, got nil")
-	}
+	}), "Expected SetupWithManager to fail due to missing type in scheme, got nil")
 }
 
 func setTestPostgresPasswordSecretRef(tableGroup *multigresv1alpha1.TableGroup) {
@@ -248,6 +246,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			ctx := t.Context()
 
 			mgr := testutil.SetUpEnvtestManager(t, scheme,
@@ -274,16 +273,13 @@ func TestTableGroupReconciliation(t *testing.T) {
 				Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
 			}
 
-			if err := reconciler.SetupWithManager(mgr, controller.Options{
+			c.Require().NoError(reconciler.SetupWithManager(mgr, controller.Options{
 				SkipNameValidation: ptr.To(true),
-			}); err != nil {
-				t.Fatalf("Failed to create controller, %v", err)
-			}
+			}), "Failed to create controller")
 
 			setTestPostgresPasswordSecretRef(tc.tableGroup)
-			if err := k8sClient.Create(ctx, tc.tableGroup); err != nil {
-				t.Fatalf("Failed to create the initial tablegroup, %v", err)
-			}
+			c.Require().
+				NoError(k8sClient.Create(ctx, tc.tableGroup), "Failed to create the initial tablegroup")
 
 			// Expected Shard names use the same name constraints as the controller.
 			for _, obj := range tc.wantResources {
@@ -301,9 +297,7 @@ func TestTableGroupReconciliation(t *testing.T) {
 				}
 			}
 
-			if err := watcher.WaitForMatch(tc.wantResources...); err != nil {
-				t.Errorf("Resources mismatch:\n%v", err)
-			}
+			c.NoError(watcher.WaitForMatch(tc.wantResources...), "Resources mismatch:\n")
 		})
 	}
 }

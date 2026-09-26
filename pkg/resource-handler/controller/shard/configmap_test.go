@@ -4,12 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildPgHbaConfigMap(t *testing.T) {
@@ -58,38 +59,33 @@ func TestBuildPgHbaConfigMap(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			scheme := tc.scheme
 			if scheme == nil {
 				scheme = defaultScheme
 			}
 
 			cm, err := BuildPgHbaConfigMap(tc.shard, scheme)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("BuildPgHbaConfigMap() error = %v, wantErr %v", err, tc.wantErr)
-			}
+			c.Require().ErrorWhen(tc.wantErr, err, "BuildPgHbaConfigMap() error")
 
 			if tc.wantErr {
 				return
 			}
 
-			if cm.Name != PgHbaConfigMapName(tc.shard.Name) {
-				t.Errorf("ConfigMap name = %v, want %v", cm.Name, PgHbaConfigMapName(tc.shard.Name))
-			}
-			if cm.Namespace != tc.shard.Namespace {
-				t.Errorf("ConfigMap namespace = %v, want %v", cm.Namespace, tc.shard.Namespace)
-			}
+			c.Eq(PgHbaConfigMapName(tc.shard.Name), cm.Name, "ConfigMap name")
+			c.Eq(tc.shard.Namespace, cm.Namespace, "ConfigMap namespace")
 
 			// Verify owner reference
-			if len(cm.OwnerReferences) != 1 {
-				t.Fatalf("Expected 1 owner reference, got %d", len(cm.OwnerReferences))
-			}
+			c.Require().
+				Len(cm.OwnerReferences, 1, "Expected 1 owner reference, got %d", len(cm.OwnerReferences))
 			ownerRef := cm.OwnerReferences[0]
 			if ownerRef.Name != tc.shard.Name || ownerRef.Kind != "Shard" {
 				t.Errorf("Owner reference = %+v, want Shard/%s", ownerRef, tc.shard.Name)
 			}
-			if !ptr.Deref(ownerRef.Controller, false) {
-				t.Error("Expected owner reference to be controller")
-			}
+			c.True(
+				ptr.Deref(ownerRef.Controller, false),
+				"Expected owner reference to be controller",
+			)
 
 			// Verify labels
 			expectedLabels := map[string]string{
@@ -100,20 +96,18 @@ func TestBuildPgHbaConfigMap(t *testing.T) {
 				"app.kubernetes.io/managed-by": "multigres-operator",
 				"multigres.com/cluster":        tc.shard.Labels["multigres.com/cluster"],
 			}
-			if diff := cmp.Diff(expectedLabels, cm.Labels); diff != "" {
-				t.Errorf("Labels mismatch (-want +got):\n%s", diff)
-			}
+			c.EqDiff(expectedLabels, cm.Labels, "Labels mismatch")
 
 			// Verify template content exists
 			template, ok := cm.Data["pg_hba_template.conf"]
-			if !ok {
-				t.Fatal("ConfigMap missing pg_hba_template.conf key")
-			}
+			c.Require().True(ok, "ConfigMap missing pg_hba_template.conf key")
 
 			// Verify the template matches what's embedded (source of truth)
-			if template != DefaultPgHbaTemplate {
-				t.Error("Template content doesn't match DefaultPgHbaTemplate")
-			}
+			c.Eq(
+				DefaultPgHbaTemplate,
+				template,
+				"Template content doesn't match DefaultPgHbaTemplate",
+			)
 		})
 	}
 }
@@ -132,34 +126,28 @@ func TestBuildPostgresConfigMap(t *testing.T) {
 	}
 
 	t.Run("stores rendered content under the config key with an owner ref", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		rendered := "# rendered\nmax_connections = 200\n"
 		cm, err := BuildPostgresConfigMap(shard, rendered, scheme)
-		if err != nil {
-			t.Fatalf("BuildPostgresConfigMap() error = %v", err)
-		}
-		if cm.Name != PostgresConfigMapName(shard.Name) {
-			t.Errorf("name = %q, want %q", cm.Name, PostgresConfigMapName(shard.Name))
-		}
-		if cm.Namespace != shard.Namespace {
-			t.Errorf("namespace = %q, want %q", cm.Namespace, shard.Namespace)
-		}
-		if got := cm.Data[PostgresConfigMapKey]; got != rendered {
-			t.Errorf("Data[%q] = %q, want %q", PostgresConfigMapKey, got, rendered)
-		}
+		c.Require().NoError(err, "BuildPostgresConfigMap() error =")
+		c.Eq(PostgresConfigMapName(shard.Name), cm.Name, "name")
+		c.Eq(shard.Namespace, cm.Namespace, "namespace")
+		got := cm.Data[PostgresConfigMapKey]
+		c.Eq(rendered, got, "Data[%q] = %q, want", PostgresConfigMapKey, got)
 		if len(cm.OwnerReferences) != 1 ||
 			cm.OwnerReferences[0].Name != shard.Name ||
 			cm.OwnerReferences[0].Kind != "Shard" {
 			t.Errorf("owner reference = %+v, want Shard/%s", cm.OwnerReferences, shard.Name)
 		}
-		if !ptr.Deref(cm.OwnerReferences[0].Controller, false) {
-			t.Error("expected owner reference to be controller")
-		}
+		c.True(
+			ptr.Deref(cm.OwnerReferences[0].Controller, false),
+			"expected owner reference to be controller",
+		)
 	})
 
 	t.Run("returns error on invalid scheme", func(t *testing.T) {
-		if _, err := BuildPostgresConfigMap(shard, "x", runtime.NewScheme()); err == nil {
-			t.Error("expected error with empty scheme")
-		}
+		_, err := BuildPostgresConfigMap(shard, "x", runtime.NewScheme())
+		assert.NewCollecting(t).Error(err, "expected error with empty scheme")
 	})
 }
 
@@ -177,47 +165,38 @@ func TestBuildPostgresExporterQueriesConfigMap(t *testing.T) {
 	}
 
 	t.Run("stores embedded queries under the queries key with an owner ref", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cm, err := BuildPostgresExporterQueriesConfigMap(shard, scheme)
-		if err != nil {
-			t.Fatalf("BuildPostgresExporterQueriesConfigMap() error = %v", err)
-		}
-		if cm.Name != PostgresExporterQueriesConfigMapName(shard.Name) {
-			t.Errorf(
-				"name = %q, want %q",
-				cm.Name,
-				PostgresExporterQueriesConfigMapName(shard.Name),
-			)
-		}
-		if cm.Namespace != shard.Namespace {
-			t.Errorf("namespace = %q, want %q", cm.Namespace, shard.Namespace)
-		}
-		if got := cm.Data[PostgresExporterQueriesConfigMapKey]; got != DefaultPostgresExporterQueries {
-			t.Errorf(
-				"Data[%q] doesn't match DefaultPostgresExporterQueries",
-				PostgresExporterQueriesConfigMapKey,
-			)
-		}
+		c.Require().NoError(err, "BuildPostgresExporterQueriesConfigMap() error =")
+		c.Eq(PostgresExporterQueriesConfigMapName(shard.Name), cm.Name, "name")
+		c.Eq(shard.Namespace, cm.Namespace, "namespace")
+		c.Eq(
+			DefaultPostgresExporterQueries,
+			cm.Data[PostgresExporterQueriesConfigMapKey],
+			"Data[%q] doesn't match DefaultPostgresExporterQueries",
+			PostgresExporterQueriesConfigMapKey,
+		)
 		if len(cm.OwnerReferences) != 1 ||
 			cm.OwnerReferences[0].Name != shard.Name ||
 			cm.OwnerReferences[0].Kind != "Shard" {
 			t.Errorf("owner reference = %+v, want Shard/%s", cm.OwnerReferences, shard.Name)
 		}
-		if !ptr.Deref(cm.OwnerReferences[0].Controller, false) {
-			t.Error("expected owner reference to be controller")
-		}
+		c.True(
+			ptr.Deref(cm.OwnerReferences[0].Controller, false),
+			"expected owner reference to be controller",
+		)
 	})
 
 	t.Run("returns error on invalid scheme", func(t *testing.T) {
-		if _, err := BuildPostgresExporterQueriesConfigMap(shard, runtime.NewScheme()); err == nil {
-			t.Error("expected error with empty scheme")
-		}
+		_, err := BuildPostgresExporterQueriesConfigMap(shard, runtime.NewScheme())
+		assert.NewCollecting(t).Error(err, "expected error with empty scheme")
 	})
 }
 
 func TestDefaultPostgresExporterQueriesEmbedded(t *testing.T) {
-	if DefaultPostgresExporterQueries == "" {
-		t.Fatal("DefaultPostgresExporterQueries is empty - go:embed may have failed")
-	}
+	c := assert.NewCollecting(t)
+	c.Require().
+		NotEq("", DefaultPostgresExporterQueries, "DefaultPostgresExporterQueries is empty - go:embed may have failed")
 
 	// Each top-level key becomes the exporter's metric-name prefix.
 	for _, queryName := range []string{
@@ -228,17 +207,19 @@ func TestDefaultPostgresExporterQueriesEmbedded(t *testing.T) {
 		"connection_stats:",
 		"max_connections:",
 	} {
-		if !strings.Contains(DefaultPostgresExporterQueries, "\n"+queryName) {
-			t.Errorf("DefaultPostgresExporterQueries missing query block %q", queryName)
-		}
+		c.StrContains(
+			DefaultPostgresExporterQueries,
+			"\n"+queryName,
+			"DefaultPostgresExporterQueries missing query block %q",
+			queryName,
+		)
 	}
 }
 
 func TestDefaultPgHbaTemplateEmbedded(t *testing.T) {
+	c := assert.NewCollecting(t)
 	// Verify the embedded template is not empty
-	if DefaultPgHbaTemplate == "" {
-		t.Error("DefaultPgHbaTemplate is empty - go:embed may have failed")
-	}
+	c.NotEq("", DefaultPgHbaTemplate, "DefaultPgHbaTemplate is empty - go:embed may have failed")
 
 	// Verify critical configuration lines exist
 	// We check for the presence of rules, ignoring multiple spaces
@@ -276,12 +257,11 @@ func TestDefaultPgHbaTemplateEmbedded(t *testing.T) {
 				break
 			}
 		}
-		if !found {
-			t.Errorf(
-				"DefaultPgHbaTemplate missing %s (expected line containing all of: %v)",
-				check.desc,
-				check.mustContain,
-			)
-		}
+		c.True(
+			found,
+			"DefaultPgHbaTemplate missing %s (expected line containing all of: %v)",
+			check.desc,
+			check.mustContain,
+		)
 	}
 }

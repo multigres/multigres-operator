@@ -19,6 +19,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestShardStepsPrune covers the retained PendingDeletion handshake for child
@@ -186,6 +188,7 @@ func TestShardStepsPrune(t *testing.T) {
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 
 			var shardPatchCount atomic.Int64
 			var shardDeleteCount atomic.Int64
@@ -251,26 +254,18 @@ func TestShardStepsPrune(t *testing.T) {
 				}
 			}
 
-			if got := shardPatchCount.Load(); got != tc.wantPatches {
-				t.Errorf("Patch count mismatch: got %d, want %d", got, tc.wantPatches)
-			}
-			if got := shardDeleteCount.Load(); got != tc.wantDeletes {
-				t.Errorf("Delete count mismatch: got %d, want %d", got, tc.wantDeletes)
-			}
-			if rc.pendingDeletion != tc.wantPending {
-				t.Errorf("pending mismatch: got %t, want %t", rc.pendingDeletion, tc.wantPending)
-			}
-			if got := rc.activeShardNames[shardName]; got != tc.wantActive {
-				t.Errorf("active child mismatch: got %t, want %t", got, tc.wantActive)
-			}
+			ck.Eq(tc.wantPatches, shardPatchCount.Load(), "Patch count mismatch: got")
+			ck.Eq(tc.wantDeletes, shardDeleteCount.Load(), "Delete count mismatch: got")
+			ck.Eq(tc.wantPending, rc.pendingDeletion, "pending mismatch: got")
+			ck.Eq(tc.wantActive, rc.activeShardNames[shardName], "active child mismatch: got")
 			res, err := stepRequeueIfPending(t.Context(), rc)
-			if err != nil {
-				t.Fatalf("stepRequeueIfPending returned error: %v", err)
-			}
+			ck.Require().NoError(err, "stepRequeueIfPending returned error")
 			if tc.wantPending {
-				if !res.done || res.result.RequeueAfter != 5*time.Second {
-					t.Errorf("requeue mismatch: got %+v, want 5s requeue", res.result)
-				}
+				ck.False(
+					!res.done || res.result.RequeueAfter != 5*time.Second,
+					"requeue mismatch: got %+v, want 5s requeue",
+					res.result,
+				)
 			} else if res.done {
 				t.Errorf("unexpected requeue result: %+v", res.result)
 			}
@@ -283,9 +278,7 @@ func TestShardStepsPrune(t *testing.T) {
 						found = true
 					}
 				}
-				if !found {
-					t.Errorf("expected an event containing %q", tc.wantEvent)
-				}
+				ck.True(found, "expected an event containing %q", tc.wantEvent)
 			}
 
 			fetched := &multigresv1alpha1.Shard{}
@@ -296,23 +289,22 @@ func TestShardStepsPrune(t *testing.T) {
 			)
 
 			if tc.wantDeleted {
-				if !errors.IsNotFound(getErr) {
-					t.Errorf(
-						"expected child Shard to be deleted, but it still exists (err: %v)",
-						getErr,
-					)
-				}
+				ck.True(
+					errors.IsNotFound(getErr),
+					"expected child Shard to be deleted, but it still exists (err: %v)",
+					getErr,
+				)
 				return
 			}
 
-			if getErr != nil {
-				t.Fatalf("expected child Shard to still exist: %v", getErr)
-			}
+			ck.Require().NoError(getErr, "expected child Shard to still exist")
 			got := fetched.Annotations[multigresv1alpha1.AnnotationPendingDeletion]
 			if tc.wantAnnotationNonEmpty {
-				if got == "" {
-					t.Error("expected a freshly stamped PendingDeletion annotation, got empty")
-				}
+				ck.NotEq(
+					"",
+					got,
+					"expected a freshly stamped PendingDeletion annotation, got empty",
+				)
 			} else if got != tc.wantAnnotation {
 				t.Errorf(
 					"PendingDeletion annotation mismatch: got %q, want %q",

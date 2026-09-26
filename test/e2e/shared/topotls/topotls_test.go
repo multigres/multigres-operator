@@ -13,6 +13,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestTopoTLSCluster brings up a cluster with topoTLS enabled and verifies it
@@ -23,6 +25,7 @@ import (
 // anywhere in that path would leave the cluster unable to become ready.
 func TestTopoTLSCluster(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	// cert-manager and the shared CA the operator signs the etcd serving
 	// certificate and the client credential with.
@@ -30,14 +33,10 @@ func TestTopoTLSCluster(t *testing.T) {
 
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/topo-tls.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 
 	// The child resource tree still forms with topology TLS on.
 	framework.WaitForCRDCount(t, c, ns,
@@ -76,14 +75,18 @@ func waitForTopologyReady(t *testing.T, c client.Client, ns, name string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		cluster := &multigresv1alpha1.MultigresCluster{}
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, cluster); err != nil {
-			return false, nil
-		}
-		return meta.IsStatusConditionTrue(cluster.Status.Conditions, "TopologyReady"), nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for TopologyReady on cluster %s/%s: %v", ns, name, err)
-	}
+	err := wait.PollUntilContextCancel(
+		ctx,
+		5*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			cluster := &multigresv1alpha1.MultigresCluster{}
+			if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, cluster); err != nil {
+				return false, nil
+			}
+			return meta.IsStatusConditionTrue(cluster.Status.Conditions, "TopologyReady"), nil
+		},
+	)
+	assert.NewAborting(t).
+		NoError(err, "timed out waiting for TopologyReady on cluster %s/%s", ns, name)
 }
