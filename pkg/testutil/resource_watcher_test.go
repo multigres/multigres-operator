@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestResourceWatcher_BeforeCreation tests that watcher can subscribe to events
@@ -72,9 +73,7 @@ func TestResourceWatcher_BeforeCreation(t *testing.T) {
 				watcher.SetCmpOpts(opts...)
 
 				err := watcher.WaitForMatch(expected)
-				if err != nil {
-					t.Errorf("Failed to wait for Service: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for Service")
 			},
 		},
 		"statefulset created": {
@@ -142,9 +141,7 @@ func TestResourceWatcher_BeforeCreation(t *testing.T) {
 				watcher.SetCmpOpts(opts...)
 
 				err := watcher.WaitForMatch(expected)
-				if err != nil {
-					t.Errorf("Failed to wait for StatefulSet: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for StatefulSet")
 			},
 		},
 		"deployment created": {
@@ -213,9 +210,7 @@ func TestResourceWatcher_BeforeCreation(t *testing.T) {
 				watcher.SetCmpOpts(opts...)
 
 				err := watcher.WaitForMatch(expected)
-				if err != nil {
-					t.Errorf("Failed to wait for Deployment: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for Deployment")
 			},
 		},
 		"multiple unwatched kinds fail immediately": {
@@ -238,9 +233,7 @@ func TestResourceWatcher_BeforeCreation(t *testing.T) {
 					return
 				}
 
-				if diff := cmp.Diff(want.Kinds, got.Kinds); diff != "" {
-					t.Errorf("Unwatched kinds mismatch (-want +got):\n%s", diff)
-				}
+				assert.NewCollecting(t).EqDiff(want.Kinds, got.Kinds, "Unwatched kinds mismatch")
 			},
 		},
 	}
@@ -268,9 +261,7 @@ func TestResourceWatcher_BeforeCreation(t *testing.T) {
 			}()
 
 			// THEN create resources (tests subscription path)
-			if err := tc.setup(ctx, c); err != nil {
-				t.Fatalf("Setup failed: %v", err)
-			}
+			assert.NewAborting(t).NoError(tc.setup(ctx, c), "Setup failed")
 
 			// Wait for assertion to complete
 			<-done
@@ -341,9 +332,7 @@ func TestResourceWatcher_AfterCreation(t *testing.T) {
 				watcher.SetCmpOpts(opts...)
 
 				err := watcher.WaitForMatch(expected)
-				if err != nil {
-					t.Errorf("Failed to wait for updated Service: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for updated Service")
 			},
 		},
 		"service deleted after watcher starts": {
@@ -377,9 +366,8 @@ func TestResourceWatcher_AfterCreation(t *testing.T) {
 					return
 				}
 
-				if evt.Name != "test-svc-delete" {
-					t.Errorf("Expected test-svc-delete, got %s", evt.Name)
-				}
+				assert.NewCollecting(t).
+					Eq("test-svc-delete", evt.Name, "Expected test-svc-delete, got")
 
 				t.Logf("Successfully detected Service deletion")
 			},
@@ -390,6 +378,7 @@ func TestResourceWatcher_AfterCreation(t *testing.T) {
 		name, tc := name, tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewAborting(t)
 
 			scheme := runtime.NewScheme()
 			_ = corev1.AddToScheme(scheme)
@@ -400,9 +389,7 @@ func TestResourceWatcher_AfterCreation(t *testing.T) {
 			c := mgr.GetClient()
 
 			// Create resources FIRST
-			if err := tc.setup(ctx, c); err != nil {
-				t.Fatalf("Setup failed: %v", err)
-			}
+			ck.NoError(tc.setup(ctx, c), "Setup failed")
 
 			// THEN start watcher (won't see initial creation)
 			watcher := testutil.NewResourceWatcher(t, ctx, mgr)
@@ -415,9 +402,7 @@ func TestResourceWatcher_AfterCreation(t *testing.T) {
 			}()
 
 			// Trigger update (this should be picked up by watcher)
-			if err := tc.update(ctx, c); err != nil {
-				t.Fatalf("Update failed: %v", err)
-			}
+			ck.NoError(tc.update(ctx, c), "Update failed")
 
 			// Wait for assertion to complete
 			<-done
@@ -428,6 +413,7 @@ func TestResourceWatcher_AfterCreation(t *testing.T) {
 // TestResourceWatcherEventUtilities tests event inspection utility functions.
 func TestResourceWatcherEventUtilities(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -458,20 +444,16 @@ func TestResourceWatcherEventUtilities(t *testing.T) {
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test"}},
-				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "nginx"}}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "nginx", Image: "nginx"}},
+				},
 			},
 		},
 	}
 
-	if err := c.Create(ctx, svc1); err != nil {
-		t.Fatalf("Failed to create svc-1: %v", err)
-	}
-	if err := c.Create(ctx, svc2); err != nil {
-		t.Fatalf("Failed to create svc-2: %v", err)
-	}
-	if err := c.Create(ctx, deploy); err != nil {
-		t.Fatalf("Failed to create deploy-1: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc1), "Failed to create svc-1")
+	ck.Require().NoError(c.Create(ctx, svc2), "Failed to create svc-2")
+	ck.Require().NoError(c.Create(ctx, deploy), "Failed to create deploy-1")
 
 	// Wait for all resources
 	watcher.SetCmpOpts(
@@ -481,15 +463,11 @@ func TestResourceWatcherEventUtilities(t *testing.T) {
 		testutil.IgnoreDeploymentSpecDefaults(),
 		testutil.IgnorePodSpecDefaults(),
 	)
-	if err := watcher.WaitForMatch(svc1, svc2, deploy); err != nil {
-		t.Fatalf("Failed to wait for resources: %v", err)
-	}
+	ck.Require().NoError(watcher.WaitForMatch(svc1, svc2, deploy), "Failed to wait for resources")
 
 	// Test Events() returns all collected events
 	events := watcher.Events()
-	if len(events) < 3 {
-		t.Errorf("Events() = %d events, want at least 3", len(events))
-	}
+	ck.GreaterOrEqual(3, len(events), "Events()")
 
 	// Verify Events() contains expected resources
 	foundSvc1, foundSvc2, foundDeploy := false, false, false
@@ -504,65 +482,41 @@ func TestResourceWatcherEventUtilities(t *testing.T) {
 			foundDeploy = true
 		}
 	}
-	if !foundSvc1 {
-		t.Error("Events() should contain ADDED event for svc-1")
-	}
-	if !foundSvc2 {
-		t.Error("Events() should contain ADDED event for svc-2")
-	}
-	if !foundDeploy {
-		t.Error("Events() should contain ADDED event for deploy-1")
-	}
+	ck.True(foundSvc1, "Events() should contain ADDED event for svc-1")
+	ck.True(foundSvc2, "Events() should contain ADDED event for svc-2")
+	ck.True(foundDeploy, "Events() should contain ADDED event for deploy-1")
 
 	// Test ForKind() filters by resource kind
 	svcEvents := watcher.ForKind("Service")
-	if len(svcEvents) < 2 {
-		t.Errorf("ForKind(Service) = %d events, want at least 2 (svc-1 and svc-2)", len(svcEvents))
-	}
+	ck.GreaterOrEqual(2, len(svcEvents), "ForKind(Service)")
 	for _, evt := range svcEvents {
-		if evt.Kind != "Service" {
-			t.Errorf("ForKind(Service) returned event with Kind = %s", evt.Kind)
-		}
+		ck.Eq("Service", evt.Kind, "ForKind(Service) returned event with Kind =")
 	}
 
 	deployEvents := watcher.ForKind("Deployment")
-	if len(deployEvents) < 1 {
-		t.Errorf("ForKind(Deployment) = %d events, want at least 1", len(deployEvents))
-	}
+	ck.GreaterOrEqual(1, len(deployEvents), "ForKind(Deployment)")
 	for _, evt := range deployEvents {
-		if evt.Kind != "Deployment" {
-			t.Errorf("ForKind(Deployment) returned event with Kind = %s", evt.Kind)
-		}
+		ck.Eq("Deployment", evt.Kind, "ForKind(Deployment) returned event with Kind =")
 	}
 
 	// Test ForName() filters by resource name
 	svc2Events := watcher.ForName("svc-2")
-	if len(svc2Events) == 0 {
-		t.Error("ForName(svc-2) returned no events")
-	}
+	ck.NotEmpty(svc2Events, "ForName(svc-2) returned no events")
 	for _, evt := range svc2Events {
-		if evt.Name != "svc-2" {
-			t.Errorf("ForName(svc-2) returned event with Name = %s", evt.Name)
-		}
+		ck.Eq("svc-2", evt.Name, "ForName(svc-2) returned event with Name =")
 	}
 
 	// Test Count() matches Events() length
 	count := watcher.Count()
-	if count != len(events) {
-		t.Errorf("Count() = %d, len(Events()) = %d, should be equal", count, len(events))
-	}
+	ck.Eq(len(events), count, "Count()")
 
 	// Test EventCh() provides direct access to event channel
 	ch := watcher.EventCh()
-	if ch == nil {
-		t.Fatal("EventCh() returned nil")
-	}
+	ck.Require().NotNil(ch, "EventCh() returned nil")
 
 	// Verify EventCh returns same channel on multiple calls
 	ch2 := watcher.EventCh()
-	if ch != ch2 {
-		t.Error("EventCh() should return the same channel instance")
-	}
+	ck.Eq(ch2, ch, "EventCh() should return the same channel instance")
 
 	// Create another resource and verify the event count increases
 	// (can't consume from channel as that would interfere with collectEvents)
@@ -572,21 +526,15 @@ func TestResourceWatcherEventUtilities(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-3", Namespace: "default"},
 		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 	}
-	if err := c.Create(ctx, svc3); err != nil {
-		t.Fatalf("Failed to create svc-3: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc3), "Failed to create svc-3")
 
 	// Wait for event to be collected
 	watcher.SetCmpOpts(testutil.IgnoreMetaRuntimeFields(), testutil.IgnoreServiceRuntimeFields())
-	if err := watcher.WaitForMatch(svc3); err != nil {
-		t.Fatalf("Failed to wait for svc-3: %v", err)
-	}
+	ck.Require().NoError(watcher.WaitForMatch(svc3), "Failed to wait for svc-3")
 
 	// Verify event was collected through the channel
 	countAfter := watcher.Count()
-	if countAfter <= countBefore {
-		t.Errorf("Count after creating svc-3: %d, should be > %d (events collected via EventCh)", countAfter, countBefore)
-	}
+	ck.Greater(countBefore, countAfter, "Count after creating svc-3")
 
 	// Verify the new event is in Events()
 	foundSvc3 := false
@@ -596,9 +544,7 @@ func TestResourceWatcherEventUtilities(t *testing.T) {
 			break
 		}
 	}
-	if !foundSvc3 {
-		t.Error("Events() should contain ADDED event for svc-3 (received via EventCh)")
-	}
+	ck.True(foundSvc3, "Events() should contain ADDED event for svc-3 (received via EventCh)")
 }
 
 // TestErrUnwatchedKinds_Error tests the Error() method.
@@ -610,9 +556,7 @@ func TestErrUnwatchedKinds_Error(t *testing.T) {
 	got := err.Error()
 	want := "the following kinds are not being watched by this ResourceWatcher: [ConfigMap Secret]"
 
-	if got != want {
-		t.Errorf("Error() = %q, want %q", got, want)
-	}
+	assert.NewCollecting(t).Eq(want, got, "Error()")
 }
 
 // TestResourceWatcher_ContextCancellation tests behavior when context is canceled.
@@ -659,9 +603,7 @@ func TestResourceWatcher_ContextCancellation(t *testing.T) {
 			cancel() // Cancel context to trigger error paths
 
 			err := tc.testFunc(t, watcher)
-			if err == nil {
-				t.Error("Function should error when context is canceled")
-			}
+			assert.NewCollecting(t).Error(err, "Function should error when context is canceled")
 		})
 	}
 }
@@ -688,7 +630,9 @@ func TestResourceWatcher_Timeouts(t *testing.T) {
 		},
 		"WaitForDeletion timeout": {
 			testFunc: func(t *testing.T, watcher *testutil.ResourceWatcher) error {
-				return watcher.WaitForDeletion(testutil.Obj[corev1.Service]("nonexistent", "default"))
+				return watcher.WaitForDeletion(
+					testutil.Obj[corev1.Service]("nonexistent", "default"),
+				)
 			},
 		},
 		"WaitForEventType timeout": {
@@ -710,9 +654,7 @@ func TestResourceWatcher_Timeouts(t *testing.T) {
 			)
 
 			err := tc.testFunc(t, watcher)
-			if err == nil {
-				t.Error("Function should timeout")
-			}
+			assert.NewCollecting(t).Error(err, "Function should timeout")
 		})
 	}
 }

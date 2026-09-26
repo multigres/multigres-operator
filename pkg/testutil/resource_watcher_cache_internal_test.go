@@ -5,6 +5,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestFindLatestEventFor(t *testing.T) {
@@ -112,6 +114,7 @@ func TestFindLatestEventFor(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			watcher := &ResourceWatcher{
 				t:      t,
@@ -120,23 +123,16 @@ func TestFindLatestEventFor(t *testing.T) {
 
 			evt := watcher.findLatestEventFor(tc.setupObj())
 
-			if (evt != nil) != tc.wantFound {
-				t.Fatalf("findLatestEventFor() found=%v, want=%v", evt != nil, tc.wantFound)
-			}
+			c.Require().
+				Eq(tc.wantFound, (evt != nil), "findLatestEventFor() found=%v, want=", evt != nil)
 
 			if !tc.wantFound {
 				return
 			}
 
-			if evt.Name != tc.wantName {
-				t.Errorf("findLatestEventFor() Name = %s, want %s", evt.Name, tc.wantName)
-			}
-			if evt.Namespace != tc.wantNS {
-				t.Errorf("findLatestEventFor() Namespace = %s, want %s", evt.Namespace, tc.wantNS)
-			}
-			if evt.Kind != tc.wantKind {
-				t.Errorf("findLatestEventFor() Kind = %s, want %s", evt.Kind, tc.wantKind)
-			}
+			c.Eq(tc.wantName, evt.Name, "findLatestEventFor() Name")
+			c.Eq(tc.wantNS, evt.Namespace, "findLatestEventFor() Namespace")
+			c.Eq(tc.wantKind, evt.Kind, "findLatestEventFor() Kind")
 		})
 	}
 }
@@ -182,9 +178,8 @@ func TestFindLatestEvent(t *testing.T) {
 
 			evt := watcher.findLatestEvent(tc.matchFunc)
 
-			if (evt != nil) != tc.wantFound {
-				t.Errorf("findLatestEvent() found=%v, want=%v", evt != nil, tc.wantFound)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.wantFound, (evt != nil), "findLatestEvent() found=%v, want=", evt != nil)
 		})
 	}
 }
@@ -214,6 +209,7 @@ func TestCheckLatestEventMatches(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			watcher := &ResourceWatcher{
 				t:      t,
@@ -222,16 +218,8 @@ func TestCheckLatestEventMatches(t *testing.T) {
 
 			matched, diff := watcher.checkLatestEventMatches(tc.setupObj(), nil)
 
-			if matched != tc.wantMatched {
-				t.Errorf("checkLatestEventMatches() matched = %v, want %v", matched, tc.wantMatched)
-			}
-			if diff != tc.wantDiff {
-				t.Errorf(
-					"checkLatestEventMatches() diff = %s, want %s",
-					diff,
-					tc.wantDiff,
-				)
-			}
+			c.Eq(tc.wantMatched, matched, "checkLatestEventMatches() matched")
+			c.Eq(tc.wantDiff, diff, "checkLatestEventMatches() diff")
 		})
 	}
 }

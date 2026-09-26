@@ -1,6 +1,10 @@
 package postgresconfig
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/multigres/testkit/assert"
+)
 
 func TestRequiresRestart(t *testing.T) {
 	tests := []struct {
@@ -41,9 +45,8 @@ func TestRequiresRestart(t *testing.T) {
 		{"auto_explain.log_min_duration", true},
 	}
 	for _, tt := range tests {
-		if got := RequiresRestart(tt.name); got != tt.want {
-			t.Errorf("RequiresRestart(%q) = %v, want %v", tt.name, got, tt.want)
-		}
+		got := RequiresRestart(tt.name)
+		assert.NewCollecting(t).Eq(tt.want, got, "RequiresRestart(%q) = %v, want", tt.name, got)
 	}
 }
 
@@ -68,9 +71,8 @@ func TestRequiresRestartKnownRestartKeys(t *testing.T) {
 		"cron.log_statement", // pg_cron PGC_POSTMASTER; namespaced → conservative restart
 	}
 	for _, k := range restartKeys {
-		if !RequiresRestart(k) {
-			t.Errorf("RequiresRestart(%q) = false, want true (restart-required)", k)
-		}
+		assert.NewCollecting(t).
+			True(RequiresRestart(k), "RequiresRestart(%q) = false, want true (restart-required)", k)
 	}
 }
 
@@ -79,6 +81,7 @@ func TestRequiresRestartKnownRestartKeys(t *testing.T) {
 // empty context, everything would (conservatively) require a restart, silently
 // disabling the reload path. Assert a healthy split exists.
 func TestRequiresRestartMatchesCatalogContext(t *testing.T) {
+	c := assert.NewCollecting(t)
 	var reloadable, total int
 	for name := range catalog {
 		total++
@@ -86,16 +89,14 @@ func TestRequiresRestartMatchesCatalogContext(t *testing.T) {
 			reloadable++
 		}
 	}
-	if total < 300 {
-		t.Fatalf("catalog has %d entries, expected the full PG17 set", total)
-	}
+	c.Require().GreaterOrEqual(300, total, "catalog has")
 	// The majority of PG17 GUCs are reload-safe (sighup/user/superuser); if the
 	// context column were missing this would be ~0.
-	if reloadable < 200 {
-		t.Errorf(
-			"only %d/%d params classified reloadable; context column likely missing from catalog",
-			reloadable,
-			total,
-		)
-	}
+	c.GreaterOrEqual(
+		200,
+		reloadable,
+		"only %d/%d params classified reloadable; context column likely missing from catalog",
+		reloadable,
+		total,
+	)
 }

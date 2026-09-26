@@ -1,6 +1,10 @@
 package postgresconfig
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/multigres/testkit/assert"
+)
 
 // TestBaselineWinsOverRefForResourceDerivedKeys reproduces a precedence problem
 // in Render(): the operator's own resource-derived baseline must not be
@@ -23,6 +27,7 @@ import "testing"
 // wins). After swapping the order to ref -> baseline -> inline it must be "192MB"
 // (baseline wins), since no inline override was given.
 func TestBaselineWinsOverRefForResourceDerivedKeys(t *testing.T) {
+	c := assert.NewCollecting(t)
 	cfg := Defaults() // effective_cache_size baseline default is "192MB"
 
 	// A ref value clearly different from the baseline so a precedence bug is
@@ -31,17 +36,9 @@ func TestBaselineWinsOverRefForResourceDerivedKeys(t *testing.T) {
 	const refContent = "effective_cache_size = '999MB'"
 
 	rendered, err := Render(cfg, refContent, nil)
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
+	c.Require().NoError(err, "Render")
 
 	_, split := StampAndSplit(rendered)
 	got := split.ReloadSettings["effective_cache_size"]
-	if want := "192MB"; got != want {
-		t.Errorf(
-			"effective_cache_size = %q, want %q: the operator's resource-derived baseline must win over the deprecated PostgresConfigRef (only inline spec.postgresConfig should override it)",
-			got,
-			want,
-		)
-	}
+	c.Eq("192MB", got, "effective_cache_size")
 }

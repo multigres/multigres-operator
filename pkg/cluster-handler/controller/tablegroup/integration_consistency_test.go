@@ -21,6 +21,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestTableGroup_ConsistencyConvergence runs the controller against a real
@@ -31,6 +33,7 @@ import (
 // tests.
 func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	globalTopo := multigresv1alpha1.GlobalTopoServerRef{
 		Address:        "etcd-client:2379",
@@ -47,13 +50,11 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 		testutil.WithCRDPaths("../../../../config/crd/bases"),
 	)
 
-	if err := (&tablegroup.TableGroupReconciler{
+	c.NoError((&tablegroup.TableGroupReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
-	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}); err != nil {
-		t.Fatalf("Failed to set up controller: %v", err)
-	}
+	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}), "Failed to set up controller")
 
 	watcher := testutil.NewResourceWatcher(t, t.Context(), mgr,
 		testutil.WithCmpOpts(testutil.IgnoreMetaRuntimeFields()),
@@ -123,9 +124,7 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 
 	// The initial three-shard spec establishes a healthy terminal baseline under
 	// a real apiserver and cache before the test introduces an add/remove change.
-	if err := k8sClient.Create(ctx, tg); err != nil {
-		t.Fatalf("Failed to create TableGroup: %v", err)
-	}
+	c.NoError(k8sClient.Create(ctx, tg), "Failed to create TableGroup")
 
 	waitForChildShards(t, ctx, k8sClient, namespace, clusterName, dbName, tgName,
 		[]string{childName("s1"), childName("s2"), childName("s3")})
@@ -159,7 +158,7 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 	// The add/remove update forces the controller to create one desired child,
 	// retire one orphan through PendingDeletion, and keep status truthful while
 	// both old and new children may briefly exist.
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	c.NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &multigresv1alpha1.TableGroup{}
 		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(tg), latest); err != nil {
 			return err
@@ -170,9 +169,7 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 			shardSpec("s4", "zone-d"),
 		}
 		return k8sClient.Update(ctx, latest)
-	}); err != nil {
-		t.Fatalf("Failed to update TableGroup spec: %v", err)
-	}
+	}), "Failed to update TableGroup spec")
 
 	// The old child can still exist while it drains, so the useful assertion here
 	// is that the new desired child appears, not that the child set is already
@@ -185,7 +182,7 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 	waitForShardAnnotation(t, ctx, k8sClient, s3Name, namespace,
 		multigresv1alpha1.AnnotationPendingDeletion)
 
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	c.NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &multigresv1alpha1.Shard{}
 		if err := k8sClient.Get(
 			ctx,
@@ -203,15 +200,11 @@ func TestTableGroup_ConsistencyConvergence(t *testing.T) {
 		}
 		latest.Status.Conditions = append(latest.Status.Conditions, cond)
 		return k8sClient.Status().Update(ctx, latest)
-	}); err != nil {
-		t.Fatalf("Failed to set ReadyForDeletion on orphan shard: %v", err)
-	}
+	}), "Failed to set ReadyForDeletion on orphan shard")
 
-	if err := watcher.WaitForDeletion(&multigresv1alpha1.Shard{
+	c.NoError(watcher.WaitForDeletion(&multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: s3Name, Namespace: namespace},
-	}); err != nil {
-		t.Fatalf("Orphan shard s3 was not pruned: %v", err)
-	}
+	}), "Orphan shard s3 was not pruned")
 
 	// Once the replacement child reports Healthy, the parent should converge to a
 	// stable terminal status for the new generation.
@@ -275,9 +268,8 @@ func waitForChildShards(
 			}
 		}
 
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for child shards %v", wantNames)
-		}
+		assert.NewAborting(t).
+			False(time.Now().After(deadline), "timed out waiting for child shards %v", wantNames)
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -293,7 +285,7 @@ func driveShardHealthy(
 ) {
 	t.Helper()
 
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	assert.NewAborting(t).NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		latest := &multigresv1alpha1.Shard{}
 		if err := k8sClient.Get(
 			ctx,
@@ -306,9 +298,7 @@ func driveShardHealthy(
 		latest.Status.Message = "Ready"
 		latest.Status.ObservedGeneration = latest.Generation
 		return k8sClient.Status().Update(ctx, latest)
-	}); err != nil {
-		t.Fatalf("Failed to drive shard %s healthy: %v", name, err)
-	}
+	}), "Failed to drive shard %s healthy", name)
 }
 
 // waitForShardExists polls until the named Shard exists.
@@ -330,9 +320,8 @@ func waitForShardExists(
 		); err == nil {
 			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for shard %s to exist", name)
-		}
+		assert.NewAborting(t).
+			False(time.Now().After(deadline), "timed out waiting for shard %s to exist", name)
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -359,9 +348,8 @@ func waitForShardAnnotation(
 				return
 			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for shard %s annotation %q", name, annotation)
-		}
+		assert.NewAborting(t).
+			False(time.Now().After(deadline), "timed out waiting for shard %s annotation %q", name, annotation)
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -388,16 +376,8 @@ func waitForTableGroup(
 				return g
 			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf(
-				"timed out waiting for TableGroup to converge; last observed phase=%q ready=%d total=%d observedGen=%d gen=%d",
-				last.Status.Phase,
-				last.Status.ReadyShards,
-				last.Status.TotalShards,
-				last.Status.ObservedGeneration,
-				last.Generation,
-			)
-		}
+		assert.NewAborting(t).
+			False(time.Now().After(deadline), "timed out waiting for TableGroup to converge; last observed phase=%q ready=%d total=%d observedGen=%d gen=%d", last.Status.Phase, last.Status.ReadyShards, last.Status.TotalShards, last.Status.ObservedGeneration, last.Generation)
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -418,9 +398,8 @@ func assertTableGroupStaysStable(
 	deadline := time.Now().Add(window)
 	for {
 		g := &multigresv1alpha1.TableGroup{}
-		if err := k8sClient.Get(ctx, key, g); err != nil {
-			t.Fatalf("Failed to get TableGroup during stability check: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(k8sClient.Get(ctx, key, g), "Failed to get TableGroup during stability check")
 		if !predicate(g) {
 			t.Fatalf(
 				"TableGroup left its stable terminal state: phase=%q observedGen=%d gen=%d",

@@ -25,6 +25,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestReconcileGlobal_ErrorPaths(t *testing.T) {
@@ -52,9 +54,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to missing global topo spec, got nil")
-		}
+		assert.NewCollecting(t).
+			Error(err, "Expected error due to missing global topo spec, got nil")
 	})
 
 	t.Run("Error: Resolve Multiadmin Failed", func(t *testing.T) {
@@ -79,9 +80,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to missing multi admin spec, got nil")
-		}
+		assert.NewCollecting(t).
+			Error(err, "Expected error due to missing multi admin spec, got nil")
 	})
 
 	t.Run("Error: Resolve MultiadminWeb Failed", func(t *testing.T) {
@@ -106,9 +106,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to missing multi admin web spec, got nil")
-		}
+		assert.NewCollecting(t).
+			Error(err, "Expected error due to missing multi admin web spec, got nil")
 	})
 
 	t.Run("Error: Patch Global Topo Failed", func(t *testing.T) {
@@ -137,9 +136,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil || err.Error() != "failed to apply global topo server: patch error" {
-			t.Errorf("Expected 'patch error', got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || err.Error() != "failed to apply global topo server: patch error", "Expected 'patch error', got %v", err)
 	})
 
 	t.Run("Error: Patch Multiadmin Failed", func(t *testing.T) {
@@ -164,9 +162,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil || err.Error() != "failed to apply multiadmin deployment: patch error" {
-			t.Errorf("Expected 'patch error', got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || err.Error() != "failed to apply multiadmin deployment: patch error", "Expected 'patch error', got %v", err)
 	})
 
 	t.Run("Error: Patch MultiadminWeb Failed", func(t *testing.T) {
@@ -191,9 +188,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil || err.Error() != "failed to apply multiadmin-web deployment: patch error" {
-			t.Errorf("Expected 'patch error', got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || err.Error() != "failed to apply multiadmin-web deployment: patch error", "Expected 'patch error', got %v", err)
 	})
 
 	t.Run("Error: Build Global Topo Failed", func(t *testing.T) {
@@ -219,9 +215,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to build failure, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to build failure, got nil")
 	})
 
 	t.Run("Error: Build Multiadmin Failed", func(t *testing.T) {
@@ -243,9 +237,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to build failure, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to build failure, got nil")
 	})
 
 	t.Run("Error: Build MultiadminWeb Failed", func(t *testing.T) {
@@ -267,9 +259,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to build failure, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to build failure, got nil")
 	})
 
 	t.Run("Error: Build Multiadmin Service Failed", func(t *testing.T) {
@@ -298,9 +288,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to build failure, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to build failure, got nil")
 	})
 
 	t.Run("Error: Patch Multiadmin Service Failed", func(t *testing.T) {
@@ -328,9 +316,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil || err.Error() != "failed to apply multiadmin service: service patch error" {
-			t.Errorf("Expected 'service patch error', got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || err.Error() != "failed to apply multiadmin service: service patch error", "Expected 'service patch error', got %v", err)
 	})
 
 	t.Run("Error: Build MultiadminWeb Service Failed", func(t *testing.T) {
@@ -354,9 +341,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil {
-			t.Error("Expected error due to build failure, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to build failure, got nil")
 	})
 
 	t.Run("Error: Patch MultiadminWeb Service Failed", func(t *testing.T) {
@@ -384,10 +369,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil ||
-			err.Error() != "failed to apply multiadmin-web service: service patch error" {
-			t.Errorf("Expected 'service patch error', got %v", err)
-		}
+		assert.NewCollecting(t).False(err == nil ||
+			err.Error() != "failed to apply multiadmin-web service: service patch error", "Expected 'service patch error', got %v", err)
 	})
 
 	t.Run("Error: Patch Multigateway Global Service Failed", func(t *testing.T) {
@@ -420,10 +403,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil ||
-			err.Error() != "failed to apply global multigateway service: gw service patch error" {
-			t.Errorf("Expected 'gw service patch error', got %v", err)
-		}
+		assert.NewCollecting(t).False(err == nil ||
+			err.Error() != "failed to apply global multigateway service: gw service patch error", "Expected 'gw service patch error', got %v", err)
 	})
 
 	t.Run("Error: Patch Multigateway Global Replica Service Failed", func(t *testing.T) {
@@ -452,10 +433,8 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			cluster,
 			resolver.NewResolver(c, "default"),
 		)
-		if err == nil ||
-			err.Error() != "failed to apply global replica multigateway service: gw replica service patch error" {
-			t.Errorf("Expected 'gw replica service patch error', got %v", err)
-		}
+		assert.NewCollecting(t).False(err == nil ||
+			err.Error() != "failed to apply global replica multigateway service: gw replica service patch error", "Expected 'gw replica service patch error', got %v", err)
 	})
 }
 
@@ -492,16 +471,15 @@ func TestReconcile_Global(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 
 				ts := &multigresv1alpha1.TopoServer{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: clusterName + "-global-topo", Namespace: namespace},
 					ts,
-				); err != nil {
-					t.Fatal(err)
-				}
+				))
 				if got, want := ts.Spec.Etcd.Image, multigresv1alpha1.ImageRef(
 					"etcd:topo",
 				); got != want {
@@ -509,61 +487,51 @@ func TestReconcile_Global(t *testing.T) {
 				}
 
 				deploy := &appsv1.Deployment{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: clusterName + "-multiadmin", Namespace: namespace},
 					deploy,
-				); err != nil {
-					t.Fatal(err)
-				}
+				))
 				if got, want := *deploy.Spec.Replicas, int32(5); got != want {
 					t.Errorf("Multiadmin replicas mismatch got %d, want %d", got, want)
 				}
 
 				webDeploy := &appsv1.Deployment{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{
 						Name:      clusterName + "-multiadmin-web",
 						Namespace: namespace,
 					},
 					webDeploy,
-				); err != nil {
-					t.Fatal(err)
-				}
+				))
 				// Default replicas is 1
-				if got, want := *webDeploy.Spec.Replicas, int32(1); got != want {
-					t.Errorf("MultiadminWeb replicas mismatch got %d, want %d", got, want)
-				}
+				got, want := *webDeploy.Spec.Replicas, int32(1)
+				ck.Eq(want, got, "MultiadminWeb replicas mismatch got")
 
 				// Verify global multigateway Service exists
 				gwSvc := &corev1.Service{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: clusterName + "-multigateway", Namespace: namespace},
 					gwSvc,
-				); err != nil {
-					t.Fatalf("Expected global multigateway Service to exist: %v", err)
-				}
-				if gwSvc.Spec.Selector["app.kubernetes.io/component"] != "multigateway" {
-					t.Errorf(
-						"Global multigateway Service selector component = %v, want multigateway",
-						gwSvc.Spec.Selector["app.kubernetes.io/component"],
-					)
-				}
+				), "Expected global multigateway Service to exist")
+				ck.Eq(
+					"multigateway",
+					gwSvc.Spec.Selector["app.kubernetes.io/component"],
+					"Global multigateway Service selector component",
+				)
 
 				// Verify global replica multigateway Service exists
 				gwReplicaSvc := &corev1.Service{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{
 						Name:      clusterName + "-multigateway-replica",
 						Namespace: namespace,
 					},
 					gwReplicaSvc,
-				); err != nil {
-					t.Fatalf("Expected global multigateway replica Service to exist: %v", err)
-				}
+				), "Expected global multigateway replica Service to exist")
 				if len(gwReplicaSvc.Spec.Ports) != 1 ||
 					gwReplicaSvc.Spec.Ports[0].Port != 5433 ||
 					gwReplicaSvc.Spec.Ports[0].TargetPort != intstr.FromString("pg-replica") {
@@ -586,18 +554,16 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			existingObjects: []client.Object{coreTpl, cellTpl, shardTpl},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 				ts := &multigresv1alpha1.TopoServer{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: clusterName + "-global-topo", Namespace: namespace},
 					ts,
-				); err != nil {
-					t.Fatal(err)
-				}
-				if got, want := ts.Spec.Etcd.RootPath, "/custom/root"; got != want {
-					t.Errorf("RootPath mismatch got %q, want %q", got, want)
-				}
+				))
+				got, want := ts.Spec.Etcd.RootPath, "/custom/root"
+				ck.Eq(want, got, "RootPath mismatch got")
 			},
 		},
 
@@ -611,17 +577,17 @@ func TestReconcile_Global(t *testing.T) {
 			},
 			existingObjects: []client.Object{coreTpl, cellTpl, shardTpl},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 				ts := &multigresv1alpha1.TopoServer{}
-				if err := c.Get(
+				err := c.Get(
 					ctx,
 					types.NamespacedName{Name: clusterName + "-global-topo", Namespace: namespace},
 					ts,
-				); !apierrors.IsNotFound(
+				)
+				assert.NewAborting(t).True(apierrors.IsNotFound(
 					err,
-				) {
-					t.Fatal("Global TopoServer should NOT be created for External mode")
-				}
+				), "Global TopoServer should NOT be created for External mode")
 				cell := &multigresv1alpha1.Cell{}
 				// Use hashed name for Cell
 				cellName := name.JoinWithConstraints(
@@ -629,16 +595,13 @@ func TestReconcile_Global(t *testing.T) {
 					clusterName,
 					"zone-a",
 				)
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: cellName, Namespace: namespace},
 					cell,
-				); err != nil {
-					t.Fatalf("Expected Cell %s to exist: %v", cellName, err)
-				}
-				if got, want := cell.Spec.GlobalTopoServer.Address, "http://external-etcd:2379"; got != want {
-					t.Errorf("External address mismatch got %q, want %q", got, want)
-				}
+				), "Expected Cell %s to exist", cellName)
+				got, want := cell.Spec.GlobalTopoServer.Address, "http://external-etcd:2379"
+				ck.Eq(want, got, "External address mismatch got")
 			},
 		},
 		"Error: Explicit Core Template Missing (Should Fail)": {
@@ -727,43 +690,32 @@ func TestReconcile_Global(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ts := &multigresv1alpha1.TopoServer{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: clusterName + "-global-topo", Namespace: namespace},
 					ts,
-				); err != nil {
-					t.Fatal(err)
-				}
-				if ts.Spec.Etcd.Image != "new-etcd" {
-					t.Errorf("TopoServer not updated")
-				}
+				))
+				ck.Eq("new-etcd", ts.Spec.Etcd.Image, "TopoServer not updated")
 				deploy := &appsv1.Deployment{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: clusterName + "-multiadmin", Namespace: namespace},
 					deploy,
-				); err != nil {
-					t.Fatal(err)
-				}
-				if *deploy.Spec.Replicas != 3 {
-					t.Errorf("Multiadmin not updated")
-				}
+				))
+				ck.Eq(3, *deploy.Spec.Replicas, "Multiadmin not updated")
 
 				webDeploy := &appsv1.Deployment{}
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{
 						Name:      clusterName + "-multiadmin-web",
 						Namespace: namespace,
 					},
 					webDeploy,
-				); err != nil {
-					t.Fatal(err)
-				}
-				if *webDeploy.Spec.Replicas != 2 {
-					t.Errorf("MultiadminWeb not updated")
-				}
+				))
+				ck.Eq(2, *webDeploy.Spec.Replicas, "MultiadminWeb not updated")
 			},
 		},
 		"Idempotency: No changes needed": {
@@ -923,9 +875,8 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		c := clientBuilder.Build()
 
 		// Manually create template to ensure it exists
-		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
-			t.Fatalf("Failed to create CoreTemplate: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(c.Create(t.Context(), coreTpl.DeepCopy()), "Failed to create CoreTemplate")
 
 		reconciler := &MultigresClusterReconciler{
 			Client:   c,
@@ -967,9 +918,8 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		c := clientBuilder.Build()
 
 		// Manually create template to ensure it exists
-		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
-			t.Fatalf("Failed to create CoreTemplate: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(c.Create(t.Context(), coreTpl.DeepCopy()), "Failed to create CoreTemplate")
 
 		reconciler := &MultigresClusterReconciler{
 			Client:   c,
@@ -1003,9 +953,8 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		c := clientBuilder.Build()
 
 		// Manually create template to ensure it exists
-		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
-			t.Fatalf("Failed to create CoreTemplate: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(c.Create(t.Context(), coreTpl.DeepCopy()), "Failed to create CoreTemplate")
 
 		reconciler := &MultigresClusterReconciler{
 			Client:   c,
@@ -1036,9 +985,8 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
 		c := clientBuilder.Build()
 
-		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
-			t.Fatalf("Failed to create CoreTemplate: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(c.Create(t.Context(), coreTpl.DeepCopy()), "Failed to create CoreTemplate")
 
 		reconciler := &MultigresClusterReconciler{
 			Client:   c,
@@ -1069,9 +1017,8 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
 		c := clientBuilder.Build()
 
-		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
-			t.Fatalf("Failed to create CoreTemplate: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(c.Create(t.Context(), coreTpl.DeepCopy()), "Failed to create CoreTemplate")
 
 		reconciler := &MultigresClusterReconciler{
 			Client:   c,
@@ -1103,13 +1050,13 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 	listPolicies := func(t *testing.T, c client.Client) []networkingv1.NetworkPolicy {
 		t.Helper()
 		list := &networkingv1.NetworkPolicyList{}
-		if err := c.List(context.Background(), list, client.InNamespace("default")); err != nil {
-			t.Fatalf("failed to list network policies: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(c.List(context.Background(), list, client.InNamespace("default")), "failed to list network policies")
 		return list.Items
 	}
 
 	t.Run("Enabled creates policies for multiadmin and multiadmin-web", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{
 			Enabled:                  true,
 			AllowedIngressNamespaces: []string{"envoy-gateway-system"},
@@ -1126,17 +1073,17 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
-		}
+		ck.NoError(
+			r.reconcileAdminNetworkPolicies(context.Background(), cluster),
+			"reconcileAdminNetworkPolicies() error =",
+		)
 
 		policies := listPolicies(t, c)
-		if len(policies) != 2 {
-			t.Fatalf("expected 2 network policies, got %d", len(policies))
-		}
+		ck.Len(policies, 2, "expected 2 network policies, got %d", len(policies))
 	})
 
 	t.Run("Disabled deletes previously created policies", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true})
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
 			WithTypeConverters(managedfields.NewDeducedTypeConverter()).Build()
@@ -1146,20 +1093,18 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
-		}
-		if got := len(listPolicies(t, c)); got != 2 {
-			t.Fatalf("expected 2 network policies before disable, got %d", got)
-		}
+		ck.NoError(
+			r.reconcileAdminNetworkPolicies(context.Background(), cluster),
+			"reconcileAdminNetworkPolicies() error =",
+		)
+		ck.Eq(2, len(listPolicies(t, c)), "expected 2 network policies before disable, got")
 
 		cluster.Spec.NetworkPolicy = nil
-		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
-		}
-		if got := len(listPolicies(t, c)); got != 0 {
-			t.Fatalf("expected 0 network policies after disable, got %d", got)
-		}
+		ck.NoError(
+			r.reconcileAdminNetworkPolicies(context.Background(), cluster),
+			"reconcileAdminNetworkPolicies() error =",
+		)
+		ck.Eq(0, len(listPolicies(t, c)), "expected 0 network policies after disable, got")
 	})
 
 	t.Run("Disabled with nothing to delete is a no-op", func(t *testing.T) {
@@ -1171,9 +1116,8 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileAdminNetworkPolicies(context.Background(), cluster); err != nil {
-			t.Fatalf("reconcileAdminNetworkPolicies() error = %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(r.reconcileAdminNetworkPolicies(context.Background(), cluster), "reconcileAdminNetworkPolicies() error =")
 	})
 
 	t.Run("Apply error is propagated", func(t *testing.T) {
@@ -1194,8 +1138,7 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 		}
 
 		err := r.reconcileAdminNetworkPolicies(context.Background(), cluster)
-		if err == nil || !strings.Contains(err.Error(), "failed to apply network policy") {
-			t.Fatalf("expected apply error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to apply network policy"), "expected apply error, got %v", err)
 	})
 }

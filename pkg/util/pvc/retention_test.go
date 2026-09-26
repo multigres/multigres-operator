@@ -6,6 +6,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildRetentionPolicy(t *testing.T) {
@@ -58,13 +60,10 @@ func TestBuildRetentionPolicy(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			got := BuildRetentionPolicy(tc.policy)
-			if got.WhenDeleted != tc.wantDeleted {
-				t.Errorf("WhenDeleted = %q, want %q", got.WhenDeleted, tc.wantDeleted)
-			}
-			if got.WhenScaled != tc.wantScaled {
-				t.Errorf("WhenScaled = %q, want %q", got.WhenScaled, tc.wantScaled)
-			}
+			c.Eq(tc.wantDeleted, got.WhenDeleted, "WhenDeleted")
+			c.Eq(tc.wantScaled, got.WhenScaled, "WhenScaled")
 		})
 	}
 }

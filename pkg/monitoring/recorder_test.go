@@ -7,34 +7,32 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestSetClusterInfo(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { clusterInfo.Reset() })
 
 	SetClusterInfo("test-cluster", "default", "Healthy", true)
 
 	val := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true")
-	if val != 1 {
-		t.Errorf("expected clusterInfo gauge to be 1, got %f", val)
-	}
+	c.Eq(1, val, "expected clusterInfo gauge to be 1, got")
 
 	// Phase change should clean up old label set, initialized stays true
 	SetClusterInfo("test-cluster", "default", "Degraded", true)
 
 	val = gaugeValue(t, clusterInfo, "test-cluster", "default", "Degraded", "true")
-	if val != 1 {
-		t.Errorf("expected clusterInfo gauge for Degraded to be 1, got %f", val)
-	}
+	c.Eq(1, val, "expected clusterInfo gauge for Degraded to be 1, got")
 
 	// Old phase must have been cleaned up (value 0)
 	oldVal := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true")
-	if oldVal != 0 {
-		t.Error("old phase label set should have been cleaned up")
-	}
+	c.Eq(0, oldVal, "old phase label set should have been cleaned up")
 }
 
 func TestSetClusterTopology(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() {
 		clusterCellsTotal.Reset()
 		clusterShardsTotal.Reset()
@@ -43,31 +41,25 @@ func TestSetClusterTopology(t *testing.T) {
 	SetClusterTopology("test-cluster", "default", 3, 6)
 
 	cells := gaugeValue(t, clusterCellsTotal, "test-cluster", "default")
-	if cells != 3 {
-		t.Errorf("expected cells=3, got %f", cells)
-	}
+	c.Eq(3, cells, "expected cells=3, got")
 	shards := gaugeValue(t, clusterShardsTotal, "test-cluster", "default")
-	if shards != 6 {
-		t.Errorf("expected shards=6, got %f", shards)
-	}
+	c.Eq(6, shards, "expected shards=6, got")
 }
 
 func TestSetCellGatewayReplicas(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { cellGatewayReplicas.Reset() })
 
 	SetCellGatewayReplicas("cell-1", "default", 3, 2)
 
 	desired := gaugeValue(t, cellGatewayReplicas, "cell-1", "default", "desired")
-	if desired != 3 {
-		t.Errorf("expected desired=3, got %f", desired)
-	}
+	c.Eq(3, desired, "expected desired=3, got")
 	ready := gaugeValue(t, cellGatewayReplicas, "cell-1", "default", "ready")
-	if ready != 2 {
-		t.Errorf("expected ready=2, got %f", ready)
-	}
+	c.Eq(2, ready, "expected ready=2, got")
 }
 
 func TestSetShardPoolReplicas(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { shardPoolReplicas.Reset() })
 
 	SetShardPoolReplicas("test-cluster", "shard-1", "primary", "z1", "default", 3, 3)
@@ -82,9 +74,7 @@ func TestSetShardPoolReplicas(t *testing.T) {
 		"default",
 		"desired",
 	)
-	if desired != 3 {
-		t.Errorf("expected desired=3, got %f", desired)
-	}
+	c.Eq(3, desired, "expected desired=3, got")
 	ready := gaugeValue(
 		t,
 		shardPoolReplicas,
@@ -95,27 +85,23 @@ func TestSetShardPoolReplicas(t *testing.T) {
 		"default",
 		"ready",
 	)
-	if ready != 3 {
-		t.Errorf("expected ready=3, got %f", ready)
-	}
+	c.Eq(3, ready, "expected ready=3, got")
 }
 
 func TestSetTopoServerReplicas(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { toposerverReplicas.Reset() })
 
 	SetTopoServerReplicas("topo-1", "default", 3, 1)
 
 	desired := gaugeValue(t, toposerverReplicas, "topo-1", "default", "desired")
-	if desired != 3 {
-		t.Errorf("expected desired=3, got %f", desired)
-	}
+	c.Eq(3, desired, "expected desired=3, got")
 	ready := gaugeValue(t, toposerverReplicas, "topo-1", "default", "ready")
-	if ready != 1 {
-		t.Errorf("expected ready=1, got %f", ready)
-	}
+	c.Eq(1, ready, "expected ready=1, got")
 }
 
 func TestRecordWebhookRequest(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() {
 		webhookRequestTotal.Reset()
 		webhookRequestDuration.Reset()
@@ -130,31 +116,24 @@ func TestRecordWebhookRequest(t *testing.T) {
 	)
 
 	successVal := counterValue(t, webhookRequestTotal, "CREATE", "MultigresCluster", "success")
-	if successVal != 1 {
-		t.Errorf("expected success counter=1, got %f", successVal)
-	}
+	c.Eq(1, successVal, "expected success counter=1, got")
 
 	errorVal := counterValue(t, webhookRequestTotal, "UPDATE", "MultigresCluster", "error")
-	if errorVal != 1 {
-		t.Errorf("expected error counter=1, got %f", errorVal)
-	}
+	c.Eq(1, errorVal, "expected error counter=1, got")
 }
 
 func TestSetPoolPodsDrifted(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { poolPodsDrifted.Reset() })
 
 	SetPoolPodsDrifted("cluster-1", "shard-1", "primary", "zone-a", "default", 3)
 
 	val := gaugeValue(t, poolPodsDrifted, "cluster-1", "shard-1", "primary", "zone-a", "default")
-	if val != 3 {
-		t.Errorf("expected poolPodsDrifted gauge to be 3, got %f", val)
-	}
+	c.Eq(3, val, "expected poolPodsDrifted gauge to be 3, got")
 
 	SetPoolPodsDrifted("cluster-1", "shard-1", "primary", "zone-a", "default", 0)
 	val = gaugeValue(t, poolPodsDrifted, "cluster-1", "shard-1", "primary", "zone-a", "default")
-	if val != 0 {
-		t.Errorf("expected poolPodsDrifted gauge to be 0, got %f", val)
-	}
+	c.Eq(0, val, "expected poolPodsDrifted gauge to be 0, got")
 }
 
 func TestSetLastBackupAge(t *testing.T) {
@@ -164,12 +143,11 @@ func TestSetLastBackupAge(t *testing.T) {
 	SetLastBackupAge("cluster-1", "shard-1", "default", age)
 
 	val := gaugeValue(t, lastBackupAgeSeconds, "cluster-1", "shard-1", "default")
-	if val != age.Seconds() {
-		t.Errorf("expected lastBackupAgeSeconds gauge to be %f, got %f", age.Seconds(), val)
-	}
+	assert.NewCollecting(t).Eq(age.Seconds(), val, "expected lastBackupAgeSeconds gauge to be")
 }
 
 func TestIncrementDrainOperations(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { drainOperationsTotal.Reset() })
 
 	IncrementDrainOperations("cluster-1", "shard-1", "success")
@@ -177,16 +155,13 @@ func TestIncrementDrainOperations(t *testing.T) {
 	IncrementDrainOperations("cluster-1", "shard-1", "error")
 
 	successVal := counterValue(t, drainOperationsTotal, "cluster-1", "shard-1", "success")
-	if successVal != 2 {
-		t.Errorf("expected drain success counter=2, got %f", successVal)
-	}
+	c.Eq(2, successVal, "expected drain success counter=2, got")
 	errorVal := counterValue(t, drainOperationsTotal, "cluster-1", "shard-1", "error")
-	if errorVal != 1 {
-		t.Errorf("expected drain error counter=1, got %f", errorVal)
-	}
+	c.Eq(1, errorVal, "expected drain error counter=1, got")
 }
 
 func TestSetRollingUpdateInProgress(t *testing.T) {
+	c := assert.NewCollecting(t)
 	t.Cleanup(func() { rollingUpdateInProgress.Reset() })
 
 	SetRollingUpdateInProgress("cluster-1", "shard-1", "primary", "zone-a", "default", true)
@@ -199,9 +174,7 @@ func TestSetRollingUpdateInProgress(t *testing.T) {
 		"zone-a",
 		"default",
 	)
-	if val != 1 {
-		t.Errorf("expected rollingUpdateInProgress=1 when true, got %f", val)
-	}
+	c.Eq(1, val, "expected rollingUpdateInProgress=1 when true, got")
 
 	SetRollingUpdateInProgress("cluster-1", "shard-1", "primary", "zone-a", "default", false)
 	val = gaugeValue(
@@ -213,35 +186,27 @@ func TestSetRollingUpdateInProgress(t *testing.T) {
 		"zone-a",
 		"default",
 	)
-	if val != 0 {
-		t.Errorf("expected rollingUpdateInProgress=0 when false, got %f", val)
-	}
+	c.Eq(0, val, "expected rollingUpdateInProgress=0 when false, got")
 }
 
 // --- helpers ---
 
 func gaugeValue(t *testing.T, vec *prometheus.GaugeVec, labels ...string) float64 {
 	t.Helper()
+	c := assert.NewAborting(t)
 	g, err := vec.GetMetricWithLabelValues(labels...)
-	if err != nil {
-		t.Fatalf("GetMetricWithLabelValues(%v): %v", labels, err)
-	}
+	c.NoError(err, "GetMetricWithLabelValues(%v)", labels)
 	m := &dto.Metric{}
-	if err := g.Write(m); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	c.NoError(g.Write(m), "Write")
 	return m.GetGauge().GetValue()
 }
 
 func counterValue(t *testing.T, vec *prometheus.CounterVec, labels ...string) float64 {
 	t.Helper()
+	ck := assert.NewAborting(t)
 	c, err := vec.GetMetricWithLabelValues(labels...)
-	if err != nil {
-		t.Fatalf("GetMetricWithLabelValues(%v): %v", labels, err)
-	}
+	ck.NoError(err, "GetMetricWithLabelValues(%v)", labels)
 	m := &dto.Metric{}
-	if err := c.Write(m); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	ck.NoError(c.Write(m), "Write")
 	return m.GetCounter().GetValue()
 }

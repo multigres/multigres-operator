@@ -30,6 +30,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 const (
@@ -525,6 +527,7 @@ func TestManager_EnsureCerts(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(s).
@@ -578,21 +581,16 @@ func TestManager_EnsureCerts(t *testing.T) {
 			err := mgr.Bootstrap(t.Context())
 
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("Expected error, got nil")
-				}
-				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
-					t.Errorf(
-						"Error message mismatch. Got: %v, Want substring: %s",
-						err,
-						tc.errContains,
-					)
-				}
+				c.Require().Error(err, "Expected error, got nil")
+				c.False(
+					tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains),
+					"Error message mismatch. Got: %v, Want substring: %s",
+					err,
+					tc.errContains,
+				)
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+			c.Require().NoError(err, "Unexpected error")
 
 			if tc.checkFiles {
 				if _, err := os.Stat(filepath.Join(certDir, CertFileName)); os.IsNotExist(err) {
@@ -615,9 +613,10 @@ func TestManager_EnsureCerts(t *testing.T) {
 						break
 					}
 				}
-				if len(original) > 0 && bytes.Equal(secret.Data["tls.crt"], original) {
-					t.Error("Expected rotation, but cert did not change")
-				}
+				c.False(
+					len(original) > 0 && bytes.Equal(secret.Data["tls.crt"], original),
+					"Expected rotation, but cert did not change",
+				)
 			}
 		})
 	}
@@ -686,9 +685,7 @@ func (b *badSchemeClient) Scheme() *runtime.Scheme {
 func generateCAPEM(tb testing.TB) ([]byte, []byte) {
 	tb.Helper()
 	ca, err := GenerateCA("")
-	if err != nil {
-		tb.Fatal(err)
-	}
+	assert.NewAborting(tb).NoError(err)
 	return ca.CertPEM, ca.KeyPEM
 }
 
@@ -699,10 +696,9 @@ func generateSignedCertPEM(
 	dnsNames []string,
 ) []byte {
 	tb.Helper()
+	c := assert.NewAborting(tb)
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	c.NoError(err)
 
 	tmpl := x509.Certificate{
 		SerialNumber: big.NewInt(2),
@@ -713,9 +709,7 @@ func generateSignedCertPEM(
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, ca.Cert, &priv.PublicKey, ca.Key)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	c.NoError(err)
 
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
@@ -728,6 +722,7 @@ func TestManager_PostReconcileHook(t *testing.T) {
 
 	t.Run("Hook Called with CA Bundle", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		var hookCalled atomic.Bool
 		var receivedCABundle []byte
@@ -746,22 +741,14 @@ func TestManager_PostReconcileHook(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		c.Require().NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 
-		if !hookCalled.Load() {
-			t.Error("PostReconcileHook was not called")
-		}
-		if len(receivedCABundle) == 0 {
-			t.Error("PostReconcileHook received empty CA bundle")
-		}
+		c.True(hookCalled.Load(), "PostReconcileHook was not called")
+		c.NotEmpty(receivedCABundle, "PostReconcileHook received empty CA bundle")
 
 		// Verify the CA bundle is valid PEM
 		block, _ := pem.Decode(receivedCABundle)
-		if block == nil {
-			t.Error("CA bundle is not valid PEM")
-		}
+		c.NotNil(block, "CA bundle is not valid PEM")
 	})
 
 	t.Run("Hook Error Propagates", func(t *testing.T) {
@@ -780,9 +767,8 @@ func TestManager_PostReconcileHook(t *testing.T) {
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
 		err := mgr.Bootstrap(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "post-reconcile hook failed") {
-			t.Errorf("Expected hook error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "post-reconcile hook failed"), "Expected hook error, got %v", err)
 	})
 
 	t.Run("No Hook (nil) Succeeds", func(t *testing.T) {
@@ -798,9 +784,7 @@ func TestManager_PostReconcileHook(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 	})
 }
 
@@ -812,6 +796,7 @@ func TestManager_OwnerRef(t *testing.T) {
 
 	t.Run("Owner Set: Secrets Get Owner Reference", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		owner := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -831,37 +816,28 @@ func TestManager_OwnerRef(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		c.Require().NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 
 		// Verify CA secret has owner reference
 		caSecret := &corev1.Secret{}
-		if err := cl.Get(t.Context(), types.NamespacedName{
+		c.Require().NoError(cl.Get(t.Context(), types.NamespacedName{
 			Name:      testCASecretName,
 			Namespace: "test-ns",
-		}, caSecret); err != nil {
-			t.Fatalf("Failed to get CA secret: %v", err)
-		}
-		if len(caSecret.OwnerReferences) == 0 {
-			t.Error("Expected CA secret to have owner reference")
-		}
+		}, caSecret), "Failed to get CA secret")
+		c.NotEmpty(caSecret.OwnerReferences, "Expected CA secret to have owner reference")
 
 		// Verify server secret has owner reference
 		srvSecret := &corev1.Secret{}
-		if err := cl.Get(t.Context(), types.NamespacedName{
+		c.Require().NoError(cl.Get(t.Context(), types.NamespacedName{
 			Name:      testServerSecretName,
 			Namespace: "test-ns",
-		}, srvSecret); err != nil {
-			t.Fatalf("Failed to get server secret: %v", err)
-		}
-		if len(srvSecret.OwnerReferences) == 0 {
-			t.Error("Expected server secret to have owner reference")
-		}
+		}, srvSecret), "Failed to get server secret")
+		c.NotEmpty(srvSecret.OwnerReferences, "Expected server secret to have owner reference")
 	})
 
 	t.Run("No Owner: Secrets Created Without Owner Reference", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		cl := fake.NewClientBuilder().WithScheme(s).Build()
 		opts := Options{
@@ -873,20 +849,14 @@ func TestManager_OwnerRef(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		c.Require().NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 
 		caSecret := &corev1.Secret{}
-		if err := cl.Get(t.Context(), types.NamespacedName{
+		c.Require().NoError(cl.Get(t.Context(), types.NamespacedName{
 			Name:      testCASecretName,
 			Namespace: "test-ns",
-		}, caSecret); err != nil {
-			t.Fatalf("Failed to get CA secret: %v", err)
-		}
-		if len(caSecret.OwnerReferences) != 0 {
-			t.Error("Expected CA secret to have no owner references")
-		}
+		}, caSecret), "Failed to get CA secret")
+		c.Empty(caSecret.OwnerReferences, "Expected CA secret to have no owner references")
 	})
 
 	t.Run("Owner with Bad Scheme: SetControllerReference Fails", func(t *testing.T) {
@@ -915,9 +885,8 @@ func TestManager_OwnerRef(t *testing.T) {
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
 		err := mgr.Bootstrap(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "failed to set controller reference") {
-			t.Errorf("Expected controller ref error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to set controller reference"), "Expected controller ref error, got %v", err)
 	})
 
 	t.Run("Owner with Bad Scheme: SetControllerReference Fails on Server Cert", func(t *testing.T) {
@@ -951,10 +920,11 @@ func TestManager_OwnerRef(t *testing.T) {
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
 		err := mgr.Bootstrap(t.Context())
-		if err == nil ||
-			!strings.Contains(err.Error(), "failed to set owner for server cert secret") {
-			t.Errorf("Expected server cert owner error, got %v", err)
-		}
+		assert.NewCollecting(t).False(err == nil ||
+			!strings.Contains(
+				err.Error(),
+				"failed to set owner for server cert secret",
+			), "Expected server cert owner error, got %v", err)
 	})
 }
 
@@ -978,9 +948,7 @@ func TestManager_WaitForProjection(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 	})
 
 	t.Run("Enabled: Mismatch Timeout", func(t *testing.T) {
@@ -1024,9 +992,7 @@ func TestManager_WaitForProjection(t *testing.T) {
 		defer cancel()
 
 		err := mgr.waitForProjection(ctx, []byte("expected"))
-		if err == nil {
-			t.Error("Expected timeout error for missing file")
-		}
+		assert.NewCollecting(t).Error(err, "Expected timeout error for missing file")
 	})
 
 	t.Run("Enabled: File Matches Immediately", func(t *testing.T) {
@@ -1045,9 +1011,8 @@ func TestManager_WaitForProjection(t *testing.T) {
 			WaitForProjection: true,
 		})
 
-		if err := mgr.waitForProjection(t.Context(), expected); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(mgr.waitForProjection(t.Context(), expected), "Unexpected error")
 	})
 }
 
@@ -1059,6 +1024,7 @@ func TestManager_ExtKeyUsages(t *testing.T) {
 
 	t.Run("Custom ExtKeyUsages Flow Through to Cert", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		cl := fake.NewClientBuilder().WithScheme(s).Build()
 		opts := Options{
@@ -1073,41 +1039,29 @@ func TestManager_ExtKeyUsages(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		c.Require().NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 
 		// Read the generated server cert and verify ExtKeyUsages
 		secret := &corev1.Secret{}
-		if err := cl.Get(t.Context(), types.NamespacedName{
+		c.Require().NoError(cl.Get(t.Context(), types.NamespacedName{
 			Name:      testServerSecretName,
 			Namespace: "test-ns",
-		}, secret); err != nil {
-			t.Fatalf("Failed to get server secret: %v", err)
-		}
+		}, secret), "Failed to get server secret")
 
 		block, _ := pem.Decode(secret.Data["tls.crt"])
-		if block == nil {
-			t.Fatal("Failed to decode server cert PEM")
-		}
+		c.Require().NotNil(block, "Failed to decode server cert PEM")
 		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			t.Fatalf("Failed to parse server cert: %v", err)
-		}
+		c.Require().NoError(err, "Failed to parse server cert")
 
-		if len(cert.ExtKeyUsage) != 2 {
-			t.Fatalf("Expected 2 ExtKeyUsages, got %d", len(cert.ExtKeyUsage))
-		}
-		if cert.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
-			t.Errorf("Expected ServerAuth, got %v", cert.ExtKeyUsage[0])
-		}
-		if cert.ExtKeyUsage[1] != x509.ExtKeyUsageClientAuth {
-			t.Errorf("Expected ClientAuth, got %v", cert.ExtKeyUsage[1])
-		}
+		c.Require().
+			Len(cert.ExtKeyUsage, 2, "Expected 2 ExtKeyUsages, got %d", len(cert.ExtKeyUsage))
+		c.Eq(x509.ExtKeyUsageServerAuth, cert.ExtKeyUsage[0], "Expected ServerAuth, got")
+		c.Eq(x509.ExtKeyUsageClientAuth, cert.ExtKeyUsage[1], "Expected ClientAuth, got")
 	})
 
 	t.Run("Default ExtKeyUsages (ServerAuth Only)", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 
 		cl := fake.NewClientBuilder().WithScheme(s).Build()
 		opts := Options{
@@ -1119,17 +1073,13 @@ func TestManager_ExtKeyUsages(t *testing.T) {
 		}
 
 		mgr := NewManager(cl, record.NewFakeRecorder(10), opts)
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		c.NoError(mgr.Bootstrap(t.Context()), "Unexpected error")
 
 		secret := &corev1.Secret{}
-		if err := cl.Get(t.Context(), types.NamespacedName{
+		c.NoError(cl.Get(t.Context(), types.NamespacedName{
 			Name:      testServerSecretName,
 			Namespace: "test-ns",
-		}, secret); err != nil {
-			t.Fatalf("Failed to get server secret: %v", err)
-		}
+		}, secret), "Failed to get server secret")
 
 		block, _ := pem.Decode(secret.Data["tls.crt"])
 		cert, _ := x509.ParseCertificate(block.Bytes)
@@ -1158,9 +1108,9 @@ func TestDNSNameSetsEqual(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := dnsNameSetsEqual(tc.a, tc.b); got != tc.want {
-				t.Errorf("dnsNameSetsEqual(%v, %v) = %v, want %v", tc.a, tc.b, got, tc.want)
-			}
+			got := dnsNameSetsEqual(tc.a, tc.b)
+			assert.NewCollecting(t).
+				Eq(tc.want, got, "dnsNameSetsEqual(%v, %v) = %v, want", tc.a, tc.b, got)
 		})
 	}
 }
@@ -1230,50 +1180,43 @@ func TestManager_Misc(t *testing.T) {
 		})
 
 		// Start should not return an error — it logs reconcile failures
-		if err := mgr.Start(timeoutCtx); err != nil {
-			t.Fatalf("Start should only return nil, got %v", err)
-		}
+		assert.NewAborting(t).NoError(mgr.Start(timeoutCtx), "Start should only return nil, got")
 	})
 
 	t.Run("ComponentName Default", func(t *testing.T) {
 		t.Parallel()
 		opts := Options{}
-		if got := opts.componentName(); got != "cert" {
-			t.Errorf("Expected default componentName 'cert', got %q", got)
-		}
+		assert.NewCollecting(t).
+			Eq("cert", opts.componentName(), "Expected default componentName 'cert', got")
 	})
 
 	t.Run("ComponentName Custom", func(t *testing.T) {
 		t.Parallel()
 		opts := Options{ComponentName: "webhook"}
-		if got := opts.componentName(); got != "webhook" {
-			t.Errorf("Expected componentName 'webhook', got %q", got)
-		}
+		assert.NewCollecting(t).
+			Eq("webhook", opts.componentName(), "Expected componentName 'webhook', got")
 	})
 
 	t.Run("ExtKeyUsages Default", func(t *testing.T) {
 		t.Parallel()
 		opts := Options{}
 		usages := opts.extKeyUsages()
-		if len(usages) != 1 || usages[0] != x509.ExtKeyUsageServerAuth {
-			t.Errorf("Expected default [ServerAuth], got %v", usages)
-		}
+		assert.NewCollecting(t).
+			False(len(usages) != 1 || usages[0] != x509.ExtKeyUsageServerAuth, "Expected default [ServerAuth], got %v", usages)
 	})
 
 	t.Run("Organization Default", func(t *testing.T) {
 		t.Parallel()
 		opts := Options{}
-		if got := opts.organization(); got != Organization {
-			t.Errorf("Expected default organization %q, got %q", Organization, got)
-		}
+		assert.NewCollecting(t).
+			Eq(Organization, opts.organization(), "Expected default organization")
 	})
 
 	t.Run("Organization Custom", func(t *testing.T) {
 		t.Parallel()
 		opts := Options{Organization: "Acme Corp"}
-		if got := opts.organization(); got != "Acme Corp" {
-			t.Errorf("Expected organization 'Acme Corp', got %q", got)
-		}
+		assert.NewCollecting(t).
+			Eq("Acme Corp", opts.organization(), "Expected organization 'Acme Corp', got")
 	})
 
 	t.Run("RecorderEvent with Nil Recorder", func(t *testing.T) {
@@ -1323,9 +1266,8 @@ func TestManager_EntropyFailures(t *testing.T) {
 		randReader = errorReader{}
 
 		err := mgr.reconcilePKI(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "failed to generate server cert") {
-			t.Errorf("Expected server cert gen error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to generate server cert"), "Expected server cert gen error, got %v", err)
 	})
 
 	t.Run("ensureServerCert: GenerateServerCert Failure (Rotation)", func(t *testing.T) {
@@ -1363,9 +1305,8 @@ func TestManager_EntropyFailures(t *testing.T) {
 		randReader = errorReader{}
 
 		err := mgr.reconcilePKI(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "failed to generate new server cert") {
-			t.Errorf("Expected server cert rotation error, got %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to generate new server cert"), "Expected server cert rotation error, got %v", err)
 	})
 }
 
@@ -1405,6 +1346,7 @@ func TestManager_CacheRaceConditions(t *testing.T) {
 
 	t.Run("ensureCA: MaxRecursionDepth", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		cl := &alreadyExistsOnCreateClient{
 			Client:     fake.NewClientBuilder().WithScheme(s).Build(),
@@ -1420,15 +1362,19 @@ func TestManager_CacheRaceConditions(t *testing.T) {
 		})
 
 		err := mgr.Bootstrap(t.Context())
-		if err == nil {
-			t.Fatal("Expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "failed to ensure CA secret") {
-			t.Errorf("Expected max recursion error, got: %v", err)
-		}
-		if !strings.Contains(err.Error(), "informer cache") {
-			t.Errorf("Expected cache label hint in error, got: %v", err)
-		}
+		c.Require().Error(err, "Expected error, got nil")
+		c.StrContains(
+			err.Error(),
+			"failed to ensure CA secret",
+			"Expected max recursion error, got: %v",
+			err,
+		)
+		c.StrContains(
+			err.Error(),
+			"informer cache",
+			"Expected cache label hint in error, got: %v",
+			err,
+		)
 	})
 
 	t.Run("ensureCA: AlreadyExists Retry Succeeds", func(t *testing.T) {
@@ -1447,13 +1393,13 @@ func TestManager_CacheRaceConditions(t *testing.T) {
 			ServiceName:      "test-svc",
 		})
 
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Expected success after retry, got: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(mgr.Bootstrap(t.Context()), "Expected success after retry, got")
 	})
 
 	t.Run("ensureServerCert: MaxRecursionDepth", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		validCABytes, validCAKeyBytes := generateCAPEM(t)
 		caSecret := &corev1.Secret{
@@ -1475,15 +1421,19 @@ func TestManager_CacheRaceConditions(t *testing.T) {
 		})
 
 		err := mgr.Bootstrap(t.Context())
-		if err == nil {
-			t.Fatal("Expected error, got nil")
-		}
-		if !strings.Contains(err.Error(), "failed to ensure server cert secret") {
-			t.Errorf("Expected max recursion error, got: %v", err)
-		}
-		if !strings.Contains(err.Error(), "informer cache") {
-			t.Errorf("Expected cache label hint in error, got: %v", err)
-		}
+		c.Require().Error(err, "Expected error, got nil")
+		c.StrContains(
+			err.Error(),
+			"failed to ensure server cert secret",
+			"Expected max recursion error, got: %v",
+			err,
+		)
+		c.StrContains(
+			err.Error(),
+			"informer cache",
+			"Expected cache label hint in error, got: %v",
+			err,
+		)
 	})
 
 	t.Run("ensureServerCert: AlreadyExists Retry Succeeds", func(t *testing.T) {
@@ -1508,8 +1458,7 @@ func TestManager_CacheRaceConditions(t *testing.T) {
 			ServiceName:      "test-svc",
 		})
 
-		if err := mgr.Bootstrap(t.Context()); err != nil {
-			t.Fatalf("Expected success after retry, got: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(mgr.Bootstrap(t.Context()), "Expected success after retry, got")
 	})
 }

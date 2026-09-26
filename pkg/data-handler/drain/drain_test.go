@@ -15,6 +15,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/drain"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestExecuteDrainStateMachine(t *testing.T) {
@@ -41,66 +43,55 @@ func TestExecuteDrainStateMachine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewAborting(t)
 			shard, pod, k8sClient := testObjects(t, tt.from)
 
 			requeue, err := drain.ExecuteDrainStateMachine(
 				context.Background(), k8sClient, record.NewFakeRecorder(1), shard, pod,
 			)
-			if err != nil {
-				t.Fatalf("execute drain state machine: %v", err)
-			}
-			if !requeue {
-				t.Fatal("expected a requeue after a state transition")
-			}
+			c.NoError(err, "execute drain state machine")
+			c.True(requeue, "expected a requeue after a state transition")
 
 			updated := &corev1.Pod{}
-			if err := k8sClient.Get(
+			c.NoError(k8sClient.Get(
 				context.Background(),
 				client.ObjectKeyFromObject(pod),
 				updated,
-			); err != nil {
-				t.Fatalf("get updated pod: %v", err)
-			}
-			if got := updated.Annotations[metadata.AnnotationDrainState]; got != tt.want {
-				t.Fatalf("drain state = %q, want %q", got, tt.want)
-			}
+			), "get updated pod")
+			c.Eq(tt.want, updated.Annotations[metadata.AnnotationDrainState], "drain state")
 		})
 	}
 }
 
 func TestExecuteDrainStateMachineTimeout(t *testing.T) {
+	c := assert.NewAborting(t)
 	shard, pod, k8sClient := testObjects(t, metadata.DrainStateDraining)
 	pod.Annotations[metadata.AnnotationDrainRequestedAt] = time.Now().
 		Add(-drain.DrainTimeout - time.Second).
 		Format(time.RFC3339)
-	if err := k8sClient.Update(context.Background(), pod); err != nil {
-		t.Fatalf("update pod: %v", err)
-	}
+	c.NoError(k8sClient.Update(context.Background(), pod), "update pod")
 
 	requeue, err := drain.ExecuteDrainStateMachine(context.Background(), k8sClient, nil, shard, pod)
-	if err != nil {
-		t.Fatalf("execute timed out drain: %v", err)
-	}
-	if !requeue {
-		t.Fatal("expected a requeue after the timeout transition")
-	}
+	c.NoError(err, "execute timed out drain")
+	c.True(requeue, "expected a requeue after the timeout transition")
 
 	updated := &corev1.Pod{}
-	if err := k8sClient.Get(
+	c.NoError(k8sClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(pod),
 		updated,
-	); err != nil {
-		t.Fatalf("get updated pod: %v", err)
-	}
-	if got := updated.Annotations[metadata.AnnotationDrainState]; got != metadata.DrainStateReadyForDeletion {
-		t.Fatalf("drain state = %q, want %q", got, metadata.DrainStateReadyForDeletion)
-	}
+	), "get updated pod")
+	c.Eq(
+		metadata.DrainStateReadyForDeletion,
+		updated.Annotations[metadata.AnnotationDrainState],
+		"drain state",
+	)
 }
 
 func TestExecuteDrainStateMachineNoop(t *testing.T) {
 	for _, state := range []string{"", metadata.DrainStateReadyForDeletion} {
 		t.Run(state, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			shard, pod, k8sClient := testObjects(t, state)
 			requeue, err := drain.ExecuteDrainStateMachine(
 				context.Background(),
@@ -109,12 +100,8 @@ func TestExecuteDrainStateMachineNoop(t *testing.T) {
 				shard,
 				pod,
 			)
-			if err != nil {
-				t.Fatalf("execute drain state machine: %v", err)
-			}
-			if requeue {
-				t.Fatal("did not expect a requeue")
-			}
+			c.NoError(err, "execute drain state machine")
+			c.False(requeue, "did not expect a requeue")
 		})
 	}
 }
@@ -124,13 +111,10 @@ func testObjects(
 	state string,
 ) (*multigresv1alpha1.Shard, *corev1.Pod, client.Client) {
 	t.Helper()
+	c := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add Multigres scheme: %v", err)
-	}
-	if err := corev1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add core scheme: %v", err)
-	}
+	c.NoError(multigresv1alpha1.AddToScheme(scheme), "add Multigres scheme")
+	c.NoError(corev1.AddToScheme(scheme), "add core scheme")
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{

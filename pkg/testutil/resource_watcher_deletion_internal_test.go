@@ -12,6 +12,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestWaitForDeletion_EmptySlice tests WaitForDeletion with empty slice.
@@ -24,9 +26,8 @@ func TestWaitForDeletion_EmptySlice(t *testing.T) {
 	}
 
 	err := watcher.WaitForDeletion()
-	if err != nil {
-		t.Errorf("WaitForDeletion() with empty slice should return nil, got: %v", err)
-	}
+	assert.NewCollecting(t).
+		NoError(err, "WaitForDeletion() with empty slice should return nil, got")
 }
 
 // TestDeletionPredicate_NonMatchingEvents tests deletion predicate with various
@@ -78,9 +79,7 @@ func TestDeletionPredicate_NonMatchingEvents(t *testing.T) {
 
 	// Wait for deletion of non-existent service (times out)
 	err := watcher.WaitForDeletion(Obj[corev1.Service]("svc-target", "default"))
-	if err == nil {
-		t.Error("Expected timeout")
-	}
+	assert.NewCollecting(t).Error(err, "Expected timeout")
 }
 
 // TestWaitForSingleDeletion_SuccessWithUpdates tests deletion success after
@@ -125,7 +124,5 @@ func TestWaitForSingleDeletion_SuccessWithUpdates(t *testing.T) {
 	}()
 
 	err := watcher.WaitForDeletion(Obj[corev1.Service]("svc-upd-del", "default"))
-	if err != nil {
-		t.Errorf("WaitForDeletion() should succeed, got: %v", err)
-	}
+	assert.NewCollecting(t).NoError(err, "WaitForDeletion() should succeed, got")
 }

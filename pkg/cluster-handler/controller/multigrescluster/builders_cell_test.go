@@ -3,7 +3,6 @@ package multigrescluster
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -11,6 +10,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildCell(t *testing.T) {
@@ -48,6 +49,7 @@ func TestBuildCell(t *testing.T) {
 	allCells := []multigresv1alpha1.CellName{"zone-a", "zone-b"}
 
 	t.Run("Success", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		got, err := BuildCell(
 			cluster,
 			cellCfg,
@@ -58,32 +60,26 @@ func TestBuildCell(t *testing.T) {
 			allCells,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildCell() error = %v", err)
-		}
+		c.Require().NoError(err, "BuildCell() error =")
 
 		// Calculate expected hash: md5("my-cluster", "zone-a") -> "6b6f7386"
 		expectedName := name.JoinWithConstraints(name.DefaultConstraints, "my-cluster", "zone-a")
-		if got.Name != expectedName {
-			t.Errorf("Name = %v, want %v", got.Name, expectedName)
-		}
-		if got.Spec.ZoneID != "use1-az1" {
-			t.Errorf("ZoneID = %v, want %v", got.Spec.ZoneID, "use1-az1")
-		}
-		if got.Spec.Images.Multigateway != "gateway:latest" {
-			t.Errorf("Gateway Image = %v, want %v", got.Spec.Images.Multigateway, "gateway:latest")
-		}
-		if diff := cmp.Diff(allCells, got.Spec.AllCells); diff != "" {
-			t.Errorf("AllCells mismatch (-want +got):\n%s", diff)
-		}
+		c.Eq(expectedName, got.Name, "Name")
+		c.Eq("use1-az1", got.Spec.ZoneID, "ZoneID")
+		c.Eq("gateway:latest", got.Spec.Images.Multigateway, "Gateway Image")
+		c.EqDiff(allCells, got.Spec.AllCells, "AllCells mismatch")
 
 		// Verify OwnerReference
-		if len(got.OwnerReferences) != 1 {
-			t.Errorf("OwnerReferences count = %v, want 1", len(got.OwnerReferences))
-		}
+		c.Len(
+			got.OwnerReferences,
+			1,
+			"OwnerReferences count = %v, want 1",
+			len(got.OwnerReferences),
+		)
 	})
 
 	t.Run("Propagates ZoneID", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cellCfgWithZoneID := &multigresv1alpha1.CellConfig{
 			Name:   "zone-a",
 			ZoneID: "use1-az1",
@@ -98,15 +94,12 @@ func TestBuildCell(t *testing.T) {
 			allCells,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildCell() error = %v", err)
-		}
-		if got.Spec.ZoneID != "use1-az1" {
-			t.Errorf("ZoneID = %v, want use1-az1", got.Spec.ZoneID)
-		}
+		c.Require().NoError(err, "BuildCell() error =")
+		c.Eq("use1-az1", got.Spec.ZoneID, "ZoneID")
 	})
 
 	t.Run("Propagates InternalTLS", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		clusterWithInternalTLS := cluster.DeepCopy()
 		clusterWithInternalTLS.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{
 			Enabled: ptr.To(true),
@@ -122,16 +115,8 @@ func TestBuildCell(t *testing.T) {
 			allCells,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildCell() error = %v", err)
-		}
-		if got.Spec.InternalTLS != clusterWithInternalTLS.Spec.InternalTLS {
-			t.Fatalf(
-				"InternalTLS = %#v, want propagated pointer %#v",
-				got.Spec.InternalTLS,
-				clusterWithInternalTLS.Spec.InternalTLS,
-			)
-		}
+		c.NoError(err, "BuildCell() error =")
+		c.Eq(clusterWithInternalTLS.Spec.InternalTLS, got.Spec.InternalTLS, "InternalTLS")
 	})
 
 	t.Run("ControllerRefError", func(t *testing.T) {
@@ -146,12 +131,11 @@ func TestBuildCell(t *testing.T) {
 			allCells,
 			emptyScheme,
 		)
-		if err == nil {
-			t.Error("Expected error due to missing scheme types, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "Expected error due to missing scheme types, got nil")
 	})
 
 	t.Run("Propagates explicit project ref annotation", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		clusterWithProjectRef := cluster.DeepCopy()
 		clusterWithProjectRef.Annotations = map[string]string{
 			metadata.AnnotationProjectRef: "proj_123",
@@ -167,17 +151,14 @@ func TestBuildCell(t *testing.T) {
 			allCells,
 			scheme,
 		)
-		if err != nil {
-			t.Fatalf("BuildCell() error = %v", err)
-		}
+		c.NoError(err, "BuildCell() error =")
 
-		if got.Annotations[metadata.AnnotationProjectRef] != "proj_123" {
-			t.Fatalf(
-				"annotation %q = %q, want %q",
-				metadata.AnnotationProjectRef,
-				got.Annotations[metadata.AnnotationProjectRef],
-				"proj_123",
-			)
-		}
+		c.Eq(
+			"proj_123",
+			got.Annotations[metadata.AnnotationProjectRef],
+			"annotation %q = %q, want",
+			metadata.AnnotationProjectRef,
+			got.Annotations[metadata.AnnotationProjectRef],
+		)
 	})
 }

@@ -6,11 +6,14 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestSendEvent_ChannelFull tests the default branch when event channel is full.
 func TestSendEvent_ChannelFull(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	watcher := &ResourceWatcher{
 		t:       t,
@@ -29,12 +32,8 @@ func TestSendEvent_ChannelFull(t *testing.T) {
 
 	// Verify first event is in channel
 	evt := <-watcher.eventCh
-	if evt.Name != "test" {
-		t.Errorf("Event in channel has Name = %s, want test", evt.Name)
-	}
-	if evt.Type != "ADDED" {
-		t.Errorf("Event in channel has Type = %s, want ADDED", evt.Type)
-	}
+	c.Eq("test", evt.Name, "Event in channel has Name")
+	c.Eq("ADDED", evt.Type, "Event in channel has Type")
 
 	// Second event was dropped (channel was full)
 	select {
@@ -48,6 +47,7 @@ func TestSendEvent_ChannelFull(t *testing.T) {
 // TestCollectEvents_SubscriberChannelFull tests that events are dropped when subscriber channel is full.
 func TestCollectEvents_SubscriberChannelFull(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	ctx := t.Context()
 
@@ -79,16 +79,12 @@ func TestCollectEvents_SubscriberChannelFull(t *testing.T) {
 	eventsCount := len(watcher.events)
 	watcher.mu.RUnlock()
 
-	if eventsCount != 2 {
-		t.Errorf("watcher.events length = %d, want 2", eventsCount)
-	}
+	c.Eq(2, eventsCount, "watcher.events length")
 
 	// Verify subscriber channel only has first event
 	select {
 	case evt := <-subCh:
-		if evt.Name != "svc1" {
-			t.Errorf("First event Name = %s, want svc1", evt.Name)
-		}
+		c.Eq("svc1", evt.Name, "First event Name")
 	default:
 		t.Error("Expected first event in subscriber channel")
 	}
@@ -131,10 +127,6 @@ func TestUnsubscribe_NotFound(t *testing.T) {
 	// Should not panic
 	watcher.unsubscribe(differentCh)
 
-	if len(watcher.subscribers) != 1 {
-		t.Errorf(
-			"unsubscribe() should not remove other channels, got %d subscribers",
-			len(watcher.subscribers),
-		)
-	}
+	assert.NewCollecting(t).
+		Len(watcher.subscribers, 1, "unsubscribe() should not remove other channels, got %d subscribers", len(watcher.subscribers))
 }

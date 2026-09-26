@@ -19,15 +19,16 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildLocalTopoServer(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme() error = %v", err)
-	}
+	c.Require().NoError(multigresv1alpha1.AddToScheme(scheme), "AddToScheme() error =")
 
 	cell := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{
@@ -51,24 +52,12 @@ func TestBuildLocalTopoServer(t *testing.T) {
 	}
 
 	got, err := BuildLocalTopoServer(cell, scheme)
-	if err != nil {
-		t.Fatalf("BuildLocalTopoServer() error = %v", err)
-	}
-	if got == nil {
-		t.Fatal("BuildLocalTopoServer() = nil, want TopoServer")
-	}
-	if got.Name != BuildLocalTopoServerName(cell) {
-		t.Errorf("name = %q, want %q", got.Name, BuildLocalTopoServerName(cell))
-	}
-	if got.Namespace != "default" {
-		t.Errorf("namespace = %q, want default", got.Namespace)
-	}
-	if got.Labels[metadata.LabelMultigresCluster] != "cluster" {
-		t.Errorf("cluster label = %q, want cluster", got.Labels[metadata.LabelMultigresCluster])
-	}
-	if got.Labels[metadata.LabelMultigresCell] != "zone-a" {
-		t.Errorf("cell label = %q, want zone-a", got.Labels[metadata.LabelMultigresCell])
-	}
+	c.Require().NoError(err, "BuildLocalTopoServer() error =")
+	c.Require().NotNil(got, "BuildLocalTopoServer() = nil, want TopoServer")
+	c.Eq(BuildLocalTopoServerName(cell), got.Name, "name")
+	c.Eq("default", got.Namespace, "namespace")
+	c.Eq("cluster", got.Labels[metadata.LabelMultigresCluster], "cluster label")
+	c.Eq("zone-a", got.Labels[metadata.LabelMultigresCell], "cell label")
 	if got.Spec.Etcd == nil || got.Spec.Etcd.RootPath != "/multigres/zone-a" {
 		t.Fatalf("etcd spec = %#v, want root path /multigres/zone-a", got.Spec.Etcd)
 	}
@@ -83,6 +72,7 @@ func TestBuildLocalTopoServer(t *testing.T) {
 
 func TestBuildLocalTopoServerExternalReturnsNil(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	cell := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-zone-a", Namespace: "default"},
@@ -98,16 +88,13 @@ func TestBuildLocalTopoServerExternalReturnsNil(t *testing.T) {
 	}
 
 	got, err := BuildLocalTopoServer(cell, runtime.NewScheme())
-	if err != nil {
-		t.Fatalf("BuildLocalTopoServer() error = %v", err)
-	}
-	if got != nil {
-		t.Fatalf("BuildLocalTopoServer() = %#v, want nil", got)
-	}
+	c.NoError(err, "BuildLocalTopoServer() error =")
+	c.Nil(got, "BuildLocalTopoServer()")
 }
 
 func TestBuildLocalTopoServerNameIsSafeForTopoServerChildren(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	cell := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{
@@ -116,17 +103,25 @@ func TestBuildLocalTopoServerNameIsSafeForTopoServerChildren(t *testing.T) {
 	}
 
 	got := BuildLocalTopoServerName(cell)
-	if len(got) > 52 {
-		t.Fatalf("managed TopoServer name length = %d, want <= 52: %q", len(got), got)
-	}
-	if len(got+"-headless") > 63 {
-		t.Fatalf("managed TopoServer headless service name length = %d, want <= 63: %q",
-			len(got+"-headless"), got+"-headless")
-	}
+	c.LessOrEqual(
+		52,
+		len(got),
+		"managed TopoServer name length = %d, want <= 52: %q",
+		len(got),
+		got,
+	)
+	c.LessOrEqual(
+		63,
+		len(got+"-headless"),
+		"managed TopoServer headless service name length = %d, want <= 63: %q",
+		len(got+"-headless"),
+		got+"-headless",
+	)
 }
 
 func TestCellReconcilerWaitsForManagedLocalTopoServer(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -145,33 +140,26 @@ func TestCellReconcilerWaitsForManagedLocalTopoServer(t *testing.T) {
 	result, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
 	})
-	if err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	if result.RequeueAfter != localTopoServerRecheckDelay {
-		t.Fatalf("RequeueAfter = %v, want %v", result.RequeueAfter, localTopoServerRecheckDelay)
-	}
+	c.NoError(err, "Reconcile() error =")
+	c.Eq(localTopoServerRecheckDelay, result.RequeueAfter, "RequeueAfter")
 
 	toposerver := &multigresv1alpha1.TopoServer{}
-	if err := fakeClient.Get(t.Context(), client.ObjectKey{
+	c.NoError(fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      BuildLocalTopoServerName(cell),
 		Namespace: cell.Namespace,
-	}, toposerver); err != nil {
-		t.Fatalf("managed TopoServer should exist: %v", err)
-	}
+	}, toposerver), "managed TopoServer should exist")
 
 	deployment := &appsv1.Deployment{}
 	err = fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      "test-cluster-zone-a-multigateway",
 		Namespace: cell.Namespace,
 	}, deployment)
-	if !errors.IsNotFound(err) {
-		t.Fatalf("Multigateway Deployment get error = %v, want NotFound", err)
-	}
+	c.True(errors.IsNotFound(err), "Multigateway Deployment get error = %v, want NotFound", err)
 }
 
 func TestCellReconcilerSetsWaitingStatusForManagedLocalTopoServer(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -194,9 +182,7 @@ func TestCellReconcilerSetsWaitingStatusForManagedLocalTopoServer(t *testing.T) 
 		Reason:             "MultigatewayReady",
 		ObservedGeneration: cell.Generation,
 	})
-	if err := fakeClient.Status().Update(t.Context(), cell); err != nil {
-		t.Fatalf("failed to seed Cell status: %v", err)
-	}
+	c.NoError(fakeClient.Status().Update(t.Context(), cell), "failed to seed Cell status")
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -204,36 +190,32 @@ func TestCellReconcilerSetsWaitingStatusForManagedLocalTopoServer(t *testing.T) 
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	if _, err := reconciler.Reconcile(t.Context(), ctrl.Request{
+	_, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
-	}); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
+	})
+	assert.NewAborting(t).NoError(err, "Reconcile() error =")
 
 	updatedCell := &multigresv1alpha1.Cell{}
-	if err := fakeClient.Get(t.Context(), client.ObjectKey{
+	c.NoError(fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      cell.Name,
 		Namespace: cell.Namespace,
-	}, updatedCell); err != nil {
-		t.Fatalf("Cell get error = %v", err)
-	}
-	if updatedCell.Status.Phase != multigresv1alpha1.PhaseProgressing {
-		t.Fatalf("Phase = %s, want Progressing", updatedCell.Status.Phase)
-	}
+	}, updatedCell), "Cell get error =")
+	c.Eq(multigresv1alpha1.PhaseProgressing, updatedCell.Status.Phase, "Phase")
 	for _, conditionType := range []string{"Available", "Ready"} {
 		condition := meta.FindStatusCondition(updatedCell.Status.Conditions, conditionType)
-		if condition == nil {
-			t.Fatalf("%s condition not found", conditionType)
-		}
+		c.NotNil(condition, "%s condition not found", conditionType)
 		if condition.Status != metav1.ConditionFalse ||
 			condition.Reason != "LocalTopoServerNotReady" {
 			t.Fatalf("%s = %s/%s, want False/LocalTopoServerNotReady",
 				conditionType, condition.Status, condition.Reason)
 		}
-		if condition.ObservedGeneration != updatedCell.Generation {
-			t.Fatalf("%s observedGeneration = %d, want %d",
-				conditionType, condition.ObservedGeneration, updatedCell.Generation)
-		}
+		c.Eq(
+			updatedCell.Generation,
+			condition.ObservedGeneration,
+			"%s observedGeneration = %d, want",
+			conditionType,
+			condition.ObservedGeneration,
+		)
 	}
 }
 
@@ -272,9 +254,8 @@ func TestCellReconcilerDeletesStaleManagedLocalTopoServer(t *testing.T) {
 		Name:      toposerver.Name,
 		Namespace: toposerver.Namespace,
 	}, got)
-	if !errors.IsNotFound(err) {
-		t.Fatalf("stale local TopoServer get error = %v, want NotFound", err)
-	}
+	assert.NewAborting(t).
+		True(errors.IsNotFound(err), "stale local TopoServer get error = %v, want NotFound", err)
 }
 
 func TestCellReconcilerIgnoresUnownedLocalTopoServerWhenNoManagedTopoDesired(t *testing.T) {
@@ -302,23 +283,21 @@ func TestCellReconcilerIgnoresUnownedLocalTopoServerWhenNoManagedTopoDesired(t *
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	if _, err := reconciler.Reconcile(t.Context(), ctrl.Request{
+	_, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
-	}); err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
+	})
+	assert.NewAborting(t).NoError(err, "Reconcile() error =")
 
 	got := &multigresv1alpha1.TopoServer{}
-	if err := fakeClient.Get(t.Context(), client.ObjectKey{
+	assert.NewAborting(t).NoError(fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      toposerver.Name,
 		Namespace: toposerver.Namespace,
-	}, got); err != nil {
-		t.Fatalf("unowned local TopoServer should be left alone: %v", err)
-	}
+	}, got), "unowned local TopoServer should be left alone")
 }
 
 func TestCellReconcilerRefusesManagedLocalTopoServerNameConflict(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -339,16 +318,18 @@ func TestCellReconcilerRefusesManagedLocalTopoServerNameConflict(t *testing.T) {
 	_, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
 	})
-	if err == nil {
-		t.Fatal("Reconcile() error = nil, want name conflict")
-	}
-	if !strings.Contains(err.Error(), "not controlled by Cell") {
-		t.Fatalf("Reconcile() error = %v, want not controlled by Cell", err)
-	}
+	c.Error(err, "Reconcile() error = nil, want name conflict")
+	c.StrContains(
+		err.Error(),
+		"not controlled by Cell",
+		"Reconcile() error = %v, want not controlled by Cell",
+		err,
+	)
 }
 
 func TestCellReconcilerPendingDeletionWaitsForManagedLocalTopoServer(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -371,27 +352,19 @@ func TestCellReconcilerPendingDeletionWaitsForManagedLocalTopoServer(t *testing.
 	result, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
 	})
-	if err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	if result.RequeueAfter != localTopoServerRecheckDelay {
-		t.Fatalf("RequeueAfter = %v, want %v", result.RequeueAfter, localTopoServerRecheckDelay)
-	}
+	c.NoError(err, "Reconcile() error =")
+	c.Eq(localTopoServerRecheckDelay, result.RequeueAfter, "RequeueAfter")
 
 	updatedCell := &multigresv1alpha1.Cell{}
-	if err := fakeClient.Get(t.Context(), client.ObjectKey{
+	c.NoError(fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      cell.Name,
 		Namespace: cell.Namespace,
-	}, updatedCell); err != nil {
-		t.Fatalf("Cell get error = %v", err)
-	}
+	}, updatedCell), "Cell get error =")
 	condition := meta.FindStatusCondition(
 		updatedCell.Status.Conditions,
 		multigresv1alpha1.ConditionReadyForDeletion,
 	)
-	if condition == nil {
-		t.Fatal("ReadyForDeletion condition not found")
-	}
+	c.NotNil(condition, "ReadyForDeletion condition not found")
 	if condition.Status != metav1.ConditionFalse || condition.Reason != "LocalTopoServerDeleting" {
 		t.Fatalf("ReadyForDeletion = %s/%s, want False/LocalTopoServerDeleting",
 			condition.Status, condition.Reason)
@@ -402,6 +375,7 @@ func TestCellReconcilerPendingDeletionDeletesObservedLocalTopoServerWhenSpecNoLo
 	t *testing.T,
 ) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -430,25 +404,20 @@ func TestCellReconcilerPendingDeletionDeletesObservedLocalTopoServerWhenSpecNoLo
 	result, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
 	})
-	if err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	if result.RequeueAfter != localTopoServerRecheckDelay {
-		t.Fatalf("RequeueAfter = %v, want %v", result.RequeueAfter, localTopoServerRecheckDelay)
-	}
+	c.NoError(err, "Reconcile() error =")
+	c.Eq(localTopoServerRecheckDelay, result.RequeueAfter, "RequeueAfter")
 
 	got := &multigresv1alpha1.TopoServer{}
 	err = fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      toposerver.Name,
 		Namespace: toposerver.Namespace,
 	}, got)
-	if !errors.IsNotFound(err) {
-		t.Fatalf("local TopoServer get error = %v, want NotFound", err)
-	}
+	c.True(errors.IsNotFound(err), "local TopoServer get error = %v, want NotFound", err)
 }
 
 func TestCellReconcilerLocalTopoServerReadyRequiresObservedGeneration(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -468,16 +437,13 @@ func TestCellReconcilerLocalTopoServerReadyRequiresObservedGeneration(t *testing
 	}
 
 	ready, err := reconciler.localTopoServerReady(t.Context(), cell)
-	if err != nil {
-		t.Fatalf("localTopoServerReady() error = %v", err)
-	}
-	if ready {
-		t.Fatal("localTopoServerReady() = true, want false for stale observedGeneration")
-	}
+	c.NoError(err, "localTopoServerReady() error =")
+	c.False(ready, "localTopoServerReady() = true, want false for stale observedGeneration")
 }
 
 func TestCellReconcilerPendingDeletionReadyAfterManagedLocalTopoServerDeleted(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
@@ -499,27 +465,19 @@ func TestCellReconcilerPendingDeletionReadyAfterManagedLocalTopoServerDeleted(t 
 	result, err := reconciler.Reconcile(t.Context(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: cell.Name, Namespace: cell.Namespace},
 	})
-	if err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	if result.RequeueAfter != 0 {
-		t.Fatalf("RequeueAfter = %v, want 0", result.RequeueAfter)
-	}
+	c.NoError(err, "Reconcile() error =")
+	c.Eq(0, result.RequeueAfter, "RequeueAfter")
 
 	updatedCell := &multigresv1alpha1.Cell{}
-	if err := fakeClient.Get(t.Context(), client.ObjectKey{
+	c.NoError(fakeClient.Get(t.Context(), client.ObjectKey{
 		Name:      cell.Name,
 		Namespace: cell.Namespace,
-	}, updatedCell); err != nil {
-		t.Fatalf("Cell get error = %v", err)
-	}
+	}, updatedCell), "Cell get error =")
 	condition := meta.FindStatusCondition(
 		updatedCell.Status.Conditions,
 		multigresv1alpha1.ConditionReadyForDeletion,
 	)
-	if condition == nil {
-		t.Fatal("ReadyForDeletion condition not found")
-	}
+	c.NotNil(condition, "ReadyForDeletion condition not found")
 	if condition.Status != metav1.ConditionTrue || condition.Reason != "LocalTopoServerDeleted" {
 		t.Fatalf("ReadyForDeletion = %s/%s, want True/LocalTopoServerDeleted",
 			condition.Status, condition.Reason)
@@ -528,16 +486,11 @@ func TestCellReconcilerPendingDeletionReadyAfterManagedLocalTopoServerDeleted(t 
 
 func cellTestScheme(t testing.TB) *runtime.Scheme {
 	t.Helper()
+	c := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme(multigres) error = %v", err)
-	}
-	if err := appsv1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme(apps) error = %v", err)
-	}
-	if err := corev1.AddToScheme(scheme); err != nil {
-		t.Fatalf("AddToScheme(core) error = %v", err)
-	}
+	c.NoError(multigresv1alpha1.AddToScheme(scheme), "AddToScheme(multigres) error =")
+	c.NoError(appsv1.AddToScheme(scheme), "AddToScheme(apps) error =")
+	c.NoError(corev1.AddToScheme(scheme), "AddToScheme(core) error =")
 	return scheme
 }
 

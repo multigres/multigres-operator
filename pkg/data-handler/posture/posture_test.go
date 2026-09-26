@@ -13,6 +13,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
+
+	"github.com/multigres/testkit/assert"
 )
 
 type mockTopoStore struct {
@@ -102,6 +104,7 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("consistent postures", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 
 		primary := poolerInfo(
@@ -127,29 +130,17 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpc, shard, []string{"primary-pod", "replica-pod"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == nil {
-			t.Fatal("expected result, got nil")
-		}
-		if result.MultiplePrimaries {
-			t.Error("expected MultiplePrimaries=false")
-		}
-		if len(result.Mismatches) != 0 {
-			t.Errorf("expected no mismatches, got %v", result.Mismatches)
-		}
-		if result.PrimaryCount != 1 {
-			t.Errorf("expected PrimaryCount=1, got %d", result.PrimaryCount)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(result, "expected result, got nil")
+		c.False(result.MultiplePrimaries, "expected MultiplePrimaries=false")
+		c.Empty(result.Mismatches, "expected no mismatches, got")
+		c.Eq(1, result.PrimaryCount, "expected PrimaryCount=1, got")
 		wantPrimary := result.Postures["primary-pod"] != "PRIMARY"
 		wantReplica := result.Postures["replica-pod"] != "STANDBY"
 		if wantPrimary || wantReplica {
 			t.Errorf("unexpected postures: %v", result.Postures)
 		}
-		if result.Message != "postures consistent with topology roles" {
-			t.Errorf("unexpected message: %s", result.Message)
-		}
+		c.Eq("postures consistent with topology roles", result.Message, "unexpected message")
 		for _, podName := range []string{"primary-pod", "replica-pod"} {
 			if got := result.Readiness[podName]; !got.Ready || got.Reason != "DataPlaneReady" {
 				t.Errorf("readiness[%s] = %#v, want data-plane ready", podName, got)
@@ -178,9 +169,7 @@ func TestEvaluate(t *testing.T) {
 		rpc.SetStatusResponse(topoclient.ComponentIDString(replica.Id), response)
 
 		result, err := posture.Evaluate(t.Context(), store, rpc, shard, []string{"replica-pod"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 		if got := result.Readiness["replica-pod"]; got.Ready || got.Reason != "PostgresNotReady" {
 			t.Errorf("readiness = %#v, want PostgresNotReady", got)
 		}
@@ -207,9 +196,7 @@ func TestEvaluate(t *testing.T) {
 		rpc.SetStatusResponse(topoclient.ComponentIDString(replica.Id), response)
 
 		result, err := posture.Evaluate(t.Context(), store, rpc, shard, []string{"replica-pod"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 		if got := result.Readiness["replica-pod"]; got.Ready || got.Reason != "NotCohortMember" {
 			t.Errorf("readiness = %#v, want NotCohortMember", got)
 		}
@@ -217,6 +204,7 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("multiple primaries detected", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 
 		primaryA := poolerInfo(
@@ -240,18 +228,10 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpc, shard, []string{"pod-a", "pod-b"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == nil {
-			t.Fatal("expected result, got nil")
-		}
-		if !result.MultiplePrimaries {
-			t.Error("expected MultiplePrimaries=true")
-		}
-		if result.PrimaryCount != 2 {
-			t.Errorf("expected PrimaryCount=2, got %d", result.PrimaryCount)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(result, "expected result, got nil")
+		c.True(result.MultiplePrimaries, "expected MultiplePrimaries=true")
+		c.Eq(2, result.PrimaryCount, "expected PrimaryCount=2, got")
 		if len(result.Mismatches) != 1 || result.Mismatches[0] != "pod-b" {
 			t.Errorf("expected mismatch [pod-b], got %v", result.Mismatches)
 		}
@@ -259,6 +239,7 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("replica reporting primary posture is a mismatch", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 
 		replica := poolerInfo(
@@ -277,26 +258,22 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpc, shard, []string{"replica-pod"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == nil {
-			t.Fatal("expected result, got nil")
-		}
-		if result.MultiplePrimaries {
-			t.Error("expected MultiplePrimaries=false with only one observed primary")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(result, "expected result, got nil")
+		c.False(
+			result.MultiplePrimaries,
+			"expected MultiplePrimaries=false with only one observed primary",
+		)
 		if len(result.Mismatches) != 1 || result.Mismatches[0] != "replica-pod" {
 			t.Errorf("expected mismatch [replica-pod], got %v", result.Mismatches)
 		}
 		wantMsg := "pod replica-pod reports postgres primary but topology role is REPLICA"
-		if result.Message != wantMsg {
-			t.Errorf("unexpected message: got %q, want %q", result.Message, wantMsg)
-		}
+		c.Eq(wantMsg, result.Message, "unexpected message: got")
 	})
 
 	t.Run("promoting is not a mismatch", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 
 		replica := poolerInfo(
@@ -315,25 +292,15 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpc, shard, []string{"replica-pod"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == nil {
-			t.Fatal("expected result, got nil")
-		}
-		if len(result.Mismatches) != 0 {
-			t.Errorf(
-				"expected no mismatches during promotion transition, got %v",
-				result.Mismatches,
-			)
-		}
-		if result.Postures["replica-pod"] != "PROMOTING" {
-			t.Errorf("expected posture PROMOTING, got %s", result.Postures["replica-pod"])
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(result, "expected result, got nil")
+		c.Empty(result.Mismatches, "expected no mismatches during promotion transition, got")
+		c.Eq("PROMOTING", result.Postures["replica-pod"], "expected posture PROMOTING, got")
 	})
 
 	t.Run("RPC error records UNKNOWN without false positive", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 
 		replica := poolerInfo(
@@ -352,31 +319,21 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpc, shard, []string{"replica-pod"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == nil {
-			t.Fatal("expected result, got nil")
-		}
-		if result.Postures["replica-pod"] != "UNKNOWN" {
-			t.Errorf(
-				"expected UNKNOWN posture on RPC error, got %s",
-				result.Postures["replica-pod"],
-			)
-		}
-		if len(result.Mismatches) != 0 {
-			t.Errorf("expected no mismatches, got %v", result.Mismatches)
-		}
-		if result.MultiplePrimaries {
-			t.Error("expected MultiplePrimaries=false")
-		}
-		if !result.Incomplete {
-			t.Error("expected RPC failure to mark observation incomplete")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(result, "expected result, got nil")
+		c.Eq(
+			"UNKNOWN",
+			result.Postures["replica-pod"],
+			"expected UNKNOWN posture on RPC error, got",
+		)
+		c.Empty(result.Mismatches, "expected no mismatches, got")
+		c.False(result.MultiplePrimaries, "expected MultiplePrimaries=false")
+		c.True(result.Incomplete, "expected RPC failure to mark observation incomplete")
 	})
 
 	t.Run("unavailable topology cell returns incomplete observation", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 		store := &mockTopoStore{
 			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
@@ -387,19 +344,15 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpcclient.NewFakeClient(), shard, nil,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result == nil || !result.Incomplete {
-			t.Fatalf("expected incomplete result, got %#v", result)
-		}
-		if result.Message != "posture observation incomplete" {
-			t.Errorf("unexpected message: %q", result.Message)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().
+			False(result == nil || !result.Incomplete, "expected incomplete result, got %#v", result)
+		c.Eq("posture observation incomplete", result.Message, "unexpected message")
 	})
 
 	t.Run("shutdown pooler is skipped", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 
 		dead := poolerInfo(
@@ -418,16 +371,13 @@ func TestEvaluate(t *testing.T) {
 		result, err := posture.Evaluate(
 			context.Background(), store, rpc, shard, []string{"dead-pod"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != nil {
-			t.Errorf("expected nil result when only pooler is shut down, got %v", result)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Nil(result, "expected nil result when only pooler is shut down, got")
 	})
 
 	t.Run("no poolers matched returns nil result", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := testShard()
 		store := &mockTopoStore{
 			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
@@ -437,12 +387,8 @@ func TestEvaluate(t *testing.T) {
 		rpc := rpcclient.NewFakeClient()
 
 		result, err := posture.Evaluate(context.Background(), store, rpc, shard, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result != nil {
-			t.Errorf("expected nil result, got %v", result)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Nil(result, "expected nil result, got")
 	})
 
 	t.Run("non-unavailable topo error is returned", func(t *testing.T) {
@@ -456,9 +402,7 @@ func TestEvaluate(t *testing.T) {
 		rpc := rpcclient.NewFakeClient()
 
 		_, err := posture.Evaluate(context.Background(), store, rpc, shard, nil)
-		if err == nil {
-			t.Error("expected error, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "expected error, got nil")
 	})
 }
 
@@ -467,6 +411,7 @@ func TestApply(t *testing.T) {
 
 	t.Run("sets consistent condition", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{ObjectMeta: metav1.ObjectMeta{Generation: 3}}
 		result := &posture.Result{
 			Postures: map[string]string{"pod-a": "PRIMARY"},
@@ -475,26 +420,23 @@ func TestApply(t *testing.T) {
 
 		posture.Apply(shard, result)
 
-		if len(shard.Status.Conditions) != 1 {
-			t.Fatalf("expected 1 condition, got %d", len(shard.Status.Conditions))
-		}
+		ck.Require().
+			Len(shard.Status.Conditions, 1, "expected 1 condition, got %d", len(shard.Status.Conditions))
 		c := shard.Status.Conditions[0]
-		if c.Type != posture.ConditionConsistent {
-			t.Errorf("expected type %s, got %s", posture.ConditionConsistent, c.Type)
-		}
-		if c.Status != metav1.ConditionTrue {
-			t.Errorf("expected True, got %s", c.Status)
-		}
-		if c.Reason != "Consistent" {
-			t.Errorf("expected reason Consistent, got %s", c.Reason)
-		}
-		if shard.Status.PodPostures["pod-a"] != "PRIMARY" {
-			t.Errorf("expected PodPostures to be set, got %v", shard.Status.PodPostures)
-		}
+		ck.Eq(posture.ConditionConsistent, c.Type, "expected type")
+		ck.Eq(metav1.ConditionTrue, c.Status, "expected True, got")
+		ck.Eq("Consistent", c.Reason, "expected reason Consistent, got")
+		ck.Eq(
+			"PRIMARY",
+			shard.Status.PodPostures["pod-a"],
+			"expected PodPostures to be set, got %v",
+			shard.Status.PodPostures,
+		)
 	})
 
 	t.Run("sets MultiplePrimaries condition, takes priority over mismatches", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		result := &posture.Result{
 			Postures:          map[string]string{"pod-a": "PRIMARY", "pod-b": "PRIMARY"},
@@ -506,16 +448,13 @@ func TestApply(t *testing.T) {
 		posture.Apply(shard, result)
 
 		c := shard.Status.Conditions[0]
-		if c.Status != metav1.ConditionFalse {
-			t.Errorf("expected False, got %s", c.Status)
-		}
-		if c.Reason != "MultiplePrimaries" {
-			t.Errorf("expected reason MultiplePrimaries, got %s", c.Reason)
-		}
+		ck.Eq(metav1.ConditionFalse, c.Status, "expected False, got")
+		ck.Eq("MultiplePrimaries", c.Reason, "expected reason MultiplePrimaries, got")
 	})
 
 	t.Run("sets RoleMismatch condition", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		result := &posture.Result{
 			Postures:   map[string]string{"pod-a": "PRIMARY"},
@@ -526,16 +465,13 @@ func TestApply(t *testing.T) {
 		posture.Apply(shard, result)
 
 		c := shard.Status.Conditions[0]
-		if c.Status != metav1.ConditionFalse {
-			t.Errorf("expected False, got %s", c.Status)
-		}
-		if c.Reason != "RoleMismatch" {
-			t.Errorf("expected reason RoleMismatch, got %s", c.Reason)
-		}
+		ck.Eq(metav1.ConditionFalse, c.Status, "expected False, got")
+		ck.Eq("RoleMismatch", c.Reason, "expected reason RoleMismatch, got")
 	})
 
 	t.Run("incomplete observation sets Unknown instead of consistent", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		posture.Apply(shard, &posture.Result{
 			Postures:   map[string]string{"pod-a": "UNKNOWN"},
@@ -544,16 +480,13 @@ func TestApply(t *testing.T) {
 		})
 
 		condition := shard.Status.Conditions[0]
-		if condition.Status != metav1.ConditionUnknown {
-			t.Errorf("expected Unknown, got %s", condition.Status)
-		}
-		if condition.Reason != "ObservationIncomplete" {
-			t.Errorf("expected ObservationIncomplete, got %s", condition.Reason)
-		}
+		c.Eq(metav1.ConditionUnknown, condition.Status, "expected Unknown, got")
+		c.Eq("ObservationIncomplete", condition.Reason, "expected ObservationIncomplete, got")
 	})
 
 	t.Run("incomplete observation preserves confirmed failure", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{Status: multigresv1alpha1.ShardStatus{
 			Conditions: []metav1.Condition{{
 				Type:    posture.ConditionConsistent,
@@ -570,12 +503,17 @@ func TestApply(t *testing.T) {
 		})
 
 		condition := shard.Status.Conditions[0]
-		if condition.Status != metav1.ConditionFalse || condition.Reason != "MultiplePrimaries" {
-			t.Errorf("expected existing failure to remain, got %#v", condition)
-		}
-		if shard.Status.PodPostures["pod-a"] != "UNKNOWN" {
-			t.Errorf("expected latest posture visibility, got %v", shard.Status.PodPostures)
-		}
+		c.False(
+			condition.Status != metav1.ConditionFalse || condition.Reason != "MultiplePrimaries",
+			"expected existing failure to remain, got %#v",
+			condition,
+		)
+		c.Eq(
+			"UNKNOWN",
+			shard.Status.PodPostures["pod-a"],
+			"expected latest posture visibility, got %v",
+			shard.Status.PodPostures,
+		)
 	})
 
 	t.Run(
@@ -591,21 +529,17 @@ func TestApply(t *testing.T) {
 			})
 
 			condition := shard.Status.Conditions[0]
-			if condition.Status != metav1.ConditionFalse || condition.Reason != "RoleMismatch" {
-				t.Errorf("expected definite mismatch failure, got %#v", condition)
-			}
+			assert.NewCollecting(t).
+				False(condition.Status != metav1.ConditionFalse || condition.Reason != "RoleMismatch", "expected definite mismatch failure, got %#v", condition)
 		},
 	)
 
 	t.Run("nil result is no-op", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		posture.Apply(shard, nil)
-		if len(shard.Status.Conditions) != 0 {
-			t.Error("expected no conditions for nil result")
-		}
-		if shard.Status.PodPostures != nil {
-			t.Error("expected PodPostures to remain nil for nil result")
-		}
+		c.Empty(shard.Status.Conditions, "expected no conditions for nil result")
+		c.Nil(shard.Status.PodPostures, "expected PodPostures to remain nil for nil result")
 	})
 }

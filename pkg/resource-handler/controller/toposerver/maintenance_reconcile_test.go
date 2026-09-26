@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -18,6 +17,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/certs"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestReconcileRepairsMaintenanceDependencies(t *testing.T) {
@@ -34,43 +35,30 @@ func TestReconcileRepairsMaintenanceDependencies(t *testing.T) {
 		{name: "member recovered", age: 3 * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			r, ts, etcd := maintenanceFixture(t)
-			if err := policyv1.AddToScheme(r.Scheme); err != nil {
-				t.Fatal(err)
-			}
+			c.Require().NoError(policyv1.AddToScheme(r.Scheme))
 			key := client.ObjectKeyFromObject(ts)
 			before := &appsv1.StatefulSet{}
-			if err := r.Get(t.Context(), key, before); err != nil {
-				t.Fatal(err)
-			}
+			c.Require().NoError(r.Get(t.Context(), key, before))
 			if tc.tls {
 				ts.Spec.TLS = &multigresv1alpha1.TopoTLSConfig{
 					Enabled: ptr.To(true), IssuerName: "topology-issuer",
 				}
-				if err := r.Update(t.Context(), ts); err != nil {
-					t.Fatal(err)
-				}
+				c.Require().NoError(r.Update(t.Context(), ts))
 				desired, err := BuildStatefulSet(ts, r.Scheme)
-				if err != nil {
-					t.Fatal(err)
-				}
+				c.Require().NoError(err)
 				before.Spec = desired.Spec
-				if err := r.Update(t.Context(), before); err != nil {
-					t.Fatal(err)
-				}
+				c.Require().NoError(r.Update(t.Context(), before))
 			}
 			ts.Status.EtcdMaintenance = &multigresv1alpha1.EtcdMaintenanceStatus{
 				LastAttemptTime: metav1.NewTime(time.Now().Add(-tc.age)),
 				Endpoint:        maintenanceEndpoints(ts)[0],
 				InProgress:      true,
 			}
-			if err := r.Status().Update(t.Context(), ts); err != nil {
-				t.Fatal(err)
-			}
+			c.Require().NoError(r.Status().Update(t.Context(), ts))
 			ts.Spec.Etcd.Image = "etcd:pending-rollout"
-			if err := r.Update(t.Context(), ts); err != nil {
-				t.Fatal(err)
-			}
+			c.Require().NoError(r.Update(t.Context(), ts))
 
 			healthErr := errors.New("member is still unavailable")
 			if tc.unhealthy {
@@ -92,15 +80,16 @@ func TestReconcileRepairsMaintenanceDependencies(t *testing.T) {
 
 			result, err := r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key})
 			if tc.unhealthy {
-				if !errors.Is(err, healthErr) {
-					t.Errorf("expected member health error, got %v", err)
-				}
+				c.ErrorIs(err, healthErr, "expected member health error, got")
 			} else if err != nil {
 				t.Errorf("Reconcile() error = %v", err)
 			}
-			if tc.wantActive && result.RequeueAfter != statusRecheckDelay {
-				t.Errorf("requeue = %v, want %v", result.RequeueAfter, statusRecheckDelay)
-			}
+			c.False(
+				tc.wantActive && result.RequeueAfter != statusRecheckDelay,
+				"requeue = %v, want %v",
+				result.RequeueAfter,
+				statusRecheckDelay,
+			)
 			for _, name := range []string{ts.Name + "-headless", ts.Name} {
 				svc := &corev1.Service{}
 				if err := r.Get(
@@ -111,13 +100,13 @@ func TestReconcileRepairsMaintenanceDependencies(t *testing.T) {
 					t.Errorf("maintenance blocked Service repair: %v", err)
 					continue
 				}
-				if !metav1.IsControlledBy(svc, ts) {
-					t.Errorf("Service %s is not owned by the TopoServer", name)
-				}
-				if name == ts.Name+"-headless" &&
-					(svc.Spec.ClusterIP != corev1.ClusterIPNone || !svc.Spec.PublishNotReadyAddresses) {
-					t.Error("headless Service does not publish member DNS during recovery")
-				}
+				c.True(
+					metav1.IsControlledBy(svc, ts),
+					"Service %s is not owned by the TopoServer",
+					name,
+				)
+				c.False(name == ts.Name+"-headless" &&
+					(svc.Spec.ClusterIP != corev1.ClusterIPNone || !svc.Spec.PublishNotReadyAddresses), "headless Service does not publish member DNS during recovery")
 			}
 			if tc.tls {
 				cert, err := certs.Get(
@@ -126,19 +115,16 @@ func TestReconcileRepairsMaintenanceDependencies(t *testing.T) {
 					ts.Namespace,
 					multigresv1alpha1.TopoServerCertName(ts.Name),
 				)
-				if err != nil || cert == nil {
-					t.Errorf(
-						"maintenance blocked Certificate repair: certificate=%v error=%v",
-						cert,
-						err,
-					)
-				}
+				c.False(
+					err != nil || cert == nil,
+					"maintenance blocked Certificate repair: certificate=%v error=%v",
+					cert,
+					err,
+				)
 			}
 
 			fresh := &multigresv1alpha1.TopoServer{}
-			if err := r.Get(t.Context(), key, fresh); err != nil {
-				t.Fatal(err)
-			}
+			c.Require().NoError(r.Get(t.Context(), key, fresh))
 			if fresh.Status.EtcdMaintenance == nil ||
 				fresh.Status.EtcdMaintenance.InProgress != tc.wantActive {
 				t.Errorf(
@@ -148,22 +134,19 @@ func TestReconcileRepairsMaintenanceDependencies(t *testing.T) {
 				)
 			}
 			after := &appsv1.StatefulSet{}
-			if err := r.Get(t.Context(), key, after); err != nil {
-				t.Fatal(err)
-			}
+			c.Require().NoError(r.Get(t.Context(), key, after))
 			if tc.wantActive {
-				if diff := cmp.Diff(before.Spec, after.Spec); diff != "" {
-					t.Errorf("StatefulSet changed during maintenance (-before +after):\n%s", diff)
-				}
+				c.EqDiff(before.Spec, after.Spec, "StatefulSet changed during maintenance")
 			} else if after.Spec.Template.Spec.Containers[0].Image != string(ts.Spec.Etcd.Image) {
 				t.Error("StatefulSet update did not resume after maintenance recovery")
 			}
-			if (connectionAttempts > 0) != (tc.age >= maintenanceTimeout) {
-				t.Errorf("maintenance connection attempts = %d", connectionAttempts)
-			}
-			if len(etcd.defragged) != 0 {
-				t.Error("recovery started another defragmentation")
-			}
+			c.Eq(
+				(tc.age >= maintenanceTimeout),
+				(connectionAttempts > 0),
+				"maintenance connection attempts = %d",
+				connectionAttempts,
+			)
+			c.Empty(etcd.defragged, "recovery started another defragmentation")
 		})
 	}
 }

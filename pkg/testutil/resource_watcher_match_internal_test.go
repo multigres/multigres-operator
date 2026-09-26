@@ -11,6 +11,8 @@ import (
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // mockTB implements testing.TB for capturing Fatal/Fatalf and Error/Errorf calls.
@@ -94,9 +96,7 @@ func TestWatchResource_Error(t *testing.T) {
 
 	watcher.watchResource(context.Background(), mockM, &corev1.Service{})
 
-	if !mockTB.fatalCalled {
-		t.Error("t.Fatalf was not called")
-	}
+	assert.NewCollecting(t).True(mockTB.fatalCalled, "t.Fatalf was not called")
 }
 
 // mockInformer implements eventHandlerRegistrar for testing.
@@ -141,14 +141,13 @@ func TestAddEventHandlerToInformer_Error(t *testing.T) {
 
 	watcher.addEventHandlerToInformer(mockInformer, "Service")
 
-	if !mockTB.fatalCalled {
-		t.Error("t.Fatalf was not called")
-	}
+	assert.NewCollecting(t).True(mockTB.fatalCalled, "t.Fatalf was not called")
 }
 
 // TestWaitForEvent_Match tests waitForEvent when predicate matches.
 func TestWaitForEvent_Match(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	ch := make(chan ResourceEvent, 1)
 
@@ -167,12 +166,8 @@ func TestWaitForEvent_Match(t *testing.T) {
 
 	watcher := &ResourceWatcher{t: t}
 	evt, err := watcher.waitForEvent(ch, deadline, predicate)
-	if err != nil {
-		t.Errorf("waitForEvent() error = %v, want nil", err)
-	}
-	if evt == nil || evt.Name != "test" {
-		t.Errorf("waitForEvent() evt.Name = %v, want test", evt)
-	}
+	c.NoError(err, "waitForEvent() error")
+	c.False(evt == nil || evt.Name != "test", "waitForEvent() evt.Name = %v, want test", evt)
 }
 
 // TestWaitForEvent_ChannelClosed tests waitForEvent when the channel is closed.
@@ -191,9 +186,7 @@ func TestWaitForEvent_ChannelClosed(t *testing.T) {
 	watcher := &ResourceWatcher{t: t}
 	_, err := watcher.waitForEvent(ch, deadline, predicate)
 
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("waitForEvent() error = %v, want context.Canceled", err)
-	}
+	assert.NewCollecting(t).ErrorIs(err, context.Canceled, "waitForEvent() error")
 }
 
 // TestWaitForEvent_NoMatch tests waitForEvent when predicate never matches.
@@ -218,9 +211,7 @@ func TestWaitForEvent_NoMatch(t *testing.T) {
 	watcher := &ResourceWatcher{t: t}
 	_, err := watcher.waitForEvent(ch, deadline, predicate)
 
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("waitForEvent() error = %v, want DeadlineExceeded", err)
-	}
+	assert.NewCollecting(t).ErrorIs(err, context.DeadlineExceeded, "waitForEvent() error")
 }
 
 // TestWaitForEvent_TimeoutEdgeCase tests the timeout logic in waitForEvent.
@@ -239,9 +230,8 @@ func TestWaitForEvent_TimeoutEdgeCase(t *testing.T) {
 	watcher := &ResourceWatcher{t: t}
 	_, err := watcher.waitForEvent(ch, deadline, predicate)
 
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("waitForEvent() with past deadline should return DeadlineExceeded, got: %v", err)
-	}
+	assert.NewCollecting(t).
+		ErrorIs(err, context.DeadlineExceeded, "waitForEvent() with past deadline should return DeadlineExceeded, got")
 }
 
 // TestWaitForEvent_TimeoutBoundary tests the timeout boundary condition.
@@ -266,9 +256,8 @@ func TestWaitForEvent_TimeoutBoundary(t *testing.T) {
 	watcher := &ResourceWatcher{t: t}
 	_, err := watcher.waitForEvent(ch, deadline, predicate)
 
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("waitForEvent() should timeout, got: %v", err)
-	}
+	assert.NewCollecting(t).
+		ErrorIs(err, context.DeadlineExceeded, "waitForEvent() should timeout, got")
 }
 
 // TestWaitForMatch_EmptySlice tests WaitForMatch with empty slice.
@@ -281,9 +270,7 @@ func TestWaitForMatch_EmptySlice(t *testing.T) {
 	}
 
 	err := watcher.WaitForMatch()
-	if err != nil {
-		t.Errorf("WaitForMatch() with empty slice should return nil, got: %v", err)
-	}
+	assert.NewCollecting(t).NoError(err, "WaitForMatch() with empty slice should return nil, got")
 }
 
 // TestExtractKind tests kind extraction from various object types.
@@ -309,9 +296,7 @@ func TestExtractKind(t *testing.T) {
 			t.Parallel()
 
 			got := extractKind(tc.obj)
-			if got != tc.want {
-				t.Errorf("extractKind() = %s, want %s", got, tc.want)
-			}
+			assert.NewCollecting(t).Eq(tc.want, got, "extractKind()")
 		})
 	}
 }
@@ -339,9 +324,7 @@ func TestExtractKind_NoPointer(t *testing.T) {
 			t.Parallel()
 
 			got := extractKind(tc.obj)
-			if got != tc.want {
-				t.Errorf("extractKind() = %s, want %s", got, tc.want)
-			}
+			assert.NewCollecting(t).Eq(tc.want, got, "extractKind()")
 		})
 	}
 }
@@ -353,9 +336,7 @@ func TestExtractKind_NoDot(t *testing.T) {
 	// Create a mock type that when formatted has no dot
 	// In practice, all client.Object types have packages, but we can test the fallback
 	kind := extractKind(&corev1.Node{})
-	if kind != "Node" {
-		t.Errorf("extractKind() = %s, want Node", kind)
-	}
+	assert.NewCollecting(t).Eq("Node", kind, "extractKind()")
 }
 
 // TestExtractKind_NonPointer tests extractKind fallback for type without leading *.
@@ -366,9 +347,7 @@ func TestExtractKind_NonPointer(t *testing.T) {
 	// by ensuring we handle types correctly
 	pod := corev1.Pod{}
 	kind := extractKind(&pod)
-	if kind != "Pod" {
-		t.Errorf("extractKind() = %s, want Pod", kind)
-	}
+	assert.NewCollecting(t).Eq("Pod", kind, "extractKind()")
 }
 
 // TestExtractKind_FallbackPath tests the final return when no dot is found.
@@ -387,8 +366,6 @@ func TestExtractKind_FallbackPath(t *testing.T) {
 
 	for _, tc := range tests {
 		got := extractKind(tc.obj)
-		if got != tc.want {
-			t.Errorf("extractKind(%T) = %s, want %s", tc.obj, got, tc.want)
-		}
+		assert.NewCollecting(t).Eq(tc.want, got, "extractKind(%T) = %s, want", tc.obj, got)
 	}
 }

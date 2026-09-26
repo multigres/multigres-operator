@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestResolveProjectRef(t *testing.T) {
@@ -40,9 +42,7 @@ func TestResolveProjectRef(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := metadata.ResolveProjectRef(tc.annotations, tc.clusterName)
-			if got != tc.want {
-				t.Fatalf("ResolveProjectRef() = %q, want %q", got, tc.want)
-			}
+			assert.NewAborting(t).Eq(tc.want, got, "ResolveProjectRef()")
 		})
 	}
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/multigres/multigres/go/common/consensus"
 	clustermetadata "github.com/multigres/multigres/go/pb/clustermetadata"
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -23,24 +22,28 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // Check every shared fixture and every sample consumed by the shared/dedicated
 // suites without starting Kubernetes. This tests resolved shard-wide capacity,
 // including template defaults and pool/cell placement, not replicas per pool.
 func TestE2EFixturesSupportBootstrap(t *testing.T) {
+	ck := assert.NewAborting(t)
 	root, err := repoRoot()
-	require.NoError(t, err)
+	ck.NoError(err)
 	scheme := runtime.NewScheme()
-	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
-	require.NoError(t, corev1.AddToScheme(scheme))
+	ck.NoError(multigresv1alpha1.AddToScheme(scheme))
+	ck.NoError(corev1.AddToScheme(scheme))
 	strict := serializer.NewCodecFactory(scheme, serializer.EnableStrict).UniversalDeserializer()
 	decode := func(t *testing.T, path string) []runtime.Object {
 		t.Helper()
+		c := assert.NewAborting(t)
 		data, err := os.ReadFile(
 			path,
 		) // #nosec G304 -- Only repository fixture paths enumerated below are read.
-		require.NoError(t, err)
+		c.NoError(err)
 		documents := utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(data), 4096)
 		var objects []runtime.Object
 		for {
@@ -48,13 +51,13 @@ func TestE2EFixturesSupportBootstrap(t *testing.T) {
 			if err := documents.Decode(&raw); err == io.EOF {
 				break
 			} else {
-				require.NoError(t, err)
+				c.NoError(err)
 			}
 			if len(raw.Raw) == 0 {
 				continue
 			}
 			object, _, err := strict.Decode(raw.Raw, nil, nil)
-			require.NoError(t, err, "%s must use current API fields", path)
+			c.NoError(err, "%s must use current API fields", path)
 			objects = append(objects, object)
 		}
 		return objects
@@ -62,30 +65,31 @@ func TestE2EFixturesSupportBootstrap(t *testing.T) {
 	var templates []client.Object
 	for _, directory := range []string{"test/e2e/fixtures/templates", "config/samples/templates"} {
 		paths, err := filepath.Glob(filepath.Join(root, directory, "*.yaml"))
-		require.NoError(t, err)
+		ck.NoError(err)
 		for _, path := range paths {
 			objects := decode(t, path)
-			require.Len(t, objects, 1)
+			ck.Len(objects, 1)
 			template := objects[0].(client.Object)
 			template.SetNamespace("test")
 			templates = append(templates, template)
 		}
 	}
 	paths, err := filepath.Glob(filepath.Join(root, "test/e2e/fixtures/*.yaml"))
-	require.NoError(t, err)
+	ck.NoError(err)
 	for _, sample := range []string{"minimal.yaml", "no-templates.yaml", "templated-cluster.yaml"} {
 		paths = append(paths, filepath.Join(root, "config/samples", sample))
 	}
 	for _, path := range paths {
 		relative, err := filepath.Rel(root, path)
-		require.NoError(t, err)
+		ck.NoError(err)
 		t.Run(relative, func(t *testing.T) {
+			ck := assert.NewAborting(t)
 			decode(t, path)
 			cluster := MustLoadCluster(relative, "test")
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(templates...).Build()
 			r := resolver.NewResolver(c, "test")
 			_, err = r.PopulateClusterDefaults(context.Background(), cluster)
-			require.NoError(t, err)
+			ck.NoError(err)
 			var cells []multigresv1alpha1.CellName
 			for _, cell := range cluster.Spec.Cells {
 				cells = append(cells, cell.Name)
@@ -96,9 +100,9 @@ func TestE2EFixturesSupportBootstrap(t *testing.T) {
 					policyName = cluster.Spec.DurabilityPolicy
 				}
 				policyProto, err := consensus.ParseUserSpecifiedDurabilityPolicy(policyName)
-				require.NoError(t, err)
+				ck.NoError(err)
 				policy, err := consensus.NewPolicyFromProto(policyProto)
-				require.NoError(t, err)
+				ck.NoError(err)
 				for _, group := range database.TableGroups {
 					for _, shard := range group.Shards {
 						if shard.ShardTemplate == "" {
@@ -111,7 +115,7 @@ func TestE2EFixturesSupportBootstrap(t *testing.T) {
 								AllCellNames: cells, MaterializeCellDefaults: true,
 							},
 						)
-						require.NoError(t, err)
+						ck.NoError(err)
 						var cohort []*clustermetadata.ID
 						for name, pool := range resolved.Pools {
 							for _, cell := range pool.Cells {
@@ -126,8 +130,7 @@ func TestE2EFixturesSupportBootstrap(t *testing.T) {
 								}
 							}
 						}
-						require.True(
-							t,
+						ck.True(
 							consensus.CohortSurvivesAnyMemberLoss(policy, cohort),
 							"%s/%s/%s: %d poolers cannot safely bootstrap %s",
 							database.Name,

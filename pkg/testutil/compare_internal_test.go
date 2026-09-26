@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestFilterByFieldName tests the filter function directly.
@@ -32,14 +34,8 @@ func TestFilterByFieldName(t *testing.T) {
 			t.Parallel()
 			filter := filterByFieldName(tc.fieldName)
 			got := filter(tc.path)
-			if got != tc.want {
-				t.Errorf(
-					"filterByFieldName(%s) with empty path = %v, want %v",
-					tc.fieldName,
-					got,
-					tc.want,
-				)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.want, got, "filterByFieldName(%s) with empty path = %v, want", tc.fieldName, got)
 		})
 	}
 }
@@ -64,7 +60,6 @@ func TestFilterByFieldName_Integration(t *testing.T) {
 
 	// Should match when ignoring Status
 	diff := cmp.Diff(svc1, svc2, IgnoreStatus())
-	if diff != "" {
-		t.Errorf("Services should match when ignoring Status, but found diff:\n%s", diff)
-	}
+	assert.NewCollecting(t).
+		Eq("", diff, "Services should match when ignoring Status, but found diff:\n")
 }

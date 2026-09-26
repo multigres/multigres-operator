@@ -13,6 +13,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestCheckDisruption(t *testing.T) {
@@ -235,9 +237,7 @@ func TestCheckDisruption(t *testing.T) {
 					Name: target, Unscheduled: tc.unscheduled,
 				},
 			)
-			if (err != nil) != tc.wantError {
-				t.Fatalf("CheckDisruption() = %v, wantError %v", err, tc.wantError)
-			}
+			assert.NewAborting(t).ErrorWhen(tc.wantError, err, "CheckDisruption()")
 		})
 	}
 }

@@ -7,17 +7,16 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestControllerManagerUsesNonOverlappingRollout(t *testing.T) {
+	c := assert.NewCollecting(t)
 	f, err := os.Open("manager.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(err)
 	defer func() {
-		if err := f.Close(); err != nil {
-			t.Errorf("close manager manifest: %v", err)
-		}
+		c.NoError(f.Close(), "close manager manifest")
 	}()
 
 	type manifest struct {
@@ -39,16 +38,11 @@ func TestControllerManagerUsesNonOverlappingRollout(t *testing.T) {
 		if resource.Kind != "Deployment" {
 			continue
 		}
-		if got := resource.Spec.Strategy["type"]; got != "Recreate" {
-			t.Fatalf("controller-manager strategy = %q, want Recreate", got)
-		}
+		got := resource.Spec.Strategy["type"]
+		c.Require().False(got != "Recreate", "controller-manager strategy = %q, want Recreate", got)
 		rollingUpdate, present := resource.Spec.Strategy["rollingUpdate"]
-		if !present {
-			t.Fatal("controller-manager strategy must explicitly clear rollingUpdate")
-		}
-		if rollingUpdate != nil {
-			t.Fatalf("controller-manager rollingUpdate = %#v, want null", rollingUpdate)
-		}
+		c.Require().True(present, "controller-manager strategy must explicitly clear rollingUpdate")
+		c.Require().Nil(rollingUpdate, "controller-manager rollingUpdate")
 		return
 	}
 

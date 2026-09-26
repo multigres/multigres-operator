@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr/testr"
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +17,8 @@ import (
 
 	"github.com/multigres/multigres-operator/pkg/gc"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 const (
@@ -60,19 +61,20 @@ func run(
 		opts.Retention = 30 * 24 * time.Hour
 	}
 	res, err := New(cl, testr.New(t), opts).Clean(context.Background())
-	require.NoError(t, err)
+	assert.NewAborting(t).NoError(err)
 	return res, cl
 }
 
 func parseNow(t *testing.T, s string) func() time.Time {
 	t.Helper()
 	ts, err := time.Parse(metadata.OrphanTimestampFormat, s)
-	require.NoError(t, err)
+	assert.NewAborting(t).NoError(err)
 	return func() time.Time { return ts }
 }
 
 func TestClean_DeletesExpiredOnly(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	res, cl := run(
 		t,
@@ -87,13 +89,13 @@ func TestClean_DeletesExpiredOnly(t *testing.T) {
 		),
 	)
 
-	require.Equal(t, ObjectKind, res.Kind)
-	require.Equal(t, 2, res.Scanned)
-	require.Equal(t, 1, res.Deleted)
-	require.Equal(t, 1, res.Skipped)
-	require.Zero(t, res.Errors+res.Malformed+res.WouldDelete)
+	c.EqDeep(ObjectKind, res.Kind)
+	c.EqDeep(2, res.Scanned)
+	c.EqDeep(1, res.Deleted)
+	c.EqDeep(1, res.Skipped)
+	c.Zero(res.Errors + res.Malformed + res.WouldDelete)
 
-	require.True(t, apierrors.IsNotFound(
+	c.True(apierrors.IsNotFound(
 		cl.Get(
 			context.Background(),
 			client.ObjectKey{Namespace: "ns1", Name: "old"},
@@ -104,28 +106,31 @@ func TestClean_DeletesExpiredOnly(t *testing.T) {
 
 func TestClean_DryRun(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	res, _ := run(t, gc.Options{DryRun: true}, interceptor.Funcs{},
 		pvc("old", orphanLabels(tsOld)),
 	)
 
-	require.Equal(t, 1, res.WouldDelete)
-	require.Zero(t, res.Deleted)
+	c.EqDeep(1, res.WouldDelete)
+	c.Zero(res.Deleted)
 }
 
 func TestClean_MalformedTimestamp(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	res, _ := run(t, gc.Options{}, interceptor.Funcs{},
 		pvc("bad", orphanLabels("not-a-timestamp")),
 	)
 
-	require.Equal(t, 1, res.Malformed)
-	require.Zero(t, res.Deleted)
+	c.EqDeep(1, res.Malformed)
+	c.Zero(res.Deleted)
 }
 
 func TestClean_NamespaceScope(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	a := pvc("a", orphanLabels(tsOld))
 	b := pvc("b", orphanLabels(tsOld))
@@ -133,12 +138,13 @@ func TestClean_NamespaceScope(t *testing.T) {
 
 	res, _ := run(t, gc.Options{Namespace: "ns1"}, interceptor.Funcs{}, a, b)
 
-	require.Equal(t, 1, res.Scanned)
-	require.Equal(t, 1, res.Deleted)
+	c.EqDeep(1, res.Scanned)
+	c.EqDeep(1, res.Deleted)
 }
 
 func TestClean_DeleteErrorCounted(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	boom := errors.New("api server unavailable")
 	res, _ := run(t, gc.Options{}, interceptor.Funcs{
@@ -147,8 +153,8 @@ func TestClean_DeleteErrorCounted(t *testing.T) {
 		},
 	}, pvc("old", orphanLabels(tsOld)))
 
-	require.Equal(t, 1, res.Errors)
-	require.Zero(t, res.Deleted)
+	ck.EqDeep(1, res.Errors)
+	ck.Zero(res.Deleted)
 }
 
 func TestClean_NotFoundIsNotError(t *testing.T) {
@@ -160,21 +166,22 @@ func TestClean_NotFoundIsNotError(t *testing.T) {
 		},
 	}, pvc("old", orphanLabels(tsOld)))
 
-	require.Zero(t, res.Errors)
+	assert.NewAborting(t).Zero(res.Errors)
 }
 
 // Pinpoint regression: a PVC orphaned later in the day must NOT be deleted
 // until a full retention has elapsed from that exact timestamp.
 func TestClean_SameDayPrecision(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	res, _ := run(t, gc.Options{
 		Retention: 30 * 24 * time.Hour,
 		Now:       parseNow(t, "2026-05-15T12-00-00Z"),
 	}, interceptor.Funcs{}, pvc("borderline", orphanLabels("2026-04-15T18-00-00Z")))
 
-	require.Equal(t, 1, res.Skipped)
-	require.Zero(t, res.Deleted)
+	c.EqDeep(1, res.Skipped)
+	c.Zero(res.Deleted)
 }
 
 // Static check that *Cleankeeper satisfies gc.Cleankeeper.

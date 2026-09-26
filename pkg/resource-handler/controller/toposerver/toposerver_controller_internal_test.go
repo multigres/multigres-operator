@@ -20,6 +20,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestReconcileStatefulSet_InvalidScheme tests the error path when BuildStatefulSet fails.
@@ -48,9 +50,7 @@ func TestReconcileStatefulSet_InvalidScheme(t *testing.T) {
 	}
 
 	err := reconciler.reconcileStatefulSet(context.Background(), toposerver)
-	if err == nil {
-		t.Error("reconcileStatefulSet() should error with invalid scheme")
-	}
+	assert.NewCollecting(t).Error(err, "reconcileStatefulSet() should error with invalid scheme")
 }
 
 // TestReconcileHeadlessService_InvalidScheme tests the error path when BuildHeadlessService fails.
@@ -76,9 +76,8 @@ func TestReconcileHeadlessService_InvalidScheme(t *testing.T) {
 	}
 
 	err := reconciler.reconcileHeadlessService(context.Background(), toposerver)
-	if err == nil {
-		t.Error("reconcileHeadlessService() should error with invalid scheme")
-	}
+	assert.NewCollecting(t).
+		Error(err, "reconcileHeadlessService() should error with invalid scheme")
 }
 
 // TestReconcileClientService_InvalidScheme tests the error path when BuildClientService fails.
@@ -104,9 +103,7 @@ func TestReconcileClientService_InvalidScheme(t *testing.T) {
 	}
 
 	err := reconciler.reconcileClientService(context.Background(), toposerver)
-	if err == nil {
-		t.Error("reconcileClientService() should error with invalid scheme")
-	}
+	assert.NewCollecting(t).Error(err, "reconcileClientService() should error with invalid scheme")
 }
 
 // TestUpdateStatus_StatefulSetNotFound tests the NotFound path in updateStatus.
@@ -137,9 +134,8 @@ func TestUpdateStatus_StatefulSetNotFound(t *testing.T) {
 
 	// Call updateStatus when StatefulSet doesn't exist yet
 	err := reconciler.updateStatus(context.Background(), toposerver)
-	if err != nil {
-		t.Errorf("updateStatus() should not error when StatefulSet not found, got: %v", err)
-	}
+	assert.NewCollecting(t).
+		NoError(err, "updateStatus() should not error when StatefulSet not found, got")
 }
 
 // TestReconcileClientService_PatchError tests error path on Patch client Service.
@@ -179,9 +175,7 @@ func TestReconcileClientService_PatchError(t *testing.T) {
 	}
 
 	err := reconciler.reconcileClientService(context.Background(), toposerver)
-	if err == nil {
-		t.Error("reconcileClientService() should error on Patch failure")
-	}
+	assert.NewCollecting(t).Error(err, "reconcileClientService() should error on Patch failure")
 }
 
 // TestUpdateStatus_GetError tests error path on Get StatefulSet (not NotFound).
@@ -215,9 +209,7 @@ func TestUpdateStatus_GetError(t *testing.T) {
 	}
 
 	err := reconciler.updateStatus(context.Background(), toposerver)
-	if err == nil {
-		t.Error("updateStatus() should error on Get failure")
-	}
+	assert.NewCollecting(t).Error(err, "updateStatus() should error on Get failure")
 }
 
 // TestSetupWithManager tests the manager setup function.
@@ -235,25 +227,23 @@ func TestSetupWithManager(t *testing.T) {
 			Scheme:  scheme,
 			Metrics: metricsserver.Options{BindAddress: "0"},
 		})
-		if err != nil {
-			t.Fatalf("Failed to create manager: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "Failed to create manager")
 		return mgr
 	}
 
 	t.Run("default options", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		mgr := createMgr()
 		r := &TopoServerReconciler{
 			Client:   mgr.GetClient(),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
-		if err := r.SetupWithManager(mgr); err != nil {
-			t.Errorf("SetupWithManager() error = %v", err)
-		}
-		if r.APIReader != mgr.GetAPIReader() {
-			t.Error("maintenance must use the manager's uncached API reader")
-		}
+		c.NoError(r.SetupWithManager(mgr), "SetupWithManager() error =")
+		c.False(
+			r.APIReader != mgr.GetAPIReader(),
+			"maintenance must use the manager's uncached API reader",
+		)
 	})
 
 	t.Run("with options", func(t *testing.T) {
@@ -263,12 +253,10 @@ func TestSetupWithManager(t *testing.T) {
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
-		if err := r.SetupWithManager(mgr, controller.Options{
+		assert.NewCollecting(t).NoError(r.SetupWithManager(mgr, controller.Options{
 			MaxConcurrentReconciles: 1,
 			SkipNameValidation:      ptr.To(true),
-		}); err != nil {
-			t.Errorf("SetupWithManager() with opts error = %v", err)
-		}
+		}), "SetupWithManager() with opts error =")
 	})
 
 	for name, reader := range map[string]client.Reader{
@@ -276,6 +264,7 @@ func TestSetupWithManager(t *testing.T) {
 		"shared setup preserves injected reader":   fake.NewClientBuilder().WithScheme(scheme).Build(),
 	} {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			mgr := createMgr()
 			r := &TopoServerReconciler{
 				Client:    mgr.GetClient(),
@@ -283,23 +272,20 @@ func TestSetupWithManager(t *testing.T) {
 				Scheme:    scheme,
 				Recorder:  record.NewFakeRecorder(100),
 			}
-			if err := r.SetupWithManagerReconciler(mgr, r, controller.Options{
+			c.Require().NoError(r.SetupWithManagerReconciler(mgr, r, controller.Options{
 				SkipNameValidation: ptr.To(true),
-			}); err != nil {
-				t.Fatalf("SetupWithManagerReconciler() error = %v", err)
-			}
+			}), "SetupWithManagerReconciler() error =")
 			want := reader
 			if want == nil {
 				want = mgr.GetAPIReader()
 			}
-			if r.APIReader != want {
-				t.Error("shared setup selected the wrong maintenance reader")
-			}
+			c.False(r.APIReader != want, "shared setup selected the wrong maintenance reader")
 		})
 	}
 }
 
 func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -356,10 +342,7 @@ func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	if err := reconciler.updateStatus(context.Background(), toposerver); err != nil {
-		t.Fatalf("updateStatus() unexpected error: %v", err)
-	}
-	if toposerver.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("expected PhaseDegraded, got %q", toposerver.Status.Phase)
-	}
+	c.Require().
+		NoError(reconciler.updateStatus(context.Background(), toposerver), "updateStatus() unexpected error")
+	c.Eq(multigresv1alpha1.PhaseDegraded, toposerver.Status.Phase, "expected PhaseDegraded, got")
 }

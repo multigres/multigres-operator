@@ -3,7 +3,6 @@ package shard
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +13,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildMultiorchDeployment(t *testing.T) {
@@ -626,9 +627,7 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 				return
 			}
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildMultiorchDeployment() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildMultiorchDeployment() mismatch")
 		})
 	}
 }
@@ -654,6 +653,7 @@ func TestBuildMultiorchDeployment_ProjectRefAnnotation(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			shard := &multigresv1alpha1.Shard{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:        "test-shard",
@@ -678,9 +678,7 @@ func TestBuildMultiorchDeployment_ProjectRefAnnotation(t *testing.T) {
 			}
 
 			deploy, err := BuildMultiorchDeployment(shard, "zone-a", scheme)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			c.NoError(err, "unexpected error")
 
 			if got := deploy.Spec.Template.Annotations[metadata.AnnotationProjectRef]; got != tc.want {
 				t.Fatalf("annotation %q = %q, want %q", metadata.AnnotationProjectRef, got, tc.want)
@@ -692,15 +690,15 @@ func TestBuildMultiorchDeployment_ProjectRefAnnotation(t *testing.T) {
 				metadata.LabelAppManagedBy: metadata.ManagedByMultigres,
 			}
 			for key, want := range assertedLabels {
-				if got := deploy.Spec.Template.Labels[key]; got != want {
-					t.Fatalf("label %q = %q, want %q", key, got, want)
-				}
+				got := deploy.Spec.Template.Labels[key]
+				c.Eq(want, got, "label %q = %q, want", key, got)
 			}
 		})
 	}
 }
 
 func TestBuildMultiorchDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T) {
+	c := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -735,9 +733,7 @@ func TestBuildMultiorchDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T)
 	}
 
 	deploy, err := BuildMultiorchDeployment(shard, "zone-a", scheme)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.NoError(err, "unexpected error")
 
 	if _, ok := deploy.Spec.Template.Annotations[metadata.AnnotationPrometheusScrape]; ok {
 		t.Fatalf("annotation %q should be omitted", metadata.AnnotationPrometheusScrape)
@@ -748,12 +744,11 @@ func TestBuildMultiorchDeployment_OmitsPrometheusScrapeAnnotations(t *testing.T)
 	if _, ok := deploy.Spec.Template.Annotations[metadata.AnnotationPrometheusPath]; ok {
 		t.Fatalf("annotation %q should be omitted", metadata.AnnotationPrometheusPath)
 	}
-	if got := deploy.Spec.Template.Annotations["custom-annotation"]; got != "keep-me" {
-		t.Fatalf("custom annotation = %q, want %q", got, "keep-me")
-	}
+	c.Eq("keep-me", deploy.Spec.Template.Annotations["custom-annotation"], "custom annotation")
 }
 
 func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -777,9 +772,7 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 	}
 
 	got, err := BuildMultiorchDeployment(shard, "zone-a", scheme)
-	if err != nil {
-		t.Fatalf("BuildMultiorchDeployment() error = %v", err)
-	}
+	c.Require().NoError(err, "BuildMultiorchDeployment() error =")
 
 	found := false
 	for _, v := range got.Spec.Template.Spec.Volumes {
@@ -787,17 +780,9 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 			continue
 		}
 		found = true
-		if v.Secret == nil {
-			t.Fatal("shard TLS volume should use Secret source")
-		}
+		c.Require().NotNil(v.Secret, "shard TLS volume should use Secret source")
 		wantSecretName := "multiorch.test-cluster.default.multigres.internal" //nolint:gosec // test constant
-		if v.Secret.SecretName != wantSecretName {
-			t.Errorf(
-				"shard TLS secret = %q, want internal secret %q",
-				v.Secret.SecretName,
-				wantSecretName,
-			)
-		}
+		c.Eq(wantSecretName, v.Secret.SecretName, "shard TLS secret")
 		if v.Secret.DefaultMode == nil || *v.Secret.DefaultMode != 0o444 {
 			t.Errorf(
 				"shard TLS secret defaultMode = %v, want 0444",
@@ -805,9 +790,7 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 			)
 		}
 	}
-	if !found {
-		t.Error("expected internal multiorch TLS volume when internal TLS is enabled")
-	}
+	c.True(found, "expected internal multiorch TLS volume when internal TLS is enabled")
 
 	for _, tc := range []struct {
 		name        string
@@ -820,20 +803,19 @@ func TestBuildMultiorchDeployment_ShardTLSVolume(t *testing.T) {
 		},
 	} {
 		t.Run("absent when "+tc.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			disabledShard := shard.DeepCopy()
 			disabledShard.Spec.InternalTLS = tc.internalTLS
 
 			disabled, err := BuildMultiorchDeployment(disabledShard, "zone-a", scheme)
-			if err != nil {
-				t.Fatalf("BuildMultiorchDeployment() error = %v", err)
-			}
+			c.Require().NoError(err, "BuildMultiorchDeployment() error =")
 			for _, volume := range disabled.Spec.Template.Spec.Volumes {
-				if volume.Name == ShardTLSVolumeName {
-					t.Errorf(
-						"internal TLS volume should be absent for config %+v",
-						tc.internalTLS,
-					)
-				}
+				c.NotEq(
+					ShardTLSVolumeName,
+					volume.Name,
+					"internal TLS volume should be absent for config %+v",
+					tc.internalTLS,
+				)
 			}
 		})
 	}
@@ -1028,9 +1010,7 @@ func TestBuildMultiorchService(t *testing.T) {
 				return
 			}
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildMultiorchService() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildMultiorchService() mismatch")
 		})
 	}
 }

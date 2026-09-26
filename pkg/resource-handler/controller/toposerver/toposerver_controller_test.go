@@ -20,6 +20,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestTopoServerReconciler_Reconcile(t *testing.T) {
@@ -51,43 +53,30 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 			existingObjects: []client.Object{},
 			wantRequeue:     true,
 			assertFunc: func(t *testing.T, c client.Client, toposerver *multigresv1alpha1.TopoServer) {
+				ck := assert.NewCollecting(t)
 				// Verify all workload, disruption, and service resources were created.
 				sts := &appsv1.StatefulSet{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-toposerver", Namespace: "default"},
-					sts); err != nil {
-					t.Errorf("StatefulSet should exist: %v", err)
-				}
+					sts), "StatefulSet should exist")
 
 				pdb := &policyv1.PodDisruptionBudget{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-toposerver", Namespace: "default"},
-					pdb); err != nil {
-					t.Errorf("PodDisruptionBudget should exist: %v", err)
-				}
+					pdb), "PodDisruptionBudget should exist")
 
 				headlessSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-toposerver-headless", Namespace: "default"},
-					headlessSvc); err != nil {
-					t.Errorf("Headless Service should exist: %v", err)
-				}
+					headlessSvc), "Headless Service should exist")
 
 				clientSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-toposerver", Namespace: "default"},
-					clientSvc); err != nil {
-					t.Errorf("Client Service should exist: %v", err)
-				}
+					clientSvc), "Client Service should exist")
 
 				// Verify defaults
-				if *sts.Spec.Replicas != int32(3) {
-					t.Errorf(
-						"StatefulSet replicas = %d, want %d",
-						*sts.Spec.Replicas,
-						int32(3),
-					)
-				}
+				ck.Eq(int32(3), *sts.Spec.Replicas, "StatefulSet replicas")
 			},
 		},
 		"update existing resources": {
@@ -134,25 +123,21 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 				},
 			},
 			assertFunc: func(t *testing.T, c client.Client, toposerver *multigresv1alpha1.TopoServer) {
+				ck := assert.NewCollecting(t)
 				sts := &appsv1.StatefulSet{}
 				err := c.Get(t.Context(), types.NamespacedName{
 					Name:      "existing-toposerver",
 					Namespace: "default",
 				}, sts)
-				if err != nil {
-					t.Fatalf("Failed to get StatefulSet: %v", err)
-				}
+				ck.Require().NoError(err, "Failed to get StatefulSet")
 
-				if *sts.Spec.Replicas != 5 {
-					t.Errorf("StatefulSet replicas = %d, want 5", *sts.Spec.Replicas)
-				}
+				ck.Eq(5, *sts.Spec.Replicas, "StatefulSet replicas")
 
-				if sts.Spec.Template.Spec.Containers[0].Image != "quay.io/coreos/etcd:v3.5.15" {
-					t.Errorf(
-						"StatefulSet image = %s, want quay.io/coreos/etcd:v3.5.15",
-						sts.Spec.Template.Spec.Containers[0].Image,
-					)
-				}
+				ck.Eq(
+					"quay.io/coreos/etcd:v3.5.15",
+					sts.Spec.Template.Spec.Containers[0].Image,
+					"StatefulSet image",
+				)
 			},
 		},
 
@@ -180,9 +165,8 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 				err := c.Get(t.Context(),
 					types.NamespacedName{Name: "test-missing-sc", Namespace: "default"},
 					sts)
-				if err == nil {
-					t.Error("StatefulSet should not exist when StorageClass is missing")
-				}
+				assert.NewCollecting(t).
+					Error(err, "StatefulSet should not exist when StorageClass is missing")
 			},
 		},
 		"existing StorageClass proceeds normally and creates StatefulSet": {
@@ -207,11 +191,9 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 			wantRequeue: true,
 			assertFunc: func(t *testing.T, c client.Client, toposerver *multigresv1alpha1.TopoServer) {
 				sts := &appsv1.StatefulSet{}
-				if err := c.Get(t.Context(),
+				assert.NewCollecting(t).NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-existing-sc", Namespace: "default"},
-					sts); err != nil {
-					t.Errorf("StatefulSet should exist when StorageClass is present: %v", err)
-				}
+					sts), "StatefulSet should exist when StorageClass is present")
 			},
 		},
 		"immediate StorageClass requeues without creating StatefulSet": {
@@ -237,9 +219,8 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 			assertFunc: func(t *testing.T, c client.Client, toposerver *multigresv1alpha1.TopoServer) {
 				sts := &appsv1.StatefulSet{}
 				err := c.Get(t.Context(), client.ObjectKeyFromObject(toposerver), sts)
-				if err == nil {
-					t.Error("StatefulSet should not exist with immediate volume binding")
-				}
+				assert.NewCollecting(t).
+					Error(err, "StatefulSet should not exist with immediate volume binding")
 			},
 		},
 
@@ -367,6 +348,7 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			// Fake clients register unstructured certificate types lazily. Each
 			// parallel subtest must own its scheme to avoid concurrent mutation.
@@ -408,9 +390,7 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 			}
 			if !toposerverInExisting {
 				err := fakeClient.Create(t.Context(), tc.toposerver)
-				if err != nil {
-					t.Fatalf("Failed to create TopoServer: %v", err)
-				}
+				c.Require().NoError(err, "Failed to create TopoServer")
 			}
 
 			// Reconcile
@@ -430,13 +410,12 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 				return
 			}
 
-			if (result.RequeueAfter != 0) != tc.wantRequeue {
-				t.Errorf(
-					"Reconcile() requeue = %v, want requeue = %v",
-					result.RequeueAfter,
-					tc.wantRequeue,
-				)
-			}
+			c.Eq(
+				tc.wantRequeue,
+				(result.RequeueAfter != 0),
+				"Reconcile() requeue = %v, want requeue =",
+				result.RequeueAfter,
+			)
 
 			// Run custom assertions if provided
 			if tc.assertFunc != nil {
@@ -447,6 +426,7 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 }
 
 func TestTopoServerReconciler_ReconcileNotFound(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -473,12 +453,8 @@ func TestTopoServerReconciler_ReconcileNotFound(t *testing.T) {
 	}
 
 	result, err := reconciler.Reconcile(t.Context(), req)
-	if err != nil {
-		t.Errorf("Reconcile() should not error on NotFound, got: %v", err)
-	}
-	if result.RequeueAfter > 0 {
-		t.Errorf("Reconcile() should not requeue on NotFound")
-	}
+	c.NoError(err, "Reconcile() should not error on NotFound, got")
+	c.LessOrEqual(0, result.RequeueAfter, "Reconcile() should not requeue on NotFound")
 }
 
 func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
@@ -490,6 +466,7 @@ func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
 	_ = storagev1.AddToScheme(scheme)
 
 	t.Run("all_replicas_ready_status", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		toposerver := &multigresv1alpha1.TopoServer{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-toposerver-ready",
@@ -530,29 +507,21 @@ func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.updateStatus(t.Context(), toposerver); err != nil {
-			t.Fatalf("updateStatus failed: %v", err)
-		}
+		c.Require().NoError(r.updateStatus(t.Context(), toposerver), "updateStatus failed")
 
 		updatedTopoServer := &multigresv1alpha1.TopoServer{}
-		if err := fakeClient.Get(
+		c.Require().NoError(fakeClient.Get(
 			t.Context(),
 			client.ObjectKeyFromObject(toposerver),
 			updatedTopoServer,
-		); err != nil {
-			t.Fatalf("Failed to get TopoServer: %v", err)
-		}
+		), "Failed to get TopoServer")
 
 		if len(updatedTopoServer.Status.Conditions) == 0 {
 			t.Error("Status.Conditions should not be empty")
 		} else {
 			readyCondition := updatedTopoServer.Status.Conditions[0]
-			if readyCondition.Type != "Ready" {
-				t.Errorf("Condition type = %s, want Ready", readyCondition.Type)
-			}
-			if readyCondition.Status != metav1.ConditionTrue {
-				t.Errorf("Condition status = %s, want True", readyCondition.Status)
-			}
+			c.Eq("Ready", readyCondition.Type, "Condition type")
+			c.Eq(metav1.ConditionTrue, readyCondition.Status, "Condition status")
 		}
 	})
 
@@ -582,9 +551,8 @@ func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.updateStatus(t.Context(), toposerver); err != nil {
-			t.Fatalf("updateStatus failed: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(r.updateStatus(t.Context(), toposerver), "updateStatus failed")
 		toposerverUpdated := &multigresv1alpha1.TopoServer{}
 		_ = fakeClient.Get(t.Context(), client.ObjectKeyFromObject(toposerver), toposerverUpdated)
 		if len(toposerverUpdated.Status.Conditions) > 0 &&
@@ -609,6 +577,7 @@ func TestTopoServerReconciler_FieldOwnershipIsolation(t *testing.T) {
 
 	t.Run("updateStatus patch contains exactly one condition (Ready)", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 
 		ts := &multigresv1alpha1.TopoServer{
 			ObjectMeta: metav1.ObjectMeta{
@@ -656,29 +625,26 @@ func TestTopoServerReconciler_FieldOwnershipIsolation(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.updateStatus(t.Context(), ts); err != nil {
-			t.Fatalf("updateStatus: %v", err)
-		}
+		c.NoError(r.updateStatus(t.Context(), ts), "updateStatus")
 
 		patchTS, ok := capturedPatchObj.(*multigresv1alpha1.TopoServer)
-		if !ok {
-			t.Fatalf("expected *TopoServer patch, got %T", capturedPatchObj)
-		}
+		c.True(ok, "expected *TopoServer patch, got %T", capturedPatchObj)
 
 		// Exactly one condition: Ready.
-		if len(patchTS.Status.Conditions) != 1 {
-			t.Fatalf("updateStatus patch must contain exactly 1 condition, got %d: %v",
-				len(patchTS.Status.Conditions), patchTS.Status.Conditions)
-		}
-		if patchTS.Status.Conditions[0].Type != "Ready" {
-			t.Fatalf("expected Ready condition, got %s", patchTS.Status.Conditions[0].Type)
-		}
+		c.Len(
+			patchTS.Status.Conditions,
+			1,
+			"updateStatus patch must contain exactly 1 condition, got %d",
+			len(patchTS.Status.Conditions),
+		)
+		c.Eq("Ready", patchTS.Status.Conditions[0].Type, "expected Ready condition, got")
 	})
 
 	t.Run(
 		"guard patch contains exactly one condition (StorageClassValid) and no other status fields",
 		func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewAborting(t)
 
 			ts := &multigresv1alpha1.TopoServer{
 				ObjectMeta: metav1.ObjectMeta{
@@ -718,50 +684,34 @@ func TestTopoServerReconciler_FieldOwnershipIsolation(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			if err := r.validateEtcdStorageClassDependency(t.Context(), ts); err != nil {
-				t.Fatalf("guard: %v", err)
-			}
+			c.NoError(r.validateEtcdStorageClassDependency(t.Context(), ts), "guard")
 
 			patchTS, ok := capturedPatchObj.(*multigresv1alpha1.TopoServer)
-			if !ok {
-				t.Fatalf("expected *TopoServer patch, got %T", capturedPatchObj)
-			}
+			c.True(ok, "expected *TopoServer patch, got %T", capturedPatchObj)
 
 			// Exactly one condition: StorageClassValid.
-			if len(patchTS.Status.Conditions) != 1 {
-				t.Fatalf("guard patch must contain exactly 1 condition, got %d: %v",
-					len(patchTS.Status.Conditions), patchTS.Status.Conditions)
-			}
+			c.Len(
+				patchTS.Status.Conditions,
+				1,
+				"guard patch must contain exactly 1 condition, got %d",
+				len(patchTS.Status.Conditions),
+			)
 			scCond := &patchTS.Status.Conditions[0]
-			if scCond.Type != conditionStorageClassValid {
-				t.Fatalf("expected %s condition, got %s", conditionStorageClassValid, scCond.Type)
-			}
+			c.Eq(conditionStorageClassValid, scCond.Type, "expected")
 			if scCond.Status != metav1.ConditionTrue || scCond.Reason != storageClassReadyReason {
 				t.Fatalf("unexpected condition: status=%s reason=%s", scCond.Status, scCond.Reason)
 			}
 
 			// No other status fields should be set in the guard patch.
-			if patchTS.Status.Phase != "" {
-				t.Fatalf("guard patch must not set Phase, got %q", patchTS.Status.Phase)
-			}
-			if patchTS.Status.Message != "" {
-				t.Fatalf("guard patch must not set Message, got %q", patchTS.Status.Message)
-			}
-			if patchTS.Status.ClientService != "" {
-				t.Fatalf(
-					"guard patch must not set ClientService, got %q",
-					patchTS.Status.ClientService,
-				)
-			}
-			if patchTS.Status.PeerService != "" {
-				t.Fatalf("guard patch must not set PeerService, got %q", patchTS.Status.PeerService)
-			}
-			if patchTS.Status.ObservedGeneration != 0 {
-				t.Fatalf(
-					"guard patch must not set ObservedGeneration, got %d",
-					patchTS.Status.ObservedGeneration,
-				)
-			}
+			c.Eq("", patchTS.Status.Phase, "guard patch must not set Phase, got")
+			c.Eq("", patchTS.Status.Message, "guard patch must not set Message, got")
+			c.Eq("", patchTS.Status.ClientService, "guard patch must not set ClientService, got")
+			c.Eq("", patchTS.Status.PeerService, "guard patch must not set PeerService, got")
+			c.Eq(
+				0,
+				patchTS.Status.ObservedGeneration,
+				"guard patch must not set ObservedGeneration, got",
+			)
 		},
 	)
 }
@@ -775,6 +725,7 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 	_ = storagev1.AddToScheme(scheme)
 
 	t.Run("ignore_deleted", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		toposerver := &multigresv1alpha1.TopoServer{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-deleted",
@@ -784,9 +735,7 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver).Build()
 		// Now delete it so DeletionTimestamp is set
-		if err := fakeClient.Delete(t.Context(), toposerver); err != nil {
-			t.Fatalf("failed to delete: %v", err)
-		}
+		c.NoError(fakeClient.Delete(t.Context(), toposerver), "failed to delete")
 
 		r := &TopoServerReconciler{
 			Client:   fakeClient,
@@ -799,15 +748,12 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 				NamespacedName: types.NamespacedName{Name: "test-deleted", Namespace: "default"},
 			},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if res.RequeueAfter != 0 {
-			t.Fatalf("expected no requeue")
-		}
+		c.NoError(err, "unexpected error")
+		c.Eq(0, res.RequeueAfter, "expected no requeue")
 	})
 
 	t.Run("healthy_phase", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		toposerver := &multigresv1alpha1.TopoServer{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-healthy",
@@ -820,9 +766,7 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 
 		// Build the exact STS and Pods needed so reconcile reaches healthy phase.
 		sts, err := BuildStatefulSet(toposerver, scheme)
-		if err != nil {
-			t.Fatalf("failed to build sts: %v", err)
-		}
+		c.NoError(err, "failed to build sts")
 		sts.Generation = 1
 		sts.Status = appsv1.StatefulSetStatus{
 			Replicas:           *sts.Spec.Replicas,
@@ -867,17 +811,19 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 				NamespacedName: types.NamespacedName{Name: "test-healthy", Namespace: "default"},
 			},
 		)
-		if reconcileErr != nil {
-			t.Fatalf("unexpected error: %v", reconcileErr)
-		}
+		c.NoError(reconcileErr, "unexpected error")
 
 		updatedTopo := &multigresv1alpha1.TopoServer{}
 		_ = fakeClient.Get(t.Context(), client.ObjectKeyFromObject(toposerver), updatedTopo)
 
-		if res.RequeueAfter != 0 {
-			t.Fatalf("expected no requeue, but got requeueAfter %v, phase is %s, msg is %s",
-				res.RequeueAfter, updatedTopo.Status.Phase, updatedTopo.Status.Message)
-		}
+		c.Eq(
+			0,
+			res.RequeueAfter,
+			"expected no requeue, but got requeueAfter %v, phase is %s, msg is %s",
+			res.RequeueAfter,
+			updatedTopo.Status.Phase,
+			updatedTopo.Status.Message,
+		)
 	})
 
 	t.Run("list_error_in_updateStatus", func(t *testing.T) {
@@ -914,9 +860,10 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 				NamespacedName: types.NamespacedName{Name: "test-list-err", Namespace: "default"},
 			},
 		)
-		if reconcileErr == nil ||
-			!strings.Contains(reconcileErr.Error(), "failed to list toposerver pods") {
-			t.Fatalf("expected list pods error, got %v", reconcileErr)
-		}
+		assert.NewAborting(t).False(reconcileErr == nil ||
+			!strings.Contains(
+				reconcileErr.Error(),
+				"failed to list toposerver pods",
+			), "expected list pods error, got %v", reconcileErr)
 	})
 }

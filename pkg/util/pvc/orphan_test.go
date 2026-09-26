@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -15,6 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 const (
@@ -46,51 +47,55 @@ func newClient(t *testing.T, objs ...client.Object) client.Client {
 
 func TestMarkOrphan_AddsLabelAndStripsOwnerRef(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	pvc := newPVC("a", shardUID, otherUID)
 	c := newClient(t, pvc)
 	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
 
-	require.NoError(t, MarkOrphan(context.Background(), c, pvc, shardUID, now))
+	ck.NoError(MarkOrphan(context.Background(), c, pvc, shardUID, now))
 
 	got := &corev1.PersistentVolumeClaim{}
-	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
-	require.Equal(t, "2026-05-19T12-00-00Z", got.Labels[metadata.LabelOrphan])
-	require.Len(t, got.OwnerReferences, 1)
-	require.Equal(t, otherUID, got.OwnerReferences[0].UID)
+	ck.NoError(c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
+	ck.EqDeep("2026-05-19T12-00-00Z", got.Labels[metadata.LabelOrphan])
+	ck.Len(got.OwnerReferences, 1)
+	ck.EqDeep(otherUID, got.OwnerReferences[0].UID)
 }
 
 func TestMarkOrphan_Idempotent(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	pvc := newPVC("a")
 	pvc.Labels = map[string]string{metadata.LabelOrphan: "2026-05-01T00-00-00Z"}
 	c := newClient(t, pvc)
 	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
 
-	require.NoError(t, MarkOrphan(context.Background(), c, pvc, "", now))
+	ck.NoError(MarkOrphan(context.Background(), c, pvc, "", now))
 
 	got := &corev1.PersistentVolumeClaim{}
-	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
+	ck.NoError(c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
 	// Existing label preserved — retention is measured from the original event.
-	require.Equal(t, "2026-05-01T00-00-00Z", got.Labels[metadata.LabelOrphan])
+	ck.EqDeep("2026-05-01T00-00-00Z", got.Labels[metadata.LabelOrphan])
 }
 
 func TestMarkOrphan_NoOwnerUIDLeavesRefs(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	pvc := newPVC("a", shardUID)
 	c := newClient(t, pvc)
 
-	require.NoError(t, MarkOrphan(context.Background(), c, pvc, "", time.Now()))
+	ck.NoError(MarkOrphan(context.Background(), c, pvc, "", time.Now()))
 
 	got := &corev1.PersistentVolumeClaim{}
-	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
-	require.Len(t, got.OwnerReferences, 1)
+	ck.NoError(c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
+	ck.Len(got.OwnerReferences, 1)
 }
 
 func TestClearOrphan_RemovesLabel(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	logger := logr.Discard()
 	pvc := newPVC("a")
@@ -100,38 +105,40 @@ func TestClearOrphan_RemovesLabel(t *testing.T) {
 	}
 	c := newClient(t, pvc)
 
-	require.NoError(t, ClearOrphan(context.Background(), logger, c, pvc))
+	ck.NoError(ClearOrphan(context.Background(), logger, c, pvc))
 
 	got := &corev1.PersistentVolumeClaim{}
-	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
+	ck.NoError(c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
 	_, hasOrphan := got.Labels[metadata.LabelOrphan]
-	require.False(t, hasOrphan)
+	ck.False(hasOrphan)
 	// other labels should remain untouched.
-	require.Equal(t, metadata.ManagedByMultigres, got.Labels[metadata.LabelAppManagedBy])
+	ck.EqDeep(metadata.ManagedByMultigres, got.Labels[metadata.LabelAppManagedBy])
 }
 
 func TestClearOrphan_NoLabelIsNoOp(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 
 	logger := logr.Discard()
 	pvc := newPVC("a")
 	pvc.Labels = map[string]string{metadata.LabelAppManagedBy: metadata.ManagedByMultigres}
 	c := newClient(t, pvc)
 
-	require.NoError(t, ClearOrphan(context.Background(), logger, c, pvc))
+	ck.NoError(ClearOrphan(context.Background(), logger, c, pvc))
 
 	got := &corev1.PersistentVolumeClaim{}
-	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
-	require.Equal(t, metadata.ManagedByMultigres, got.Labels[metadata.LabelAppManagedBy])
+	ck.NoError(c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got))
+	ck.EqDeep(metadata.ManagedByMultigres, got.Labels[metadata.LabelAppManagedBy])
 }
 
 func TestHasOrphanLabel(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
-	require.False(t, HasOrphanLabel(nil))
-	require.False(t, HasOrphanLabel(newPVC("a")))
+	c.False(HasOrphanLabel(nil))
+	c.False(HasOrphanLabel(newPVC("a")))
 
 	labeled := newPVC("a")
 	labeled.Labels = map[string]string{metadata.LabelOrphan: "x"}
-	require.True(t, HasOrphanLabel(labeled))
+	c.True(HasOrphanLabel(labeled))
 }

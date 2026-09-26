@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,10 +19,13 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestExternalAdminWeb_EnableDisableLifecycle(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	const clusterName = "aw-lifecycle"
 
@@ -57,7 +58,7 @@ func TestExternalAdminWeb_EnableDisableLifecycle(t *testing.T) {
 
 	setTestPostgresPasswordSecretRef(cluster)
 
-	require.NoError(t, k8sClient.Create(t.Context(), cluster))
+	c.Require().NoError(k8sClient.Create(t.Context(), cluster))
 
 	watcher.SetCmpOpts(
 		testutil.IgnoreMetaRuntimeFields(),
@@ -93,67 +94,86 @@ func TestExternalAdminWeb_EnableDisableLifecycle(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, watcher.WaitForMatch(expectedAWSvc),
-		"multiadmin-web Service should be ClusterIP with externalIPs and annotations")
+	c.Require().
+		NoError(watcher.WaitForMatch(expectedAWSvc), "multiadmin-web Service should be ClusterIP with externalIPs and annotations")
 
 	// Step 3: Verify initial condition is NoReadyAdminWeb (endpoint assigned via externalIP, 0 ready pods).
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		var mgc multigresv1alpha1.MultigresCluster
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgc); err != nil {
+		if err := k8sClient.Get(
+			t.Context(),
+			client.ObjectKeyFromObject(cluster),
+			&mgc,
+		); err != nil {
 			return false
 		}
-		cond := meta.FindStatusCondition(mgc.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
+		cond := meta.FindStatusCondition(
+			mgc.Status.Conditions,
+			multigresv1alpha1.ConditionAdminWebExternalReady,
+		)
 		return cond != nil &&
 			cond.Status == metav1.ConditionFalse &&
 			cond.Reason == multigresv1alpha1.ReasonNoReadyAdminWeb &&
 			mgc.Status.AdminWeb != nil &&
 			mgc.Status.AdminWeb.ExternalEndpoint == "2001:db8::200"
-	}, testTimeout, pollInterval, "condition should be False/NoReadyAdminWeb before pods are ready")
+	}, "condition should be False/NoReadyAdminWeb before pods are ready")
 
 	// Step 4: Simulate the admin-web Deployment reporting ready replicas.
 	var awDeploy appsv1.Deployment
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		err := k8sClient.Get(t.Context(), client.ObjectKey{
 			Name:      clusterName + "-multiadmin-web",
 			Namespace: testNamespace,
 		}, &awDeploy)
 		return err == nil
-	}, testTimeout, pollInterval, "admin-web Deployment should exist")
+	}, "admin-web Deployment should exist")
 
 	awDeploy.Status.ReadyReplicas = 1
 	awDeploy.Status.Replicas = 1
-	require.NoError(t, k8sClient.Status().Update(t.Context(), &awDeploy),
-		"simulating admin-web Deployment reporting ready replicas")
+	c.Require().
+		NoError(k8sClient.Status().Update(t.Context(), &awDeploy), "simulating admin-web Deployment reporting ready replicas")
 
 	// Step 5: Verify condition transitions to EndpointReady.
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		var mgc multigresv1alpha1.MultigresCluster
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgc); err != nil {
+		if err := k8sClient.Get(
+			t.Context(),
+			client.ObjectKeyFromObject(cluster),
+			&mgc,
+		); err != nil {
 			return false
 		}
-		cond := meta.FindStatusCondition(mgc.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
+		cond := meta.FindStatusCondition(
+			mgc.Status.Conditions,
+			multigresv1alpha1.ConditionAdminWebExternalReady,
+		)
 		return cond != nil &&
 			cond.Status == metav1.ConditionTrue &&
 			cond.Reason == multigresv1alpha1.ReasonEndpointReady &&
 			mgc.Status.AdminWeb != nil &&
 			mgc.Status.AdminWeb.ExternalEndpoint == "2001:db8::200"
-	}, testTimeout, pollInterval, "condition should be True/EndpointReady with endpoint in status")
+	}, "condition should be True/EndpointReady with endpoint in status")
 
 	// Verify observedGeneration is set on the condition.
 	var mgcCheck multigresv1alpha1.MultigresCluster
-	require.NoError(t, k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgcCheck))
-	cond := meta.FindStatusCondition(mgcCheck.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
-	require.NotNil(t, cond)
-	assert.Equal(t, mgcCheck.Generation, cond.ObservedGeneration,
-		"observedGeneration should match cluster generation")
+	c.Require().NoError(k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgcCheck))
+	cond := meta.FindStatusCondition(
+		mgcCheck.Status.Conditions,
+		multigresv1alpha1.ConditionAdminWebExternalReady,
+	)
+	c.Require().NotNil(cond)
+	c.EqDeep(
+		mgcCheck.Generation,
+		cond.ObservedGeneration,
+		"observedGeneration should match cluster generation",
+	)
 
 	// Step 6: Disable external admin web and verify reversion.
-	require.NoError(t, k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+	c.Require().NoError(k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
 	cluster.Spec.ExternalAdminWeb = &multigresv1alpha1.ExternalAdminWebConfig{
 		Enabled: false,
 	}
-	require.NoError(t, k8sClient.Update(t.Context(), cluster),
-		"disabling external admin web")
+	c.Require().NoError(k8sClient.Update(t.Context(), cluster), "disabling external admin web")
 
 	// Step 7: Verify Service reverts to ClusterIP with no annotations.
 	expectedClusterIPSvc := &corev1.Service{
@@ -177,22 +197,30 @@ func TestExternalAdminWeb_EnableDisableLifecycle(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, watcher.WaitForMatch(expectedClusterIPSvc),
-		"multiadmin-web Service should revert to ClusterIP after disabling")
+	c.Require().
+		NoError(watcher.WaitForMatch(expectedClusterIPSvc), "multiadmin-web Service should revert to ClusterIP after disabling")
 
 	// Step 8: Verify admin web status is nil and condition is removed.
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		var mgc multigresv1alpha1.MultigresCluster
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgc); err != nil {
+		if err := k8sClient.Get(
+			t.Context(),
+			client.ObjectKeyFromObject(cluster),
+			&mgc,
+		); err != nil {
 			return false
 		}
-		cond := meta.FindStatusCondition(mgc.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
+		cond := meta.FindStatusCondition(
+			mgc.Status.Conditions,
+			multigresv1alpha1.ConditionAdminWebExternalReady,
+		)
 		return mgc.Status.AdminWeb == nil && cond == nil
-	}, testTimeout, pollInterval, "admin web status should be nil and condition removed after disabling")
+	}, "admin web status should be nil and condition removed after disabling")
 }
 
 func TestExternalAdminWeb_NoReadyAdminWebTransition(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	const clusterName = "aw-no-ready"
 
@@ -222,57 +250,77 @@ func TestExternalAdminWeb_NoReadyAdminWebTransition(t *testing.T) {
 
 	setTestPostgresPasswordSecretRef(cluster)
 
-	require.NoError(t, k8sClient.Create(t.Context(), cluster))
+	c.Require().NoError(k8sClient.Create(t.Context(), cluster))
 
 	// Step 2: Wait for initial NoReadyAdminWeb condition.
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		var mgc multigresv1alpha1.MultigresCluster
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgc); err != nil {
+		if err := k8sClient.Get(
+			t.Context(),
+			client.ObjectKeyFromObject(cluster),
+			&mgc,
+		); err != nil {
 			return false
 		}
-		cond := meta.FindStatusCondition(mgc.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
+		cond := meta.FindStatusCondition(
+			mgc.Status.Conditions,
+			multigresv1alpha1.ConditionAdminWebExternalReady,
+		)
 		return cond != nil &&
 			cond.Status == metav1.ConditionFalse &&
 			cond.Reason == multigresv1alpha1.ReasonNoReadyAdminWeb &&
 			strings.Contains(cond.Message, "no multiadmin-web pods are ready") &&
 			mgc.Status.AdminWeb != nil &&
 			mgc.Status.AdminWeb.ExternalEndpoint == "2001:db8::201"
-	}, testTimeout, pollInterval, "condition should be False/NoReadyAdminWeb with endpoint populated")
+	}, "condition should be False/NoReadyAdminWeb with endpoint populated")
 
 	// Step 3: Simulate the admin-web Deployment reporting ready replicas.
 	var awDeploy appsv1.Deployment
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		err := k8sClient.Get(t.Context(), client.ObjectKey{
 			Name:      clusterName + "-multiadmin-web",
 			Namespace: testNamespace,
 		}, &awDeploy)
 		return err == nil
-	}, testTimeout, pollInterval, "admin-web Deployment should exist")
+	}, "admin-web Deployment should exist")
 
 	awDeploy.Status.ReadyReplicas = 2
 	awDeploy.Status.Replicas = 2
-	require.NoError(t, k8sClient.Status().Update(t.Context(), &awDeploy))
+	c.Require().NoError(k8sClient.Status().Update(t.Context(), &awDeploy))
 
 	// Step 4: Verify condition transitions to True/EndpointReady.
-	assert.Eventually(t, func() bool {
+	c.EventuallyTrue(testTimeout, pollInterval, func() bool {
 		var mgc multigresv1alpha1.MultigresCluster
-		if err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgc); err != nil {
+		if err := k8sClient.Get(
+			t.Context(),
+			client.ObjectKeyFromObject(cluster),
+			&mgc,
+		); err != nil {
 			return false
 		}
-		cond := meta.FindStatusCondition(mgc.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
+		cond := meta.FindStatusCondition(
+			mgc.Status.Conditions,
+			multigresv1alpha1.ConditionAdminWebExternalReady,
+		)
 		return cond != nil &&
 			cond.Status == metav1.ConditionTrue &&
 			cond.Reason == multigresv1alpha1.ReasonEndpointReady &&
 			strings.Contains(cond.Message, "is serving traffic") &&
 			mgc.Status.AdminWeb != nil &&
 			mgc.Status.AdminWeb.ExternalEndpoint == "2001:db8::201"
-	}, testTimeout, pollInterval, "condition should transition to True/EndpointReady after Deployment reports ready")
+	}, "condition should transition to True/EndpointReady after Deployment reports ready")
 
 	// Verify observedGeneration is set correctly.
 	var mgcCheck multigresv1alpha1.MultigresCluster
-	require.NoError(t, k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgcCheck))
-	cond := meta.FindStatusCondition(mgcCheck.Status.Conditions, multigresv1alpha1.ConditionAdminWebExternalReady)
-	require.NotNil(t, cond)
-	assert.Equal(t, mgcCheck.Generation, cond.ObservedGeneration,
-		"observedGeneration should match cluster generation")
+	c.Require().NoError(k8sClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), &mgcCheck))
+	cond := meta.FindStatusCondition(
+		mgcCheck.Status.Conditions,
+		multigresv1alpha1.ConditionAdminWebExternalReady,
+	)
+	c.Require().NotNil(cond)
+	c.EqDeep(
+		mgcCheck.Generation,
+		cond.ObservedGeneration,
+		"observedGeneration should match cluster generation",
+	)
 }

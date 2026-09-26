@@ -6,13 +6,13 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestCollectorsRegistered(t *testing.T) {
 	collectors := Collectors()
-	if len(collectors) == 0 {
-		t.Fatal("expected at least one collector, got 0")
-	}
+	assert.NewAborting(t).NotEmpty(collectors, "expected at least one collector, got 0")
 }
 
 func TestMetricNamingConvention(t *testing.T) {
@@ -38,9 +38,8 @@ func TestMetricHelpNonEmpty(t *testing.T) {
 
 		for desc := range ch {
 			help := extractHelp(desc)
-			if help == "" {
-				t.Errorf("metric %q has empty help string", desc.String())
-			}
+			assert.NewCollecting(t).
+				NotEq("", help, "metric %q has empty help string", desc.String())
 		}
 	}
 }
@@ -87,14 +86,8 @@ func TestGaugeLabels(t *testing.T) {
 
 			descStr := desc.String()
 			for _, label := range tt.wantLabels {
-				if !strings.Contains(descStr, label) {
-					t.Errorf(
-						"metric %s missing label %q in descriptor: %s",
-						tt.name,
-						label,
-						descStr,
-					)
-				}
+				assert.NewCollecting(t).
+					StrContains(descStr, label, "metric %s missing label %q in descriptor", tt.name, label)
 			}
 		})
 	}

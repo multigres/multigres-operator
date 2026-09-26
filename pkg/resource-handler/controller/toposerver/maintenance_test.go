@@ -22,6 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 type fakeEtcdMaintenance struct {
@@ -74,6 +76,7 @@ func maintenanceFixture(
 	t *testing.T,
 ) (*TopoServerReconciler, *multigresv1alpha1.TopoServer, *fakeEtcdMaintenance) {
 	t.Helper()
+	ck := assert.NewAborting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -84,9 +87,7 @@ func maintenanceFixture(
 		DefragmentationEnabled: ptr.To(true),
 	}
 	sts, err := BuildStatefulSet(ts, scheme)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(err)
 	sts.UID, sts.Generation = "sts-uid", 1
 	sts.Status = appsv1.StatefulSetStatus{
 		ObservedGeneration: 1,
@@ -133,9 +134,7 @@ func maintenanceFixture(
 		WithStatusSubresource(&multigresv1alpha1.TopoServer{}, &appsv1.StatefulSet{}, &corev1.Pod{}).
 		WithObjects(objects...).
 		Build()
-	if err := c.Get(t.Context(), client.ObjectKeyFromObject(ts), ts); err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(c.Get(t.Context(), client.ObjectKeyFromObject(ts), ts))
 	r := &TopoServerReconciler{
 		Client:               c,
 		APIReader:            c,
@@ -147,28 +146,22 @@ func maintenanceFixture(
 }
 
 func TestEtcdMaintenanceSerializesMembersAndRestarts(t *testing.T) {
+	c := assert.NewAborting(t)
 	r, ts, f := maintenanceFixture(t)
-	if err := r.reconcileMaintenance(t.Context(), ts); err != nil {
-		t.Fatal(err)
-	}
+	c.NoError(r.reconcileMaintenance(t.Context(), ts))
 	if len(f.defragged) != 1 || len(f.moved) != 1 {
 		t.Fatalf("defrags=%v leader transfers=%v", f.defragged, f.moved)
 	}
 	fresh := &multigresv1alpha1.TopoServer{}
-	if err := r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if fresh.Status.EtcdMaintenance == nil || fresh.Status.EtcdMaintenance.InProgress {
-		t.Fatal("completed reservation not persisted")
-	}
+	c.NoError(r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh))
+	c.False(
+		fresh.Status.EtcdMaintenance == nil || fresh.Status.EtcdMaintenance.InProgress,
+		"completed reservation not persisted",
+	)
 	// A new controller instance, or a stale reconcile, must obey the persisted interval.
 	r2 := *r
-	if err := r2.reconcileMaintenance(t.Context(), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.defragged) != 1 {
-		t.Fatal("maintenance repeated inside the interval")
-	}
+	c.NoError(r2.reconcileMaintenance(t.Context(), fresh))
+	c.Len(f.defragged, 1, "maintenance repeated inside the interval")
 }
 
 func TestEtcdMaintenanceHealthGates(t *testing.T) {
@@ -219,9 +212,7 @@ func TestEtcdMaintenanceHealthGates(t *testing.T) {
 			sts := &appsv1.StatefulSet{}
 			_ = r.Get(t.Context(), client.ObjectKeyFromObject(ts), sts)
 			sts.Status.UpdateRevision = "rev2"
-			if err := r.Status().Update(t.Context(), sts); err != nil {
-				t.Fatal(err)
-			}
+			assert.NewAborting(t).NoError(r.Status().Update(t.Context(), sts))
 		}, false},
 		{"reservation conflict", func(r *TopoServerReconciler, _ *multigresv1alpha1.TopoServer, _ *fakeEtcdMaintenance) {
 			r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
@@ -230,15 +221,12 @@ func TestEtcdMaintenanceHealthGates(t *testing.T) {
 		}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			r, ts, f := maintenanceFixture(t)
 			test.mutate(r, ts, f)
 			err := r.reconcileMaintenance(t.Context(), ts)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("error=%v", err)
-			}
-			if len(f.defragged) != 0 {
-				t.Fatalf("unsafe defragmentation: %v", f.defragged)
-			}
+			c.ErrorWhen(test.wantErr, err, "error=")
+			c.Empty(f.defragged, "unsafe defragmentation")
 		})
 	}
 }
@@ -279,15 +267,18 @@ func TestEtcdMaintenanceRejectsInvalidMemberResponses(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			r, ts, f := maintenanceFixture(t)
 			tc.mutate(f)
 			err := r.reconcileMaintenance(t.Context(), ts)
-			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
-				t.Fatalf("expected %q, got %v", tc.wantError, err)
-			}
-			if tc.wantCause != nil && !errors.Is(err, tc.wantCause) {
-				t.Errorf("error %v does not wrap %v", err, tc.wantCause)
-			}
+			c.Require().
+				False(err == nil || !strings.Contains(err.Error(), tc.wantError), "expected %q, got %v", tc.wantError, err)
+			c.False(
+				tc.wantCause != nil && !errors.Is(err, tc.wantCause),
+				"error %v does not wrap %v",
+				err,
+				tc.wantCause,
+			)
 			if len(f.moved) != 0 || len(f.defragged) != 0 {
 				t.Errorf(
 					"maintenance changed unhealthy members: transfers=%v defrags=%v",
@@ -296,70 +287,51 @@ func TestEtcdMaintenanceRejectsInvalidMemberResponses(t *testing.T) {
 				)
 			}
 			fresh := &multigresv1alpha1.TopoServer{}
-			if err := r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh); err != nil {
-				t.Fatal(err)
-			}
-			if fresh.Status.EtcdMaintenance != nil {
-				t.Error("failed health checks created a maintenance reservation")
-			}
+			c.Require().NoError(r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh))
+			c.Nil(
+				fresh.Status.EtcdMaintenance,
+				"failed health checks created a maintenance reservation",
+			)
 		})
 	}
 }
 
 func TestEtcdMaintenanceIncompleteLeadershipTransfer(t *testing.T) {
+	c := assert.NewCollecting(t)
 	r, ts, f := maintenanceFixture(t)
 	f.skipLeaderTransfer = true
 	err := r.reconcileMaintenance(t.Context(), ts)
-	if err == nil || err.Error() != "etcd leadership transfer has not completed" {
-		t.Fatalf("expected incomplete leadership transfer, got %v", err)
-	}
+	c.Require().
+		False(err == nil || err.Error() != "etcd leadership transfer has not completed", "expected incomplete leadership transfer, got %v", err)
 	if len(f.moved) != 1 || f.moved[0] != 2 {
 		t.Errorf("leadership transfer attempts = %v, want [2]", f.moved)
 	}
-	if len(f.defragged) != 0 {
-		t.Errorf(
-			"defragmented a member whose leadership transfer did not complete: %v",
-			f.defragged,
-		)
-	}
+	c.Empty(f.defragged, "defragmented a member whose leadership transfer did not complete")
 	fresh := &multigresv1alpha1.TopoServer{}
-	if err := r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh); err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh))
 	state := fresh.Status.EtcdMaintenance
-	if state == nil || !state.InProgress || state.Endpoint != maintenanceEndpoints(ts)[0] {
-		t.Fatalf("incomplete transfer did not retain the target reservation: %+v", state)
-	}
+	c.Require().
+		False(state == nil || !state.InProgress || state.Endpoint != maintenanceEndpoints(ts)[0], "incomplete transfer did not retain the target reservation: %+v", state)
 	r2 := *r
-	if err := r2.reconcileMaintenance(t.Context(), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.moved) != 1 || len(f.defragged) != 0 {
-		t.Error("maintenance restarted while the transfer reservation remained active")
-	}
+	c.Require().NoError(r2.reconcileMaintenance(t.Context(), fresh))
+	c.False(
+		len(f.moved) != 1 || len(f.defragged) != 0,
+		"maintenance restarted while the transfer reservation remained active",
+	)
 }
 
 func TestEtcdMaintenanceInterruptedOperation(t *testing.T) {
+	c := assert.NewAborting(t)
 	r, ts, f := maintenanceFixture(t)
 	f.defragErr = context.DeadlineExceeded
-	if err := r.reconcileMaintenance(t.Context(), ts); err == nil {
-		t.Fatal("expected timeout")
-	}
+	c.Error(r.reconcileMaintenance(t.Context(), ts), "expected timeout")
 	fresh := &multigresv1alpha1.TopoServer{}
-	if err := r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if !fresh.Status.EtcdMaintenance.InProgress {
-		t.Fatal("uncertain operation released its reservation")
-	}
+	c.NoError(r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh))
+	c.True(fresh.Status.EtcdMaintenance.InProgress, "uncertain operation released its reservation")
 	waiting, err := r.resumeMaintenance(t.Context(), fresh)
-	if err != nil || !waiting {
-		t.Fatalf("resume immediately: waiting=%v err=%v", waiting, err)
-	}
+	c.False(err != nil || !waiting, "resume immediately: waiting=%v err=%v", waiting, err)
 	fresh.Status.EtcdMaintenance.LastAttemptTime = metav1.NewTime(time.Now().Add(-3 * time.Minute))
-	if err := r.Status().Update(t.Context(), fresh); err != nil {
-		t.Fatal(err)
-	}
+	c.NoError(r.Status().Update(t.Context(), fresh))
 	f.healthErr = errors.New("previous member still unavailable")
 	if waiting, err = r.resumeMaintenance(t.Context(), fresh); !waiting || err == nil {
 		t.Fatalf("unhealthy resume: waiting=%v err=%v", waiting, err)
@@ -368,25 +340,16 @@ func TestEtcdMaintenanceInterruptedOperation(t *testing.T) {
 	if waiting, err = r.resumeMaintenance(t.Context(), fresh); waiting || err != nil {
 		t.Fatalf("healthy resume: waiting=%v err=%v", waiting, err)
 	}
-	if err := r.reconcileMaintenance(t.Context(), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.defragged) != 1 {
-		t.Fatal("interrupted operation started another defrag")
-	}
+	c.NoError(r.reconcileMaintenance(t.Context(), fresh))
+	c.Len(f.defragged, 1, "interrupted operation started another defrag")
 }
 
 func TestEtcdMaintenancePostHealthFailureKeepsReservation(t *testing.T) {
+	c := assert.NewAborting(t)
 	r, ts, f := maintenanceFixture(t)
 	f.afterDefrag = func() { f.healthErr = errors.New("member unhealthy after defrag") }
-	if err := r.reconcileMaintenance(t.Context(), ts); err == nil {
-		t.Fatal("expected post-defrag health failure")
-	}
+	c.Error(r.reconcileMaintenance(t.Context(), ts), "expected post-defrag health failure")
 	fresh := &multigresv1alpha1.TopoServer{}
-	if err := r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh); err != nil {
-		t.Fatal(err)
-	}
-	if !fresh.Status.EtcdMaintenance.InProgress {
-		t.Fatal("failed post-check released reservation")
-	}
+	c.NoError(r.Get(t.Context(), client.ObjectKeyFromObject(ts), fresh))
+	c.True(fresh.Status.EtcdMaintenance.InProgress, "failed post-check released reservation")
 }

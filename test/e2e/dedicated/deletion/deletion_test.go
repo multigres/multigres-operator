@@ -16,16 +16,17 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestClusterDeletion verifies that deleting a MultigresCluster triggers
 // cascading deletion of all child resources (CRDs and Kubernetes resources).
 func TestClusterDeletion(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	// Load and create the minimal sample.
@@ -36,9 +37,7 @@ func TestClusterDeletion(t *testing.T) {
 		WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
 		WhenScaled:  multigresv1alpha1.RetainPVCRetentionPolicy,
 	}
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	// Wait for full provisioning.
 	cluster.WaitForAllPodsReady(t, ns)
@@ -46,20 +45,21 @@ func TestClusterDeletion(t *testing.T) {
 
 	// Delete the cluster.
 	clusterKey := client.ObjectKeyFromObject(cr)
-	if err := c.Delete(ctx, cr); err != nil {
-		t.Fatalf("delete MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Delete(ctx, cr), "delete MultigresCluster")
 
 	// Wait for the MultigresCluster object to disappear.
 	pollCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	err = wait.PollUntilContextCancel(pollCtx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		err := c.Get(ctx, clusterKey, &multigresv1alpha1.MultigresCluster{})
-		return apierrors.IsNotFound(err), nil
-	})
-	if err != nil {
-		t.Fatalf("MultigresCluster not deleted: %v", err)
-	}
+	err = wait.PollUntilContextCancel(
+		pollCtx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			err := c.Get(ctx, clusterKey, &multigresv1alpha1.MultigresCluster{})
+			return apierrors.IsNotFound(err), nil
+		},
+	)
+	ck.NoError(err, "MultigresCluster not deleted")
 
 	// Verify child CRDs are cleaned up.
 	framework.WaitForEmpty(t, c, ns,
@@ -112,16 +112,16 @@ func TestClusterDeletion(t *testing.T) {
 	// Verify data (non-topo) PVCs are retained under the Retain policy forced
 	// above, only topo PVCs are force-deleted by cluster cleanup.
 	pvcList := &corev1.PersistentVolumeClaimList{}
-	if err := c.List(ctx, pvcList, client.InNamespace(ns)); err != nil {
-		t.Fatalf("list PVCs: %v", err)
-	}
+	ck.NoError(c.List(ctx, pvcList, client.InNamespace(ns)), "list PVCs")
 	nonTopoCount := 0
 	for _, pvc := range pvcList.Items {
 		if !strings.Contains(pvc.Name, "-topo-") {
 			nonTopoCount++
 		}
 	}
-	if nonTopoCount == 0 {
-		t.Fatalf("expected at least one non-topo (data) PVC to survive cluster deletion under Retain, found none")
-	}
+	ck.NotEq(
+		0,
+		nonTopoCount,
+		"expected at least one non-topo (data) PVC to survive cluster deletion under Retain, found none",
+	)
 }

@@ -12,6 +12,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestBaselineWinsOverRef verifies end-to-end that the operator's own
@@ -33,11 +35,10 @@ import (
 // still applies, proving the fix layers the ref UNDER the baseline rather than
 // ignoring it.
 func TestBaselineWinsOverRef(t *testing.T) {
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 	ctx := context.Background()
 
 	// Deprecated ref (key "postgresql.conf", like the real project): sets a
@@ -52,9 +53,7 @@ func TestBaselineWinsOverRef(t *testing.T) {
 			"postgresql.conf": "effective_cache_size = '999MB'\nseq_page_cost = '2.5'",
 		},
 	}
-	if err := c.Create(ctx, refCM); err != nil {
-		t.Fatalf("create ref ConfigMap: %v", err)
-	}
+	ck.NoError(c.Create(ctx, refCM), "create ref ConfigMap")
 
 	// Create with the ref set and NO inline postgresConfig, and pin the pool
 	// memory to 512Mi so the operator's sized effective_cache_size is a
@@ -73,9 +72,7 @@ func TestBaselineWinsOverRef(t *testing.T) {
 		pool.Postgres.Resources.Limits[corev1.ResourceMemory] = resource.MustParse("512Mi")
 		shard.Spec.Pools[name] = pool
 	}
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	framework.WaitForPod(t, c, ns, "postgres")
 	cluster.WaitForAllPodsReady(t, ns)

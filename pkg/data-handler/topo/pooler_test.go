@@ -12,6 +12,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func routingState(role clustermetadata.RoutingRole) *clustermetadata.RoutingState {
@@ -23,6 +25,7 @@ func TestFindPrimaryPooler(t *testing.T) {
 
 	t.Run("returns nil when no primary exists", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(context.Background(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -43,12 +46,8 @@ func TestFindPrimaryPooler(t *testing.T) {
 			shard,
 			[]string{"cell1"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if primary != nil {
-			t.Error("expected nil primary when none registered")
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Nil(primary, "expected nil primary when none registered")
 	})
 
 	t.Run("returns error for non-unavailable topo errors", func(t *testing.T) {
@@ -68,13 +67,12 @@ func TestFindPrimaryPooler(t *testing.T) {
 		_, err := topo.FindPrimaryPooler(
 			t.Context(), store, shard, []string{"nonexistent-cell"},
 		)
-		if err == nil {
-			t.Error("expected error for non-unavailable topo error")
-		}
+		assert.NewCollecting(t).Error(err, "expected error for non-unavailable topo error")
 	})
 
 	t.Run("returns primary from second cell", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1", "cell2")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -102,15 +100,9 @@ func TestFindPrimaryPooler(t *testing.T) {
 		}
 
 		primary, err := topo.FindPrimaryPooler(ctx, store, shard, []string{"cell1", "cell2"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if primary == nil {
-			t.Fatal("expected primary to be found")
-		}
-		if primary.Id.Name != "primary-pod" {
-			t.Errorf("expected primary-pod, got %s", primary.Id.Name)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(primary, "expected primary to be found")
+		c.Eq("primary-pod", primary.Id.Name, "expected primary-pod, got")
 	})
 
 	t.Run("skips a shut-down primary", func(t *testing.T) {
@@ -141,9 +133,7 @@ func TestFindPrimaryPooler(t *testing.T) {
 		}
 
 		primary, err := topo.FindPrimaryPooler(ctx, store, shard, []string{"cell1"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 		if primary != nil {
 			t.Errorf("expected nil primary (dead primary skipped), got %s", primary.Id.Name)
 		}
@@ -175,9 +165,7 @@ func TestFindPrimaryPooler(t *testing.T) {
 		}
 
 		primary, err := topo.FindPrimaryPooler(ctx, store, shard, []string{"cell1"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "unexpected error")
 		if primary != nil {
 			t.Errorf("expected nil primary (quarantined primary skipped), got %s", primary.Id.Name)
 		}
@@ -234,6 +222,7 @@ func TestFindPrimaryPooler_TopoUnavailableSkip(t *testing.T) {
 
 	t.Run("skips unavailable cell and finds primary in next cell", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := &multiCellStore{
 			cells: map[string][]*topoclient.MultipoolerInfo{
 				"cell2": {{
@@ -263,19 +252,14 @@ func TestFindPrimaryPooler_TopoUnavailableSkip(t *testing.T) {
 		primary, err := topo.FindPrimaryPooler(
 			t.Context(), store, shard, []string{"cell1", "cell2"},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if primary == nil {
-			t.Fatal("expected primary from cell2 after skipping unavailable cell1")
-		}
-		if primary.Id.Name != "primary-pod" {
-			t.Errorf("expected primary-pod, got %s", primary.Id.Name)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(primary, "expected primary from cell2 after skipping unavailable cell1")
+		c.Eq("primary-pod", primary.Id.Name, "expected primary-pod, got")
 	})
 
 	t.Run("returns error when all cells are unavailable", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := &multiCellStore{
 			errorCells: map[string]error{
 				"cell1": errors.New("Code: UNAVAILABLE"),
@@ -292,12 +276,8 @@ func TestFindPrimaryPooler_TopoUnavailableSkip(t *testing.T) {
 		primary, err := topo.FindPrimaryPooler(
 			t.Context(), store, shard, []string{"cell1", "cell2"},
 		)
-		if err == nil {
-			t.Fatal("expected error when all cells are unavailable")
-		}
-		if primary != nil {
-			t.Error("expected nil primary when all cells are unavailable")
-		}
+		c.Require().Error(err, "expected error when all cells are unavailable")
+		c.Nil(primary, "expected nil primary when all cells are unavailable")
 	})
 }
 
@@ -311,6 +291,7 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 	t.Run("marks dead poolers shut down without deleting them", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -348,18 +329,13 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 		activePods := map[string]bool{"active-pod": true}
 		marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePods)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if marked != 2 {
-			t.Errorf("expected 2 marked, got %d", marked)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq(2, marked, "expected 2 marked, got")
 
 		// Entries are left in place (tombstones), not deleted.
 		remaining, _ := store.GetMultipoolersByCell(ctx, "cell1", nil)
-		if len(remaining) != 3 {
-			t.Fatalf("expected 3 remaining poolers (none deleted), got %d", len(remaining))
-		}
+		c.Require().
+			Len(remaining, 3, "expected 3 remaining poolers (none deleted), got %d", len(remaining))
 
 		byName := make(map[string]*clustermetadata.Multipooler, len(remaining))
 		for _, p := range remaining {
@@ -375,21 +351,23 @@ func TestMarkDeadPoolers(t *testing.T) {
 			}
 		}
 		mp := byName["stale-pod"]
-		if topo.PoolerRoutingRole(mp) != clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA {
-			t.Errorf(
-				"expected stale-pod routing role left untouched (REPLICA), got %v",
-				topo.PoolerRoutingRole(mp),
-			)
-		}
+		c.Eq(
+			clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
+			topo.PoolerRoutingRole(mp),
+			"expected stale-pod routing role left untouched (REPLICA), got",
+		)
 
 		// Active pooler left untouched.
-		if active := byName["active-pod"]; isShutdown(active) {
-			t.Error("expected active-pod to be left untouched, but it was marked shut down")
-		}
+		active := byName["active-pod"]
+		c.False(
+			isShutdown(active),
+			"expected active-pod to be left untouched, but it was marked shut down",
+		)
 	})
 
 	t.Run("is idempotent for already-shutdown poolers", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -417,16 +395,13 @@ func TestMarkDeadPoolers(t *testing.T) {
 		}
 
 		marked, err := topo.MarkDeadPoolers(ctx, store, shard, map[string]bool{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if marked != 0 {
-			t.Errorf("expected 0 marked for already-shutdown pooler, got %d", marked)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq(0, marked, "expected 0 marked for already-shutdown pooler, got")
 	})
 
 	t.Run("noop when all poolers are active", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -452,16 +427,13 @@ func TestMarkDeadPoolers(t *testing.T) {
 
 		activePods := map[string]bool{"pod-1": true}
 		marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePods)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if marked != 0 {
-			t.Errorf("expected 0 marked, got %d", marked)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq(0, marked, "expected 0 marked, got")
 	})
 
 	t.Run("skips unavailable cells gracefully", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := &multiCellStore{
 			errorCells: map[string]error{
 				"cell1": errors.New("Code: UNAVAILABLE"),
@@ -480,16 +452,13 @@ func TestMarkDeadPoolers(t *testing.T) {
 		marked, err := topo.MarkDeadPoolers(
 			t.Context(), store, shard, map[string]bool{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if marked != 0 {
-			t.Errorf("expected 0 marked for unavailable cell, got %d", marked)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq(0, marked, "expected 0 marked for unavailable cell, got")
 	})
 
 	t.Run("does not mark active poolers with FQDN hostnames", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -522,24 +491,21 @@ func TestMarkDeadPoolers(t *testing.T) {
 		// active-pod is in the active set; stale-pod is NOT.
 		activePods := map[string]bool{"active-pod": true}
 		marked, err := topo.MarkDeadPoolers(ctx, store, shard, activePods)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if marked != 1 {
-			t.Errorf("expected 1 marked (stale-pod), got %d", marked)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq(1, marked, "expected 1 marked (stale-pod), got")
 
 		remaining, _ := store.GetMultipoolersByCell(ctx, "cell1", nil)
-		if len(remaining) != 2 {
-			t.Fatalf("expected 2 remaining poolers (none deleted), got %d", len(remaining))
-		}
+		c.Require().
+			Len(remaining, 2, "expected 2 remaining poolers (none deleted), got %d", len(remaining))
 		for _, p := range remaining {
-			if p.Id.Name == "active-pod" && isShutdown(p.Multipooler) {
-				t.Error("expected active-pod to be left untouched")
-			}
-			if p.Id.Name == "stale-pod" && !isShutdown(p.Multipooler) {
-				t.Error("expected stale-pod to be marked LIFECYCLE_SHUTDOWN")
-			}
+			c.False(
+				p.Id.Name == "active-pod" && isShutdown(p.Multipooler),
+				"expected active-pod to be left untouched",
+			)
+			c.False(
+				p.Id.Name == "stale-pod" && !isShutdown(p.Multipooler),
+				"expected stale-pod to be marked LIFECYCLE_SHUTDOWN",
+			)
 		}
 	})
 
@@ -557,13 +523,12 @@ func TestMarkDeadPoolers(t *testing.T) {
 		}
 
 		_, err := topo.MarkDeadPoolers(t.Context(), store, shard, map[string]bool{})
-		if err == nil {
-			t.Error("expected error when GetMultipoolersByCell fails")
-		}
+		assert.NewCollecting(t).Error(err, "expected error when GetMultipoolersByCell fails")
 	})
 
 	t.Run("continues and logs error on UpdateMultipoolerFields failure", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := &mockPoolerTopoStore{
 			getMultipoolersByCellFunc: func(ctx context.Context, cell string, opts *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				p := &topoclient.MultipoolerInfo{
@@ -597,16 +562,13 @@ func TestMarkDeadPoolers(t *testing.T) {
 		}
 
 		marked, err := topo.MarkDeadPoolers(t.Context(), store, shard, map[string]bool{})
-		if err != nil {
-			t.Fatalf("expected nil error (caught and logged), got %v", err)
-		}
-		if marked != 0 {
-			t.Errorf("expected 0 marked due to error, got %d", marked)
-		}
+		c.Require().NoError(err, "expected nil error (caught and logged), got")
+		c.Eq(0, marked, "expected 0 marked due to error, got")
 	})
 
 	t.Run("uses Id.Name when hostname is empty", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		store := &mockPoolerTopoStore{
 			getMultipoolersByCellFunc: func(ctx context.Context, cell string, opts *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				p := &topoclient.MultipoolerInfo{
@@ -643,12 +605,8 @@ func TestMarkDeadPoolers(t *testing.T) {
 		}
 
 		marked, err := topo.MarkDeadPoolers(t.Context(), store, shard, map[string]bool{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if marked != 1 {
-			t.Errorf("expected 1 marked, got %d", marked)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Eq(1, marked, "expected 1 marked, got")
 	})
 }
 
@@ -667,6 +625,7 @@ func (s *errorGetPoolersStore) Close() error { return nil }
 
 func TestCollectCells(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	shard := &multigresv1alpha1.Shard{
 		Spec: multigresv1alpha1.ShardSpec{
@@ -678,18 +637,14 @@ func TestCollectCells(t *testing.T) {
 	}
 
 	cells := topo.CollectCells(shard)
-	if len(cells) != 3 {
-		t.Errorf("expected 3 unique cells, got %d: %v", len(cells), cells)
-	}
+	ck.Len(cells, 3, "expected 3 unique cells, got %d", len(cells))
 
 	cellSet := make(map[string]bool)
 	for _, c := range cells {
 		cellSet[c] = true
 	}
 	for _, want := range []string{"zone-a", "zone-b", "zone-c"} {
-		if !cellSet[want] {
-			t.Errorf("expected cell %q in result", want)
-		}
+		ck.False(!cellSet[want], "expected cell %q in result", want)
 	}
 }
 
@@ -698,6 +653,7 @@ func TestGetPoolerStatus(t *testing.T) {
 
 	t.Run("returns advertised routing roles", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -748,27 +704,18 @@ func TestGetPoolerStatus(t *testing.T) {
 			shard,
 			[]string{"primary", "replica", "unknown", "quarantined"},
 		)
-		if !result.QuerySuccess {
-			t.Error("expected QuerySuccess=true")
-		}
-		if result.Roles["primary"] != "PRIMARY" {
-			t.Errorf("expected PRIMARY, got %s", result.Roles["primary"])
-		}
-		if result.Roles["replica"] != "REPLICA" {
-			t.Errorf("expected REPLICA, got %s", result.Roles["replica"])
-		}
-		if result.Roles["unknown"] != "REPLICA" {
-			t.Errorf("expected REPLICA fallback, got %s", result.Roles["unknown"])
-		}
+		c.True(result.QuerySuccess, "expected QuerySuccess=true")
+		c.Eq("PRIMARY", result.Roles["primary"], "expected PRIMARY, got")
+		c.Eq("REPLICA", result.Roles["replica"], "expected REPLICA, got")
+		c.Eq("REPLICA", result.Roles["unknown"], "expected REPLICA fallback, got")
 		// Quarantined poolers get a distinct QUARANTINED role (visible in status)
 		// but are handled by quarantine remediation, not routed.
-		if result.Roles["quarantined"] != "QUARANTINED" {
-			t.Errorf("expected QUARANTINED, got %s", result.Roles["quarantined"])
-		}
+		c.Eq("QUARANTINED", result.Roles["quarantined"], "expected QUARANTINED, got")
 	})
 
 	t.Run("skips shut-down poolers even if a pod name matches", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -797,16 +744,13 @@ func TestGetPoolerStatus(t *testing.T) {
 		}
 
 		result := topo.GetPoolerStatus(ctx, store, shard, []string{"shutdown-pod"})
-		if !result.QuerySuccess {
-			t.Error("expected QuerySuccess=true")
-		}
-		if len(result.Roles) != 0 {
-			t.Errorf("expected no roles for shut-down pooler, got %v", result.Roles)
-		}
+		c.True(result.QuerySuccess, "expected QuerySuccess=true")
+		c.Empty(result.Roles, "expected no roles for shut-down pooler, got")
 	})
 
 	t.Run("skips orphaned poolers gracefully", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -832,12 +776,8 @@ func TestGetPoolerStatus(t *testing.T) {
 		}
 
 		result := topo.GetPoolerStatus(ctx, store, shard, []string{"other-pod"})
-		if !result.QuerySuccess {
-			t.Error("expected QuerySuccess=true")
-		}
-		if len(result.Roles) != 0 {
-			t.Errorf("expected no roles mapped for orphaned pod, got %v", result.Roles)
-		}
+		c.True(result.QuerySuccess, "expected QuerySuccess=true")
+		c.Empty(result.Roles, "expected no roles mapped for orphaned pod, got")
 	})
 
 	t.Run("sets QuerySuccess false on error", func(t *testing.T) {
@@ -855,13 +795,13 @@ func TestGetPoolerStatus(t *testing.T) {
 		}
 
 		result := topo.GetPoolerStatus(t.Context(), store, shard, nil)
-		if result.QuerySuccess {
-			t.Error("expected QuerySuccess=false when store errors")
-		}
+		assert.NewCollecting(t).
+			False(result.QuerySuccess, "expected QuerySuccess=false when store errors")
 	})
 
 	t.Run("uses Id.Name when hostname is empty", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
 		store := topoclient.NewWithFactory(
 			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
@@ -887,11 +827,12 @@ func TestGetPoolerStatus(t *testing.T) {
 		}
 
 		result := topo.GetPoolerStatus(ctx, store, shard, []string{"my-pod-0"})
-		if !result.QuerySuccess {
-			t.Error("expected QuerySuccess=true")
-		}
-		if result.Roles["my-pod-0"] != "PRIMARY" {
-			t.Errorf("expected key 'my-pod-0' with PRIMARY, got roles: %v", result.Roles)
-		}
+		c.True(result.QuerySuccess, "expected QuerySuccess=true")
+		c.Eq(
+			"PRIMARY",
+			result.Roles["my-pod-0"],
+			"expected key 'my-pod-0' with PRIMARY, got roles: %v",
+			result.Roles,
+		)
 	})
 }

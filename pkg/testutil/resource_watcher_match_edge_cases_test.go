@@ -17,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/multigres/testkit/assert"
 )
 
 var testError = errors.New("test error for coverage")
@@ -24,6 +26,7 @@ var testError = errors.New("test error for coverage")
 // TestVerboseDiffs_ExistingNonMatch tests verbose diff logging when existing event doesn't match.
 func TestVerboseDiffs_ExistingNonMatch(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -38,9 +41,7 @@ func TestVerboseDiffs_ExistingNonMatch(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-svc", Namespace: "default"},
 		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 	}
-	if err := c.Create(ctx, svc); err != nil {
-		t.Fatalf("Failed to create Service: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc), "Failed to create Service")
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -65,9 +66,7 @@ func TestVerboseDiffs_ExistingNonMatch(t *testing.T) {
 	watcher.SetCmpOpts(IgnoreMetaRuntimeFields(), IgnoreServiceRuntimeFields())
 
 	err := watcher.WaitForMatch(expected)
-	if err == nil {
-		t.Error("Expected timeout error")
-	}
+	ck.Error(err, "Expected timeout error")
 }
 
 // TestVerboseDiffs_IncomingEvents tests verbose diff logging for incoming events.
@@ -99,7 +98,9 @@ func TestVerboseDiffs_IncomingEvents(t *testing.T) {
 				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "test"}},
-					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "nginx", Image: "nginx"}}},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{Name: "nginx", Image: "nginx"}},
+					},
 				},
 			},
 		}
@@ -138,9 +139,7 @@ func TestVerboseDiffs_IncomingEvents(t *testing.T) {
 	}
 
 	err := watcher.WaitForMatch(expected)
-	if err == nil {
-		t.Error("Expected timeout")
-	}
+	assert.NewCollecting(t).Error(err, "Expected timeout")
 }
 
 // TestWatchResource_AlreadyWatched tests early return when kind already watched.
@@ -194,7 +193,5 @@ func TestWaitForEventType_NonMatchingEvents(t *testing.T) {
 
 	// Wait for DELETED event (will see ADDED but predicate returns false)
 	_, err := watcher.WaitForEventType("Service", "DELETED")
-	if err == nil {
-		t.Error("Expected timeout error")
-	}
+	assert.NewCollecting(t).Error(err, "Expected timeout error")
 }

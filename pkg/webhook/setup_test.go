@@ -15,6 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // mockManager implements manager.Manager for testing.
@@ -66,9 +68,7 @@ func (s *mockServer) WebhookMux() *http.ServeMux                 { return http.N
 func setupTestDeps(tb testing.TB) (*runtime.Scheme, client.Client) {
 	tb.Helper()
 	s := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(s); err != nil {
-		tb.Fatalf("Failed to add scheme: %v", err)
-	}
+	assert.NewAborting(tb).NoError(multigresv1alpha1.AddToScheme(s), "Failed to add scheme")
 	c := fake.NewClientBuilder().WithScheme(s).Build()
 	return s, c
 }
@@ -207,24 +207,24 @@ func TestSetup(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			mgr := tc.mgrFunc(t)
 			err := Setup(mgr, tc.resolver, tc.opts)
 
 			if tc.expectError != "" {
-				if err == nil {
-					t.Fatalf("Expected error containing %q, got nil", tc.expectError)
-				}
-				if diff := cmp.Diff(
+				c.Require().Error(err, "Expected error containing %q, got nil", tc.expectError)
+				diff := cmp.Diff(
 					true,
 					strings.Contains(err.Error(), tc.expectError),
-				); diff != "" {
-					t.Errorf(
-						"Error message mismatch (-got +want matching check):\n%s\nGot error: %v",
-						diff,
-						err,
-					)
-				}
+				)
+				c.Eq(
+					"",
+					diff,
+					"Error message mismatch (-got +want matching check):\n%s\nGot error: %v",
+					diff,
+					err,
+				)
 			} else if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}

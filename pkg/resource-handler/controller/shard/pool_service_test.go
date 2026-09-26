@@ -3,7 +3,6 @@ package shard
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -11,6 +10,8 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildPoolHeadlessService(t *testing.T) {
@@ -338,9 +339,7 @@ func TestBuildPoolHeadlessService(t *testing.T) {
 				return
 			}
 
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildPoolHeadlessService() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildPoolHeadlessService() mismatch")
 		})
 	}
 }

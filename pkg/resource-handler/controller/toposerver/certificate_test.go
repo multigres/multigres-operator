@@ -19,6 +19,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/certs"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func certScheme() *runtime.Scheme {
@@ -52,6 +54,7 @@ func certTestTopoServer(tls *multigresv1alpha1.TopoTLSConfig) *multigresv1alpha1
 }
 
 func TestBuildServingCertificate(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := certScheme()
 	toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{
 		Enabled:    ptr.To(true),
@@ -59,29 +62,18 @@ func TestBuildServingCertificate(t *testing.T) {
 	})
 
 	got, err := BuildServingCertificate(toposerver, scheme)
-	if err != nil {
-		t.Fatalf("BuildServingCertificate() error = %v", err)
-	}
-	if got == nil {
-		t.Fatal("BuildServingCertificate() = nil, want a Certificate")
-	}
+	c.Require().NoError(err, "BuildServingCertificate() error =")
+	c.Require().NotNil(got, "BuildServingCertificate() = nil, want a Certificate")
 
 	wantName := "test-cluster-global-topo-topo-server-tls"
-	if got.GetName() != wantName {
-		t.Errorf("name = %q, want %q", got.GetName(), wantName)
-	}
-	if got.GetNamespace() != "supabase" {
-		t.Errorf("namespace = %q, want supabase", got.GetNamespace())
-	}
+	c.Eq(wantName, got.GetName(), "name")
+	c.Eq("supabase", got.GetNamespace(), "namespace")
 	ownerRefs := got.GetOwnerReferences()
-	if len(ownerRefs) != 1 || ownerRefs[0].Kind != "TopoServer" {
-		t.Fatalf("ownerReferences = %+v, want one TopoServer ref", ownerRefs)
-	}
+	c.Require().
+		False(len(ownerRefs) != 1 || ownerRefs[0].Kind != "TopoServer", "ownerReferences = %+v, want one TopoServer ref", ownerRefs)
 
 	spec, ok := got.Object["spec"].(map[string]any)
-	if !ok {
-		t.Fatal("spec is not a map")
-	}
+	c.Require().True(ok, "spec is not a map")
 
 	// Both Services the controller creates have to verify: the client Service
 	// (BuildClientService) and the headless peer Service (BuildHeadlessService).
@@ -96,20 +88,18 @@ func TestBuildServingCertificate(t *testing.T) {
 		"test-cluster-global-topo-headless.supabase.svc.cluster.local",
 		"*.test-cluster-global-topo-headless.supabase.svc.cluster.local",
 	}
-	if diff := cmp.Diff(wantDNSNames, spec["dnsNames"]); diff != "" {
-		t.Errorf("dnsNames mismatch (-want +got):\n%s", diff)
-	}
+	c.Eq("", cmp.Diff(wantDNSNames, spec["dnsNames"]), "dnsNames mismatch (-want +got):\n")
 
 	wantSubject := fmt.Sprintf(
 		certs.LiteralSubjectTemplate,
 		"test-cluster-global-topo.supabase.svc.cluster.local",
 	)
-	if diff := cmp.Diff(wantSubject, spec["literalSubject"]); diff != "" {
-		t.Errorf("literalSubject mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff(wantName, spec["secretName"]); diff != "" {
-		t.Errorf("secretName mismatch (-want +got):\n%s", diff)
-	}
+	c.Eq(
+		"",
+		cmp.Diff(wantSubject, spec["literalSubject"]),
+		"literalSubject mismatch (-want +got):\n",
+	)
+	c.Eq("", cmp.Diff(wantName, spec["secretName"]), "secretName mismatch (-want +got):\n")
 
 	// The topology server is shared infrastructure, so it takes the issuer from
 	// the topology TLS config rather than any single cluster's issuer.
@@ -118,32 +108,23 @@ func TestBuildServingCertificate(t *testing.T) {
 		"kind":  "ClusterIssuer",
 		"group": "cert-manager.io",
 	}
-	if diff := cmp.Diff(wantIssuerRef, spec["issuerRef"]); diff != "" {
-		t.Errorf("issuerRef mismatch (-want +got):\n%s", diff)
-	}
+	c.Eq("", cmp.Diff(wantIssuerRef, spec["issuerRef"]), "issuerRef mismatch (-want +got):\n")
 }
 
 func TestBuildServingCertificateSANsCoverBothServices(t *testing.T) {
+	c := assert.NewAborting(t)
 	scheme := certScheme()
 	toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 
 	clientSvc, err := BuildClientService(toposerver, scheme)
-	if err != nil {
-		t.Fatalf("BuildClientService() error = %v", err)
-	}
+	c.NoError(err, "BuildClientService() error =")
 	headlessSvc, err := BuildHeadlessService(toposerver, scheme)
-	if err != nil {
-		t.Fatalf("BuildHeadlessService() error = %v", err)
-	}
+	c.NoError(err, "BuildHeadlessService() error =")
 
 	cert, err := BuildServingCertificate(toposerver, scheme)
-	if err != nil {
-		t.Fatalf("BuildServingCertificate() error = %v", err)
-	}
+	c.NoError(err, "BuildServingCertificate() error =")
 	sans, _, err := unstructured.NestedSlice(cert.Object, "spec", "dnsNames")
-	if err != nil {
-		t.Fatalf("NestedSlice(dnsNames) error = %v", err)
-	}
+	c.NoError(err, "NestedSlice(dnsNames) error =")
 	covered := make(map[string]struct{}, len(sans))
 	for _, s := range sans {
 		covered[s.(string)] = struct{}{}
@@ -158,17 +139,14 @@ func TestBuildServingCertificateSANsCoverBothServices(t *testing.T) {
 }
 
 func TestBuildServingCertificateDefaultIssuer(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := certScheme()
 	toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 
 	cert, err := BuildServingCertificate(toposerver, scheme)
-	if err != nil {
-		t.Fatalf("BuildServingCertificate() error = %v", err)
-	}
+	c.Require().NoError(err, "BuildServingCertificate() error =")
 	issuer, _, _ := unstructured.NestedString(cert.Object, "spec", "issuerRef", "name")
-	if issuer != certs.DefaultIssuerName {
-		t.Errorf("issuerRef.name = %q, want %q", issuer, certs.DefaultIssuerName)
-	}
+	c.Eq(certs.DefaultIssuerName, issuer, "issuerRef.name")
 }
 
 func TestBuildServingCertificateDisabled(t *testing.T) {
@@ -179,13 +157,10 @@ func TestBuildServingCertificateDisabled(t *testing.T) {
 		"disabled": {Enabled: ptr.To(false)},
 	} {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got, err := BuildServingCertificate(certTestTopoServer(tls), scheme)
-			if err != nil {
-				t.Fatalf("BuildServingCertificate() error = %v", err)
-			}
-			if got != nil {
-				t.Errorf("BuildServingCertificate() = %v, want nil", got)
-			}
+			c.Require().NoError(err, "BuildServingCertificate() error =")
+			c.Nil(got, "BuildServingCertificate()")
 		})
 	}
 }
@@ -194,6 +169,7 @@ func TestReconcileCertificate(t *testing.T) {
 	certName := "test-cluster-global-topo-topo-server-tls"
 
 	t.Run("applies the certificate when enabled", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		scheme := certScheme()
 		toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver).Build()
@@ -203,28 +179,26 @@ func TestReconcileCertificate(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), toposerver); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.NoError(
+			r.reconcileCertificate(context.Background(), toposerver),
+			"reconcileCertificate() error =",
+		)
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certs.GVK)
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			client.ObjectKey{Namespace: "supabase", Name: certName},
 			got,
-		); err != nil {
-			t.Fatalf("expected serving Certificate, got error %v", err)
-		}
+		), "expected serving Certificate, got error")
 	})
 
 	t.Run("reports a foreign certificate collision when enabled", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		scheme := certScheme()
 		toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 		foreign, err := BuildServingCertificate(toposerver, scheme)
-		if err != nil {
-			t.Fatalf("BuildServingCertificate() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildServingCertificate() error =")
 		foreign.SetOwnerReferences([]metav1.OwnerReference{{
 			APIVersion: "example.com/v1",
 			Kind:       "Other",
@@ -243,31 +217,24 @@ func TestReconcileCertificate(t *testing.T) {
 		key := client.ObjectKey{Namespace: "supabase", Name: certName}
 		before := &unstructured.Unstructured{}
 		before.SetGroupVersionKind(certs.GVK)
-		if err := c.Get(context.Background(), key, before); err != nil {
-			t.Fatalf("Get() error = %v", err)
-		}
+		ck.Require().NoError(c.Get(context.Background(), key, before), "Get() error =")
 
-		if err := r.reconcileCertificate(context.Background(), toposerver); err == nil {
-			t.Fatal("reconcileCertificate() error = nil, want collision error")
-		}
+		ck.Require().
+			Error(r.reconcileCertificate(context.Background(), toposerver), "reconcileCertificate() error = nil, want collision error")
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certs.GVK)
-		if err := c.Get(context.Background(), key, got); err != nil {
-			t.Fatalf("foreign Certificate was modified or deleted: %v", err)
-		}
-		if diff := cmp.Diff(before.Object, got.Object); diff != "" {
-			t.Errorf("foreign Certificate changed (-want +got):\n%s", diff)
-		}
+		ck.Require().
+			NoError(c.Get(context.Background(), key, got), "foreign Certificate was modified or deleted")
+		ck.EqDiff(before.Object, got.Object, "foreign Certificate changed")
 	})
 
 	t.Run("prunes the certificate and its secret when disabled", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		scheme := certScheme()
 		enabled := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 		existing, err := BuildServingCertificate(enabled, scheme)
-		if err != nil {
-			t.Fatalf("BuildServingCertificate() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildServingCertificate() error =")
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: certName, Namespace: "supabase"},
 		}
@@ -283,29 +250,25 @@ func TestReconcileCertificate(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), toposerver); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileCertificate(context.Background(), toposerver), "reconcileCertificate() error =")
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certs.GVK)
-		if err := c.Get(
+		ck.Error(c.Get(
 			context.Background(),
 			client.ObjectKey{Namespace: "supabase", Name: certName},
 			got,
-		); err == nil {
-			t.Error("expected serving Certificate to be deleted")
-		}
-		if err := c.Get(
+		), "expected serving Certificate to be deleted")
+		ck.Error(c.Get(
 			context.Background(),
 			client.ObjectKey{Namespace: "supabase", Name: certName},
 			&corev1.Secret{},
-		); err == nil {
-			t.Error("expected generated Secret to be deleted")
-		}
+		), "expected generated Secret to be deleted")
 	})
 
 	t.Run("issues nothing when TLS is unset", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		scheme := certScheme()
 		toposerver := certTestTopoServer(nil)
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver).Build()
@@ -315,29 +278,23 @@ func TestReconcileCertificate(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), toposerver); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileCertificate(context.Background(), toposerver), "reconcileCertificate() error =")
 
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(certs.GVK)
-		if err := c.List(context.Background(), list); err != nil {
-			t.Fatalf("List() error = %v", err)
-		}
-		if len(list.Items) != 0 {
-			t.Errorf("got %d Certificates, want 0", len(list.Items))
-		}
+		ck.Require().NoError(c.List(context.Background(), list), "List() error =")
+		ck.Empty(list.Items, "got %d Certificates, want 0", len(list.Items))
 	})
 
 	// Removing the TLS block is as common as setting enabled to false, and it
 	// must not leave private key material behind either.
 	t.Run("cleans up when the TLS block is removed", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		scheme := certScheme()
 		enabled := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 		existing, err := BuildServingCertificate(enabled, scheme)
-		if err != nil {
-			t.Fatalf("BuildServingCertificate() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildServingCertificate() error =")
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: certName, Namespace: "supabase"},
 		}
@@ -353,29 +310,29 @@ func TestReconcileCertificate(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), toposerver); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileCertificate(context.Background(), toposerver), "reconcileCertificate() error =")
 
 		key := client.ObjectKey{Namespace: "supabase", Name: certName}
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certs.GVK)
-		if err := c.Get(context.Background(), key, got); err == nil {
-			t.Error("expected orphaned Certificate to be deleted")
-		}
-		if err := c.Get(context.Background(), key, &corev1.Secret{}); err == nil {
-			t.Error("expected orphaned Secret to be deleted")
-		}
+		ck.Error(
+			c.Get(context.Background(), key, got),
+			"expected orphaned Certificate to be deleted",
+		)
+		ck.Error(
+			c.Get(context.Background(), key, &corev1.Secret{}),
+			"expected orphaned Secret to be deleted",
+		)
 	})
 
 	// A same-named Certificate owned by something else is not ours to delete.
 	t.Run("leaves an unowned certificate alone", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		scheme := certScheme()
 		enabled := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
 		foreign, err := BuildServingCertificate(enabled, scheme)
-		if err != nil {
-			t.Fatalf("BuildServingCertificate() error = %v", err)
-		}
+		ck.Require().NoError(err, "BuildServingCertificate() error =")
 		foreign.SetOwnerReferences(nil)
 
 		toposerver := certTestTopoServer(nil)
@@ -389,19 +346,16 @@ func TestReconcileCertificate(t *testing.T) {
 			Recorder: record.NewFakeRecorder(10),
 		}
 
-		if err := r.reconcileCertificate(context.Background(), toposerver); err != nil {
-			t.Fatalf("reconcileCertificate() error = %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileCertificate(context.Background(), toposerver), "reconcileCertificate() error =")
 
 		got := &unstructured.Unstructured{}
 		got.SetGroupVersionKind(certs.GVK)
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			client.ObjectKey{Namespace: "supabase", Name: certName},
 			got,
-		); err != nil {
-			t.Errorf("unowned Certificate was deleted: %v", err)
-		}
+		), "unowned Certificate was deleted")
 	})
 }
 
@@ -409,40 +363,34 @@ func TestReconcileCertificate(t *testing.T) {
 // enforcement existed: plaintext listeners and no serving certificate mount.
 // This is the invariant that keeps the change safe to merge with the gate off.
 func TestTopoTLSOffRendersPlaintext(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := certScheme()
 
 	sts, err := BuildStatefulSet(certTestTopoServer(nil), scheme)
-	if err != nil {
-		t.Fatalf("BuildStatefulSet() error = %v", err)
-	}
+	c.Require().NoError(err, "BuildStatefulSet() error =")
 
 	for _, vol := range sts.Spec.Template.Spec.Volumes {
-		if vol.Name == TopoServerTLSVolumeName {
-			t.Fatalf("serving certificate volume present with topology TLS off")
-		}
+		c.Require().
+			NotEq(TopoServerTLSVolumeName, vol.Name, "serving certificate volume present with topology TLS off")
 	}
 	env := etcdEnvMap(t, sts)
-	if got := env["ETCD_LISTEN_CLIENT_URLS"]; got != "http://[::]:2379" {
-		t.Errorf("ETCD_LISTEN_CLIENT_URLS = %q, want plaintext", got)
-	}
-	if _, ok := env["ETCD_CLIENT_CERT_AUTH"]; ok {
-		t.Errorf("ETCD_CLIENT_CERT_AUTH set with topology TLS off")
-	}
+	c.Eq("http://[::]:2379", env["ETCD_LISTEN_CLIENT_URLS"], "ETCD_LISTEN_CLIENT_URLS")
+	_, ok := env["ETCD_CLIENT_CERT_AUTH"]
+	c.False(ok, "ETCD_CLIENT_CERT_AUTH set with topology TLS off")
 }
 
 // With topology TLS on, etcd serves its client and peer listeners over TLS,
 // requires a client certificate on each, and mounts the issued serving
 // certificate. The metrics listener stays plaintext so the probes keep working.
 func TestTopoTLSOnRequiresClientCerts(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := certScheme()
 
 	sts, err := BuildStatefulSet(certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{
 		Enabled:    ptr.To(true),
 		IssuerName: "multigres-infra-issuer",
 	}), scheme)
-	if err != nil {
-		t.Fatalf("BuildStatefulSet() error = %v", err)
-	}
+	c.Require().NoError(err, "BuildStatefulSet() error =")
 
 	var servingVol *corev1.Volume
 	for i := range sts.Spec.Template.Spec.Volumes {
@@ -450,9 +398,7 @@ func TestTopoTLSOnRequiresClientCerts(t *testing.T) {
 			servingVol = &sts.Spec.Template.Spec.Volumes[i]
 		}
 	}
-	if servingVol == nil {
-		t.Fatal("serving certificate volume missing with topology TLS on")
-	}
+	c.Require().NotNil(servingVol, "serving certificate volume missing with topology TLS on")
 	if servingVol.Secret == nil ||
 		servingVol.Secret.SecretName != multigresv1alpha1.TopoServerCertSecretName(
 			"test-cluster-global-topo",
@@ -464,18 +410,15 @@ func TestTopoTLSOnRequiresClientCerts(t *testing.T) {
 	for _, m := range sts.Spec.Template.Spec.Containers[0].VolumeMounts {
 		if m.Name == TopoServerTLSVolumeName {
 			mounted = true
-			if !m.ReadOnly || m.MountPath != TopoServerTLSMountPath {
-				t.Errorf(
-					"serving certificate mount = %+v, want read-only at %s",
-					m,
-					TopoServerTLSMountPath,
-				)
-			}
+			c.False(
+				!m.ReadOnly || m.MountPath != TopoServerTLSMountPath,
+				"serving certificate mount = %+v, want read-only at %s",
+				m,
+				TopoServerTLSMountPath,
+			)
 		}
 	}
-	if !mounted {
-		t.Error("serving certificate is not mounted into the etcd container")
-	}
+	c.True(mounted, "serving certificate is not mounted into the etcd container")
 
 	env := etcdEnvMap(t, sts)
 	wantEnv := map[string]string{
@@ -492,9 +435,8 @@ func TestTopoTLSOnRequiresClientCerts(t *testing.T) {
 		"ETCD_PEER_TRUSTED_CA_FILE":  TopoServerTLSCAFile,
 	}
 	for k, want := range wantEnv {
-		if got := env[k]; got != want {
-			t.Errorf("%s = %q, want %q", k, got, want)
-		}
+		got := env[k]
+		c.Eq(want, got, "%s = %q, want", k, got)
 	}
 }
 

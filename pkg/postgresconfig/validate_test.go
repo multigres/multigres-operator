@@ -3,6 +3,8 @@ package postgresconfig
 import (
 	"strings"
 	"testing"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestValidate_Accepts(t *testing.T) {
@@ -27,9 +29,8 @@ func TestValidate_Accepts(t *testing.T) {
 	}
 	for name, cfg := range tests {
 		t.Run(name, func(t *testing.T) {
-			if err := Validate(cfg); err != nil {
-				t.Errorf("Validate(%v) = %v, want nil", cfg, err)
-			}
+			err := Validate(cfg)
+			assert.NewCollecting(t).NoError(err, "Validate(%v) = %v, want nil", cfg, err)
 		})
 	}
 }
@@ -74,42 +75,38 @@ func TestValidate_Rejects(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			err := Validate(tc.cfg)
-			if err == nil {
-				t.Fatalf("Validate(%v) = nil, want error", tc.cfg)
-			}
+			c.Require().Error(err, "Validate(%v) = nil, want error", tc.cfg)
 			for _, sub := range tc.wantSubs {
-				if !strings.Contains(err.Error(), sub) {
-					t.Errorf("error %q missing %q", err.Error(), sub)
-				}
+				c.StrContains(err.Error(), sub, "error")
 			}
 		})
 	}
 }
 
 func TestValidate_AggregatesAllProblems(t *testing.T) {
+	c := assert.NewCollecting(t)
 	err := Validate(map[string]string{
 		"maxx_connections": "200",   // unknown
 		"fsync":            "maybe", // bad bool
 		"max_connections":  "200",   // valid — should not appear
 	})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "maxx_connections") ||
-		!strings.Contains(err.Error(), "fsync") {
-		t.Errorf("error should mention both problems: %v", err)
-	}
-	if strings.Contains(err.Error(), `"max_connections"`) {
-		t.Errorf("error should not flag the valid parameter: %v", err)
-	}
+	c.Require().Error(err, "expected error")
+	c.False(!strings.Contains(err.Error(), "maxx_connections") ||
+		!strings.Contains(err.Error(), "fsync"), "error should mention both problems: %v", err)
+	c.NotStrContains(
+		err.Error(),
+		`"max_connections"`,
+		"error should not flag the valid parameter: %v",
+		err,
+	)
 }
 
 func TestCatalogLoaded(t *testing.T) {
+	c := assert.NewCollecting(t)
 	// The embedded catalog must be non-trivial and contain well-known params.
-	if len(catalog) < 300 {
-		t.Errorf("catalog has %d entries, expected the full PG17 set", len(catalog))
-	}
+	c.GreaterOrEqual(300, len(catalog), "catalog has")
 	for name, want := range map[string]gucType{
 		"max_connections":  gucInteger,
 		"shared_buffers":   gucInteger,
@@ -118,8 +115,7 @@ func TestCatalogLoaded(t *testing.T) {
 		"wal_level":        gucEnum,
 		"log_line_prefix":  gucString,
 	} {
-		if got := catalog[name].typ; got != want {
-			t.Errorf("catalog[%q].typ = %q, want %q", name, got, want)
-		}
+		got := catalog[name].typ
+		c.Eq(want, got, "catalog[%q].typ = %q, want", name, got)
 	}
 }

@@ -3,10 +3,11 @@ package storage
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildPVCTemplate(t *testing.T) {
@@ -152,9 +153,7 @@ func TestBuildPVCTemplate(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := BuildPVCTemplate(tc.name, tc.storageClassName, tc.storageSize, tc.accessModes)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildPVCTemplate() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildPVCTemplate() mismatch")
 		})
 	}
 }

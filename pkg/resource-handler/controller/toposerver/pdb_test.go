@@ -3,7 +3,6 @@ package toposerver
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -12,9 +11,12 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildPodDisruptionBudget(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -28,9 +30,7 @@ func TestBuildPodDisruptionBudget(t *testing.T) {
 	}
 
 	got, err := BuildPodDisruptionBudget(toposerver, scheme)
-	if err != nil {
-		t.Fatalf("BuildPodDisruptionBudget() error = %v", err)
-	}
+	c.Require().NoError(err, "BuildPodDisruptionBudget() error =")
 
 	labels := metadata.BuildStandardLabels("test-cluster", ComponentName)
 	metadata.AddClusterLabel(labels, "test-cluster")
@@ -58,9 +58,7 @@ func TestBuildPodDisruptionBudget(t *testing.T) {
 		},
 	}
 
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("BuildPodDisruptionBudget() mismatch (-want +got):\n%s", diff)
-	}
+	c.EqDiff(want, got, "BuildPodDisruptionBudget() mismatch")
 }
 
 func TestBuildPodDisruptionBudgetInvalidScheme(t *testing.T) {
@@ -68,7 +66,6 @@ func TestBuildPodDisruptionBudgetInvalidScheme(t *testing.T) {
 		&multigresv1alpha1.TopoServer{ObjectMeta: metav1.ObjectMeta{Name: "test"}},
 		runtime.NewScheme(),
 	)
-	if err == nil {
-		t.Fatal("BuildPodDisruptionBudget() should fail with an unregistered scheme")
-	}
+	assert.NewAborting(t).
+		Error(err, "BuildPodDisruptionBudget() should fail with an unregistered scheme")
 }

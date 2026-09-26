@@ -7,6 +7,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestComputePhase(t *testing.T) {
@@ -44,9 +46,7 @@ func TestComputePhase(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ComputePhase(tt.ready, tt.total); got != tt.want {
-				t.Errorf("ComputePhase() = %v, want %v", got, tt.want)
-			}
+			assert.NewCollecting(t).Eq(tt.want, ComputePhase(tt.ready, tt.total), "ComputePhase()")
 		})
 	}
 }
@@ -188,9 +188,7 @@ func TestIsCrashLooping(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsCrashLooping(&tt.pod); got != tt.want {
-				t.Errorf("IsCrashLooping() = %v, want %v", got, tt.want)
-			}
+			assert.NewCollecting(t).Eq(tt.want, IsCrashLooping(&tt.pod), "IsCrashLooping()")
 		})
 	}
 }
@@ -239,9 +237,7 @@ func TestAnyCrashLooping(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := AnyCrashLooping(tt.pods); got != tt.want {
-				t.Errorf("AnyCrashLooping() = %v, want %v", got, tt.want)
-			}
+			assert.NewCollecting(t).Eq(tt.want, AnyCrashLooping(tt.pods), "AnyCrashLooping()")
 		})
 	}
 }
@@ -333,13 +329,10 @@ func TestComputeWorkloadPhase(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			result := ComputeWorkloadPhase(tt.input)
-			if result.Phase != tt.wantPhase {
-				t.Errorf("ComputeWorkloadPhase() phase = %v, want %v", result.Phase, tt.wantPhase)
-			}
-			if result.Message == "" {
-				t.Error("ComputeWorkloadPhase() returned empty message")
-			}
+			c.Eq(tt.wantPhase, result.Phase, "ComputeWorkloadPhase() phase")
+			c.NotEq("", result.Message, "ComputeWorkloadPhase() returned empty message")
 		})
 	}
 }

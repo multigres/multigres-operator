@@ -15,6 +15,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func topoTestClient(objs ...client.Object) client.Client {
@@ -79,6 +81,7 @@ func TestNewStoreFromShard_InvalidImplementation(t *testing.T) {
 // fail with the Secret name, so a misconfigured cluster reports the missing
 // material instead of silently connecting without a certificate.
 func TestNewStoreFromShard_MissingSecretIsLoud(t *testing.T) {
+	c := assert.NewCollecting(t)
 	tlsName := "cluster-topo-client-tls"
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a"},
@@ -93,17 +96,14 @@ func TestNewStoreFromShard_MissingSecretIsLoud(t *testing.T) {
 	}
 
 	_, err := topo.NewStoreFromShard(context.Background(), topoTestClient(), shard)
-	if err == nil {
-		t.Fatal("expected an error for a missing client credential Secret")
-	}
-	if !strings.Contains(err.Error(), tlsName) {
-		t.Errorf("error does not name the missing Secret: %v", err)
-	}
+	c.Require().Error(err, "expected an error for a missing client credential Secret")
+	c.StrContains(err.Error(), tlsName, "error does not name the missing Secret: %v", err)
 }
 
 // A Secret that exists but is missing a required key also fails loudly, naming
 // the key.
 func TestNewStoreFromRef_MissingKeyIsLoud(t *testing.T) {
+	c := assert.NewCollecting(t)
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "topo-tls", Namespace: "team-a"},
 		Data: map[string][]byte{
@@ -120,12 +120,12 @@ func TestNewStoreFromRef_MissingKeyIsLoud(t *testing.T) {
 	}
 
 	_, err := topo.NewStoreFromRef(context.Background(), topoTestClient(secret), "team-a", ref)
-	if err == nil {
-		t.Fatal("expected an error for a Secret missing tls.key")
-	}
-	if !strings.Contains(err.Error(), "tls.key") || !strings.Contains(err.Error(), "topo-tls") {
-		t.Errorf("error does not name the Secret and missing key: %v", err)
-	}
+	c.Require().Error(err, "expected an error for a Secret missing tls.key")
+	c.False(
+		!strings.Contains(err.Error(), "tls.key") || !strings.Contains(err.Error(), "topo-tls"),
+		"error does not name the Secret and missing key: %v",
+		err,
+	)
 }
 
 func TestNewStoreFromRef_WithClientCert(t *testing.T) {
@@ -145,9 +145,7 @@ func TestNewStoreFromRef_WithClientCert(t *testing.T) {
 	}
 
 	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(secret), "team-a", ref)
-	if err != nil {
-		t.Fatalf("NewStoreFromRef() unexpected error: %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "NewStoreFromRef() unexpected error")
 	if store != nil {
 		_ = store.Close()
 	}
@@ -166,9 +164,9 @@ func TestIsTopoUnavailable(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if got := topo.IsTopoUnavailable(tc.err); got != tc.want {
-				t.Errorf("IsTopoUnavailable(%v) = %v, want %v", tc.err, got, tc.want)
-			}
+			got := topo.IsTopoUnavailable(tc.err)
+			assert.NewCollecting(t).
+				Eq(tc.want, got, "IsTopoUnavailable(%v) = %v, want", tc.err, got)
 		})
 	}
 }
@@ -184,9 +182,7 @@ func TestNewStoreFromCell(t *testing.T) {
 	}
 
 	store, err := topo.NewStoreFromCell(context.Background(), topoTestClient(), cell)
-	if err != nil {
-		t.Fatalf("NewStoreFromCell() unexpected error: %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "NewStoreFromCell() unexpected error")
 	if store != nil {
 		_ = store.Close()
 	}
@@ -219,9 +215,7 @@ func TestNewStoreFromRef(t *testing.T) {
 	}
 
 	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(), "team-a", ref)
-	if err != nil {
-		t.Fatalf("NewStoreFromRef() unexpected error: %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "NewStoreFromRef() unexpected error")
 	if store != nil {
 		_ = store.Close()
 	}

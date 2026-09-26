@@ -19,6 +19,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // buildHashedName helper to generate the expected hashed name for tests
@@ -37,20 +39,13 @@ type conditionAssertion struct {
 // assertConditions verifies conditions match expectations
 func assertConditions(t testing.TB, got []metav1.Condition, want ...conditionAssertion) {
 	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("condition count = %d, want %d", len(got), len(want))
-	}
+	c := assert.NewCollecting(t)
+	c.Require().Len(got, len(want), "condition count = %d, want", len(got))
 	for i, w := range want {
 		g := got[i]
-		if g.Type != w.Type {
-			t.Errorf("condition[%d].Type = %q, want %q", i, g.Type, w.Type)
-		}
-		if g.Status != w.Status {
-			t.Errorf("condition[%d].Status = %q, want %q", i, g.Status, w.Status)
-		}
-		if g.Reason != w.Reason {
-			t.Errorf("condition[%d].Reason = %q, want %q", i, g.Reason, w.Reason)
-		}
+		c.Eq(w.Type, g.Type, "condition[%d].Type = %q, want", i, g.Type)
+		c.Eq(w.Status, g.Status, "condition[%d].Status = %q, want", i, g.Status)
+		c.Eq(w.Reason, g.Reason, "condition[%d].Reason = %q, want", i, g.Reason)
 	}
 }
 
@@ -90,35 +85,26 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			existingObjects: []client.Object{},
 			wantRequeue:     true,
 			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
+				ck := assert.NewCollecting(t)
 				hashedName := buildHashedName(
 					cell.Labels["multigres.com/cluster"],
 					string(cell.Spec.Name),
 				)
 				// Verify Multigateway Deployment was created
 				mgDeploy := &appsv1.Deployment{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedName, Namespace: "default"},
-					mgDeploy); err != nil {
-					t.Errorf("Multigateway Deployment should exist: %v", err)
-				}
+					mgDeploy), "Multigateway Deployment should exist")
 
 				// Verify Multigateway Service was created
 				mgSvc := &corev1.Service{}
-				if err := c.Get(t.Context(),
+				ck.NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedName, Namespace: "default"},
-					mgSvc); err != nil {
-					t.Errorf("Multigateway Service should exist: %v", err)
-				}
+					mgSvc), "Multigateway Service should exist")
 
 				// Verify defaults
 				const wantReplicas int32 = 1
-				if *mgDeploy.Spec.Replicas != wantReplicas {
-					t.Errorf(
-						"Multigateway Deployment replicas = %d, want %d",
-						*mgDeploy.Spec.Replicas,
-						wantReplicas,
-					)
-				}
+				ck.Eq(wantReplicas, *mgDeploy.Spec.Replicas, "Multigateway Deployment replicas")
 			},
 		},
 		"update existing resources": {
@@ -161,6 +147,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 			},
 			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
+				ck := assert.NewCollecting(t)
 				hashedName := buildHashedName(
 					cell.Labels["multigres.com/cluster"],
 					string(cell.Spec.Name),
@@ -170,26 +157,17 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					Name:      hashedName,
 					Namespace: "default",
 				}, mgDeploy)
-				if err != nil {
-					t.Fatalf("Failed to get Multigateway Deployment: %v", err)
-				}
+				ck.Require().NoError(err, "Failed to get Multigateway Deployment")
 
-				if *mgDeploy.Spec.Replicas != 5 {
-					t.Errorf(
-						"Multigateway Deployment replicas = %d, want 5",
-						*mgDeploy.Spec.Replicas,
-					)
-				}
+				ck.Eq(5, *mgDeploy.Spec.Replicas, "Multigateway Deployment replicas")
 
-				if len(mgDeploy.Spec.Template.Spec.Containers) == 0 {
-					t.Fatal("Multigateway Deployment has no containers")
-				}
-				if mgDeploy.Spec.Template.Spec.Containers[0].Image != "custom/multigateway:v1.0.0" {
-					t.Errorf(
-						"Multigateway image = %s, want custom/multigateway:v1.0.0",
-						mgDeploy.Spec.Template.Spec.Containers[0].Image,
-					)
-				}
+				ck.Require().
+					NotEmpty(mgDeploy.Spec.Template.Spec.Containers, "Multigateway Deployment has no containers")
+				ck.Eq(
+					"custom/multigateway:v1.0.0",
+					mgDeploy.Spec.Template.Spec.Containers[0].Image,
+					"Multigateway image",
+				)
 			},
 		},
 
@@ -224,11 +202,9 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 					string(cell.Spec.Name),
 				)
 				mgDeploy := &appsv1.Deployment{}
-				if err := c.Get(t.Context(),
+				assert.NewCollecting(t).Error(c.Get(t.Context(),
 					types.NamespacedName{Name: hashedName, Namespace: "default"},
-					mgDeploy); err == nil {
-					t.Errorf("Multigateway Deployment should NOT exist")
-				}
+					mgDeploy), "Multigateway Deployment should NOT exist")
 			},
 		},
 
@@ -269,12 +245,11 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 			},
 			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
+				ck := assert.NewCollecting(t)
 				updatedCell := &multigresv1alpha1.Cell{}
-				if err := c.Get(t.Context(),
+				ck.Require().NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-cell-ready", Namespace: "default"},
-					updatedCell); err != nil {
-					t.Fatalf("Failed to get Cell: %v", err)
-				}
+					updatedCell), "Failed to get Cell")
 
 				assertConditions(
 					t,
@@ -294,9 +269,8 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				if got, want := updatedCell.Status.GatewayReplicas, int32(2); got != want {
 					t.Errorf("GatewayReplicas = %d, want %d", got, want)
 				}
-				if got, want := updatedCell.Status.GatewayReadyReplicas, int32(2); got != want {
-					t.Errorf("GatewayReadyReplicas = %d, want %d", got, want)
-				}
+				got, want := updatedCell.Status.GatewayReadyReplicas, int32(2)
+				ck.Eq(want, got, "GatewayReadyReplicas")
 			},
 		},
 		"not ready status - partial replicas": {
@@ -338,11 +312,9 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			},
 			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
 				updatedCell := &multigresv1alpha1.Cell{}
-				if err := c.Get(t.Context(),
+				assert.NewAborting(t).NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-cell-partial", Namespace: "default"},
-					updatedCell); err != nil {
-					t.Fatalf("Failed to get Cell: %v", err)
-				}
+					updatedCell), "Failed to get Cell")
 
 				// With 2/3 replicas ready: Available=True (service is up), Ready=False (not converged)
 				assertConditions(
@@ -381,25 +353,24 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			},
 			existingObjects: []client.Object{},
 			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
+				ck := assert.NewCollecting(t)
 				updatedCell := &multigresv1alpha1.Cell{}
-				if err := c.Get(t.Context(),
+				ck.Require().NoError(c.Get(t.Context(),
 					types.NamespacedName{Name: "test-cell-pending-deletion", Namespace: "default"},
-					updatedCell); err != nil {
-					t.Fatalf("Failed to get Cell: %v", err)
-				}
+					updatedCell), "Failed to get Cell")
 
 				found := false
 				for _, cond := range updatedCell.Status.Conditions {
 					if cond.Type == multigresv1alpha1.ConditionReadyForDeletion {
 						found = true
-						if cond.Status != metav1.ConditionTrue {
-							t.Errorf("expected ReadyForDeletion=True, got %s", cond.Status)
-						}
+						ck.Eq(
+							metav1.ConditionTrue,
+							cond.Status,
+							"expected ReadyForDeletion=True, got",
+						)
 					}
 				}
-				if !found {
-					t.Errorf("expected ConditionReadyForDeletion to be present")
-				}
+				ck.True(found, "expected ConditionReadyForDeletion to be present")
 			},
 		},
 		////----------------------------------------
@@ -575,6 +546,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			// Calculate hashed name
 			clusterName := tc.cell.Labels["multigres.com/cluster"]
@@ -628,9 +600,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 			}
 			if !cellInExisting {
 				err := fakeClient.Create(t.Context(), tc.cell)
-				if err != nil {
-					t.Fatalf("Failed to create Cell: %v", err)
-				}
+				c.Require().NoError(err, "Failed to create Cell")
 			}
 
 			// Reconcile
@@ -650,13 +620,12 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				return
 			}
 
-			if (result.RequeueAfter != 0) != tc.wantRequeue {
-				t.Errorf(
-					"Reconcile() requeue = %v, want requeue = %v",
-					result.RequeueAfter,
-					tc.wantRequeue,
-				)
-			}
+			c.Eq(
+				tc.wantRequeue,
+				(result.RequeueAfter != 0),
+				"Reconcile() requeue = %v, want requeue =",
+				result.RequeueAfter,
+			)
 
 			// Run custom assertions if provided
 			if tc.assertFunc != nil {
@@ -667,6 +636,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 }
 
 func TestCellReconciler_ReconcileNotFound(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -691,10 +661,6 @@ func TestCellReconciler_ReconcileNotFound(t *testing.T) {
 	}
 
 	result, err := reconciler.Reconcile(t.Context(), req)
-	if err != nil {
-		t.Errorf("Reconcile() should not error on NotFound, got: %v", err)
-	}
-	if result.RequeueAfter > 0 {
-		t.Errorf("Reconcile() should not requeue on NotFound")
-	}
+	c.NoError(err, "Reconcile() should not error on NotFound, got")
+	c.LessOrEqual(0, result.RequeueAfter, "Reconcile() should not requeue on NotFound")
 }

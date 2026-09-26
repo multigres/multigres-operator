@@ -5,6 +5,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"k8s.io/utils/ptr"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestMergeEtcdMaintenance(t *testing.T) {
@@ -28,8 +30,6 @@ func TestMergeEtcdMaintenance(t *testing.T) {
 	}
 	*override.Maintenance.DefragmentationEnabled = true
 	*override.Maintenance.QuotaBackendBytes = 2 << 30
-	if base.Maintenance.DefragmentationIsEnabled() ||
-		base.Maintenance.EffectiveQuotaBackendBytes() != 512<<20 {
-		t.Fatal("merged maintenance aliases override")
-	}
+	assert.NewAborting(t).False(base.Maintenance.DefragmentationIsEnabled() ||
+		base.Maintenance.EffectiveQuotaBackendBytes() != 512<<20, "merged maintenance aliases override")
 }

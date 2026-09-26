@@ -17,6 +17,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestHandleDeletion(t *testing.T) {
@@ -73,6 +75,7 @@ func TestHandleDeletion(t *testing.T) {
 
 	t.Run("scheduled pod gets deleted during shard deletion", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		pod := makePod("pod-0", true, "")
 		shard := baseShard.DeepCopy()
@@ -91,12 +94,12 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != podTerminationRequeueDelay {
-			t.Errorf("Expected requeue while pod still terminating, got %v", result.RequeueAfter)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(
+			podTerminationRequeueDelay,
+			result.RequeueAfter,
+			"Expected requeue while pod still terminating, got",
+		)
 
 		// Pod should be deleted
 		updatedPod := &corev1.Pod{}
@@ -105,13 +108,12 @@ func TestHandleDeletion(t *testing.T) {
 			types.NamespacedName{Name: "pod-0", Namespace: "default"},
 			updatedPod,
 		)
-		if err == nil {
-			t.Error("Expected pod to be deleted")
-		}
+		ck.Error(err, "Expected pod to be deleted")
 	})
 
 	t.Run("unscheduled pod gets deleted during shard deletion", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		pod := makePod("pod-unsched", false, "")
 		shard := baseShard.DeepCopy()
@@ -130,15 +132,12 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != podTerminationRequeueDelay {
-			t.Errorf(
-				"Expected requeue while unscheduled pod terminating, got %v",
-				result.RequeueAfter,
-			)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(
+			podTerminationRequeueDelay,
+			result.RequeueAfter,
+			"Expected requeue while unscheduled pod terminating, got",
+		)
 
 		// Pod should be deleted
 		updatedPod := &corev1.Pod{}
@@ -147,13 +146,12 @@ func TestHandleDeletion(t *testing.T) {
 			types.NamespacedName{Name: "pod-unsched", Namespace: "default"},
 			updatedPod,
 		)
-		if err == nil {
-			t.Error("Expected pod to be deleted")
-		}
+		ck.Error(err, "Expected pod to be deleted")
 	})
 
 	t.Run("ready-for-deletion pod gets deleted", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		pod := makePod("pod-rfd", true, metadata.DrainStateReadyForDeletion)
 		shard := baseShard.DeepCopy()
@@ -172,12 +170,12 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != podTerminationRequeueDelay {
-			t.Errorf("Expected requeue while drained pod terminating, got %v", result.RequeueAfter)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(
+			podTerminationRequeueDelay,
+			result.RequeueAfter,
+			"Expected requeue while drained pod terminating, got",
+		)
 
 		// Pod should be deleted
 		updatedPod := &corev1.Pod{}
@@ -186,13 +184,12 @@ func TestHandleDeletion(t *testing.T) {
 			types.NamespacedName{Name: "pod-rfd", Namespace: "default"},
 			updatedPod,
 		)
-		if err == nil {
-			t.Error("Expected pod to be deleted")
-		}
+		ck.Error(err, "Expected pod to be deleted")
 	})
 
 	t.Run("mid-drain pod gets deleted directly", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		pod := makePod("pod-draining", true, metadata.DrainStateDraining)
 		pod.Annotations[metadata.AnnotationDrainRequestedAt] = time.Now().UTC().Format(time.RFC3339)
@@ -212,12 +209,12 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != podTerminationRequeueDelay {
-			t.Errorf("Expected requeue while pod still terminating, got %v", result.RequeueAfter)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(
+			podTerminationRequeueDelay,
+			result.RequeueAfter,
+			"Expected requeue while pod still terminating, got",
+		)
 
 		// Pod should be deleted directly, no drain wait
 		updatedPod := &corev1.Pod{}
@@ -226,13 +223,12 @@ func TestHandleDeletion(t *testing.T) {
 			types.NamespacedName{Name: "pod-draining", Namespace: "default"},
 			updatedPod,
 		)
-		if err == nil {
-			t.Error("Expected pod to be deleted")
-		}
+		ck.Error(err, "Expected pod to be deleted")
 	})
 
 	t.Run("expired drain pod gets deleted directly", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		pod := makePod("pod-timeout", true, metadata.DrainStateDraining)
 		pod.Annotations[metadata.AnnotationDrainRequestedAt] = time.Now().
@@ -255,12 +251,12 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != podTerminationRequeueDelay {
-			t.Errorf("Expected requeue while pod still terminating, got %v", result.RequeueAfter)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(
+			podTerminationRequeueDelay,
+			result.RequeueAfter,
+			"Expected requeue while pod still terminating, got",
+		)
 
 		// Pod should be deleted
 		updatedPod := &corev1.Pod{}
@@ -269,13 +265,12 @@ func TestHandleDeletion(t *testing.T) {
 			types.NamespacedName{Name: "pod-timeout", Namespace: "default"},
 			updatedPod,
 		)
-		if err == nil {
-			t.Error("Expected pod to be deleted")
-		}
+		ck.Error(err, "Expected pod to be deleted")
 	})
 
 	t.Run("cleanup completes when no pods exist", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		shard := baseShard.DeepCopy()
 
@@ -293,16 +288,13 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue when no pods exist")
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(0, result.RequeueAfter, "Expected no requeue when no pods exist")
 	})
 
 	t.Run("PVC orphaned only after pods are gone", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		shard := baseShard.DeepCopy()
 		shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
@@ -332,42 +324,46 @@ func TestHandleDeletion(t *testing.T) {
 
 		// First pass: pod still present -> requeue, PVC must NOT be orphaned yet.
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != podTerminationRequeueDelay {
-			t.Errorf("Expected requeue while pod alive, got %v", result.RequeueAfter)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(
+			podTerminationRequeueDelay,
+			result.RequeueAfter,
+			"Expected requeue while pod alive, got",
+		)
 		got := &corev1.PersistentVolumeClaim{}
-		if err := c.Get(context.Background(),
-			types.NamespacedName{Name: "data-pvc-0", Namespace: "default"}, got); err != nil {
-			t.Fatalf("failed to get PVC: %v", err)
-		}
+		ck.Require().NoError(c.Get(
+			context.Background(),
+			types.NamespacedName{
+				Name:      "data-pvc-0",
+				Namespace: "default",
+			},
+			got,
+		), "failed to get PVC")
 		if _, ok := got.Labels[metadata.LabelOrphan]; ok {
 			t.Error("PVC must not be orphaned while a pod still references it")
 		}
 
 		// Second pass: pod deleted by the first pass -> PVC orphaned now.
 		result, err = r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion (2nd pass) returned error: %v", err)
-		}
-		if result.RequeueAfter != 0 {
-			t.Errorf("Expected no requeue once pods are gone, got %v", result.RequeueAfter)
-		}
-		if err := c.Get(context.Background(),
-			types.NamespacedName{Name: "data-pvc-0", Namespace: "default"}, got); err != nil {
-			t.Fatalf("failed to get PVC after cleanup: %v", err)
-		}
-		if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
-			t.Error("PVC should be orphaned once all pods are gone")
-		}
+		ck.Require().NoError(err, "handleDeletion (2nd pass) returned error")
+		ck.Eq(0, result.RequeueAfter, "Expected no requeue once pods are gone, got")
+		ck.Require().NoError(c.Get(
+			context.Background(),
+			types.NamespacedName{
+				Name:      "data-pvc-0",
+				Namespace: "default",
+			},
+			got,
+		), "failed to get PVC after cleanup")
+		_, ok := got.Labels[metadata.LabelOrphan]
+		ck.True(ok, "PVC should be orphaned once all pods are gone")
 	})
 
 	t.Run(
 		"MultigresCluster being deleted hard-deletes PVC instead of orphaning",
 		func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 
 			shard := baseShard.DeepCopy()
 			shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
@@ -403,26 +399,22 @@ func TestHandleDeletion(t *testing.T) {
 			}
 
 			result, err := r.handleDeletion(context.Background(), shard)
-			if err != nil {
-				t.Fatalf("handleDeletion returned error: %v", err)
-			}
-			if result.RequeueAfter != 0 {
-				t.Errorf("Expected no requeue once pods are gone, got %v", result.RequeueAfter)
-			}
+			ck.Require().NoError(err, "handleDeletion returned error")
+			ck.Eq(0, result.RequeueAfter, "Expected no requeue once pods are gone, got")
 			got := &corev1.PersistentVolumeClaim{}
 			err = c.Get(context.Background(),
 				types.NamespacedName{Name: "data-pvc-churn", Namespace: "default"}, got)
-			if !apierrors.IsNotFound(err) {
-				t.Errorf(
-					"PVC should be hard-deleted while cluster is being deleted, got err=%v",
-					err,
-				)
-			}
+			ck.True(
+				apierrors.IsNotFound(err),
+				"PVC should be hard-deleted while cluster is being deleted, got err=%v",
+				err,
+			)
 		},
 	)
 
 	t.Run("pod stuck terminating past timeout does not block PVC cleanup", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		shard := baseShard.DeepCopy()
 		shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
@@ -454,20 +446,19 @@ func TestHandleDeletion(t *testing.T) {
 		}
 
 		result, err := r.handleDeletion(context.Background(), shard)
-		if err != nil {
-			t.Fatalf("handleDeletion returned error: %v", err)
-		}
-		if result.RequeueAfter != 0 {
-			t.Errorf("Expected no requeue for pod stuck past timeout, got %v", result.RequeueAfter)
-		}
+		ck.Require().NoError(err, "handleDeletion returned error")
+		ck.Eq(0, result.RequeueAfter, "Expected no requeue for pod stuck past timeout, got")
 		got := &corev1.PersistentVolumeClaim{}
-		if err := c.Get(context.Background(),
-			types.NamespacedName{Name: "data-pvc-stuck", Namespace: "default"}, got); err != nil {
-			t.Fatalf("failed to get PVC: %v", err)
-		}
-		if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
-			t.Error("PVC should be orphaned even when a pod is stuck terminating past the timeout")
-		}
+		ck.Require().NoError(c.Get(
+			context.Background(),
+			types.NamespacedName{
+				Name:      "data-pvc-stuck",
+				Namespace: "default",
+			},
+			got,
+		), "failed to get PVC")
+		_, ok := got.Labels[metadata.LabelOrphan]
+		ck.True(ok, "PVC should be orphaned even when a pod is stuck terminating past the timeout")
 	})
 }
 
@@ -505,6 +496,7 @@ func TestHandlePendingDeletion(t *testing.T) {
 
 	t.Run("No pods — sets ReadyForDeletion immediately", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 
 		c := fake.NewClientBuilder().
@@ -521,19 +513,13 @@ func TestHandlePendingDeletion(t *testing.T) {
 		}
 
 		result, err := r.handlePendingDeletion(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.RequeueAfter != 0 {
-			t.Error("Expected no requeue when no pods exist")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.Eq(0, result.RequeueAfter, "Expected no requeue when no pods exist")
 
 		updated := &multigresv1alpha1.Shard{}
-		if err := c.Get(t.Context(), types.NamespacedName{
+		ck.Require().NoError(c.Get(t.Context(), types.NamespacedName{
 			Name: shard.Name, Namespace: shard.Namespace,
-		}, updated); err != nil {
-			t.Fatalf("failed to get shard: %v", err)
-		}
+		}, updated), "failed to get shard")
 
 		found := false
 		for _, cond := range updated.Status.Conditions {
@@ -542,13 +528,12 @@ func TestHandlePendingDeletion(t *testing.T) {
 				found = true
 			}
 		}
-		if !found {
-			t.Error("Expected ReadyForDeletion condition to be True")
-		}
+		ck.True(found, "Expected ReadyForDeletion condition to be True")
 	})
 
 	t.Run("Pods without drain — initiates drain and requeues", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 
 		pod := &corev1.Pod{
@@ -576,29 +561,24 @@ func TestHandlePendingDeletion(t *testing.T) {
 		}
 
 		result, err := r.handlePendingDeletion(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.RequeueAfter == 0 {
-			t.Error("Expected requeue when pods exist")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.NotEq(0, result.RequeueAfter, "Expected requeue when pods exist")
 
 		// Verify drain was initiated.
 		updatedPod := &corev1.Pod{}
-		if err := c.Get(t.Context(), types.NamespacedName{
+		ck.Require().NoError(c.Get(t.Context(), types.NamespacedName{
 			Name: pod.Name, Namespace: pod.Namespace,
-		}, updatedPod); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updatedPod.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf("Expected drain state %q, got %q",
-				metadata.DrainStateRequested,
-				updatedPod.Annotations[metadata.AnnotationDrainState])
-		}
+		}, updatedPod), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updatedPod.Annotations[metadata.AnnotationDrainState],
+			"Expected drain state",
+		)
 	})
 
 	t.Run("All pods ready-for-deletion — sets ReadyForDeletion", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 
 		pod := &corev1.Pod{
@@ -629,27 +609,22 @@ func TestHandlePendingDeletion(t *testing.T) {
 		}
 
 		result, err := r.handlePendingDeletion(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		// The pod was deleted, so we need to requeue to check again.
-		if result.RequeueAfter == 0 {
-			t.Error("Expected requeue after deleting drained pods")
-		}
+		ck.NotEq(0, result.RequeueAfter, "Expected requeue after deleting drained pods")
 
 		// Verify the pod was deleted.
 		updatedPod := &corev1.Pod{}
 		err = c.Get(t.Context(), types.NamespacedName{
 			Name: pod.Name, Namespace: pod.Namespace,
 		}, updatedPod)
-		if err == nil {
-			t.Error("Expected pod to be deleted")
-		}
+		ck.Error(err, "Expected pod to be deleted")
 	})
 
 	t.Run("Mix of draining and undrained pods — requeues", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 
 		drainingPod := &corev1.Pod{
@@ -691,24 +666,18 @@ func TestHandlePendingDeletion(t *testing.T) {
 		}
 
 		result, err := r.handlePendingDeletion(t.Context(), shard)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.RequeueAfter == 0 {
-			t.Error("Expected requeue when pods are still draining")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.NotEq(0, result.RequeueAfter, "Expected requeue when pods are still draining")
 
 		// Verify the undrained pod now has drain state set.
 		updatedPod := &corev1.Pod{}
-		if err := c.Get(t.Context(), types.NamespacedName{
+		ck.Require().NoError(c.Get(t.Context(), types.NamespacedName{
 			Name: undrainedPod.Name, Namespace: undrainedPod.Namespace,
-		}, updatedPod); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updatedPod.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf("Expected drain state %q, got %q",
-				metadata.DrainStateRequested,
-				updatedPod.Annotations[metadata.AnnotationDrainState])
-		}
+		}, updatedPod), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updatedPod.Annotations[metadata.AnnotationDrainState],
+			"Expected drain state",
+		)
 	})
 }

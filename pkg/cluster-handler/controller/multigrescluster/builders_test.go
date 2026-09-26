@@ -6,6 +6,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildGlobalTopoServer_Errors(t *testing.T) {
@@ -22,7 +24,5 @@ func TestBuildGlobalTopoServer_Errors(t *testing.T) {
 	}
 
 	_, err := BuildGlobalTopoServer(cluster, cluster.Spec.GlobalTopoServer, scheme)
-	if err != nil {
-		t.Errorf("Expected nil error for nil GlobalTopoServerSpec, got %v", err)
-	}
+	assert.NewCollecting(t).NoError(err, "Expected nil error for nil GlobalTopoServerSpec, got")
 }

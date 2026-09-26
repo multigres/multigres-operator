@@ -1,6 +1,10 @@
 package v1alpha1
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/multigres/testkit/assert"
+)
 
 func TestEffectiveCompaction(t *testing.T) {
 	for _, tc := range []struct {
@@ -23,9 +27,8 @@ func TestEffectiveCompaction(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mode, retention, err := tc.config.EffectiveCompaction()
-			if (err != nil) != tc.wantErr || mode != tc.mode || retention != tc.retention {
-				t.Fatalf("got (%q,%q,%v)", mode, retention, err)
-			}
+			assert.NewAborting(t).
+				False((err != nil) != tc.wantErr || mode != tc.mode || retention != tc.retention, "got (%q,%q,%v)", mode, retention, err)
 		})
 	}
 }

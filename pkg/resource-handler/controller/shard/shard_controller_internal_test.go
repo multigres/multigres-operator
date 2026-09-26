@@ -33,6 +33,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // Helper functions moved from shard_controller_test_util_test.go
@@ -158,9 +160,8 @@ func TestSetConditions(t *testing.T) {
 
 			// Use go-cmp for exact match, ignoring LastTransitionTime
 			opts := cmpopts.IgnoreFields(metav1.Condition{}, "LastTransitionTime")
-			if diff := cmp.Diff(tc.want, got, opts); diff != "" {
-				t.Errorf("setConditions() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).
+				EqDiffOpts(tc.want, got, []cmp.Option{opts}, "setConditions() mismatch")
 		})
 	}
 }
@@ -168,6 +169,7 @@ func TestSetConditions(t *testing.T) {
 // TestBuildMultiorchContainer_WithImage tests buildMultiorchContainer with custom image.
 // This tests the image override path that was missing coverage.
 func TestBuildMultiorchContainer_WithImage(t *testing.T) {
+	c := assert.NewCollecting(t)
 	customImage := "custom/multiorch:v1.2.3"
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -188,12 +190,8 @@ func TestBuildMultiorchContainer_WithImage(t *testing.T) {
 
 	container := buildMultiorchContainer(shard, "zone1")
 
-	if container.Image != customImage {
-		t.Errorf("buildMultiorchContainer() image = %s, want %s", container.Image, customImage)
-	}
-	if container.Name != "multiorch" {
-		t.Errorf("buildMultiorchContainer() name = %s, want multiorch", container.Name)
-	}
+	c.Eq(customImage, container.Image, "buildMultiorchContainer() image")
+	c.Eq("multiorch", container.Name, "buildMultiorchContainer() name")
 }
 
 // TestReconcile_InvalidScheme tests the error path when Build* functions fail due to invalid scheme.
@@ -317,9 +315,8 @@ func TestReconcile_InvalidScheme(t *testing.T) {
 			}
 
 			err := tc.reconcileFunc(reconciler, context.Background(), shard)
-			if err == nil {
-				t.Errorf("reconcile function should error with invalid scheme")
-			}
+			assert.NewCollecting(t).
+				Error(err, "reconcile function should error with invalid scheme")
 		})
 	}
 }
@@ -361,9 +358,8 @@ func TestUpdateStatus_PoolPodsNotFound(t *testing.T) {
 
 	// Call updateStatus when pool Pods don't exist yet
 	err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
-	if err != nil {
-		t.Errorf("updateStatus() should not error when pool Pods not found, got: %v", err)
-	}
+	assert.NewCollecting(t).
+		NoError(err, "updateStatus() should not error when pool Pods not found, got")
 }
 
 // TestReconcile_PatchError tests error path on Patch operations.
@@ -524,9 +520,7 @@ func TestReconcile_PatchError(t *testing.T) {
 			}
 
 			err := tc.reconcileFunc(reconciler, context.Background(), shard)
-			if err == nil {
-				t.Errorf("reconcile function should error on Patch failure")
-			}
+			assert.NewCollecting(t).Error(err, "reconcile function should error on Patch failure")
 		})
 	}
 }
@@ -534,6 +528,7 @@ func TestReconcile_PatchError(t *testing.T) {
 // TestReconcile_PostgresSecretError verifies the error path in Reconcile when
 // reconcilePostgresPasswordSecret fails (lines 81-92 of shard_controller.go).
 func TestReconcile_PostgresSecretError(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -579,15 +574,14 @@ func TestReconcile_PostgresSecretError(t *testing.T) {
 	}
 
 	_, err := reconciler.Reconcile(t.Context(), req)
-	if err == nil {
-		t.Fatal("Reconcile should return an error when reconcilePostgresPasswordSecret fails")
-	}
-	if !strings.Contains(
+	c.Require().
+		Error(err, "Reconcile should return an error when reconcilePostgresPasswordSecret fails")
+	c.StrContains(
 		err.Error(),
 		`failed to get postgres password Secret "missing-postgres-password"`,
-	) {
-		t.Errorf("unexpected error: %v", err)
-	}
+		"unexpected error: %v",
+		err,
+	)
 }
 
 // TestUpdateStatus_Multiorch tests updateStatus with different Multiorch deployment scenarios.
@@ -674,6 +668,7 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			scheme := runtime.NewScheme()
 			_ = multigresv1alpha1.AddToScheme(scheme)
 			_ = appsv1.AddToScheme(scheme)
@@ -715,31 +710,19 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 			}
 
 			err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
-			if tc.expectError && err == nil {
-				t.Error("updateStatus() should error but didn't")
-			}
-			if !tc.expectError && err != nil {
-				t.Errorf("updateStatus() unexpected error: %v", err)
-			}
+			c.False(tc.expectError && err == nil, "updateStatus() should error but didn't")
+			c.False(!tc.expectError && err != nil, "updateStatus() unexpected error: %v", err)
 
 			// For non-error cases, verify OrchReady status
 			if !tc.expectError {
 				updatedShard := &multigresv1alpha1.Shard{}
-				if err := fakeClient.Get(
+				c.Require().NoError(fakeClient.Get(
 					context.Background(),
 					client.ObjectKeyFromObject(shard),
 					updatedShard,
-				); err != nil {
-					t.Fatalf("Failed to get shard: %v", err)
-				}
+				), "Failed to get shard")
 
-				if updatedShard.Status.OrchReady != tc.expectOrchReady {
-					t.Errorf(
-						"OrchReady = %v, want %v",
-						updatedShard.Status.OrchReady,
-						tc.expectOrchReady,
-					)
-				}
+				c.Eq(tc.expectOrchReady, updatedShard.Status.OrchReady, "OrchReady")
 			}
 		})
 	}
@@ -788,9 +771,7 @@ func TestUpdateStatus_GetError(t *testing.T) {
 	}
 
 	err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
-	if err == nil {
-		t.Error("updateStatus() should error on Get failure")
-	}
+	assert.NewCollecting(t).Error(err, "updateStatus() should error on Get failure")
 }
 
 // statusPatchCapture wraps a client.Client to snapshot the state of the
@@ -825,6 +806,7 @@ func (w *capturingStatusWriter) Patch(
 // TestUpdateStatus_FieldOwner verifies that the SSA status patch uses
 // "multigres-resource-handler" as the field owner, not "multigres-operator".
 func TestUpdateStatus_FieldOwner(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -861,23 +843,17 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 	}
 
 	err := reconciler.updateStatus(context.Background(), shard, renderedConfig{})
-	if err != nil {
-		t.Fatalf("updateStatus() unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "updateStatus() unexpected error")
 
 	// Verify the field owner is "multigres-resource-handler"
 	foundFieldOwner := false
 	for _, opt := range capture.capturedOpts {
 		if fo, ok := opt.(client.FieldOwner); ok {
-			if string(fo) != "multigres-resource-handler" {
-				t.Errorf("field owner = %q, want %q", string(fo), "multigres-resource-handler")
-			}
+			c.Eq("multigres-resource-handler", string(fo), "field owner")
 			foundFieldOwner = true
 		}
 	}
-	if !foundFieldOwner {
-		t.Error("no FieldOwner option found in Status().Patch() call")
-	}
+	c.True(foundFieldOwner, "no FieldOwner option found in Status().Patch() call")
 }
 
 // TestHandleScaleDown_ConcurrentDrainPrevention verifies that handleScaleDown
@@ -1087,6 +1063,7 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 
 	for testName, tc := range tests {
 		t.Run(testName, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			shard := baseShard.DeepCopy()
 
 			objects := make([]client.Object, 0, len(tc.pods)+1)
@@ -1127,16 +1104,10 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				tc.replicas,
 				tc.actionTaken,
 			)
-			if err != nil {
-				t.Fatalf("handleScaleDown() unexpected error: %v", err)
-			}
+			c.Require().NoError(err, "handleScaleDown() unexpected error")
 
-			if gotAction != tc.wantAction {
-				t.Errorf("actionTaken = %v, want %v", gotAction, tc.wantAction)
-			}
-			if gotInProgress != tc.wantInProgress {
-				t.Errorf("inProgress = %v, want %v", gotInProgress, tc.wantInProgress)
-			}
+			c.Eq(tc.wantAction, gotAction, "actionTaken")
+			c.Eq(tc.wantInProgress, gotInProgress, "inProgress")
 
 			for _, p := range tc.pods {
 				updated := &corev1.Pod{}
@@ -1189,9 +1160,7 @@ func TestSetupWithManager(t *testing.T) {
 			Scheme:  scheme,
 			Metrics: metricsserver.Options{BindAddress: "0"},
 		})
-		if err != nil {
-			t.Fatalf("Failed to create manager: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "Failed to create manager")
 		return mgr
 	}
 
@@ -1203,9 +1172,7 @@ func TestSetupWithManager(t *testing.T) {
 			Recorder:  record.NewFakeRecorder(100),
 			APIReader: mgr.GetClient(),
 		}
-		if err := r.SetupWithManager(mgr); err != nil {
-			t.Errorf("SetupWithManager() error = %v", err)
-		}
+		assert.NewCollecting(t).NoError(r.SetupWithManager(mgr), "SetupWithManager() error =")
 	})
 
 	t.Run("with options", func(t *testing.T) {
@@ -1216,12 +1183,10 @@ func TestSetupWithManager(t *testing.T) {
 			Recorder:  record.NewFakeRecorder(100),
 			APIReader: mgr.GetClient(),
 		}
-		if err := r.SetupWithManager(mgr, controller.Options{
+		assert.NewCollecting(t).NoError(r.SetupWithManager(mgr, controller.Options{
 			MaxConcurrentReconciles: 1,
 			SkipNameValidation:      ptr.To(true),
-		}); err != nil {
-			t.Errorf("SetupWithManager() with opts error = %v", err)
-		}
+		}), "SetupWithManager() with opts error =")
 	})
 }
 
@@ -1270,6 +1235,7 @@ func TestClusterIsChurning(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			var objs []client.Object
 			if tc.cluster != nil {
@@ -1279,12 +1245,8 @@ func TestClusterIsChurning(t *testing.T) {
 			r := &ShardReconciler{Client: fakeClient}
 
 			got, err := r.clusterIsChurning(context.Background(), "default", tc.clusterName)
-			if err != nil {
-				t.Fatalf("clusterIsChurning() returned unexpected error: %v", err)
-			}
-			if got != tc.want {
-				t.Errorf("clusterIsChurning() = %v, want %v", got, tc.want)
-			}
+			c.Require().NoError(err, "clusterIsChurning() returned unexpected error")
+			c.Eq(tc.want, got, "clusterIsChurning()")
 		})
 	}
 }
@@ -1397,6 +1359,7 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			shard := baseShard.DeepCopy()
 
 			pod := makePod(tc.podName)
@@ -1427,9 +1390,7 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			err := reconciler.cleanupDrainedPod(
 				context.Background(), shard, pod, poolName, poolSpec, replicas,
 			)
-			if err != nil {
-				t.Fatalf("cleanupDrainedPod() returned unexpected error: %v", err)
-			}
+			c.Require().NoError(err, "cleanupDrainedPod() returned unexpected error")
 
 			pvcAfter := &corev1.PersistentVolumeClaim{}
 			getErr := fakeClient.Get(
@@ -1438,31 +1399,26 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 				pvcAfter,
 			)
 			pvcExists := getErr == nil
-			if pvcExists != tc.wantPVC {
-				t.Fatalf(
-					"PVC %s exists = %v, want %v (err=%v)",
-					tc.pvcName, pvcExists, tc.wantPVC, getErr,
-				)
-			}
+			c.Require().
+				Eq(tc.wantPVC, pvcExists, "PVC %s exists = %v, want %v (err=%v)", tc.pvcName, pvcExists, tc.wantPVC, getErr)
 			if !pvcExists {
 				return
 			}
 			_, hasOrphanLabel := pvcAfter.Labels[metadata.LabelOrphan]
-			if hasOrphanLabel != tc.wantOrphan {
-				t.Errorf(
-					"PVC %s orphan-since present = %v, want %v",
-					tc.pvcName, hasOrphanLabel, tc.wantOrphan,
-				)
-			}
+			c.Eq(
+				tc.wantOrphan,
+				hasOrphanLabel,
+				"PVC %s orphan-since present = %v, want",
+				tc.pvcName,
+				hasOrphanLabel,
+			)
 
 			podAfter := &corev1.Pod{}
-			if err := fakeClient.Get(
+			c.Require().NoError(fakeClient.Get(
 				context.Background(),
 				client.ObjectKey{Namespace: "default", Name: tc.podName},
 				podAfter,
-			); err != nil {
-				t.Fatalf("failed to get pod after cleanup: %v", err)
-			}
+			), "failed to get pod after cleanup")
 		})
 	}
 }
@@ -1486,6 +1442,7 @@ func TestHandleExternalDeletion(t *testing.T) {
 	}
 
 	t.Run("unscheduled pod is ignored", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "pod-unsched",
@@ -1501,21 +1458,18 @@ func TestHandleExternalDeletion(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.NoError(r.handleExternalDeletion(context.Background(), shard, pod), "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
+		), "failed to get pod")
 	})
 
 	t.Run("scheduled pod without drain annotation gets drain initiated", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "pod-sched",
@@ -1533,34 +1487,31 @@ func TestHandleExternalDeletion(t *testing.T) {
 		rec := record.NewFakeRecorder(10)
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: rec}
 
-		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.handleExternalDeletion(context.Background(), shard, pod), "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf("drain state = %q, want %q",
-				updated.Annotations[metadata.AnnotationDrainState], metadata.DrainStateRequested)
-		}
+		), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"drain state",
+		)
 
 		select {
 		case event := <-rec.Events:
-			if !strings.Contains(event, "ExternalDeletion") {
-				t.Errorf("expected ExternalDeletion event, got %q", event)
-			}
+			ck.StrContains(event, "ExternalDeletion", "expected ExternalDeletion event, got")
 		default:
 			t.Error("expected ExternalDeletion event")
 		}
 	})
 
 	t.Run("scheduled pod with existing drain annotation is left alone", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "pod-draining",
@@ -1579,25 +1530,24 @@ func TestHandleExternalDeletion(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.handleExternalDeletion(context.Background(), shard, pod), "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateDraining {
-			t.Errorf("drain state changed to %q, should remain %q",
-				updated.Annotations[metadata.AnnotationDrainState], metadata.DrainStateDraining)
-		}
+		), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateDraining,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"drain state changed to",
+		)
 	})
 
 	t.Run("unscheduled pod without scheduled condition is ignored", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "pod-no-conditions",
@@ -1609,18 +1559,14 @@ func TestHandleExternalDeletion(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.NoError(r.handleExternalDeletion(context.Background(), shard, pod), "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
+		), "failed to get pod")
 	})
 
 	t.Run("error initiating drain for scheduled pod", func(t *testing.T) {
@@ -1649,9 +1595,7 @@ func TestHandleExternalDeletion(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		err := r.handleExternalDeletion(context.Background(), shard, pod)
-		if err == nil {
-			t.Error("expected error when initiateDrain fails")
-		}
+		assert.NewCollecting(t).Error(err, "expected error when initiateDrain fails")
 	})
 }
 
@@ -1674,9 +1618,8 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			APIReader: c,
 		}
 
-		if err := r.reconcilePgBackRestCerts(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(r.reconcilePgBackRestCerts(context.Background(), shard), "unexpected error")
 	})
 
 	t.Run("user-provided secret with valid keys succeeds", func(t *testing.T) {
@@ -1711,12 +1654,12 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			APIReader: c,
 		}
 
-		if err := r.reconcilePgBackRestCerts(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(r.reconcilePgBackRestCerts(context.Background(), shard), "unexpected error")
 	})
 
 	t.Run("user-provided secret not found returns error", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -1740,15 +1683,12 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 		}
 
 		err := r.reconcilePgBackRestCerts(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error for missing secret")
-		}
-		if !strings.Contains(err.Error(), "not found") {
-			t.Errorf("expected 'not found' error, got: %v", err)
-		}
+		ck.Error(err, "expected error for missing secret")
+		ck.StrContains(err.Error(), "not found", "expected 'not found' error, got: %v", err)
 	})
 
 	t.Run("user-provided secret missing required key returns error", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -1781,12 +1721,13 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 		}
 
 		err := r.reconcilePgBackRestCerts(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error for missing key")
-		}
-		if !strings.Contains(err.Error(), "tls.key") {
-			t.Errorf("expected error about missing 'tls.key', got: %v", err)
-		}
+		ck.Error(err, "expected error for missing key")
+		ck.StrContains(
+			err.Error(),
+			"tls.key",
+			"expected error about missing 'tls.key', got: %v",
+			err,
+		)
 	})
 }
 
@@ -1796,6 +1737,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("nil backup config returns nil and creates no secret", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec:       multigresv1alpha1.ShardSpec{},
@@ -1809,20 +1751,16 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			APIReader: c,
 		}
 
-		if err := r.reconcileBackupCipherSecret(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileBackupCipherSecret(context.Background(), shard), "unexpected error")
 
 		var secrets corev1.SecretList
-		if err := c.List(context.Background(), &secrets); err != nil {
-			t.Fatalf("failed to list secrets: %v", err)
-		}
-		if len(secrets.Items) != 0 {
-			t.Errorf("expected no secrets created, got %d", len(secrets.Items))
-		}
+		ck.Require().NoError(c.List(context.Background(), &secrets), "failed to list secrets")
+		ck.Empty(secrets.Items, "expected no secrets created, got %d", len(secrets.Items))
 	})
 
 	t.Run("backup without encryption returns nil and creates no secret", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -1840,20 +1778,16 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			APIReader: c,
 		}
 
-		if err := r.reconcileBackupCipherSecret(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileBackupCipherSecret(context.Background(), shard), "unexpected error")
 
 		var secrets corev1.SecretList
-		if err := c.List(context.Background(), &secrets); err != nil {
-			t.Fatalf("failed to list secrets: %v", err)
-		}
-		if len(secrets.Items) != 0 {
-			t.Errorf("expected no secrets created, got %d", len(secrets.Items))
-		}
+		ck.Require().NoError(c.List(context.Background(), &secrets), "failed to list secrets")
+		ck.Empty(secrets.Items, "expected no secrets created, got %d", len(secrets.Items))
 	})
 
 	t.Run("user-provided secret valid, no operator secret created", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -1884,20 +1818,21 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			APIReader: c,
 		}
 
-		if err := r.reconcileBackupCipherSecret(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.reconcileBackupCipherSecret(context.Background(), shard), "unexpected error")
 
 		var secrets corev1.SecretList
-		if err := c.List(context.Background(), &secrets); err != nil {
-			t.Fatalf("failed to list secrets: %v", err)
-		}
-		if len(secrets.Items) != 1 {
-			t.Errorf("expected only the user-provided secret to exist, got %d", len(secrets.Items))
-		}
+		ck.Require().NoError(c.List(context.Background(), &secrets), "failed to list secrets")
+		ck.Len(
+			secrets.Items,
+			1,
+			"expected only the user-provided secret to exist, got %d",
+			len(secrets.Items),
+		)
 	})
 
 	t.Run("user-provided secret not found returns error", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -1922,15 +1857,12 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 		}
 
 		err := r.reconcileBackupCipherSecret(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error for missing secret")
-		}
-		if !strings.Contains(err.Error(), "not found") {
-			t.Errorf("expected 'not found' error, got: %v", err)
-		}
+		ck.Error(err, "expected error for missing secret")
+		ck.StrContains(err.Error(), "not found", "expected 'not found' error, got: %v", err)
 	})
 
 	t.Run("user-provided secret missing required key returns error", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -1962,12 +1894,14 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 		}
 
 		err := r.reconcileBackupCipherSecret(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error for missing key")
-		}
-		if !strings.Contains(err.Error(), PgBackRestCipherKeyDataKey) {
-			t.Errorf("expected error about missing %q, got: %v", PgBackRestCipherKeyDataKey, err)
-		}
+		ck.Error(err, "expected error for missing key")
+		ck.StrContains(
+			err.Error(),
+			PgBackRestCipherKeyDataKey,
+			"expected error about missing %q, got: %v",
+			PgBackRestCipherKeyDataKey,
+			err,
+		)
 	})
 
 	t.Run("empty secret name returns error", func(t *testing.T) {
@@ -1993,9 +1927,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 		}
 
 		err := r.reconcileBackupCipherSecret(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error for empty secret name")
-		}
+		assert.NewCollecting(t).Error(err, "expected error for empty secret name")
 	})
 }
 
@@ -2024,6 +1956,7 @@ func TestCreateMissingResources(t *testing.T) {
 	cellName := "zone1"
 
 	t.Run("terminal pod (Failed) is deleted for recreation", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
@@ -2055,12 +1988,8 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			1,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !actionTaken {
-			t.Error("expected actionTaken for terminal pod deletion")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(actionTaken, "expected actionTaken for terminal pod deletion")
 
 		// Pod should be deleted
 		err = c.Get(
@@ -2068,12 +1997,11 @@ func TestCreateMissingResources(t *testing.T) {
 			types.NamespacedName{Name: podName, Namespace: "default"},
 			&corev1.Pod{},
 		)
-		if !errors.IsNotFound(err) {
-			t.Errorf("terminal pod should be deleted, but Get returned: %v", err)
-		}
+		ck.True(errors.IsNotFound(err), "terminal pod should be deleted, but Get returned: %v", err)
 	})
 
 	t.Run("reused orphan PVC has orphan-since label cleared", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
@@ -2106,18 +2034,14 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			1,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		got := &corev1.PersistentVolumeClaim{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: pvcName, Namespace: "default"},
 			got,
-		); err != nil {
-			t.Fatalf("PVC must still exist: %v", err)
-		}
+		), "PVC must still exist")
 		if _, ok := got.Labels[metadata.LabelOrphan]; ok {
 			t.Errorf(
 				"orphan-since label should be cleared when PVC is reused, still present: %v",
@@ -2125,16 +2049,15 @@ func TestCreateMissingResources(t *testing.T) {
 			)
 		}
 		// pod (re)created on the reused PVC
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: podName, Namespace: "default"},
 			&corev1.Pod{},
-		); err != nil {
-			t.Errorf("pod should be created on reused PVC: %v", err)
-		}
+		), "pod should be created on reused PVC")
 	})
 
 	t.Run("terminal pod (Succeeded) is deleted for recreation", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
@@ -2163,17 +2086,14 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			1,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !actionTaken {
-			t.Error("expected actionTaken for terminal pod deletion")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(actionTaken, "expected actionTaken for terminal pod deletion")
 	})
 
 	t.Run(
 		"externally deleted pod (DeletionTimestamp + finalizer) calls handleExternalDeletion",
 		func(t *testing.T) {
+			ck := assert.NewCollecting(t)
 			shard := baseShard.DeepCopy()
 			podName := BuildPoolPodName(shard, poolName, cellName, 0)
 			pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
@@ -2213,33 +2133,26 @@ func TestCreateMissingResources(t *testing.T) {
 				existingPVCs,
 				1,
 			)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !actionTaken {
-				t.Error("expected actionTaken for externally deleted pod")
-			}
+			ck.Require().NoError(err, "unexpected error")
+			ck.True(actionTaken, "expected actionTaken for externally deleted pod")
 
 			// Should have initiated drain
 			updated := &corev1.Pod{}
-			if err := c.Get(
+			ck.Require().NoError(c.Get(
 				context.Background(),
 				client.ObjectKeyFromObject(pod),
 				updated,
-			); err != nil {
-				t.Fatalf("failed to get pod: %v", err)
-			}
-			if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-				t.Errorf(
-					"drain state = %q, want %q",
-					updated.Annotations[metadata.AnnotationDrainState],
-					metadata.DrainStateRequested,
-				)
-			}
+			), "failed to get pod")
+			ck.Eq(
+				metadata.DrainStateRequested,
+				updated.Annotations[metadata.AnnotationDrainState],
+				"drain state",
+			)
 		},
 	)
 
 	t.Run("not-ready pod does not block creation of other replicas", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName0 := BuildPoolPodName(shard, poolName, cellName, 0)
 		podName1 := BuildPoolPodName(shard, poolName, cellName, 1)
@@ -2284,31 +2197,24 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			2,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !actionTaken {
-			t.Error("expected actionTaken for pod creation")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(actionTaken, "expected actionTaken for pod creation")
 
 		// Pod 1 SHOULD be created even though pod 0 is not ready
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: podName1, Namespace: "default"},
 			&corev1.Pod{},
-		); err != nil {
-			t.Errorf("pod-1 should have been created despite pod-0 being not ready: %v", err)
-		}
-		if err := c.Get(
+		), "pod-1 should have been created despite pod-0 being not ready")
+		ck.NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: pvcName1, Namespace: "default"},
 			&corev1.PersistentVolumeClaim{},
-		); err != nil {
-			t.Errorf("pvc-1 should have been created despite pod-0 being not ready: %v", err)
-		}
+		), "pvc-1 should have been created despite pod-0 being not ready")
 	})
 
 	t.Run("all missing pods and PVCs created in one pass", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
@@ -2324,34 +2230,27 @@ func TestCreateMissingResources(t *testing.T) {
 			map[string]*corev1.PersistentVolumeClaim{},
 			3,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !actionTaken {
-			t.Error("expected actionTaken for pod creation")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(actionTaken, "expected actionTaken for pod creation")
 
 		for i := 0; i < 3; i++ {
 			podName := BuildPoolPodName(shard, poolName, cellName, i)
 			pvcName := BuildPoolDataPVCName(shard, poolName, cellName, i)
-			if err := c.Get(
+			ck.NoError(c.Get(
 				context.Background(),
 				types.NamespacedName{Name: podName, Namespace: "default"},
 				&corev1.Pod{},
-			); err != nil {
-				t.Errorf("pod-%d should exist: %v", i, err)
-			}
-			if err := c.Get(
+			), "pod-%d should exist", i)
+			ck.NoError(c.Get(
 				context.Background(),
 				types.NamespacedName{Name: pvcName, Namespace: "default"},
 				&corev1.PersistentVolumeClaim{},
-			); err != nil {
-				t.Errorf("pvc-%d should exist: %v", i, err)
-			}
+			), "pvc-%d should exist", i)
 		}
 	})
 
 	t.Run("actionTaken blocks terminal pod deletion", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName0 := BuildPoolPodName(shard, poolName, cellName, 0)
 		podName1 := BuildPoolPodName(shard, poolName, cellName, 1)
@@ -2392,9 +2291,7 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			2,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		// Only one of the two terminal pods should have been deleted (actionTaken blocks second)
 		deleted := 0
@@ -2409,12 +2306,11 @@ func TestCreateMissingResources(t *testing.T) {
 				deleted++
 			}
 		}
-		if deleted != 1 {
-			t.Errorf("expected exactly 1 terminal pod deleted (sequential gating), got %d", deleted)
-		}
+		ck.Eq(1, deleted, "expected exactly 1 terminal pod deleted (sequential gating), got")
 	})
 
 	t.Run("missing pod is created", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
@@ -2435,28 +2331,20 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			1,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !actionTaken {
-			t.Error("expected actionTaken for pod creation")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(actionTaken, "expected actionTaken for pod creation")
 
 		// Pod and PVC should exist
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: podName, Namespace: "default"},
 			&corev1.Pod{},
-		); err != nil {
-			t.Errorf("pod should exist: %v", err)
-		}
-		if err := c.Get(
+		), "pod should exist")
+		ck.NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: pvcName, Namespace: "default"},
 			&corev1.PersistentVolumeClaim{},
-		); err != nil {
-			t.Errorf("PVC should exist: %v", err)
-		}
+		), "PVC should exist")
 	})
 
 	t.Run("error creating pod", func(t *testing.T) {
@@ -2477,9 +2365,7 @@ func TestCreateMissingResources(t *testing.T) {
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{}, map[string]*corev1.PersistentVolumeClaim{}, 1,
 		)
-		if err == nil {
-			t.Error("expected error on pod create failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on pod create failure")
 	})
 
 	t.Run("error creating PVC", func(t *testing.T) {
@@ -2500,9 +2386,7 @@ func TestCreateMissingResources(t *testing.T) {
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{}, map[string]*corev1.PersistentVolumeClaim{}, 1,
 		)
-		if err == nil {
-			t.Error("expected error on PVC create failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on PVC create failure")
 	})
 
 	t.Run("error deleting terminal pod", func(t *testing.T) {
@@ -2539,9 +2423,7 @@ func TestCreateMissingResources(t *testing.T) {
 			existingPVCs,
 			1,
 		)
-		if err == nil {
-			t.Error("expected error on terminal pod delete failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on terminal pod delete failure")
 	})
 }
 
@@ -2565,32 +2447,20 @@ func TestResolvePodIndex(t *testing.T) {
 	for tn, tc := range tests {
 		t.Run(tn, func(t *testing.T) {
 			got, ok := resolvePodIndex(tc.podName)
-			if got != tc.want || ok != tc.wantOK {
-				t.Errorf(
-					"resolvePodIndex(%q) = (%d, %v), want (%d, %v)",
-					tc.podName,
-					got,
-					ok,
-					tc.want,
-					tc.wantOK,
-				)
-			}
+			assert.NewCollecting(t).
+				False(got != tc.want || ok != tc.wantOK, "resolvePodIndex(%q) = (%d, %v), want (%d, %v)", tc.podName, got, ok, tc.want, tc.wantOK)
 		})
 	}
 }
 
 func TestIsPodReady(t *testing.T) {
 	t.Run("nil pod", func(t *testing.T) {
-		if isPodReady(nil) {
-			t.Error("expected false for nil pod")
-		}
+		assert.NewCollecting(t).False(isPodReady(nil), "expected false for nil pod")
 	})
 
 	t.Run("no conditions", func(t *testing.T) {
 		pod := &corev1.Pod{}
-		if isPodReady(pod) {
-			t.Error("expected false for pod with no conditions")
-		}
+		assert.NewCollecting(t).False(isPodReady(pod), "expected false for pod with no conditions")
 	})
 
 	t.Run("ready condition false", func(t *testing.T) {
@@ -2601,9 +2471,7 @@ func TestIsPodReady(t *testing.T) {
 				},
 			},
 		}
-		if isPodReady(pod) {
-			t.Error("expected false for pod with PodReady=False")
-		}
+		assert.NewCollecting(t).False(isPodReady(pod), "expected false for pod with PodReady=False")
 	})
 
 	t.Run("ready condition true", func(t *testing.T) {
@@ -2614,9 +2482,7 @@ func TestIsPodReady(t *testing.T) {
 				},
 			},
 		}
-		if !isPodReady(pod) {
-			t.Error("expected true for pod with PodReady=True")
-		}
+		assert.NewCollecting(t).True(isPodReady(pod), "expected true for pod with PodReady=True")
 	})
 
 	t.Run("only non-ready conditions", func(t *testing.T) {
@@ -2628,9 +2494,8 @@ func TestIsPodReady(t *testing.T) {
 				},
 			},
 		}
-		if isPodReady(pod) {
-			t.Error("expected false for pod with no PodReady condition")
-		}
+		assert.NewCollecting(t).
+			False(isPodReady(pod), "expected false for pod with no PodReady condition")
 	})
 }
 
@@ -2643,15 +2508,13 @@ func TestIsPoolHealthy(t *testing.T) {
 	}
 
 	t.Run("empty pool is unhealthy when replicas are expected", func(t *testing.T) {
-		if isPoolHealthy(map[string]*corev1.Pod{}, 1, shard) {
-			t.Error("expected empty pool with 1 expected replica to be unhealthy")
-		}
+		assert.NewCollecting(t).
+			False(isPoolHealthy(map[string]*corev1.Pod{}, 1, shard), "expected empty pool with 1 expected replica to be unhealthy")
 	})
 
 	t.Run("empty pool is healthy when no replicas are expected", func(t *testing.T) {
-		if !isPoolHealthy(map[string]*corev1.Pod{}, 0, shard) {
-			t.Error("expected empty pool with 0 expected replicas to be healthy")
-		}
+		assert.NewCollecting(t).
+			True(isPoolHealthy(map[string]*corev1.Pod{}, 0, shard), "expected empty pool with 0 expected replicas to be healthy")
 	})
 
 	t.Run("draining pod makes pool unhealthy", func(t *testing.T) {
@@ -2670,9 +2533,8 @@ func TestIsPoolHealthy(t *testing.T) {
 				},
 			},
 		}
-		if isPoolHealthy(pods, 1, shard) {
-			t.Error("draining pod should make the pool unhealthy")
-		}
+		assert.NewCollecting(t).
+			False(isPoolHealthy(pods, 1, shard), "draining pod should make the pool unhealthy")
 	})
 
 	t.Run("pod being deleted makes pool unhealthy", func(t *testing.T) {
@@ -2691,9 +2553,8 @@ func TestIsPoolHealthy(t *testing.T) {
 				},
 			},
 		}
-		if isPoolHealthy(pods, 1, shard) {
-			t.Error("terminating pod should make the pool unhealthy")
-		}
+		assert.NewCollecting(t).
+			False(isPoolHealthy(pods, 1, shard), "terminating pod should make the pool unhealthy")
 	})
 
 	t.Run("extra pod (index >= replicas) is excluded from health check", func(t *testing.T) {
@@ -2715,9 +2576,8 @@ func TestIsPoolHealthy(t *testing.T) {
 				},
 			},
 		}
-		if !isPoolHealthy(pods, 1, shard) {
-			t.Error("extra pod at index 2 with replicas=1 should be excluded from health check")
-		}
+		assert.NewCollecting(t).
+			True(isPoolHealthy(pods, 1, shard), "extra pod at index 2 with replicas=1 should be excluded from health check")
 	})
 
 	t.Run("QUARANTINED pod that is not ready does not block health check", func(t *testing.T) {
@@ -2733,9 +2593,8 @@ func TestIsPoolHealthy(t *testing.T) {
 				},
 			},
 		}
-		if !isPoolHealthy(pods, 1, quarantinedShard) {
-			t.Error("QUARANTINED pod should be excluded from health check")
-		}
+		assert.NewCollecting(t).
+			True(isPoolHealthy(pods, 1, quarantinedShard), "QUARANTINED pod should be excluded from health check")
 	})
 }
 
@@ -2753,18 +2612,16 @@ func TestPodNeedsUpdate(t *testing.T) {
 				Annotations:       map[string]string{metadata.AnnotationSpecHash: "old"},
 			},
 		}
-		if podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s) {
-			t.Error("pod with deletion timestamp should not need update")
-		}
+		assert.NewCollecting(t).
+			False(podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s), "pod with deletion timestamp should not need update")
 	})
 
 	t.Run("pod missing spec-hash annotation needs update", func(t *testing.T) {
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{},
 		}
-		if !podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s) {
-			t.Error("pod without spec-hash annotation should need update")
-		}
+		assert.NewCollecting(t).
+			True(podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s), "pod without spec-hash annotation should need update")
 	})
 
 	t.Run("pod with matching spec-hash does not need update", func(t *testing.T) {
@@ -2775,9 +2632,8 @@ func TestPodNeedsUpdate(t *testing.T) {
 				Annotations: map[string]string{metadata.AnnotationSpecHash: hash},
 			},
 		}
-		if podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s) {
-			t.Error("pod with matching spec-hash should not need update")
-		}
+		assert.NewCollecting(t).
+			False(podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s), "pod with matching spec-hash should not need update")
 	})
 
 	t.Run("pod with old spec-hash needs update", func(t *testing.T) {
@@ -2786,9 +2642,8 @@ func TestPodNeedsUpdate(t *testing.T) {
 				Annotations: map[string]string{metadata.AnnotationSpecHash: "old-hash"},
 			},
 		}
-		if !podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s) {
-			t.Error("pod with old spec-hash should need update")
-		}
+		assert.NewCollecting(t).
+			True(podNeedsUpdate(pod, shard, "main", "z1", pool, 0, s), "pod with old spec-hash should need update")
 	})
 
 	t.Run("build error assumes no update needed", func(t *testing.T) {
@@ -2798,9 +2653,8 @@ func TestPodNeedsUpdate(t *testing.T) {
 				Annotations: map[string]string{metadata.AnnotationSpecHash: "some-hash"},
 			},
 		}
-		if podNeedsUpdate(pod, shard, "main", "z1", pool, 0, emptyScheme) {
-			t.Error("build failure should assume no update needed")
-		}
+		assert.NewCollecting(t).
+			False(podNeedsUpdate(pod, shard, "main", "z1", pool, 0, emptyScheme), "build failure should assume no update needed")
 	})
 }
 
@@ -2810,6 +2664,7 @@ func TestInitiateDrain(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("sets drain annotations on pod with nil annotations", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "pod-nil-ann",
@@ -2820,25 +2675,24 @@ func TestInitiateDrain(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.initiateDrain(context.Background(), pod); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(r.initiateDrain(context.Background(), pod), "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf("drain state = %q, want %q",
-				updated.Annotations[metadata.AnnotationDrainState], metadata.DrainStateRequested)
-		}
-		if updated.Annotations[metadata.AnnotationDrainRequestedAt] == "" {
-			t.Error("drain requested-at timestamp should be set")
-		}
+		), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"drain state",
+		)
+		ck.NotEq(
+			"",
+			updated.Annotations[metadata.AnnotationDrainRequestedAt],
+			"drain requested-at timestamp should be set",
+		)
 	})
 
 	t.Run("error on patch failure", func(t *testing.T) {
@@ -2858,9 +2712,7 @@ func TestInitiateDrain(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		err := r.initiateDrain(context.Background(), pod)
-		if err == nil {
-			t.Error("expected error on patch failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on patch failure")
 	})
 }
 
@@ -2890,6 +2742,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 	}
 
 	t.Run("no drifted pods sets RollingUpdate condition to false", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -2899,25 +2752,20 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{}, 0, false, false,
 			&shardRolloutTracker{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		found := false
 		for _, cond := range shard.Status.Conditions {
 			if cond.Type == "RollingUpdate" {
 				found = true
-				if cond.Status != metav1.ConditionFalse {
-					t.Errorf("RollingUpdate condition status = %s, want False", cond.Status)
-				}
+				ck.Eq(metav1.ConditionFalse, cond.Status, "RollingUpdate condition status")
 			}
 		}
-		if !found {
-			t.Error("RollingUpdate condition not set")
-		}
+		ck.True(found, "RollingUpdate condition not set")
 	})
 
 	t.Run("actionTaken skips drain initiation", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pod := &corev1.Pod{
@@ -2938,25 +2786,24 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName: pod}, 1, true, false,
 			&shardRolloutTracker{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		// Pod should NOT have drain annotation (actionTaken blocks)
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != "" {
-			t.Error("drain annotation should not be set when actionTaken is true")
-		}
+		), "failed to get pod")
+		ck.Eq(
+			"",
+			updated.Annotations[metadata.AnnotationDrainState],
+			"drain annotation should not be set when actionTaken is true",
+		)
 	})
 
 	t.Run("isAnyPodDraining skips drain initiation", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pod := &corev1.Pod{
@@ -2977,24 +2824,23 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName: pod}, 1, false, true,
 			&shardRolloutTracker{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != "" {
-			t.Error("drain annotation should not be set when isAnyPodDraining is true")
-		}
+		), "failed to get pod")
+		ck.Eq(
+			"",
+			updated.Annotations[metadata.AnnotationDrainState],
+			"drain annotation should not be set when isAnyPodDraining is true",
+		)
 	})
 
 	t.Run("primary-only drift initiates drain for primary", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		shard.Status.PodRoles = map[string]string{podName: "PRIMARY"}
@@ -3018,25 +2864,23 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf("primary pod should have drain requested, got %q",
-				updated.Annotations[metadata.AnnotationDrainState])
-		}
+		), "failed to get pod")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"primary pod should have drain requested, got",
+		)
 	})
 
 	t.Run("primary with existing drain annotation is skipped", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		shard.Status.PodRoles = map[string]string{podName: "PRIMARY"}
@@ -3060,26 +2904,24 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		updated := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod),
 			updated,
-		); err != nil {
-			t.Fatalf("failed to get pod: %v", err)
-		}
+		), "failed to get pod")
 		// Should still be "draining", not changed to "requested"
-		if updated.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateDraining {
-			t.Errorf("primary pod drain state should remain %q, got %q",
-				metadata.DrainStateDraining, updated.Annotations[metadata.AnnotationDrainState])
-		}
+		ck.Eq(
+			metadata.DrainStateDraining,
+			updated.Annotations[metadata.AnnotationDrainState],
+			"primary pod drain state should remain",
+		)
 	})
 
 	t.Run("replica is drained before primary", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName0 := BuildPoolPodName(shard, poolName, cellName, 0)
 		podName1 := BuildPoolPodName(shard, poolName, cellName, 1)
@@ -3110,37 +2952,33 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName0: pod0, podName1: pod1}, 2, false, false,
 			&shardRolloutTracker{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		// Replica should have drain requested
 		updated0 := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod0),
 			updated0,
-		); err != nil {
-			t.Fatalf("failed to get pod0: %v", err)
-		}
-		if updated0.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-			t.Errorf("replica pod should have drain requested, got %q",
-				updated0.Annotations[metadata.AnnotationDrainState])
-		}
+		), "failed to get pod0")
+		ck.Eq(
+			metadata.DrainStateRequested,
+			updated0.Annotations[metadata.AnnotationDrainState],
+			"replica pod should have drain requested, got",
+		)
 
 		// Primary should NOT have drain annotation (replica first)
 		updated1 := &corev1.Pod{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(pod1),
 			updated1,
-		); err != nil {
-			t.Fatalf("failed to get pod1: %v", err)
-		}
-		if updated1.Annotations[metadata.AnnotationDrainState] != "" {
-			t.Errorf("primary pod should NOT have drain annotation yet, got %q",
-				updated1.Annotations[metadata.AnnotationDrainState])
-		}
+		), "failed to get pod1")
+		ck.Eq(
+			"",
+			updated1.Annotations[metadata.AnnotationDrainState],
+			"primary pod should NOT have drain annotation yet, got",
+		)
 	})
 
 	t.Run("error initiating drain for replica", func(t *testing.T) {
@@ -3169,9 +3007,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Error("expected error when drain initiation fails")
-		}
+		assert.NewCollecting(t).Error(err, "expected error when drain initiation fails")
 	})
 
 	t.Run("error initiating drain for primary", func(t *testing.T) {
@@ -3200,9 +3036,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Error("expected error when primary drain initiation fails")
-		}
+		assert.NewCollecting(t).Error(err, "expected error when primary drain initiation fails")
 	})
 }
 
@@ -3210,6 +3044,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 // rollout tracker already marked started blocks a new drain even when
 // isShardHealthy would otherwise say the shard is healthy.
 func TestHandleRollingUpdates_RolloutTrackerBlocksSameShardPass(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -3262,19 +3097,16 @@ func TestHandleRollingUpdates_RolloutTrackerBlocksSameShardPass(t *testing.T) {
 		map[string]*corev1.Pod{podName: pod}, 1, false, false,
 		rollout,
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ck.Require().NoError(err, "unexpected error")
 
 	updated := &corev1.Pod{}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(pod), updated); err != nil {
-		t.Fatalf("failed to get pod: %v", err)
-	}
-	if updated.Annotations[metadata.AnnotationDrainState] != "" {
-		t.Error(
-			"drain annotation should not be set when the rollout tracker already started this pass",
-		)
-	}
+	ck.Require().
+		NoError(c.Get(context.Background(), client.ObjectKeyFromObject(pod), updated), "failed to get pod")
+	ck.Eq(
+		"",
+		updated.Annotations[metadata.AnnotationDrainState],
+		"drain annotation should not be set when the rollout tracker already started this pass",
+	)
 }
 
 // TestIsShardHealthy_MissingPodCountsAsUnhealthy verifies that a pool/cell
@@ -3337,9 +3169,7 @@ func TestIsShardHealthy_MissingPodCountsAsUnhealthy(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 	healthy, err := r.isShardHealthy(context.Background(), shard)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	assert.NewAborting(t).NoError(err, "unexpected error")
 	if healthy {
 		t.Error(
 			"isShardHealthy should be false when pool-1/zone1 has no pod at all, " +
@@ -3369,12 +3199,12 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.reconcileSharedBackupPVC(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(r.reconcileSharedBackupPVC(context.Background(), shard), "unexpected error")
 	})
 
 	t.Run("nil backup creates PVC with defaults", func(t *testing.T) {
+		ck := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -3390,19 +3220,15 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.reconcileSharedBackupPVC(context.Background(), shard); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.NoError(r.reconcileSharedBackupPVC(context.Background(), shard), "unexpected error")
 
 		pvcName := BuildSharedBackupPVCName(shard)
 		pvc := &corev1.PersistentVolumeClaim{}
-		if err := c.Get(
+		ck.NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: pvcName, Namespace: "default"},
 			pvc,
-		); err != nil {
-			t.Fatalf("PVC should exist: %v", err)
-		}
+		), "PVC should exist")
 	})
 
 	t.Run("error on patch failure", func(t *testing.T) {
@@ -3430,14 +3256,13 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		err := r.reconcileSharedBackupPVC(context.Background(), shard)
-		if err == nil {
-			t.Error("expected error on PVC patch failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on PVC patch failure")
 	})
 }
 
 func TestBuildSharedBackupPVC_Variants(t *testing.T) {
 	t.Run("filesystem backup with custom storage class", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -3461,12 +3286,8 @@ func TestBuildSharedBackupPVC_Variants(t *testing.T) {
 		}
 
 		pvc, err := BuildSharedBackupPVC(shard, false, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pvc == nil {
-			t.Fatal("expected non-nil PVC")
-		}
+		c.NoError(err, "unexpected error")
+		c.NotNil(pvc, "expected non-nil PVC")
 		if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "premium-ssd" {
 			t.Errorf("storage class = %v, want premium-ssd", pvc.Spec.StorageClassName)
 		}
@@ -3476,6 +3297,7 @@ func TestBuildSharedBackupPVC_Variants(t *testing.T) {
 	})
 
 	t.Run("nil filesystem config uses defaults", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-shard", Namespace: "default",
@@ -3493,15 +3315,9 @@ func TestBuildSharedBackupPVC_Variants(t *testing.T) {
 		}
 
 		pvc, err := BuildSharedBackupPVC(shard, false, testScheme())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pvc == nil {
-			t.Fatal("expected non-nil PVC")
-		}
-		if pvc.Spec.StorageClassName != nil {
-			t.Errorf("storage class should be nil by default, got %v", pvc.Spec.StorageClassName)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Require().NotNil(pvc, "expected non-nil PVC")
+		c.Nil(pvc.Spec.StorageClassName, "storage class should be nil by default, got")
 	})
 }
 
@@ -3556,9 +3372,7 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 		}
 
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3)
-		if err == nil {
-			t.Error("expected error on PVC Get failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on PVC Get failure")
 	})
 
 	t.Run("error orphaning PVC", func(t *testing.T) {
@@ -3596,12 +3410,11 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 		}
 
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, poolName, poolSpec, 3)
-		if err == nil {
-			t.Error("expected error on PVC orphan-patch failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on PVC orphan-patch failure")
 	})
 
 	t.Run("nil PVC deletion policy orphans PVC", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		shard := baseShard.DeepCopy()
 		podName := BuildPoolPodName(shard, poolName, cellName, 5)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 5)
@@ -3630,21 +3443,16 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 			multigresv1alpha1.PoolSpec{},
 			3,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 
 		got := &corev1.PersistentVolumeClaim{}
-		if err := c.Get(
+		ck.Require().NoError(c.Get(
 			context.Background(),
 			types.NamespacedName{Name: pvcName, Namespace: "default"},
 			got,
-		); err != nil {
-			t.Fatalf("PVC must still exist, got err: %v", err)
-		}
-		if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
-			t.Errorf("PVC %s missing orphan-since label", pvcName)
-		}
+		), "PVC must still exist, got err")
+		_, ok := got.Labels[metadata.LabelOrphan]
+		ck.True(ok, "PVC %s missing orphan-since label", pvcName)
 	})
 }
 
@@ -3692,9 +3500,7 @@ func TestReconcilePoolPods_ErrorPaths(t *testing.T) {
 			poolSpec,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Error("expected error on pod list failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on pod list failure")
 	})
 
 	t.Run("error listing PVCs", func(t *testing.T) {
@@ -3718,9 +3524,7 @@ func TestReconcilePoolPods_ErrorPaths(t *testing.T) {
 			poolSpec,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Error("expected error on PVC list failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on PVC list failure")
 	})
 }
 
@@ -3789,9 +3593,8 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
 		)
-		if err == nil {
-			t.Error("expected error on drain initiation failure for extra pod")
-		}
+		assert.NewCollecting(t).
+			Error(err, "expected error on drain initiation failure for extra pod")
 	})
 
 	t.Run("error deleting ready-for-deletion pod after cleanup", func(t *testing.T) {
@@ -3825,9 +3628,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
 		)
-		if err == nil {
-			t.Error("expected error on pod delete failure after cleanup")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on pod delete failure after cleanup")
 	})
 
 	t.Run("error handling external deletion of extra pod", func(t *testing.T) {
@@ -3863,9 +3664,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
 		)
-		if err == nil {
-			t.Error("expected error on external deletion handling failure")
-		}
+		assert.NewCollecting(t).Error(err, "expected error on external deletion handling failure")
 	})
 }
 
@@ -3875,9 +3674,7 @@ func TestSelectPodToDrain_NilPod(t *testing.T) {
 
 	t.Run("empty list returns nil", func(t *testing.T) {
 		result := r.selectPodToDrain(context.Background(), []*corev1.Pod{}, shard)
-		if result != nil {
-			t.Errorf("expected nil for empty list, got %v", result)
-		}
+		assert.NewCollecting(t).Nil(result, "expected nil for empty list, got")
 	})
 
 	t.Run("nil entries are skipped", func(t *testing.T) {
@@ -3893,13 +3690,13 @@ func TestSelectPodToDrain_NilPod(t *testing.T) {
 			},
 		}
 		result := r.selectPodToDrain(context.Background(), pods, shard)
-		if result == nil || result.Name != "pod-0" {
-			t.Errorf("expected pod-0, got %v", result)
-		}
+		assert.NewCollecting(t).
+			False(result == nil || result.Name != "pod-0", "expected pod-0, got %v", result)
 	})
 }
 
 func TestReconcile_BackupCertsError(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -3946,12 +3743,8 @@ func TestReconcile_BackupCertsError(t *testing.T) {
 
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(shard)}
 	_, err := reconciler.Reconcile(t.Context(), req)
-	if err == nil {
-		t.Error("expected error when pgBackRest TLS secret not found")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("expected 'not found' error, got: %v", err)
-	}
+	ck.Error(err, "expected error when pgBackRest TLS secret not found")
+	ck.StrContains(err.Error(), "not found", "expected 'not found' error, got: %v", err)
 }
 
 func TestResolvePodRole_FQDNPrefix(t *testing.T) {
@@ -3963,12 +3756,11 @@ func TestResolvePodRole_FQDNPrefix(t *testing.T) {
 		},
 	}
 	role := resolvePodRole(shard, "my-pod")
-	if role != "PRIMARY" {
-		t.Errorf("expected PRIMARY via FQDN prefix match, got %q", role)
-	}
+	assert.NewCollecting(t).Eq("PRIMARY", role, "expected PRIMARY via FQDN prefix match, got")
 }
 
 func TestBuildSharedBackupPVC_InvalidStorageSize(t *testing.T) {
+	c := assert.NewCollecting(t)
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-shard",
@@ -3992,12 +3784,13 @@ func TestBuildSharedBackupPVC_InvalidStorageSize(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_, err := BuildSharedBackupPVC(shard, false, scheme)
-	if err == nil {
-		t.Fatal("expected error for invalid storage size")
-	}
-	if !strings.Contains(err.Error(), "invalid storage size") {
-		t.Errorf("expected 'invalid storage size' error, got: %v", err)
-	}
+	c.Require().Error(err, "expected error for invalid storage size")
+	c.StrContains(
+		err.Error(),
+		"invalid storage size",
+		"expected 'invalid storage size' error, got: %v",
+		err,
+	)
 }
 
 func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
@@ -4044,9 +3837,7 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 			poolSpec,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Fatal("expected error from createMissingResources")
-		}
+		assert.NewAborting(t).Error(err, "expected error from createMissingResources")
 	})
 
 	t.Run("handleScaleDown error propagates", func(t *testing.T) {
@@ -4111,9 +3902,7 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 			poolSpec,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Fatal("expected error from handleScaleDown")
-		}
+		assert.NewAborting(t).Error(err, "expected error from handleScaleDown")
 	})
 
 	t.Run("handleRollingUpdates error propagates", func(t *testing.T) {
@@ -4160,13 +3949,12 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 			poolSpec,
 			&shardRolloutTracker{},
 		)
-		if err == nil {
-			t.Fatal("expected error from handleRollingUpdates")
-		}
+		assert.NewAborting(t).Error(err, "expected error from handleRollingUpdates")
 	})
 }
 
 func TestCreateMissingResources_PodBuildError(t *testing.T) {
+	c := assert.NewCollecting(t)
 	emptyScheme := runtime.NewScheme()
 
 	shard := &multigresv1alpha1.Shard{
@@ -4218,12 +4006,13 @@ func TestCreateMissingResources_PodBuildError(t *testing.T) {
 		t.Context(), shardCopy, poolName, cellName, poolSpec,
 		map[string]*corev1.Pod{}, existingPVCs, 1,
 	)
-	if err == nil {
-		t.Fatal("expected error from BuildPoolPod with empty scheme")
-	}
-	if !strings.Contains(err.Error(), "failed to build pod") {
-		t.Errorf("expected 'failed to build pod' error, got: %v", err)
-	}
+	c.Require().Error(err, "expected error from BuildPoolPod with empty scheme")
+	c.StrContains(
+		err.Error(),
+		"failed to build pod",
+		"expected 'failed to build pod' error, got: %v",
+		err,
+	)
 }
 
 func TestCreateMissingResources_ExternalDeletionError(t *testing.T) {
@@ -4289,12 +4078,12 @@ func TestCreateMissingResources_ExternalDeletionError(t *testing.T) {
 		t.Context(), shard, poolName, cellName, poolSpec,
 		existingPods, existingPVCs, 1,
 	)
-	if err == nil {
-		t.Fatal("expected error from handleExternalDeletion in createMissingResources")
-	}
+	assert.NewAborting(t).
+		Error(err, "expected error from handleExternalDeletion in createMissingResources")
 }
 
 func TestHandleScaleDown_ExternalDeletionSetsActionTaken(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4340,15 +4129,12 @@ func TestHandleScaleDown_ExternalDeletionSetsActionTaken(t *testing.T) {
 		multigresv1alpha1.PoolSpec{ReplicasPerCell: ptr.To(int32(1))},
 		existingPods, 1, 1, false,
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !actionTaken {
-		t.Error("expected actionTaken=true after external deletion of extra pod")
-	}
+	c.Require().NoError(err, "unexpected error")
+	c.True(actionTaken, "expected actionTaken=true after external deletion of extra pod")
 }
 
 func TestHandleRollingUpdates_SkipsUpToDatePods(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4420,24 +4206,19 @@ func TestHandleRollingUpdates_SkipsUpToDatePods(t *testing.T) {
 		existingPods, 1, false, false,
 		&shardRolloutTracker{},
 	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	c.Require().NoError(err, "unexpected error")
 
 	var updatedPod1 corev1.Pod
-	if err := base.Get(
+	c.Require().NoError(base.Get(
 		t.Context(),
 		types.NamespacedName{Name: pod1Name, Namespace: "default"},
 		&updatedPod1,
-	); err != nil {
-		t.Fatalf("failed to get pod1: %v", err)
-	}
-	if updatedPod1.Annotations[metadata.AnnotationDrainState] != metadata.DrainStateRequested {
-		t.Errorf(
-			"expected drifted pod1 to have drain requested, got: %q",
-			updatedPod1.Annotations[metadata.AnnotationDrainState],
-		)
-	}
+	), "failed to get pod1")
+	c.Eq(
+		metadata.DrainStateRequested,
+		updatedPod1.Annotations[metadata.AnnotationDrainState],
+		"expected drifted pod1 to have drain requested, got",
+	)
 }
 
 func TestSelectPodToDrain_AllNilEntries(t *testing.T) {
@@ -4445,9 +4226,7 @@ func TestSelectPodToDrain_AllNilEntries(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{}
 	pods := []*corev1.Pod{nil, nil, nil}
 	result := r.selectPodToDrain(t.Context(), pods, shard)
-	if result != nil {
-		t.Errorf("expected nil when all entries are nil, got %v", result)
-	}
+	assert.NewCollecting(t).Nil(result, "expected nil when all entries are nil, got")
 }
 
 func TestReconcileSharedBackupPVC_BuildErrorAndNilReturn(t *testing.T) {
@@ -4456,6 +4235,7 @@ func TestReconcileSharedBackupPVC_BuildErrorAndNilReturn(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("build error propagates", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-shard",
@@ -4479,16 +4259,18 @@ func TestReconcileSharedBackupPVC_BuildErrorAndNilReturn(t *testing.T) {
 		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy()).Build()
 		r := &ShardReconciler{Client: base, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		err := r.reconcileSharedBackupPVC(t.Context(), shard)
-		if err == nil {
-			t.Fatal("expected error from build failure")
-		}
-		if !strings.Contains(err.Error(), "failed to build shared backup PVC") {
-			t.Errorf("expected build PVC error, got: %v", err)
-		}
+		c.Require().Error(err, "expected error from build failure")
+		c.StrContains(
+			err.Error(),
+			"failed to build shared backup PVC",
+			"expected build PVC error, got: %v",
+			err,
+		)
 	})
 }
 
 func TestReconcile_Deletion(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -4532,22 +4314,17 @@ func TestReconcile_Deletion(t *testing.T) {
 
 	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(shard)}
 	result, err := reconciler.Reconcile(t.Context(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.RequeueAfter != 0 {
-		t.Errorf("expected no requeue, got %v", result.RequeueAfter)
-	}
+	ck.Require().NoError(err, "unexpected error")
+	ck.Eq(0, result.RequeueAfter, "expected no requeue, got")
 
 	var updated multigresv1alpha1.Shard
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(shard), &updated); err != nil {
-		if !errors.IsNotFound(err) {
-			t.Fatalf("unexpected error fetching shard: %v", err)
-		}
+		ck.Require().True(errors.IsNotFound(err), "unexpected error fetching shard: %v", err)
 	}
 }
 
 func TestReconcileShardPDB_Error(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4575,15 +4352,12 @@ func TestReconcileShardPDB_Error(t *testing.T) {
 	})
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 	err := r.reconcileShardPDB(t.Context(), shard)
-	if err == nil {
-		t.Fatal("expected error from PDB reconciliation")
-	}
-	if !strings.Contains(err.Error(), "failed to apply shard PDB") {
-		t.Errorf("expected PDB error, got: %v", err)
-	}
+	ck.Require().Error(err, "expected error from PDB reconciliation")
+	ck.StrContains(err.Error(), "failed to apply shard PDB", "expected PDB error, got: %v", err)
 }
 
 func TestUpdateStatus_ProgressingPhase(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4639,18 +4413,13 @@ func TestUpdateStatus_ProgressingPhase(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	err := r.updateStatus(t.Context(), shard, renderedConfig{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if shard.Status.Phase != multigresv1alpha1.PhaseProgressing {
-		t.Errorf("expected PhaseProgressing, got %q", shard.Status.Phase)
-	}
-	if shard.Status.Message == "" {
-		t.Error("expected non-empty status message for Progressing phase")
-	}
+	ck.Require().NoError(err, "unexpected error")
+	ck.Eq(multigresv1alpha1.PhaseProgressing, shard.Status.Phase, "expected PhaseProgressing, got")
+	ck.NotEq("", shard.Status.Message, "expected non-empty status message for Progressing phase")
 }
 
 func TestUpdatePoolsStatus_PoolEmptyEvent(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4681,27 +4450,20 @@ func TestUpdatePoolsStatus_PoolEmptyEvent(t *testing.T) {
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
 	totalPods, readyPods := pools.totalPods, pools.readyPods
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if readyPods != 0 {
-		t.Errorf("expected 0 ready pods, got %d", readyPods)
-	}
-	if totalPods != 1 {
-		t.Errorf("expected 1 total pod (desired replicas), got %d", totalPods)
-	}
+	ck.Require().NoError(err, "unexpected error")
+	ck.Eq(0, readyPods, "expected 0 ready pods, got")
+	ck.Eq(1, totalPods, "expected 1 total pod (desired replicas), got")
 
 	select {
 	case event := <-recorder.Events:
-		if !strings.Contains(event, "PoolEmpty") {
-			t.Errorf("expected PoolEmpty event, got: %s", event)
-		}
+		ck.StrContains(event, "PoolEmpty", "expected PoolEmpty event, got")
 	default:
 		t.Error("expected PoolEmpty event to be recorded")
 	}
 }
 
 func TestReconcilePool_PoolPodsError(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4736,15 +4498,17 @@ func TestReconcilePool_PoolPodsError(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 	err := r.reconcilePool(t.Context(), shard, "primary", poolSpec, &shardRolloutTracker{})
-	if err == nil {
-		t.Fatal("expected error from reconcilePoolPods within reconcilePool")
-	}
-	if !strings.Contains(err.Error(), "failed to reconcile pool pods") {
-		t.Errorf("expected pool pods error, got: %v", err)
-	}
+	ck.Require().Error(err, "expected error from reconcilePoolPods within reconcilePool")
+	ck.StrContains(
+		err.Error(),
+		"failed to reconcile pool pods",
+		"expected pool pods error, got: %v",
+		err,
+	)
 }
 
 func TestUpdateStatus_HealthyPhase(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4823,18 +4587,13 @@ func TestUpdateStatus_HealthyPhase(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
 	err := r.updateStatus(t.Context(), shard, renderedConfig{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if shard.Status.Phase != multigresv1alpha1.PhaseHealthy {
-		t.Errorf("expected PhaseHealthy, got %q", shard.Status.Phase)
-	}
-	if shard.Status.Message != "Ready" {
-		t.Errorf("expected 'Ready' message, got %q", shard.Status.Message)
-	}
+	ck.Require().NoError(err, "unexpected error")
+	ck.Eq(multigresv1alpha1.PhaseHealthy, shard.Status.Phase, "expected PhaseHealthy, got")
+	ck.Eq("Ready", shard.Status.Message, "expected 'Ready' message, got")
 }
 
 func TestUpdatePoolsStatus_TerminatingPodExcluded(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -4885,17 +4644,11 @@ func TestUpdatePoolsStatus_TerminatingPodExcluded(t *testing.T) {
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
 	totalPods, readyPods := pools.totalPods, pools.readyPods
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ck.Require().NoError(err, "unexpected error")
 	// Pod is terminating, so it should be excluded.
 	// totalPods = desired replicas (1), readyPods = 0 (terminating pod excluded)
-	if readyPods != 0 {
-		t.Errorf("expected 0 ready pods (terminating pod excluded), got %d", readyPods)
-	}
-	if totalPods != 1 {
-		t.Errorf("expected 1 total pod (desired replicas), got %d", totalPods)
-	}
+	ck.Eq(0, readyPods, "expected 0 ready pods (terminating pod excluded), got")
+	ck.Eq(1, totalPods, "expected 1 total pod (desired replicas), got")
 }
 
 func TestIsDrainStale(t *testing.T) {
@@ -4929,9 +4682,7 @@ func TestIsDrainStale(t *testing.T) {
 	// Build a pod with matching spec-hash for index 4
 	matchingPod := func(index int, drainState string) *corev1.Pod {
 		desired, err := BuildPoolPod(shard, "main", "z1", shard.Spec.Pools["main"], index, scheme)
-		if err != nil {
-			t.Fatalf("BuildPoolPod failed: %v", err)
-		}
+		assert.NewAborting(t).NoError(err, "BuildPoolPod failed")
 		hash := ComputeSpecHash(desired)
 		return &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -4949,18 +4700,14 @@ func TestIsDrainStale(t *testing.T) {
 
 	t.Run("CancelsStaleScaleDownDrain", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
-		if !r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain to be stale (pod within replicas, spec matches)")
-		}
+		assert.NewCollecting(t).
+			True(r.isDrainStale(shard, pod, metadata.DrainStateRequested), "expected drain to be stale (pod within replicas, spec matches)")
 	})
 
 	t.Run("DoesNotCancelDrainingState", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateDraining)
-		if r.isDrainStale(shard, pod, metadata.DrainStateDraining) {
-			t.Error(
-				"expected drain NOT to be stale in Draining state (standby removal already sent)",
-			)
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(shard, pod, metadata.DrainStateDraining), "expected drain NOT to be stale in Draining state (standby removal already sent)")
 	})
 
 	t.Run("DoesNotCancelExtraPodDrain", func(t *testing.T) {
@@ -4971,55 +4718,50 @@ func TestIsDrainStale(t *testing.T) {
 			ReplicasPerCell: ptr.To(int32(4)),
 		}
 		pod := matchingPod(4, metadata.DrainStateRequested)
-		if r.isDrainStale(smallShard, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain NOT to be stale (pod is extra)")
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(smallShard, pod, metadata.DrainStateRequested), "expected drain NOT to be stale (pod is extra)")
 	})
 
 	t.Run("MissingLabels", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		// Clear labels to hit `if poolName == "" || cellName == ""`
 		pod.Labels = nil
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain NOT to be stale (missing labels)")
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(shard, pod, metadata.DrainStateRequested), "expected drain NOT to be stale (missing labels)")
 	})
 
 	t.Run("MissingPoolInSpec", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		// Change pool to one that doesn't exist in spec
 		pod.Labels[metadata.LabelMultigresPool] = "nonexistent"
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain NOT to be stale (pool not in spec)")
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(shard, pod, metadata.DrainStateRequested), "expected drain NOT to be stale (pool not in spec)")
 	})
 
 	t.Run("DoesNotCancelAcknowledgedDrain", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateAcknowledged)
-		if r.isDrainStale(shard, pod, metadata.DrainStateAcknowledged) {
-			t.Error("expected drain NOT to be stale (past point of no return)")
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(shard, pod, metadata.DrainStateAcknowledged), "expected drain NOT to be stale (past point of no return)")
 	})
 
 	t.Run("DoesNotCancelDrainOnDeletingPod", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		now := metav1.Now()
 		pod.DeletionTimestamp = &now
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain NOT to be stale (pod is being deleted)")
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(shard, pod, metadata.DrainStateRequested), "expected drain NOT to be stale (pod is being deleted)")
 	})
 
 	t.Run("DoesNotCancelWhenSpecDrifted", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		pod.Annotations[metadata.AnnotationSpecHash] = "wrong-hash"
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
-			t.Error("expected drain NOT to be stale (spec-hash mismatch)")
-		}
+		assert.NewCollecting(t).
+			False(r.isDrainStale(shard, pod, metadata.DrainStateRequested), "expected drain NOT to be stale (spec-hash mismatch)")
 	})
 }
 
 func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -5073,15 +4815,9 @@ func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
 	totalPods, readyPods := pools.totalPods, pools.readyPods
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if readyPods != 0 {
-		t.Errorf("expected 0 ready pods (draining pod excluded), got %d", readyPods)
-	}
-	if totalPods != 1 {
-		t.Errorf("expected 1 total pod (desired replicas), got %d", totalPods)
-	}
+	ck.Require().NoError(err, "unexpected error")
+	ck.Eq(0, readyPods, "expected 0 ready pods (draining pod excluded), got")
+	ck.Eq(1, totalPods, "expected 1 total pod (desired replicas), got")
 }
 
 func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
@@ -5121,6 +4857,7 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 	podName := BuildPoolPodName(shard, "primary", "zone1", 0)
 
 	t.Run("CrashLoopBackOff", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      podName,
@@ -5159,15 +4896,17 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if shard.Status.Phase != multigresv1alpha1.PhaseDegraded {
-			t.Errorf("expected PhaseDegraded for CrashLoopBackOff pod, got %q", shard.Status.Phase)
-		}
+		ck.Require().
+			NoError(r.updateStatus(t.Context(), shard, renderedConfig{}), "unexpected error")
+		ck.Eq(
+			multigresv1alpha1.PhaseDegraded,
+			shard.Status.Phase,
+			"expected PhaseDegraded for CrashLoopBackOff pod, got",
+		)
 	})
 
 	t.Run("OOMKilled", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		s := shard.DeepCopy()
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -5207,15 +4946,16 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.updateStatus(t.Context(), s, renderedConfig{}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if s.Status.Phase != multigresv1alpha1.PhaseDegraded {
-			t.Errorf("expected PhaseDegraded for OOMKilled pod, got %q", s.Status.Phase)
-		}
+		ck.Require().NoError(r.updateStatus(t.Context(), s, renderedConfig{}), "unexpected error")
+		ck.Eq(
+			multigresv1alpha1.PhaseDegraded,
+			s.Status.Phase,
+			"expected PhaseDegraded for OOMKilled pod, got",
+		)
 	})
 
 	t.Run("RunningPodNotDegraded", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		s := shard.DeepCopy()
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -5258,15 +4998,12 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		if err := r.updateStatus(t.Context(), s, renderedConfig{}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if s.Status.Phase == multigresv1alpha1.PhaseDegraded {
-			t.Errorf(
-				"expected Progressing (not Degraded) for running pod with prior restarts, got %q",
-				s.Status.Phase,
-			)
-		}
+		ck.Require().NoError(r.updateStatus(t.Context(), s, renderedConfig{}), "unexpected error")
+		ck.NotEq(
+			multigresv1alpha1.PhaseDegraded,
+			s.Status.Phase,
+			"expected Progressing (not Degraded) for running pod with prior restarts, got",
+		)
 	})
 }
 
@@ -5334,6 +5071,7 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 	}
 
 	t.Run("crash-looping pod on desired config is not settled", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).
 			WithObjects(shard, crashLoopingPod(desiredHash)).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -5341,21 +5079,19 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 		pools, err := r.updatePoolsStatus(
 			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash, "",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !pools.poolDegraded {
-			t.Error("expected poolDegraded=true for a crash-looping pod")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(pools.poolDegraded, "expected poolDegraded=true for a crash-looping pod")
 		// The pod already carries the desired hash, so there is no content drift;
 		// configInProgress can only be true here via the apply-failing path (a
 		// desired-config pod crash-looping), which is exactly what must not settle.
-		if !pools.configInProgress {
-			t.Error("expected configInProgress=true: desired config is on a crash-looping pod")
-		}
+		ck.True(
+			pools.configInProgress,
+			"expected configInProgress=true: desired config is on a crash-looping pod",
+		)
 	})
 
 	t.Run("crash-looping pod on stale config is unsettled via drift", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).
 			WithObjects(shard, crashLoopingPod("stale-hash")).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -5363,20 +5099,18 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 		pools, err := r.updatePoolsStatus(
 			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash, "",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !pools.poolDegraded {
-			t.Error("expected poolDegraded=true for a crash-looping pod")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(pools.poolDegraded, "expected poolDegraded=true for a crash-looping pod")
 		// The pod carries a stale hash, so config is unsettled via content drift.
-		if !pools.configInProgress {
-			t.Error("expected configInProgress=true: the pod carries a stale hash")
-		}
+		ck.True(
+			pools.configInProgress,
+			"expected configInProgress=true: the pod carries a stale hash",
+		)
 	})
 }
 
 func TestUpdateStatus_DegradedOnMultiorchCrashLoop(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -5461,15 +5195,17 @@ func TestUpdateStatus_DegradedOnMultiorchCrashLoop(t *testing.T) {
 		Build()
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-	if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if shard.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("expected PhaseDegraded for crash-looping Multiorch, got %q", shard.Status.Phase)
-	}
-	if shard.Status.Message != "One or more Multiorch pods are crash-looping" {
-		t.Errorf("expected Multiorch-specific degraded message, got %q", shard.Status.Message)
-	}
+	ck.Require().NoError(r.updateStatus(t.Context(), shard, renderedConfig{}), "unexpected error")
+	ck.Eq(
+		multigresv1alpha1.PhaseDegraded,
+		shard.Status.Phase,
+		"expected PhaseDegraded for crash-looping Multiorch, got",
+	)
+	ck.Eq(
+		"One or more Multiorch pods are crash-looping",
+		shard.Status.Message,
+		"expected Multiorch-specific degraded message, got",
+	)
 }
 
 func TestExpandPVCIfNeeded(t *testing.T) {
@@ -5488,6 +5224,7 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 	}
 
 	t.Run("no-op when sizes are equal", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-0", Namespace: "default"},
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -5504,19 +5241,17 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
 		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec), "unexpected error")
 
 		got := &corev1.PersistentVolumeClaim{}
 		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-0", Namespace: "default"}, got)
 		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("10Gi")) != 0 {
-			t.Errorf("expected 10Gi, got %s", current.String())
-		}
+		ck.Eq(0, current.Cmp(resource.MustParse("10Gi")), "expected 10Gi, got %s", current.String())
 	})
 
 	t.Run("patches PVC when desired is larger", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-1", Namespace: "default"},
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -5534,19 +5269,22 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "20Gi"},
 		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec), "unexpected error")
 
 		got := &corev1.PersistentVolumeClaim{}
 		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-1", Namespace: "default"}, got)
 		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("20Gi")) != 0 {
-			t.Errorf("expected 20Gi after expansion, got %s", current.String())
-		}
+		ck.Eq(
+			0,
+			current.Cmp(resource.MustParse("20Gi")),
+			"expected 20Gi after expansion, got %s",
+			current.String(),
+		)
 	})
 
 	t.Run("no-op when desired is smaller", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-2", Namespace: "default"},
 			Spec: corev1.PersistentVolumeClaimSpec{
@@ -5563,19 +5301,22 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
 		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec), "unexpected error")
 
 		got := &corev1.PersistentVolumeClaim{}
 		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-2", Namespace: "default"}, got)
 		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("20Gi")) != 0 {
-			t.Errorf("expected 20Gi unchanged, got %s", current.String())
-		}
+		ck.Eq(
+			0,
+			current.Cmp(resource.MustParse("20Gi")),
+			"expected 20Gi unchanged, got %s",
+			current.String(),
+		)
 	})
 
 	t.Run("handles nil requests map", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-3", Namespace: "default"},
 		}
@@ -5586,16 +5327,13 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "5Gi"},
 		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().
+			NoError(r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec), "unexpected error")
 
 		got := &corev1.PersistentVolumeClaim{}
 		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-3", Namespace: "default"}, got)
 		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("5Gi")) != 0 {
-			t.Errorf("expected 5Gi, got %s", current.String())
-		}
+		ck.Eq(0, current.Cmp(resource.MustParse("5Gi")), "expected 5Gi, got %s", current.String())
 	})
 }
 
@@ -5615,25 +5353,22 @@ func TestPVCNeedsFilesystemResize(t *testing.T) {
 				},
 			},
 		}
-		if !pvcNeedsFilesystemResize(pvcs, "data-pvc-0") {
-			t.Error("expected true for FileSystemResizePending condition")
-		}
+		assert.NewCollecting(t).
+			True(pvcNeedsFilesystemResize(pvcs, "data-pvc-0"), "expected true for FileSystemResizePending condition")
 	})
 
 	t.Run("returns false when no condition", func(t *testing.T) {
 		pvcs := map[string]*corev1.PersistentVolumeClaim{
 			"data-pvc-0": {},
 		}
-		if pvcNeedsFilesystemResize(pvcs, "data-pvc-0") {
-			t.Error("expected false when no conditions")
-		}
+		assert.NewCollecting(t).
+			False(pvcNeedsFilesystemResize(pvcs, "data-pvc-0"), "expected false when no conditions")
 	})
 
 	t.Run("returns false for unknown PVC", func(t *testing.T) {
 		pvcs := map[string]*corev1.PersistentVolumeClaim{}
-		if pvcNeedsFilesystemResize(pvcs, "missing") {
-			t.Error("expected false for unknown PVC name")
-		}
+		assert.NewCollecting(t).
+			False(pvcNeedsFilesystemResize(pvcs, "missing"), "expected false for unknown PVC name")
 	})
 }
 
@@ -5675,9 +5410,8 @@ func TestResolvePodRole(t *testing.T) {
 					PodRoles: tc.podRoles,
 				},
 			}
-			if got := resolvePodRole(shard, tc.podName); got != tc.want {
-				t.Errorf("resolvePodRole() = %q, want %q", got, tc.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.want, resolvePodRole(shard, tc.podName), "resolvePodRole()")
 		})
 	}
 }
@@ -5726,14 +5460,14 @@ func TestIsPoolerPruningEnabled(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := isPoolerPruningEnabled(tc.shard); got != tc.want {
-				t.Errorf("isPoolerPruningEnabled() = %v, want %v", got, tc.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.want, isPoolerPruningEnabled(tc.shard), "isPoolerPruningEnabled()")
 		})
 	}
 }
 
 func TestEnqueueFromPostgresConfigMap(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -5804,12 +5538,8 @@ func TestEnqueueFromPostgresConfigMap(t *testing.T) {
 
 	requests := reconciler.enqueueFromPostgresConfigMap(context.Background(), cm)
 
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 request, got %d", len(requests))
-	}
-	if requests[0].Name != "shard-with-ref" {
-		t.Errorf("enqueued shard = %q, want %q", requests[0].Name, "shard-with-ref")
-	}
+	c.Require().Len(requests, 1, "expected 1 request, got %d", len(requests))
+	c.Eq("shard-with-ref", requests[0].Name, "enqueued shard")
 }
 
 func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
@@ -5818,6 +5548,7 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("produces a deterministic hash over the rendered config", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		cm := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "pg-config", Namespace: "default"},
 			Data:       map[string]string{"custom.conf": "shared_buffers = '8GB'"},
@@ -5837,25 +5568,18 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 
 		rc := r.renderEffectiveConfig(context.Background(), shard)
 		hash, err := rc.restartHash, rc.err
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(hash) != 64 {
-			t.Errorf("hash length = %d, want 64 (SHA-256 hex)", len(hash))
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.Len(hash, 64, "hash length = %d, want 64 (SHA-256 hex)", len(hash))
 
 		// Same content should produce the same hash.
 		rc2 := r.renderEffectiveConfig(context.Background(), shard)
 		hash2, err := rc2.restartHash, rc2.err
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if hash2 != hash {
-			t.Errorf("hash not deterministic: %q != %q", hash, hash2)
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.Eq(hash, hash2, "hash not deterministic")
 	})
 
 	t.Run("different content produces different hash", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		cm1 := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "pg-v1", Namespace: "default"},
 			Data:       map[string]string{"pg.conf": "shared_buffers = '4GB'"},
@@ -5889,20 +5613,15 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 
 		rc1 := r.renderEffectiveConfig(context.Background(), shard1)
 		h1, err := rc1.restartHash, rc1.err
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 		rc2 := r.renderEffectiveConfig(context.Background(), shard2)
 		h2, err := rc2.restartHash, rc2.err
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if h1 == h2 {
-			t.Error("different ConfigMap content should produce different hashes")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.NotEq(h2, h1, "different ConfigMap content should produce different hashes")
 	})
 
 	t.Run("missing key returns error", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		cm := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "pg-config", Namespace: "default"},
 			Data:       map[string]string{"other.conf": "value"},
@@ -5921,12 +5640,8 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme}
 
 		err := r.renderEffectiveConfig(context.Background(), shard).err
-		if err == nil {
-			t.Fatal("expected error for missing key")
-		}
-		if !strings.Contains(err.Error(), "missing-key") {
-			t.Errorf("error should mention missing key, got: %v", err)
-		}
+		ck.Require().Error(err, "expected error for missing key")
+		ck.StrContains(err.Error(), "missing-key", "error should mention missing key, got: %v", err)
 	})
 
 	t.Run("missing ConfigMap returns error", func(t *testing.T) {
@@ -5943,9 +5658,8 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme}
 
-		if r.renderEffectiveConfig(context.Background(), shard).err == nil {
-			t.Error("expected error for missing ConfigMap")
-		}
+		assert.NewCollecting(t).
+			Error(r.renderEffectiveConfig(context.Background(), shard).err, "expected error for missing ConfigMap")
 	})
 }
 
@@ -5990,9 +5704,8 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 			poolSpec,
 			&shardRolloutTracker{},
 		)
-		if err == nil || !strings.Contains(err.Error(), "failed to create PVC") {
-			t.Fatalf("expected PVC creation error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to create PVC"), "expected PVC creation error, got %v", err)
 	})
 
 	t.Run("markPodPVCOrphan network error", func(t *testing.T) {
@@ -6034,9 +5747,8 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 
 		r := &ShardReconciler{Client: fails, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, "main", poolSpec, 1)
-		if err == nil || !strings.Contains(err.Error(), "failed to mark PVC") {
-			t.Fatalf("expected PVC orphan-patch error, got %v", err)
-		}
+		assert.NewAborting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to mark PVC"), "expected PVC orphan-patch error, got %v", err)
 	})
 }
 
@@ -6097,6 +5809,7 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 	}
 
 	t.Run("stale reload-hash is in progress even when restart-hash matches", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).
 			WithObjects(shard, readyPod(desiredRestart, "reload-stale")).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -6108,15 +5821,15 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 			desiredRestart,
 			desiredReload,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !pools.configInProgress {
-			t.Error("expected configInProgress=true: reload-hash is stale (reload pending)")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.True(
+			pools.configInProgress,
+			"expected configInProgress=true: reload-hash is stale (reload pending)",
+		)
 	})
 
 	t.Run("both hashes current is settled", func(t *testing.T) {
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).
 			WithObjects(shard, readyPod(desiredRestart, desiredReload)).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -6128,11 +5841,10 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 			desiredRestart,
 			desiredReload,
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if pools.configInProgress {
-			t.Error("expected configInProgress=false: both hashes match desired")
-		}
+		ck.Require().NoError(err, "unexpected error")
+		ck.False(
+			pools.configInProgress,
+			"expected configInProgress=false: both hashes match desired",
+		)
 	})
 }

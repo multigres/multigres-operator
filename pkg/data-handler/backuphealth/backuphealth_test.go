@@ -14,10 +14,13 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestEvaluateBackups_Healthy(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -40,16 +43,13 @@ func TestEvaluateBackups_Healthy(t *testing.T) {
 	if !result.Healthy {
 		t.Errorf("expected healthy, got message: %s", result.Message)
 	}
-	if result.LastBackupType != "full" {
-		t.Errorf("expected type=full, got %s", result.LastBackupType)
-	}
-	if result.LastBackupTime == nil {
-		t.Error("expected LastBackupTime to be set")
-	}
+	c.Eq("full", result.LastBackupType, "expected type=full, got")
+	c.NotNil(result.LastBackupTime, "expected LastBackupTime to be set")
 }
 
 func TestEvaluateBackups_Stale(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -69,29 +69,23 @@ func TestEvaluateBackups_Stale(t *testing.T) {
 	}
 
 	result := backuphealth.EvaluateBackups(shard, backups)
-	if result.Healthy {
-		t.Error("expected unhealthy for 48h-old backup")
-	}
-	if result.LastBackupType != "diff" {
-		t.Errorf("expected type=diff, got %s", result.LastBackupType)
-	}
+	c.False(result.Healthy, "expected unhealthy for 48h-old backup")
+	c.Eq("diff", result.LastBackupType, "expected type=diff, got")
 }
 
 func TestEvaluateBackups_NoBackups(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	shard := &multigresv1alpha1.Shard{}
 	result := backuphealth.EvaluateBackups(shard, nil)
-	if result.Healthy {
-		t.Error("expected unhealthy when no backups")
-	}
-	if result.Message != "No backups found" {
-		t.Errorf("unexpected message: %s", result.Message)
-	}
+	c.False(result.Healthy, "expected unhealthy when no backups")
+	c.Eq("No backups found", result.Message, "unexpected message")
 }
 
 func TestEvaluateBackups_NoCompleted(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	shard := &multigresv1alpha1.Shard{}
 	backups := []*multipoolermanagerdata.BackupMetadata{
@@ -103,12 +97,8 @@ func TestEvaluateBackups_NoCompleted(t *testing.T) {
 	}
 
 	result := backuphealth.EvaluateBackups(shard, backups)
-	if result.Healthy {
-		t.Error("expected unhealthy when no completed backups")
-	}
-	if result.Message != "No completed backups found" {
-		t.Errorf("unexpected message: %s", result.Message)
-	}
+	c.False(result.Healthy, "expected unhealthy when no completed backups")
+	c.Eq("No completed backups found", result.Message, "unexpected message")
 }
 
 func TestEvaluateBackups_SelectsMostRecent(t *testing.T) {
@@ -138,9 +128,8 @@ func TestEvaluateBackups_SelectsMostRecent(t *testing.T) {
 	}
 
 	result := backuphealth.EvaluateBackups(shard, backups)
-	if result.LastBackupType != "incr" {
-		t.Errorf("expected most recent backup type=incr, got %s", result.LastBackupType)
-	}
+	assert.NewCollecting(t).
+		Eq("incr", result.LastBackupType, "expected most recent backup type=incr, got")
 }
 
 func TestApply(t *testing.T) {
@@ -148,6 +137,7 @@ func TestApply(t *testing.T) {
 
 	t.Run("sets healthy condition", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Generation: 5},
@@ -162,30 +152,18 @@ func TestApply(t *testing.T) {
 
 		backuphealth.Apply(shard, result)
 
-		if len(shard.Status.Conditions) != 1 {
-			t.Fatalf("expected 1 condition, got %d", len(shard.Status.Conditions))
-		}
+		ck.Require().
+			Len(shard.Status.Conditions, 1, "expected 1 condition, got %d", len(shard.Status.Conditions))
 		c := shard.Status.Conditions[0]
-		if c.Type != backuphealth.ConditionHealthy {
-			t.Errorf(
-				"expected condition type %s, got %s",
-				backuphealth.ConditionHealthy,
-				c.Type,
-			)
-		}
-		if c.Status != metav1.ConditionTrue {
-			t.Errorf("expected True, got %s", c.Status)
-		}
-		if c.Reason != "BackupRecent" {
-			t.Errorf("expected reason BackupRecent, got %s", c.Reason)
-		}
-		if shard.Status.LastBackupType != "full" {
-			t.Errorf("expected LastBackupType=full, got %s", shard.Status.LastBackupType)
-		}
+		ck.Eq(backuphealth.ConditionHealthy, c.Type, "expected condition type")
+		ck.Eq(metav1.ConditionTrue, c.Status, "expected True, got")
+		ck.Eq("BackupRecent", c.Reason, "expected reason BackupRecent, got")
+		ck.Eq("full", shard.Status.LastBackupType, "expected LastBackupType=full, got")
 	})
 
 	t.Run("sets unhealthy condition", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 
 		shard := &multigresv1alpha1.Shard{}
 		result := &backuphealth.Result{
@@ -195,16 +173,11 @@ func TestApply(t *testing.T) {
 
 		backuphealth.Apply(shard, result)
 
-		if len(shard.Status.Conditions) != 1 {
-			t.Fatalf("expected 1 condition, got %d", len(shard.Status.Conditions))
-		}
+		ck.Require().
+			Len(shard.Status.Conditions, 1, "expected 1 condition, got %d", len(shard.Status.Conditions))
 		c := shard.Status.Conditions[0]
-		if c.Status != metav1.ConditionFalse {
-			t.Errorf("expected False, got %s", c.Status)
-		}
-		if c.Reason != "BackupStale" {
-			t.Errorf("expected reason BackupStale, got %s", c.Reason)
-		}
+		ck.Eq(metav1.ConditionFalse, c.Status, "expected False, got")
+		ck.Eq("BackupStale", c.Reason, "expected reason BackupStale, got")
 	})
 
 	t.Run("nil result is no-op", func(t *testing.T) {
@@ -212,9 +185,8 @@ func TestApply(t *testing.T) {
 
 		shard := &multigresv1alpha1.Shard{}
 		backuphealth.Apply(shard, nil)
-		if len(shard.Status.Conditions) != 0 {
-			t.Error("expected no conditions for nil result")
-		}
+		assert.NewCollecting(t).
+			Empty(shard.Status.Conditions, "expected no conditions for nil result")
 	})
 }
 
@@ -241,9 +213,8 @@ func TestParseTime(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got := backuphealth.ParseTime(tc.input)
-			if !got.Equal(tc.want) {
-				t.Errorf("ParseTime(%q) = %v, want %v", tc.input, got, tc.want)
-			}
+			assert.NewCollecting(t).
+				True(got.Equal(tc.want), "ParseTime(%q) = %v, want %v", tc.input, got, tc.want)
 		})
 	}
 }
@@ -251,13 +222,12 @@ func TestParseTime(t *testing.T) {
 func TestParseTime_InvalidFormat(t *testing.T) {
 	t.Parallel()
 	got := backuphealth.ParseTime("ABCDEFG-HIJKLMN")
-	if !got.IsZero() {
-		t.Errorf("expected zero time for invalid format, got %v", got)
-	}
+	assert.NewCollecting(t).True(got.IsZero(), "expected zero time for invalid format, got %v", got)
 }
 
 func TestEvaluateBackups_MalformedBackupID(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -276,12 +246,8 @@ func TestEvaluateBackups_MalformedBackupID(t *testing.T) {
 	}
 
 	result := backuphealth.EvaluateBackups(shard, backups)
-	if result.Healthy {
-		t.Error("expected unhealthy for malformed backup ID")
-	}
-	if result.LastBackupTime != nil {
-		t.Errorf("expected nil LastBackupTime, got %v", result.LastBackupTime)
-	}
+	c.False(result.Healthy, "expected unhealthy for malformed backup ID")
+	c.Nil(result.LastBackupTime, "expected nil LastBackupTime, got")
 }
 
 type mockTopoStore struct {
@@ -335,6 +301,7 @@ func TestEvaluate(t *testing.T) {
 	}
 
 	t.Run("No primary found", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		store := &mockTopoStore{
 			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
 				return nil, nil
@@ -343,12 +310,8 @@ func TestEvaluate(t *testing.T) {
 		rpc := &mockMultipoolerClient{}
 
 		res, err := backuphealth.Evaluate(ctx, store, rpc, shard)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if res != nil {
-			t.Errorf("expected nil result, got %v", res)
-		}
+		c.NoError(err, "unexpected error")
+		c.Nil(res, "expected nil result, got")
 	})
 
 	t.Run("Primary found but GetBackups fails", func(t *testing.T) {
@@ -372,12 +335,11 @@ func TestEvaluate(t *testing.T) {
 		}
 
 		_, err := backuphealth.Evaluate(ctx, store, rpc, shard)
-		if err == nil {
-			t.Errorf("expected error, got nil")
-		}
+		assert.NewCollecting(t).Error(err, "expected error, got nil")
 	})
 
 	t.Run("Primary found and EvaluateBackups runs", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		primaryInfo := &topoclient.MultipoolerInfo{
 			Multipooler: &clustermetadata.Multipooler{
 				Id: &clustermetadata.ID{Name: "primary-1"},
@@ -408,15 +370,9 @@ func TestEvaluate(t *testing.T) {
 		}
 
 		res, err := backuphealth.Evaluate(ctx, store, rpc, shard)
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-		if res == nil {
-			t.Fatal("expected result, got nil")
-		}
-		if !res.Healthy {
-			t.Errorf("expected healthy true, got false")
-		}
+		c.NoError(err, "unexpected error")
+		c.Require().NotNil(res, "expected result, got nil")
+		c.True(res.Healthy, "expected healthy true, got false")
 	})
 
 	t.Run("FindPrimaryPooler error", func(t *testing.T) {
@@ -428,8 +384,6 @@ func TestEvaluate(t *testing.T) {
 		rpc := &mockMultipoolerClient{}
 
 		_, err := backuphealth.Evaluate(ctx, store, rpc, shard)
-		if err == nil {
-			t.Errorf("expected find pooler error")
-		}
+		assert.NewCollecting(t).Error(err, "expected find pooler error")
 	})
 }

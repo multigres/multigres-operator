@@ -16,6 +16,8 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestResolver_ResolveShard(t *testing.T) {
@@ -317,6 +319,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tc.objects...).Build()
 			r := NewResolver(c, ns)
 
@@ -329,35 +332,25 @@ func TestResolver_ResolveShard(t *testing.T) {
 				},
 			)
 			if tc.wantErr {
-				if err == nil {
-					t.Error("Expected error")
-				}
+				ck.Error(err, "Expected error")
 				return
 			}
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
+			ck.Require().NoError(err, "Unexpected error")
 			orch, pools, pvcPolicy := &resolved.Multiorch, resolved.Pools, resolved.PVCDeletionPolicy
 
-			if diff := cmp.Diff(
+			ck.EqDiffOpts(
 				tc.wantOrch,
 				orch,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Orch Diff (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Orch Diff",
+			)
+			ck.EqDiffOpts(
 				tc.wantPools,
 				pools,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Pools Diff (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(tc.wantPVCPolicy, pvcPolicy); diff != "" {
-				t.Errorf("PVC Policy Diff (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Pools Diff",
+			)
+			ck.EqDiff(tc.wantPVCPolicy, pvcPolicy, "PVC Policy Diff")
 		})
 	}
 }
@@ -412,6 +405,7 @@ func TestResolver_ResolveShardTemplate(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewCollecting(t)
 			c := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(tc.existingObjects...).
@@ -420,9 +414,7 @@ func TestResolver_ResolveShardTemplate(t *testing.T) {
 
 			res, err := r.ResolveShardTemplate(t.Context(), tc.reqName)
 			if tc.wantErr {
-				if err == nil {
-					t.Fatal("Expected error, got nil")
-				}
+				ck.Require().Error(err, "Expected error, got nil")
 				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
 					t.Errorf(
 						"Error message mismatch: got %q, want substring %q",
@@ -436,25 +428,20 @@ func TestResolver_ResolveShardTemplate(t *testing.T) {
 			}
 
 			if !tc.wantFound {
-				if res == nil {
-					t.Fatal(
-						"Expected non-nil result structure even for not-found implicit fallback",
-					)
-				}
-				if res.GetName() != "" {
-					t.Errorf("Expected empty result, got object with name %q", res.GetName())
-				}
+				ck.Require().
+					NotNil(res, "Expected non-nil result structure even for not-found implicit fallback")
+				ck.Eq("", res.GetName(), "Expected empty result, got object with name")
 				return
 			}
 
-			if got, want := res.GetName(), tc.wantResName; got != want {
-				t.Errorf("Result name mismatch: got %q, want %q", got, want)
-			}
+			got, want := res.GetName(), tc.wantResName
+			ck.Eq(want, got, "Result name mismatch: got")
 		})
 	}
 }
 
 func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
+	c := assert.NewCollecting(t)
 	base := multigresv1alpha1.PoolSpec{
 		Postgres: multigresv1alpha1.ContainerConfig{
 			RunAsUser:  ptr.To(int64(1000)),
@@ -481,12 +468,20 @@ func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
 		wantUser, wantGroup int64,
 	) {
 		t.Helper()
-		if config.RunAsUser == nil || *config.RunAsUser != wantUser {
-			t.Errorf("%s runAsUser = %v, want %d", name, config.RunAsUser, wantUser)
-		}
-		if config.RunAsGroup == nil || *config.RunAsGroup != wantGroup {
-			t.Errorf("%s runAsGroup = %v, want %d", name, config.RunAsGroup, wantGroup)
-		}
+		c.False(
+			config.RunAsUser == nil || *config.RunAsUser != wantUser,
+			"%s runAsUser = %v, want %d",
+			name,
+			config.RunAsUser,
+			wantUser,
+		)
+		c.False(
+			config.RunAsGroup == nil || *config.RunAsGroup != wantGroup,
+			"%s runAsGroup = %v, want %d",
+			name,
+			config.RunAsGroup,
+			wantGroup,
+		)
 	}
 	assertPoolIdentity("postgres", got.Postgres, 1000, 2001)
 	assertPoolIdentity("multipooler", got.Multipooler, 1000, 2002)
@@ -502,6 +497,7 @@ func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
 
 	t.Run("override multipooler UID can match template postgres UID", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 
 		resolved := mergeShardConfig(
 			&multigresv1alpha1.ShardTemplate{
@@ -530,16 +526,21 @@ func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
 		)
 
 		got := resolved.Pools["rw"]
-		if got.Postgres.RunAsUser == nil || *got.Postgres.RunAsUser != 1000 {
-			t.Fatalf("postgres runAsUser = %v, want 1000", got.Postgres.RunAsUser)
-		}
-		if got.Multipooler.RunAsUser == nil || *got.Multipooler.RunAsUser != 1000 {
-			t.Fatalf("multipooler runAsUser = %v, want 1000", got.Multipooler.RunAsUser)
-		}
+		c.False(
+			got.Postgres.RunAsUser == nil || *got.Postgres.RunAsUser != 1000,
+			"postgres runAsUser = %v, want 1000",
+			got.Postgres.RunAsUser,
+		)
+		c.False(
+			got.Multipooler.RunAsUser == nil || *got.Multipooler.RunAsUser != 1000,
+			"multipooler runAsUser = %v, want 1000",
+			got.Multipooler.RunAsUser,
+		)
 	})
 
 	t.Run("mismatched override remains visible for resolved validation", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewAborting(t)
 
 		resolved := mergeShardConfig(
 			&multigresv1alpha1.ShardTemplate{
@@ -568,12 +569,16 @@ func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
 		)
 
 		got := resolved.Pools["rw"]
-		if got.Postgres.RunAsUser == nil || *got.Postgres.RunAsUser != 1000 {
-			t.Fatalf("postgres runAsUser = %v, want 1000", got.Postgres.RunAsUser)
-		}
-		if got.Multipooler.RunAsUser == nil || *got.Multipooler.RunAsUser != 2000 {
-			t.Fatalf("multipooler runAsUser = %v, want 2000", got.Multipooler.RunAsUser)
-		}
+		c.False(
+			got.Postgres.RunAsUser == nil || *got.Postgres.RunAsUser != 1000,
+			"postgres runAsUser = %v, want 1000",
+			got.Postgres.RunAsUser,
+		)
+		c.False(
+			got.Multipooler.RunAsUser == nil || *got.Multipooler.RunAsUser != 2000,
+			"multipooler runAsUser = %v, want 2000",
+			got.Multipooler.RunAsUser,
+		)
 	})
 }
 
@@ -988,6 +993,7 @@ func TestMergeShardConfig(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			resolved := mergeShardConfig(
 				tc.tpl,
 				tc.overrides,
@@ -997,21 +1003,18 @@ func TestMergeShardConfig(t *testing.T) {
 			)
 			orch, pools := resolved.Multiorch, resolved.Pools
 
-			if diff := cmp.Diff(
+			c.EqDiffOpts(
 				tc.wantOrch,
 				orch,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-			); diff != "" {
-				t.Errorf("Orch mismatch (-want +got):\n%s", diff)
-			}
-			if diff := cmp.Diff(
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{})},
+				"Orch mismatch",
+			)
+			c.EqDiffOpts(
 				tc.wantPools,
 				pools,
-				cmpopts.IgnoreUnexported(resource.Quantity{}),
-				cmpopts.EquateEmpty(),
-			); diff != "" {
-				t.Errorf("Pools mismatch (-want +got):\n%s", diff)
-			}
+				[]cmp.Option{cmpopts.IgnoreUnexported(resource.Quantity{}), cmpopts.EquateEmpty()},
+				"Pools mismatch",
+			)
 		})
 	}
 }
@@ -1029,9 +1032,7 @@ func TestMergeShardConfig_InitdbArgs(t *testing.T) {
 			},
 			nil, nil, nil, nil,
 		).InitdbArgs
-		if initdbArgs != "--locale-provider=icu" {
-			t.Errorf("initdbArgs = %q, want %q", initdbArgs, "--locale-provider=icu")
-		}
+		assert.NewCollecting(t).Eq("--locale-provider=icu", initdbArgs, "initdbArgs")
 	})
 
 	t.Run("overrides override template", func(t *testing.T) {
@@ -1047,9 +1048,7 @@ func TestMergeShardConfig_InitdbArgs(t *testing.T) {
 			},
 			nil, nil, nil,
 		).InitdbArgs
-		if initdbArgs != "--data-checksums" {
-			t.Errorf("initdbArgs = %q, want %q", initdbArgs, "--data-checksums")
-		}
+		assert.NewCollecting(t).Eq("--data-checksums", initdbArgs, "initdbArgs")
 	})
 
 	t.Run("inline overrides template", func(t *testing.T) {
@@ -1066,9 +1065,7 @@ func TestMergeShardConfig_InitdbArgs(t *testing.T) {
 			},
 			nil, nil,
 		).InitdbArgs
-		if initdbArgs != "--data-checksums" {
-			t.Errorf("initdbArgs = %q, want %q", initdbArgs, "--data-checksums")
-		}
+		assert.NewCollecting(t).Eq("--data-checksums", initdbArgs, "initdbArgs")
 	})
 
 	t.Run("inline overrides both template and overrides", func(t *testing.T) {
@@ -1087,9 +1084,7 @@ func TestMergeShardConfig_InitdbArgs(t *testing.T) {
 			},
 			nil, nil,
 		).InitdbArgs
-		if initdbArgs != "--wal-segsize=64" {
-			t.Errorf("initdbArgs = %q, want %q", initdbArgs, "--wal-segsize=64")
-		}
+		assert.NewCollecting(t).Eq("--wal-segsize=64", initdbArgs, "initdbArgs")
 	})
 
 	t.Run("no InitdbArgs anywhere", func(t *testing.T) {
@@ -1098,9 +1093,7 @@ func TestMergeShardConfig_InitdbArgs(t *testing.T) {
 			&multigresv1alpha1.ShardTemplate{},
 			nil, nil, nil, nil,
 		).InitdbArgs
-		if initdbArgs != "" {
-			t.Errorf("initdbArgs = %q, want empty", initdbArgs)
-		}
+		assert.NewCollecting(t).Eq("", initdbArgs, "initdbArgs")
 	})
 
 	t.Run("empty override does not clear template value", func(t *testing.T) {
@@ -1116,10 +1109,7 @@ func TestMergeShardConfig_InitdbArgs(t *testing.T) {
 			},
 			nil, nil, nil,
 		).InitdbArgs
-		if initdbArgs != "--locale-provider=icu" {
-			t.Errorf("initdbArgs = %q, want %q (empty override should not clear template)",
-				initdbArgs, "--locale-provider=icu")
-		}
+		assert.NewCollecting(t).Eq("--locale-provider=icu", initdbArgs, "initdbArgs")
 	})
 }
 
@@ -1137,10 +1127,8 @@ func TestResolver_ClientErrors_Shard(t *testing.T) {
 	r := NewResolver(mc, "default")
 
 	_, err := r.ResolveShardTemplate(t.Context(), "any")
-	if err == nil ||
-		err.Error() != "failed to get ShardTemplate: simulated database connection error" {
-		t.Errorf("Error mismatch: got %v, want simulated error", err)
-	}
+	assert.NewCollecting(t).False(err == nil ||
+		err.Error() != "failed to get ShardTemplate: simulated database connection error", "Error mismatch: got %v, want simulated error", err)
 }
 
 func TestResolveShard_PVCDeletionPolicy(t *testing.T) {
@@ -1148,6 +1136,7 @@ func TestResolveShard_PVCDeletionPolicy(t *testing.T) {
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
 	t.Run("From Template", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		r := &Resolver{
 			Client: fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -1167,16 +1156,17 @@ func TestResolveShard_PVCDeletionPolicy(t *testing.T) {
 		resolved, err := r.ResolveShard(t.Context(), &multigresv1alpha1.ShardConfig{
 			ShardTemplate: "tpl-pvc",
 		}, ResolveShardOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 		policy := resolved.PVCDeletionPolicy
-		if policy == nil || policy.WhenDeleted != multigresv1alpha1.DeletePVCRetentionPolicy {
-			t.Errorf("Expected Template PVCDeletionPolicy=Delete, got %v", policy)
-		}
+		c.False(
+			policy == nil || policy.WhenDeleted != multigresv1alpha1.DeletePVCRetentionPolicy,
+			"Expected Template PVCDeletionPolicy=Delete, got %v",
+			policy,
+		)
 	})
 
 	t.Run("Pool Level Override", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		r := &Resolver{
 			Client:             fake.NewClientBuilder().WithScheme(scheme).Build(),
 			Namespace:          "default",
@@ -1195,17 +1185,13 @@ func TestResolveShard_PVCDeletionPolicy(t *testing.T) {
 				},
 			},
 		}, ResolveShardOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().NoError(err, "unexpected error")
 		pools := resolved.Pools
 		if p, ok := pools["custom-pool"]; !ok {
 			t.Fatal("Expected custom-pool to exist")
 		} else {
-			if p.PVCDeletionPolicy == nil ||
-				p.PVCDeletionPolicy.WhenDeleted != multigresv1alpha1.RetainPVCRetentionPolicy {
-				t.Errorf("Expected Pool PVCDeletionPolicy=Retain, got %v", p.PVCDeletionPolicy)
-			}
+			c.False(p.PVCDeletionPolicy == nil ||
+				p.PVCDeletionPolicy.WhenDeleted != multigresv1alpha1.RetainPVCRetentionPolicy, "Expected Pool PVCDeletionPolicy=Retain, got %v", p.PVCDeletionPolicy)
 		}
 	})
 }
@@ -1220,9 +1206,7 @@ func TestDefaultBackupConfig(t *testing.T) {
 			Filesystem: &multigresv1alpha1.FilesystemBackupConfig{},
 		}
 		defaultBackupConfig(cfg)
-		if cfg.Filesystem.Path != DefaultBackupPath {
-			t.Errorf("Path = %q, want %q", cfg.Filesystem.Path, DefaultBackupPath)
-		}
+		assert.NewCollecting(t).Eq(DefaultBackupPath, cfg.Filesystem.Path, "Path")
 	})
 
 	t.Run("sets default storage size", func(t *testing.T) {
@@ -1232,17 +1216,13 @@ func TestDefaultBackupConfig(t *testing.T) {
 			Filesystem: &multigresv1alpha1.FilesystemBackupConfig{},
 		}
 		defaultBackupConfig(cfg)
-		if cfg.Filesystem.Storage.Size != DefaultBackupStorageSize {
-			t.Errorf(
-				"Storage.Size = %q, want %q",
-				cfg.Filesystem.Storage.Size,
-				DefaultBackupStorageSize,
-			)
-		}
+		assert.NewCollecting(t).
+			Eq(DefaultBackupStorageSize, cfg.Filesystem.Storage.Size, "Storage.Size")
 	})
 
 	t.Run("does not override existing values", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		cfg := &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeFilesystem,
 			Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
@@ -1251,26 +1231,19 @@ func TestDefaultBackupConfig(t *testing.T) {
 			},
 		}
 		defaultBackupConfig(cfg)
-		if cfg.Filesystem.Path != "/custom" {
-			t.Errorf("Path = %q, want /custom", cfg.Filesystem.Path)
-		}
-		if cfg.Filesystem.Storage.Size != "50Gi" {
-			t.Errorf("Storage.Size = %q, want 50Gi", cfg.Filesystem.Storage.Size)
-		}
+		c.Eq("/custom", cfg.Filesystem.Path, "Path")
+		c.Eq("50Gi", cfg.Filesystem.Storage.Size, "Storage.Size")
 	})
 
 	t.Run("creates filesystem struct if nil", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		cfg := &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeFilesystem,
 		}
 		defaultBackupConfig(cfg)
-		if cfg.Filesystem == nil {
-			t.Fatal("Filesystem = nil, want non-nil")
-		}
-		if cfg.Filesystem.Path != DefaultBackupPath {
-			t.Errorf("Path = %q, want %q", cfg.Filesystem.Path, DefaultBackupPath)
-		}
+		c.Require().NotNil(cfg.Filesystem, "Filesystem = nil, want non-nil")
+		c.Eq(DefaultBackupPath, cfg.Filesystem.Path, "Path")
 	})
 
 	t.Run("does not touch s3 config", func(t *testing.T) {
@@ -1281,21 +1254,16 @@ func TestDefaultBackupConfig(t *testing.T) {
 		}
 		defaultBackupConfig(cfg)
 		// Should not create Filesystem struct for S3 type
-		if cfg.Filesystem != nil {
-			t.Errorf("Filesystem should be nil for S3 type, got %+v", cfg.Filesystem)
-		}
+		assert.NewCollecting(t).Nil(cfg.Filesystem, "Filesystem should be nil for S3 type, got")
 	})
 
 	t.Run("sets default type when empty", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		cfg := &multigresv1alpha1.BackupConfig{}
 		defaultBackupConfig(cfg)
-		if cfg.Type != multigresv1alpha1.BackupTypeFilesystem {
-			t.Errorf("Type = %q, want %q", cfg.Type, multigresv1alpha1.BackupTypeFilesystem)
-		}
-		if cfg.Filesystem == nil {
-			t.Fatal("Filesystem = nil, want non-nil")
-		}
+		c.Eq(multigresv1alpha1.BackupTypeFilesystem, cfg.Type, "Type")
+		c.Require().NotNil(cfg.Filesystem, "Filesystem = nil, want non-nil")
 	})
 }
 
@@ -1306,6 +1274,7 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 
 	t.Run("inherited backup propagates to resolved config", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := NewResolver(c, "default")
 
@@ -1328,23 +1297,16 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 			},
 			ResolveShardOptions{InheritedBackup: inherited},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 		backupCfg := resolved.Backup
-		if backupCfg == nil {
-			t.Fatal("backup config should not be nil")
-		}
-		if backupCfg.Type != multigresv1alpha1.BackupTypeFilesystem {
-			t.Errorf("Type = %q, want filesystem", backupCfg.Type)
-		}
-		if backupCfg.Filesystem.Path != "/inherited-path" {
-			t.Errorf("Path = %q, want /inherited-path", backupCfg.Filesystem.Path)
-		}
+		ck.Require().NotNil(backupCfg, "backup config should not be nil")
+		ck.Eq(multigresv1alpha1.BackupTypeFilesystem, backupCfg.Type, "Type")
+		ck.Eq("/inherited-path", backupCfg.Filesystem.Path, "Path")
 	})
 
 	t.Run("shard backup overrides inherited", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := NewResolver(c, "default")
 
@@ -1372,17 +1334,14 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 			},
 			ResolveShardOptions{InheritedBackup: inherited},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 		backupCfg := resolved.Backup
-		if backupCfg.Filesystem.Path != "/shard-override" {
-			t.Errorf("Path = %q, want /shard-override", backupCfg.Filesystem.Path)
-		}
+		ck.Eq("/shard-override", backupCfg.Filesystem.Path, "Path")
 	})
 
 	t.Run("nil inherited gets filesystem default", func(t *testing.T) {
 		t.Parallel()
+		ck := assert.NewCollecting(t)
 		c := fake.NewClientBuilder().WithScheme(scheme).Build()
 		r := NewResolver(c, "default")
 
@@ -1397,19 +1356,11 @@ func TestResolveShard_InheritedBackup(t *testing.T) {
 			},
 			ResolveShardOptions{},
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		ck.Require().NoError(err, "unexpected error")
 		backupCfg := resolved.Backup
-		if backupCfg == nil {
-			t.Fatal("backup config should not be nil (should get defaults)")
-		}
-		if backupCfg.Type != multigresv1alpha1.BackupTypeFilesystem {
-			t.Errorf("Type = %q, want filesystem", backupCfg.Type)
-		}
-		if backupCfg.Filesystem.Path != DefaultBackupPath {
-			t.Errorf("Path = %q, want %q", backupCfg.Filesystem.Path, DefaultBackupPath)
-		}
+		ck.Require().NotNil(backupCfg, "backup config should not be nil (should get defaults)")
+		ck.Eq(multigresv1alpha1.BackupTypeFilesystem, backupCfg.Type, "Type")
+		ck.Eq(DefaultBackupPath, backupCfg.Filesystem.Path, "Path")
 	})
 }
 
@@ -1433,9 +1384,8 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			},
 			nil, nil, nil, nil,
 		).PostgresConfigRef
-		if ref == nil || ref.Name != "template-config" || ref.Key != "postgresql.conf" {
-			t.Errorf("postgresConfigRef = %v, want %v", ref, templateRef)
-		}
+		assert.NewCollecting(t).
+			False(ref == nil || ref.Name != "template-config" || ref.Key != "postgresql.conf", "postgresConfigRef = %v, want %v", ref, templateRef)
 	})
 
 	t.Run("overrides replace template ref", func(t *testing.T) {
@@ -1451,9 +1401,8 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			},
 			nil, nil, nil,
 		).PostgresConfigRef
-		if ref == nil || ref.Name != "override-config" || ref.Key != "custom.conf" {
-			t.Errorf("postgresConfigRef = %v, want %v", ref, overrideRef)
-		}
+		assert.NewCollecting(t).
+			False(ref == nil || ref.Name != "override-config" || ref.Key != "custom.conf", "postgresConfigRef = %v, want %v", ref, overrideRef)
 	})
 
 	t.Run("inline replaces template and overrides", func(t *testing.T) {
@@ -1472,9 +1421,8 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			},
 			nil, nil,
 		).PostgresConfigRef
-		if ref == nil || ref.Name != "inline-config" || ref.Key != "inline.conf" {
-			t.Errorf("postgresConfigRef = %v, want %v", ref, inlineRef)
-		}
+		assert.NewCollecting(t).
+			False(ref == nil || ref.Name != "inline-config" || ref.Key != "inline.conf", "postgresConfigRef = %v, want %v", ref, inlineRef)
 	})
 
 	t.Run("nil everywhere returns nil", func(t *testing.T) {
@@ -1483,9 +1431,7 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			&multigresv1alpha1.ShardTemplate{},
 			nil, nil, nil, nil,
 		).PostgresConfigRef
-		if ref != nil {
-			t.Errorf("postgresConfigRef = %v, want nil", ref)
-		}
+		assert.NewCollecting(t).Nil(ref, "postgresConfigRef")
 	})
 
 	t.Run("only overrides set ref", func(t *testing.T) {
@@ -1497,9 +1443,8 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			},
 			nil, nil, nil,
 		).PostgresConfigRef
-		if ref == nil || ref.Name != "override-config" {
-			t.Errorf("postgresConfigRef = %v, want %v", ref, overrideRef)
-		}
+		assert.NewCollecting(t).
+			False(ref == nil || ref.Name != "override-config", "postgresConfigRef = %v, want %v", ref, overrideRef)
 	})
 
 	t.Run("only inline sets ref", func(t *testing.T) {
@@ -1511,9 +1456,8 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			},
 			nil, nil,
 		).PostgresConfigRef
-		if ref == nil || ref.Name != "inline-config" {
-			t.Errorf("postgresConfigRef = %v, want %v", ref, inlineRef)
-		}
+		assert.NewCollecting(t).
+			False(ref == nil || ref.Name != "inline-config", "postgresConfigRef = %v, want %v", ref, inlineRef)
 	})
 
 	t.Run("nil overrides do not clear template ref", func(t *testing.T) {
@@ -1527,13 +1471,8 @@ func TestMergeShardConfig_PostgresConfigRef(t *testing.T) {
 			&multigresv1alpha1.ShardOverrides{},
 			nil, nil, nil,
 		).PostgresConfigRef
-		if ref == nil || ref.Name != "template-config" {
-			t.Errorf(
-				"postgresConfigRef = %v, want %v (nil override should not clear template)",
-				ref,
-				templateRef,
-			)
-		}
+		assert.NewCollecting(t).
+			False(ref == nil || ref.Name != "template-config", "postgresConfigRef = %v, want %v (nil override should not clear template)", ref, templateRef)
 	})
 }
 
@@ -1546,13 +1485,12 @@ func TestMergeShardConfig_PostgresConfig(t *testing.T) {
 			&multigresv1alpha1.ShardTemplate{},
 			nil, nil, nil, nil,
 		).PostgresConfig
-		if cfg != nil {
-			t.Errorf("postgresConfig = %v, want nil", cfg)
-		}
+		assert.NewCollecting(t).Nil(cfg, "postgresConfig")
 	})
 
 	t.Run("layers merge per key with inline winning", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 		cfg := mergeShardConfig(
 			&multigresv1alpha1.ShardTemplate{
 				Spec: multigresv1alpha1.ShardTemplateSpec{
@@ -1580,13 +1518,9 @@ func TestMergeShardConfig_PostgresConfig(t *testing.T) {
 			"shared_buffers":  "2GB", // only in template
 			"work_mem":        "8MB", // only in override
 		}
-		if len(cfg) != len(want) {
-			t.Fatalf("postgresConfig = %v, want %v", cfg, want)
-		}
+		c.Require().Len(cfg, len(want), "postgresConfig = %v, want %v", cfg, want)
 		for k, v := range want {
-			if cfg[k] != v {
-				t.Errorf("postgresConfig[%q] = %q, want %q", k, cfg[k], v)
-			}
+			c.Eq(v, cfg[k], "postgresConfig[%q] = %q, want", k, cfg[k])
 		}
 	})
 
@@ -1603,8 +1537,7 @@ func TestMergeShardConfig_PostgresConfig(t *testing.T) {
 			},
 			nil, nil, nil,
 		)
-		if tplMap["max_connections"] != "100" {
-			t.Errorf("template map mutated: %v", tplMap)
-		}
+		assert.NewCollecting(t).
+			Eq("100", tplMap["max_connections"], "template map mutated: %v", tplMap)
 	})
 }

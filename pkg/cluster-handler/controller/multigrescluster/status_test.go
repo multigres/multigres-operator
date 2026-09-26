@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,6 +17,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestReconcile_Status(t *testing.T) {
@@ -73,6 +72,7 @@ func TestReconcile_Status(t *testing.T) {
 }
 
 func TestUpdateStatus_Coverage(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -127,30 +127,22 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	ck.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	ck.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
 	found := false
 	for _, c := range cluster.Status.Conditions {
 		if c.Type == "Available" {
 			found = true
-			if c.Status != metav1.ConditionTrue {
-				t.Errorf("Expected Available=True, got %s", c.Status)
-			}
+			ck.Eq(metav1.ConditionTrue, c.Status, "Expected Available=True, got")
 		}
 	}
-	if !found {
-		t.Error("Available condition not found")
-	}
+	ck.True(found, "Available condition not found")
 
 	if s, ok := cluster.Status.Cells["cell-1"]; !ok || !s.Ready {
 		t.Errorf("Expected cell-1 to be ready in status summary, got %v", s)
@@ -179,21 +171,15 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		Build()
 
 	r.Client = fakeClient
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	ck.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	ck.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
-	if cluster.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("Expected PhaseDegraded, got %s", cluster.Status.Phase)
-	}
+	ck.Eq(multigresv1alpha1.PhaseDegraded, cluster.Status.Phase, "Expected PhaseDegraded, got")
 
 	cProgressing := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{
@@ -214,19 +200,17 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		Build()
 	r.Client = fakeClient
 
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
-	if err := fakeClient.Get(
+	ck.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
+	ck.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
-	if cluster.Status.Phase != multigresv1alpha1.PhaseProgressing {
-		t.Errorf("Expected PhaseProgressing, got %s", cluster.Status.Phase)
-	}
+	), "Failed to refresh cluster")
+	ck.Eq(
+		multigresv1alpha1.PhaseProgressing,
+		cluster.Status.Phase,
+		"Expected PhaseProgressing, got",
+	)
 
 	tgDegraded := &multigresv1alpha1.TableGroup{
 		ObjectMeta: metav1.ObjectMeta{
@@ -250,21 +234,15 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		Build()
 
 	r.Client = fakeClient
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	ck.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	ck.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
-	if cluster.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("Expected PhaseDegraded, got %s", cluster.Status.Phase)
-	}
+	ck.Eq(multigresv1alpha1.PhaseDegraded, cluster.Status.Phase, "Expected PhaseDegraded, got")
 
 	tgInit := &multigresv1alpha1.TableGroup{
 		ObjectMeta: metav1.ObjectMeta{
@@ -288,21 +266,19 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		Build()
 
 	r.Client = fakeClient
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	ck.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	ck.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
-	if cluster.Status.Phase != multigresv1alpha1.PhaseProgressing {
-		t.Errorf("Expected PhaseProgressing, got %s", cluster.Status.Phase)
-	}
+	ck.Eq(
+		multigresv1alpha1.PhaseProgressing,
+		cluster.Status.Phase,
+		"Expected PhaseProgressing, got",
+	)
 
 	tsDegraded := &multigresv1alpha1.TopoServer{
 		ObjectMeta: metav1.ObjectMeta{
@@ -322,24 +298,19 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		Build()
 
 	r.Client = fakeClient
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	ck.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	ck.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
-	if cluster.Status.Phase != multigresv1alpha1.PhaseDegraded {
-		t.Errorf("Expected PhaseDegraded, got %s", cluster.Status.Phase)
-	}
+	ck.Eq(multigresv1alpha1.PhaseDegraded, cluster.Status.Phase, "Expected PhaseDegraded, got")
 }
 
 func TestUpdateStatus_ZeroResources(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -378,33 +349,25 @@ func TestUpdateStatus_ZeroResources(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	c.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	c.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
-	assert.Equal(t, multigresv1alpha1.PhaseProgressing, cluster.Status.Phase)
-	assert.Nil(t, cluster.Status.InitializedAt)
+	c.EqDeep(multigresv1alpha1.PhaseProgressing, cluster.Status.Phase)
+	c.Nil(cluster.Status.InitializedAt)
 
 	cond := meta.FindStatusCondition(cluster.Status.Conditions, "Available")
-	if cond == nil {
-		t.Fatal("Available condition missing")
-	}
-	if cond.Status != metav1.ConditionFalse {
-		t.Errorf("Expected Available=False (no cells), got %s", cond.Status)
-	}
+	c.Require().NotNil(cond, "Available condition missing")
+	c.Eq(metav1.ConditionFalse, cond.Status, "Expected Available=False (no cells), got")
 }
 
 func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 	scheme := runtime.NewScheme()
-	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
+	assert.NewAborting(t).NoError(multigresv1alpha1.AddToScheme(scheme))
 
 	externalTopo := &multigresv1alpha1.GlobalTopoServerSpec{
 		External: &multigresv1alpha1.ExternalTopoServerSpec{
@@ -529,6 +492,7 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			objects := append([]client.Object{tt.cluster}, tt.children...)
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
@@ -541,18 +505,17 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 				Recorder: record.NewFakeRecorder(10),
 			}
 
-			require.NoError(t, r.updateStatus(t.Context(), tt.cluster))
-			require.NoError(
-				t,
-				fakeClient.Get(t.Context(), client.ObjectKeyFromObject(tt.cluster), tt.cluster),
-			)
-			assert.Equal(t, tt.wantPhase, tt.cluster.Status.Phase)
-			assert.Equal(t, tt.initialized, tt.cluster.Status.InitializedAt != nil)
+			c.Require().NoError(r.updateStatus(t.Context(), tt.cluster))
+			c.Require().
+				NoError(fakeClient.Get(t.Context(), client.ObjectKeyFromObject(tt.cluster), tt.cluster))
+			c.EqDeep(tt.wantPhase, tt.cluster.Status.Phase)
+			c.EqDeep(tt.initialized, tt.cluster.Status.InitializedAt != nil)
 		})
 	}
 }
 
 func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -616,11 +579,11 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 		Recorder: record.NewFakeRecorder(10),
 	}
 
-	require.NoError(t, r.updateStatus(t.Context(), cluster))
-	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+	c.Require().NoError(r.updateStatus(t.Context(), cluster))
+	c.Require().NoError(fakeClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
 
-	require.Equal(t, multigresv1alpha1.PhaseHealthy, cluster.Status.Phase)
-	require.NotNil(t, cluster.Status.InitializedAt)
+	c.Require().EqDeep(multigresv1alpha1.PhaseHealthy, cluster.Status.Phase)
+	c.Require().NotNil(cluster.Status.InitializedAt)
 	initializedAt := *cluster.Status.InitializedAt
 
 	degradedCell := &multigresv1alpha1.Cell{
@@ -642,15 +605,16 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 		Build()
 	r.Client = fakeClient
 
-	require.NoError(t, r.updateStatus(t.Context(), cluster))
-	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+	c.Require().NoError(r.updateStatus(t.Context(), cluster))
+	c.Require().NoError(fakeClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
 
-	assert.Equal(t, multigresv1alpha1.PhaseDegraded, cluster.Status.Phase)
-	require.NotNil(t, cluster.Status.InitializedAt)
-	assert.Equal(t, initializedAt, *cluster.Status.InitializedAt)
+	c.EqDeep(multigresv1alpha1.PhaseDegraded, cluster.Status.Phase)
+	c.Require().NotNil(cluster.Status.InitializedAt)
+	c.EqDeep(initializedAt, *cluster.Status.InitializedAt)
 }
 
 func TestUpdateStatus_GenerationMismatch(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 
@@ -719,29 +683,25 @@ func TestUpdateStatus_GenerationMismatch(t *testing.T) {
 		Recorder: record.NewFakeRecorder(100),
 	}
 
-	if err := r.updateStatus(context.Background(), cluster); err != nil {
-		t.Fatalf("updateStatus failed: %v", err)
-	}
+	c.Require().NoError(r.updateStatus(context.Background(), cluster), "updateStatus failed")
 
-	if err := fakeClient.Get(
+	c.Require().NoError(fakeClient.Get(
 		context.Background(),
 		client.ObjectKeyFromObject(cluster),
 		cluster,
-	); err != nil {
-		t.Fatalf("Failed to refresh cluster: %v", err)
-	}
+	), "Failed to refresh cluster")
 
-	if cluster.Status.Phase != multigresv1alpha1.PhaseProgressing {
-		t.Errorf(
-			"Expected PhaseProgressing due to generation mismatch, got %s",
-			cluster.Status.Phase,
-		)
-	}
+	c.Eq(
+		multigresv1alpha1.PhaseProgressing,
+		cluster.Status.Phase,
+		"Expected PhaseProgressing due to generation mismatch, got",
+	)
 }
 
 func TestUpdateStatus_UsesAPIReaderForChildHealth(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
-	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
+	c.Require().NoError(multigresv1alpha1.AddToScheme(scheme))
 
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{
@@ -811,10 +771,10 @@ func TestUpdateStatus_UsesAPIReaderForChildHealth(t *testing.T) {
 		Recorder:  record.NewFakeRecorder(10),
 	}
 
-	require.NoError(t, r.updateStatus(t.Context(), cluster))
-	require.NoError(t, cachedClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
-	assert.Equal(t, multigresv1alpha1.PhaseProgressing, cluster.Status.Phase)
-	assert.Nil(t, cluster.Status.InitializedAt)
+	c.Require().NoError(r.updateStatus(t.Context(), cluster))
+	c.Require().NoError(cachedClient.Get(t.Context(), client.ObjectKeyFromObject(cluster), cluster))
+	c.EqDeep(multigresv1alpha1.PhaseProgressing, cluster.Status.Phase)
+	c.Nil(cluster.Status.InitializedAt)
 }
 
 func TestExtractExternalEndpoint(t *testing.T) {
@@ -902,7 +862,7 @@ func TestExtractExternalEndpoint(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := extractExternalEndpoint(tc.svc)
-			assert.Equal(t, tc.want, got)
+			assert.NewCollecting(t).EqDeep(tc.want, got)
 		})
 	}
 }
@@ -968,6 +928,7 @@ func TestComputeGatewayCondition(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := computeGatewayCondition(
 				tc.externalGatewayEnabled,
 				tc.externalEndpoint,
@@ -976,16 +937,16 @@ func TestComputeGatewayCondition(t *testing.T) {
 			)
 
 			if tc.wantNil {
-				assert.Nil(t, got)
+				c.Nil(got)
 				return
 			}
 
-			require.NotNil(t, got)
-			assert.Equal(t, multigresv1alpha1.ConditionGatewayExternalReady, got.Type)
-			assert.Equal(t, tc.wantStatus, got.Status)
-			assert.Equal(t, tc.wantReason, got.Reason)
-			assert.Contains(t, got.Message, tc.wantMessageContains)
-			assert.Equal(t, tc.clusterGeneration, got.ObservedGeneration)
+			c.Require().NotNil(got)
+			c.EqDeep(multigresv1alpha1.ConditionGatewayExternalReady, got.Type)
+			c.EqDeep(tc.wantStatus, got.Status)
+			c.EqDeep(tc.wantReason, got.Reason)
+			c.StrContains(got.Message, tc.wantMessageContains)
+			c.EqDeep(tc.clusterGeneration, got.ObservedGeneration)
 		})
 	}
 }
@@ -1009,6 +970,7 @@ func TestUpdateStatus_GatewayServiceErrors(t *testing.T) {
 	}
 
 	t.Run("non-NotFound error fetching global service returns error", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		injectedErr := fmt.Errorf("simulated API server error")
 
 		cl := fake.NewClientBuilder().
@@ -1029,11 +991,12 @@ func TestUpdateStatus_GatewayServiceErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		err := r.updateStatus(t.Context(), cluster)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get global multigateway service for status")
+		c.Require().Error(err)
+		c.StrContains(err.Error(), "failed to get global multigateway service for status")
 	})
 
 	t.Run("NotFound global service sets AwaitingEndpoint when enabled", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		// No Service object created — Get will return NotFound.
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -1049,22 +1012,23 @@ func TestUpdateStatus_GatewayServiceErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		err := r.updateStatus(t.Context(), cluster)
-		require.NoError(t, err)
+		c.Require().NoError(err)
 
-		require.NotNil(t, cluster.Status.Gateway)
-		assert.Empty(t, cluster.Status.Gateway.ExternalEndpoint)
+		c.Require().NotNil(cluster.Status.Gateway)
+		c.Empty(cluster.Status.Gateway.ExternalEndpoint)
 
 		cond := meta.FindStatusCondition(
 			cluster.Status.Conditions,
 			multigresv1alpha1.ConditionGatewayExternalReady,
 		)
-		require.NotNil(t, cond)
-		assert.Equal(t, metav1.ConditionFalse, cond.Status)
-		assert.Equal(t, multigresv1alpha1.ReasonAwaitingEndpoint, cond.Reason)
+		c.Require().NotNil(cond)
+		c.EqDeep(metav1.ConditionFalse, cond.Status)
+		c.EqDeep(multigresv1alpha1.ReasonAwaitingEndpoint, cond.Reason)
 	})
 }
 
 func TestUpdateStatus_StaleCellGenerationIgnored(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := setupScheme()
 
 	clusterName := "gw-stale"
@@ -1142,7 +1106,7 @@ func TestUpdateStatus_StaleCellGenerationIgnored(t *testing.T) {
 
 	clusterCopy := cluster.DeepCopy()
 	err := r.updateStatus(t.Context(), clusterCopy)
-	require.NoError(t, err)
+	c.Require().NoError(err)
 
 	// Only the fresh cell's 2 ready gateways should count.
 	// With endpoint present and aggregateReadyGateways=2, condition should be EndpointReady.
@@ -1150,10 +1114,10 @@ func TestUpdateStatus_StaleCellGenerationIgnored(t *testing.T) {
 		clusterCopy.Status.Conditions,
 		multigresv1alpha1.ConditionGatewayExternalReady,
 	)
-	require.NotNil(t, cond)
-	assert.Equal(t, metav1.ConditionTrue, cond.Status)
-	assert.Equal(t, multigresv1alpha1.ReasonEndpointReady, cond.Reason)
-	assert.Contains(t, cond.Message, "lb.example.com")
+	c.Require().NotNil(cond)
+	c.EqDeep(metav1.ConditionTrue, cond.Status)
+	c.EqDeep(multigresv1alpha1.ReasonEndpointReady, cond.Reason)
+	c.StrContains(cond.Message, "lb.example.com")
 
 	// Now verify that if we remove the fresh cell (only stale remains),
 	// the aggregate is 0 and condition becomes NoReadyGateways.
@@ -1171,15 +1135,15 @@ func TestUpdateStatus_StaleCellGenerationIgnored(t *testing.T) {
 
 	clusterCopy2 := cluster.DeepCopy()
 	err = r2.updateStatus(t.Context(), clusterCopy2)
-	require.NoError(t, err)
+	c.Require().NoError(err)
 
 	cond2 := meta.FindStatusCondition(
 		clusterCopy2.Status.Conditions,
 		multigresv1alpha1.ConditionGatewayExternalReady,
 	)
-	require.NotNil(t, cond2)
-	assert.Equal(t, metav1.ConditionFalse, cond2.Status)
-	assert.Equal(t, multigresv1alpha1.ReasonNoReadyGateways, cond2.Reason)
+	c.Require().NotNil(cond2)
+	c.EqDeep(metav1.ConditionFalse, cond2.Status)
+	c.EqDeep(multigresv1alpha1.ReasonNoReadyGateways, cond2.Reason)
 }
 
 func TestComputeAdminWebCondition(t *testing.T) {
@@ -1235,6 +1199,7 @@ func TestComputeAdminWebCondition(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := computeAdminWebCondition(
 				tc.enabled,
 				tc.externalEndpoint,
@@ -1243,16 +1208,16 @@ func TestComputeAdminWebCondition(t *testing.T) {
 			)
 
 			if tc.wantNil {
-				assert.Nil(t, got)
+				c.Nil(got)
 				return
 			}
 
-			require.NotNil(t, got)
-			assert.Equal(t, multigresv1alpha1.ConditionAdminWebExternalReady, got.Type)
-			assert.Equal(t, tc.wantStatus, got.Status)
-			assert.Equal(t, tc.wantReason, got.Reason)
-			assert.Contains(t, got.Message, tc.wantMessageContains)
-			assert.Equal(t, tc.clusterGeneration, got.ObservedGeneration)
+			c.Require().NotNil(got)
+			c.EqDeep(multigresv1alpha1.ConditionAdminWebExternalReady, got.Type)
+			c.EqDeep(tc.wantStatus, got.Status)
+			c.EqDeep(tc.wantReason, got.Reason)
+			c.StrContains(got.Message, tc.wantMessageContains)
+			c.EqDeep(tc.clusterGeneration, got.ObservedGeneration)
 		})
 	}
 }
@@ -1276,6 +1241,7 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 	}
 
 	t.Run("non-NotFound error fetching admin-web service returns error", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		injectedErr := fmt.Errorf("simulated API server error")
 
 		cl := fake.NewClientBuilder().
@@ -1296,11 +1262,12 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		err := r.updateStatus(t.Context(), cluster)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get multiadmin-web service for status")
+		c.Require().Error(err)
+		c.StrContains(err.Error(), "failed to get multiadmin-web service for status")
 	})
 
 	t.Run("NotFound admin-web service sets AwaitingEndpoint when enabled", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cl := fake.NewClientBuilder().
 			WithScheme(scheme).
 			WithObjects(baseCluster.DeepCopy()).
@@ -1315,21 +1282,22 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		err := r.updateStatus(t.Context(), cluster)
-		require.NoError(t, err)
+		c.Require().NoError(err)
 
-		require.NotNil(t, cluster.Status.AdminWeb)
-		assert.Empty(t, cluster.Status.AdminWeb.ExternalEndpoint)
+		c.Require().NotNil(cluster.Status.AdminWeb)
+		c.Empty(cluster.Status.AdminWeb.ExternalEndpoint)
 
 		cond := meta.FindStatusCondition(
 			cluster.Status.Conditions,
 			multigresv1alpha1.ConditionAdminWebExternalReady,
 		)
-		require.NotNil(t, cond)
-		assert.Equal(t, metav1.ConditionFalse, cond.Status)
-		assert.Equal(t, multigresv1alpha1.ReasonAwaitingEndpoint, cond.Reason)
+		c.Require().NotNil(cond)
+		c.EqDeep(metav1.ConditionFalse, cond.Status)
+		c.EqDeep(multigresv1alpha1.ReasonAwaitingEndpoint, cond.Reason)
 	})
 
 	t.Run("non-NotFound error fetching admin-web deployment returns error", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		injectedErr := fmt.Errorf("simulated API server error")
 
 		awSvc := &corev1.Service{
@@ -1360,12 +1328,13 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		err := r.updateStatus(t.Context(), cluster)
-		require.Error(t, err)
+		c.Require().Error(err)
 		// The Service Get will fail first since both have the same name
-		assert.Contains(t, err.Error(), "failed to get multiadmin-web")
+		c.StrContains(err.Error(), "failed to get multiadmin-web")
 	})
 
 	t.Run("admin-web deployment ready replicas drives condition", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		awSvc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      clusterName + "-multiadmin-web",
@@ -1400,17 +1369,17 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 
 		cluster := baseCluster.DeepCopy()
 		err := r.updateStatus(t.Context(), cluster)
-		require.NoError(t, err)
+		c.Require().NoError(err)
 
-		require.NotNil(t, cluster.Status.AdminWeb)
-		assert.Equal(t, "10.0.0.1", cluster.Status.AdminWeb.ExternalEndpoint)
+		c.Require().NotNil(cluster.Status.AdminWeb)
+		c.EqDeep("10.0.0.1", cluster.Status.AdminWeb.ExternalEndpoint)
 
 		cond := meta.FindStatusCondition(
 			cluster.Status.Conditions,
 			multigresv1alpha1.ConditionAdminWebExternalReady,
 		)
-		require.NotNil(t, cond)
-		assert.Equal(t, metav1.ConditionTrue, cond.Status)
-		assert.Equal(t, multigresv1alpha1.ReasonEndpointReady, cond.Reason)
+		c.Require().NotNil(cond)
+		c.EqDeep(metav1.ConditionTrue, cond.Status)
+		c.EqDeep(multigresv1alpha1.ReasonEndpointReady, cond.Reason)
 	})
 }

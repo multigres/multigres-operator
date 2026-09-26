@@ -3,13 +3,15 @@ package toposerver
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestMaintenanceEnvironment(t *testing.T) {
+	c := assert.NewCollecting(t)
 	ts := certTestTopoServer(nil)
 	ts.Spec.Etcd.Maintenance = &multigresv1alpha1.EtcdMaintenanceConfig{
 		AutoCompactionMode:      "revision",
@@ -17,14 +19,10 @@ func TestMaintenanceEnvironment(t *testing.T) {
 		QuotaBackendBytes:       ptr.To(int64(512 << 20)),
 	}
 	sts, err := BuildStatefulSet(ts, certScheme())
-	if err != nil {
-		t.Fatal(err)
-	}
+	c.Require().NoError(err)
 	env := etcdEnvMap(t, sts)
 	for key, want := range map[string]string{"ETCD_AUTO_COMPACTION_MODE": "revision", "ETCD_AUTO_COMPACTION_RETENTION": "20000", "ETCD_QUOTA_BACKEND_BYTES": "536870912"} {
-		if env[key] != want {
-			t.Errorf("%s=%q, want %q", key, env[key], want)
-		}
+		c.Eq(want, env[key], "%s=%q, want", key, env[key])
 	}
 	for _, config := range []*multigresv1alpha1.EtcdMaintenanceConfig{
 		{AutoCompactionRetention: "0h"},
@@ -60,9 +58,7 @@ func TestBuildPodIdentityEnv(t *testing.T) {
 		},
 	}
 
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("buildPodIdentityEnv() mismatch (-want +got):\n%s", diff)
-	}
+	assert.NewCollecting(t).EqDiff(want, got, "buildPodIdentityEnv() mismatch")
 }
 
 func TestBuildEtcdConfigEnv(t *testing.T) {
@@ -143,9 +139,7 @@ func TestBuildEtcdConfigEnv(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := buildEtcdConfigEnv(tc.toposerverName, tc.serviceName, tc.namespace, false)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("buildEtcdConfigEnv() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "buildEtcdConfigEnv() mismatch")
 		})
 	}
 }
@@ -211,9 +205,7 @@ func TestBuildEtcdClusterPeerList(t *testing.T) {
 				tc.replicas,
 				"http",
 			)
-			if got != tc.want {
-				t.Errorf("buildEtcdClusterPeerList() = %v, want %v", got, tc.want)
-			}
+			assert.NewCollecting(t).Eq(tc.want, got, "buildEtcdClusterPeerList()")
 		})
 	}
 }
@@ -369,9 +361,7 @@ func TestBuildContainerEnv(t *testing.T) {
 				tc.serviceName,
 				false,
 			)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("BuildContainerEnv() mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.want, got, "BuildContainerEnv() mismatch")
 		})
 	}
 }

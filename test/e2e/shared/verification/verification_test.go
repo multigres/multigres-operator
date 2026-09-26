@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
@@ -24,6 +23,8 @@ import (
 	shardcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/shard"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestResourceVerification verifies that the operator creates the expected
@@ -36,12 +37,11 @@ func TestResourceVerification(t *testing.T) {
 }
 
 func testMultiCellFilesystemBackup(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	ns := cluster.CreateNamespace(t)
 	createStaticRWXVolume(t, ns)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.Require().NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
 	cr.Name = "multi-cell-fs-backup"
@@ -67,83 +67,83 @@ func testMultiCellFilesystemBackup(t *testing.T) {
 	pool.ReplicasPerCell = &replicas
 	cr.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"] = pool
 
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.Require().NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	claims := &corev1.PersistentVolumeClaimList{}
-	if err := c.List(context.Background(), claims,
+	ck.Require().NoError(c.List(context.Background(), claims,
 		client.InNamespace(ns),
 		client.MatchingLabels{
 			metadata.LabelMultigresCluster:    cr.Name,
 			metadata.LabelMultigresDatabase:   string(cr.Spec.Databases[0].Name),
 			metadata.LabelMultigresTableGroup: string(cr.Spec.Databases[0].TableGroups[0].Name),
-			metadata.LabelMultigresShard:      string(cr.Spec.Databases[0].TableGroups[0].Shards[0].Name),
+			metadata.LabelMultigresShard: string(
+				cr.Spec.Databases[0].TableGroups[0].Shards[0].Name,
+			),
 		},
-	); err != nil {
-		t.Fatalf("list backup PVCs: %v", err)
-	}
+	), "list backup PVCs")
 	var backupClaims []corev1.PersistentVolumeClaim
 	for _, candidate := range claims.Items {
 		if candidate.Labels[metadata.LabelMultigresPool] == "" {
 			backupClaims = append(backupClaims, candidate)
 		}
 	}
-	if len(backupClaims) != 1 {
-		t.Fatalf("backup PVC count = %d, want 1", len(backupClaims))
-	}
+	ck.Require().Len(backupClaims, 1, "backup PVC count = %d, want 1", len(backupClaims))
 	claim := &backupClaims[0]
 	if len(claim.Spec.AccessModes) != 1 || claim.Spec.AccessModes[0] != corev1.ReadWriteMany {
 		t.Fatalf("backup PVC access modes = %v, want [ReadWriteMany]", claim.Spec.AccessModes)
 	}
 
 	pods := &corev1.PodList{}
-	if err := c.List(context.Background(), pods,
+	ck.Require().NoError(c.List(context.Background(), pods,
 		client.InNamespace(ns),
 		client.MatchingLabels{
 			metadata.LabelMultigresCluster: cr.Name,
 			metadata.LabelMultigresPool:    "default",
 		},
-	); err != nil {
-		t.Fatalf("list pooler pods: %v", err)
-	}
-	if len(pods.Items) != 4 {
-		t.Fatalf("pooler pod count = %d, want 4", len(pods.Items))
-	}
+	), "list pooler pods")
+	ck.Require().Len(pods.Items, 4, "pooler pod count = %d, want 4", len(pods.Items))
 	for _, pod := range pods.Items {
 		var mountedClaim string
 		for _, volume := range pod.Spec.Volumes {
-			if volume.Name == shardcontroller.BackupVolumeName && volume.PersistentVolumeClaim != nil {
+			if volume.Name == shardcontroller.BackupVolumeName &&
+				volume.PersistentVolumeClaim != nil {
 				mountedClaim = volume.PersistentVolumeClaim.ClaimName
 				break
 			}
 		}
-		if mountedClaim != claim.Name {
-			t.Errorf("pod %q mounts backup claim %q, want %q", pod.Name, mountedClaim, claim.Name)
-		}
+		ck.Eq(
+			claim.Name,
+			mountedClaim,
+			"pod %q mounts backup claim %q, want",
+			pod.Name,
+			mountedClaim,
+		)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	err = wait.PollUntilContextCancel(ctx, 3*time.Second, true, func(ctx context.Context) (bool, error) {
-		shards := &multigresv1alpha1.ShardList{}
-		if err := c.List(ctx, shards,
-			client.InNamespace(ns),
-			client.MatchingLabels{metadata.LabelMultigresCluster: cr.Name},
-		); err != nil || len(shards.Items) != 1 {
-			return false, nil
-		}
-		for _, role := range shards.Items[0].Status.PodRoles {
-			if role == "PRIMARY" {
-				return true, nil
+	err = wait.PollUntilContextCancel(
+		ctx,
+		3*time.Second,
+		true,
+		func(ctx context.Context) (bool, error) {
+			shards := &multigresv1alpha1.ShardList{}
+			if err := c.List(ctx, shards,
+				client.InNamespace(ns),
+				client.MatchingLabels{metadata.LabelMultigresCluster: cr.Name},
+			); err != nil || len(shards.Items) != 1 {
+				return false, nil
 			}
-		}
-		return false, nil
-	})
-	if err != nil {
-		t.Fatalf("timed out waiting for bootstrap to elect a primary: %v", err)
-	}
+			for _, role := range shards.Items[0].Status.PodRoles {
+				if role == "PRIMARY" {
+					return true, nil
+				}
+			}
+			return false, nil
+		},
+	)
+	ck.Require().NoError(err, "timed out waiting for bootstrap to elect a primary")
 }
 
 // createStaticRWXVolume supplies the claim used by this test. A Kind cluster
@@ -156,38 +156,42 @@ func createStaticRWXVolume(t *testing.T, namespace string) {
 	hostPath := "/var/local/multigres-e2e-rwx/" + namespace
 	prepareStaticRWXHostPath(t, hostPath)
 
-	_, err := cluster.Clientset.CoreV1().PersistentVolumes().Create(context.Background(), &corev1.PersistentVolume{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: corev1.PersistentVolumeSpec{
-			Capacity: corev1.ResourceList{
-				corev1.ResourceStorage: apiresource.MustParse("1Gi"),
-			},
-			AccessModes:                   []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
-			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
-			StorageClassName:              "e2e-rwx",
-			NodeAffinity: &corev1.VolumeNodeAffinity{
-				Required: &corev1.NodeSelector{
-					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-						MatchExpressions: []corev1.NodeSelectorRequirement{{
-							Key:      "node-role.kubernetes.io/control-plane",
-							Operator: corev1.NodeSelectorOpExists,
+	_, err := cluster.Clientset.CoreV1().
+		PersistentVolumes().
+		Create(context.Background(), &corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: corev1.PersistentVolumeSpec{
+				Capacity: corev1.ResourceList{
+					corev1.ResourceStorage: apiresource.MustParse("1Gi"),
+				},
+				AccessModes: []corev1.PersistentVolumeAccessMode{
+					corev1.ReadWriteMany,
+				},
+				PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+				StorageClassName:              "e2e-rwx",
+				NodeAffinity: &corev1.VolumeNodeAffinity{
+					Required: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+							MatchExpressions: []corev1.NodeSelectorRequirement{{
+								Key:      "node-role.kubernetes.io/control-plane",
+								Operator: corev1.NodeSelectorOpExists,
+							}},
 						}},
-					}},
+					},
+				},
+				PersistentVolumeSource: corev1.PersistentVolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: hostPath,
+						Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+					},
 				},
 			},
-			PersistentVolumeSource: corev1.PersistentVolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: hostPath,
-					Type: ptr.To(corev1.HostPathDirectoryOrCreate),
-				},
-			},
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("create static RWX volume: %v", err)
-	}
+		}, metav1.CreateOptions{})
+	assert.NewAborting(t).NoError(err, "create static RWX volume")
 	t.Cleanup(func() {
-		_ = cluster.Clientset.CoreV1().PersistentVolumes().Delete(context.Background(), name, metav1.DeleteOptions{})
+		_ = cluster.Clientset.CoreV1().
+			PersistentVolumes().
+			Delete(context.Background(), name, metav1.DeleteOptions{})
 	})
 }
 
@@ -196,20 +200,18 @@ func prepareStaticRWXHostPath(t *testing.T, path string) {
 
 	node := cluster.Name + "-control-plane"
 	for _, args := range [][]string{{"mkdir", "-p", path}, {"chmod", "0777", path}} {
-		output, err := exec.CommandContext(context.Background(), "docker", append([]string{"exec", node}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("%s static RWX hostPath: %v\n%s", args[0], err, output)
-		}
+		output, err := exec.CommandContext(context.Background(), "docker", append([]string{"exec", node}, args...)...).
+			CombinedOutput()
+		assert.NewAborting(t).NoError(err, "%s static RWX hostPath: %v\n%s", args[0], err, output)
 	}
 }
 
 func testPDB(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
 	// Four members across two pools and cells must share one shard-wide budget.
@@ -222,20 +224,18 @@ func testPDB(t *testing.T) {
 	extra.ReplicasPerCell = ptr.To(int32(1))
 	extra.Cells = []multigresv1alpha1.CellName{"zone-b"}
 	pools["extra"] = *extra
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	poolLabels := client.MatchingLabels{
 		metadata.LabelAppComponent: shardcontroller.PoolComponentName,
 	}
 	framework.WaitForPodCount(t, c, ns, poolLabels, 4, "poolers across both pools")
 	cluster.WaitForAllPodsReady(t, ns)
 	shards := &multigresv1alpha1.ShardList{}
-	require.NoError(t, c.List(context.Background(), shards, client.InNamespace(ns)))
-	require.Len(t, shards.Items, 1)
+	ck.NoError(c.List(context.Background(), shards, client.InNamespace(ns)))
+	ck.Len(shards.Items, 1)
 	poolers := &corev1.PodList{}
-	require.NoError(t, c.List(context.Background(), poolers, client.InNamespace(ns), poolLabels))
-	require.Len(t, poolers.Items, 4)
+	ck.NoError(c.List(context.Background(), poolers, client.InNamespace(ns), poolLabels))
+	ck.Len(poolers.Items, 4)
 
 	pdbs := framework.ListPDBs(t, c, ns)
 	var shardPDBs []policyv1.PodDisruptionBudget
@@ -244,58 +244,51 @@ func testPDB(t *testing.T) {
 			shardPDBs = append(shardPDBs, pdb)
 		}
 	}
-	require.Len(t, shardPDBs, 1)
+	ck.Len(shardPDBs, 1)
 	pdb := &shardPDBs[0]
 	minimum := intstr.FromInt32(3)
-	require.Equal(t, &minimum, pdb.Spec.MinAvailable)
-	require.Nil(t, pdb.Spec.MaxUnavailable)
-	require.NotNil(t, pdb.Spec.Selector)
+	ck.EqDeep(&minimum, pdb.Spec.MinAvailable)
+	ck.Nil(pdb.Spec.MaxUnavailable)
+	ck.NotNil(pdb.Spec.Selector)
 	selector, err := metav1.LabelSelectorAsSelector(pdb.Spec.Selector)
-	require.NoError(t, err)
+	ck.NoError(err)
 	for _, pod := range poolers.Items {
-		require.True(
-			t, selector.Matches(labels.Set(pod.Labels)), "shard PDB must cover %s", pod.Name,
-		)
+		ck.True(selector.Matches(labels.Set(pod.Labels)), "shard PDB must cover %s", pod.Name)
 		matches := 0
 		for _, candidate := range pdbs {
 			selector, err := metav1.LabelSelectorAsSelector(candidate.Spec.Selector)
-			require.NoError(t, err)
+			ck.NoError(err)
 			if selector.Matches(labels.Set(pod.Labels)) {
 				matches++
 			}
 		}
-		require.Equal(t, 1, matches, "pooler %s must not match overlapping PDBs", pod.Name)
+		ck.EqDeep(1, matches, "pooler %s must not match overlapping PDBs", pod.Name)
 	}
 	// Verify the Kubernetes disruption controller agrees with the desired budget.
-	require.Eventually(t, func() bool {
+	ck.EventuallyTrue(time.Minute, time.Second, func() bool {
 		if err := c.Get(context.Background(), client.ObjectKeyFromObject(pdb), pdb); err != nil {
 			return false
 		}
 		return pdb.Status.ObservedGeneration == pdb.Generation &&
 			pdb.Status.CurrentHealthy == 4 && pdb.Status.DesiredHealthy == 3 &&
 			pdb.Status.DisruptionsAllowed == 1
-	}, time.Minute, time.Second)
+	})
 }
 
 func testMultiadminWeb(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.Require().NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.Require().NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Verify multiadminweb deployment exists (container name has a hyphen).
 	dep := framework.WaitForDeployment(t, c, ns, "multiadmin-web")
-	if dep.Status.ReadyReplicas < 1 {
-		t.Errorf("multiadmin-web has %d ready replicas, want >= 1", dep.Status.ReadyReplicas)
-	}
+	ck.GreaterOrEqual(1, dep.Status.ReadyReplicas, "multiadmin-web has")
 
 	// Verify multiadminweb service exists.
 	framework.WaitForService(t, c, ns, "http", 18100)
@@ -303,24 +296,19 @@ func testMultiadminWeb(t *testing.T) {
 
 func testLogLevels(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/log-levels.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Check that pods have the expected --log-level settings.
 	ctx := context.Background()
 	pods := &corev1.PodList{}
-	if err := c.List(ctx, pods, client.InNamespace(ns)); err != nil {
-		t.Fatalf("list pods: %v", err)
-	}
+	ck.NoError(c.List(ctx, pods, client.InNamespace(ns)), "list pods")
 
 	expectedLevels := map[string]string{
 		"multipooler":  "warn",

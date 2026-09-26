@@ -7,7 +7,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestObj tests the generic Obj helper function.
@@ -104,9 +105,7 @@ func TestObj(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if diff := cmp.Diff(tc.expected, tc.obj); diff != "" {
-				t.Errorf("Obj mismatch (-want +got):\n%s", diff)
-			}
+			assert.NewCollecting(t).EqDiff(tc.expected, tc.obj, "Obj mismatch")
 		})
 	}
 }
@@ -146,9 +145,7 @@ func TestWaitForDeletion(t *testing.T) {
 			},
 			assertFunc: func(t *testing.T, watcher *testutil.ResourceWatcher) {
 				err := watcher.WaitForDeletion(testutil.Obj[corev1.Service]("test-svc", "default"))
-				if err != nil {
-					t.Errorf("Failed to wait for deletion: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for deletion")
 			},
 		},
 		"multiple services deletion": {
@@ -184,7 +181,10 @@ func TestWaitForDeletion(t *testing.T) {
 				return watcher.WaitForMatch(svc1, svc2)
 			},
 			delete: func(ctx context.Context, c client.Client) error {
-				if err := c.Delete(ctx, testutil.Obj[corev1.Service]("svc-1", "default")); err != nil {
+				if err := c.Delete(
+					ctx,
+					testutil.Obj[corev1.Service]("svc-1", "default"),
+				); err != nil {
 					return err
 				}
 				return c.Delete(ctx, testutil.Obj[corev1.Service]("svc-2", "default"))
@@ -194,9 +194,7 @@ func TestWaitForDeletion(t *testing.T) {
 					testutil.Obj[corev1.Service]("svc-1", "default"),
 					testutil.Obj[corev1.Service]("svc-2", "default"),
 				)
-				if err != nil {
-					t.Errorf("Failed to wait for multiple deletions: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for multiple deletions")
 			},
 		},
 		"mixed resource types deletion": {
@@ -248,7 +246,10 @@ func TestWaitForDeletion(t *testing.T) {
 				return watcher.WaitForMatch(svc, deploy)
 			},
 			delete: func(ctx context.Context, c client.Client) error {
-				if err := c.Delete(ctx, testutil.Obj[corev1.Service]("my-svc", "default")); err != nil {
+				if err := c.Delete(
+					ctx,
+					testutil.Obj[corev1.Service]("my-svc", "default"),
+				); err != nil {
 					return err
 				}
 				return c.Delete(ctx, testutil.Obj[appsv1.Deployment]("my-deploy", "default"))
@@ -258,9 +259,7 @@ func TestWaitForDeletion(t *testing.T) {
 					testutil.Obj[corev1.Service]("my-svc", "default"),
 					testutil.Obj[appsv1.Deployment]("my-deploy", "default"),
 				)
-				if err != nil {
-					t.Errorf("Failed to wait for mixed type deletions: %v", err)
-				}
+				assert.NewCollecting(t).NoError(err, "Failed to wait for mixed type deletions")
 			},
 		},
 	}
@@ -269,6 +268,7 @@ func TestWaitForDeletion(t *testing.T) {
 		name, tc := name, tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			ck := assert.NewAborting(t)
 
 			scheme := runtime.NewScheme()
 			_ = corev1.AddToScheme(scheme)
@@ -279,13 +279,9 @@ func TestWaitForDeletion(t *testing.T) {
 			c := mgr.GetClient()
 			watcher := testutil.NewResourceWatcher(t, ctx, mgr)
 
-			if err := tc.setup(ctx, c, watcher); err != nil {
-				t.Fatalf("Setup failed: %v", err)
-			}
+			ck.NoError(tc.setup(ctx, c, watcher), "Setup failed")
 
-			if err := tc.delete(ctx, c); err != nil {
-				t.Fatalf("Delete failed: %v", err)
-			}
+			ck.NoError(tc.delete(ctx, c), "Delete failed")
 
 			tc.assertFunc(t, watcher)
 		})
@@ -296,6 +292,7 @@ func TestWaitForDeletion(t *testing.T) {
 // existing DELETED event.
 func TestWaitForDeletion_ExistingDeletedEvent(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -312,32 +309,22 @@ func TestWaitForDeletion_ExistingDeletedEvent(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "to-delete", Namespace: "default"},
 		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 	}
-	if err := c.Create(ctx, svc); err != nil {
-		t.Fatalf("Failed to create Service: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc), "Failed to create Service")
 
 	// Wait for creation
 	watcher.SetCmpOpts(testutil.IgnoreMetaRuntimeFields(), testutil.IgnoreServiceRuntimeFields())
-	if err := watcher.WaitForMatch(svc); err != nil {
-		t.Fatalf("Failed to wait for Service creation: %v", err)
-	}
+	ck.Require().NoError(watcher.WaitForMatch(svc), "Failed to wait for Service creation")
 
 	// Delete it
-	if err := c.Delete(ctx, svc); err != nil {
-		t.Fatalf("Failed to delete Service: %v", err)
-	}
+	ck.Require().NoError(c.Delete(ctx, svc), "Failed to delete Service")
 
 	// Wait for deletion event
 	evt, err := watcher.WaitForEventType("Service", "DELETED")
-	if err != nil {
-		t.Fatalf("WaitForEventType() error = %v", err)
-	}
+	ck.Require().NoError(err, "WaitForEventType() error =")
 
 	// Now wait for deletion again - should find existing event
 	err = watcher.WaitForDeletion(testutil.Obj[corev1.Service]("to-delete", "default"))
-	if err != nil {
-		t.Errorf("WaitForDeletion() error = %v, want nil (should find existing event)", err)
-	}
+	ck.NoError(err, "WaitForDeletion() error")
 
 	t.Logf("Successfully found existing DELETED event: %+v", evt)
 }
@@ -361,9 +348,7 @@ func TestWaitForDeletion_ContextCanceled(t *testing.T) {
 
 	// Try to wait for deletion - should fail with watcher stopped
 	err := watcher.WaitForDeletion(testutil.Obj[corev1.Service]("test", "default"))
-	if err == nil {
-		t.Error("Expected error when context is canceled")
-	}
+	assert.NewCollecting(t).Error(err, "Expected error when context is canceled")
 
 	t.Logf("Got expected error: %v", err)
 }
@@ -391,6 +376,7 @@ func TestWaitForDeletion_CascadingDelete(t *testing.T) {
 		"See: https://github.com/kubernetes-sigs/controller-runtime/issues/626")
 
 	t.Parallel()
+	ck := assert.NewCollecting(t)
 
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
@@ -405,9 +391,7 @@ func TestWaitForDeletion_CascadingDelete(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "owner", Namespace: "default"},
 		Data:       map[string]string{"key": "value"},
 	}
-	if err := c.Create(ctx, owner); err != nil {
-		t.Fatalf("Failed to create owner: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, owner), "Failed to create owner")
 
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -424,23 +408,18 @@ func TestWaitForDeletion_CascadingDelete(t *testing.T) {
 		},
 		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 	}
-	if err := c.Create(ctx, svc); err != nil {
-		t.Fatalf("Failed to create owned service: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, svc), "Failed to create owned service")
 
 	// Wait for service to be created
 	watcher.SetCmpOpts(testutil.IgnoreMetaRuntimeFields(), testutil.IgnoreServiceRuntimeFields())
-	if err := watcher.WaitForMatch(svc); err != nil {
-		t.Fatalf("Failed to wait for service creation: %v", err)
-	}
+	ck.Require().NoError(watcher.WaitForMatch(svc), "Failed to wait for service creation")
 
 	// Delete owner - should cascade to owned service
-	if err := c.Delete(ctx, owner); err != nil {
-		t.Fatalf("Failed to delete owner: %v", err)
-	}
+	ck.Require().NoError(c.Delete(ctx, owner), "Failed to delete owner")
 
 	// Wait for cascading deletion
-	if err := watcher.WaitForDeletion(testutil.Obj[corev1.Service]("owned-svc", "default")); err != nil {
-		t.Errorf("Cascading deletion failed: %v", err)
-	}
+	ck.NoError(
+		watcher.WaitForDeletion(testutil.Obj[corev1.Service]("owned-svc", "default")),
+		"Cascading deletion failed",
+	)
 }

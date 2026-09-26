@@ -16,7 +16,11 @@ limitations under the License.
 
 package v1alpha1
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/multigres/testkit/assert"
+)
 
 func TestTopoClientTLSConfigured(t *testing.T) {
 	tests := map[string]struct {
@@ -33,9 +37,8 @@ func TestTopoClientTLSConfigured(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if got := TopoClientTLSConfigured(tc.ref); got != tc.want {
-				t.Errorf("TopoClientTLSConfigured() = %v, want %v", got, tc.want)
-			}
+			assert.NewCollecting(t).
+				Eq(tc.want, TopoClientTLSConfigured(tc.ref), "TopoClientTLSConfigured()")
 		})
 	}
 }
@@ -44,57 +47,44 @@ func TestTopoClientTLSConfigured(t *testing.T) {
 // external topology may split them. The projection has to read the keypair from
 // ClientCertSecret and the CA from CASecret in either case.
 func TestBuildTopoClientTLSVolume_ProjectsFromBothSecrets(t *testing.T) {
+	c := assert.NewCollecting(t)
 	ref := GlobalTopoServerRef{CASecret: "the-ca", ClientCertSecret: "the-client"}
 	vol := BuildTopoClientTLSVolume(ref)
 
-	if vol.Name != TopoClientTLSVolumeName {
-		t.Errorf("volume name = %q, want %q", vol.Name, TopoClientTLSVolumeName)
-	}
-	if vol.Projected == nil {
-		t.Fatal("expected a projected volume source")
-	}
+	c.Eq(TopoClientTLSVolumeName, vol.Name, "volume name")
+	c.Require().NotNil(vol.Projected, "expected a projected volume source")
 	sources := vol.Projected.Sources
-	if len(sources) != 2 {
-		t.Fatalf("got %d projection sources, want 2", len(sources))
-	}
+	c.Require().Len(sources, 2, "got %d projection sources, want 2", len(sources))
 
 	keypair := sources[0].Secret
-	if keypair == nil || keypair.Name != "the-client" {
-		t.Fatalf("keypair source = %+v, want secret the-client", keypair)
-	}
+	c.Require().
+		False(keypair == nil || keypair.Name != "the-client", "keypair source = %+v, want secret the-client", keypair)
 	wantKeypairKeys := map[string]string{"tls.crt": "tls.crt", "tls.key": "tls.key"}
 	gotKeypairKeys := map[string]string{}
 	for _, item := range keypair.Items {
 		gotKeypairKeys[item.Key] = item.Path
 	}
 	for k, v := range wantKeypairKeys {
-		if gotKeypairKeys[k] != v {
-			t.Errorf("keypair projects %q to %q, want %q", k, gotKeypairKeys[k], v)
-		}
+		c.Eq(v, gotKeypairKeys[k], "keypair projects %q to %q, want", k, gotKeypairKeys[k])
 	}
 
 	ca := sources[1].Secret
-	if ca == nil || ca.Name != "the-ca" {
-		t.Fatalf("ca source = %+v, want secret the-ca", ca)
-	}
+	c.Require().False(ca == nil || ca.Name != "the-ca", "ca source = %+v, want secret the-ca", ca)
 	if len(ca.Items) != 1 || ca.Items[0].Key != "ca.crt" || ca.Items[0].Path != "ca.crt" {
 		t.Errorf("ca projection = %+v, want ca.crt to ca.crt", ca.Items)
 	}
 }
 
 func TestTopoClientTLSArgs(t *testing.T) {
+	c := assert.NewCollecting(t)
 	args := TopoClientTLSArgs()
 	want := []string{
 		"--topo-etcd-tls-cert", TopoClientTLSCertFile,
 		"--topo-etcd-tls-key", TopoClientTLSKeyFile,
 		"--topo-etcd-tls-ca", TopoClientTLSCAFile,
 	}
-	if len(args) != len(want) {
-		t.Fatalf("args = %v, want %v", args, want)
-	}
+	c.Require().Len(args, len(want), "args = %v, want %v", args, want)
 	for i := range want {
-		if args[i] != want[i] {
-			t.Errorf("args[%d] = %q, want %q", i, args[i], want[i])
-		}
+		c.Eq(want[i], args[i], "args[%d] = %q, want", i, args[i])
 	}
 }

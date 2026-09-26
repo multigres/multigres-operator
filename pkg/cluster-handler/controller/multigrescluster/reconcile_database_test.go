@@ -17,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestReconcile_Databases(t *testing.T) {
@@ -31,6 +33,7 @@ func TestReconcile_Databases(t *testing.T) {
 			},
 			existingObjects: []client.Object{coreTpl, cellTpl, shardTpl},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 
 				// System catalog is always "postgres" db, "default" tablegroup
@@ -60,16 +63,14 @@ func TestReconcile_Databases(t *testing.T) {
 					t.Fatalf("System Catalog TableGroup not found: %v", err)
 				}
 
-				if len(tg.Spec.Shards) != 1 {
-					t.Fatalf("Expected 1 shard (injected '0'), got %d", len(tg.Spec.Shards))
-				}
+				ck.Require().
+					Len(tg.Spec.Shards, 1, "Expected 1 shard (injected '0'), got %d", len(tg.Spec.Shards))
 				// Verify defaults applied.
 				// NOTE: We expect 3 replicas here because 'shardTpl' (the default template in fixtures)
 				// defines replicas: 3. The resolver correctly prioritizes the Namespace Default (Level 3)
 				// over the Operator Default (Level 4, which is 1).
-				if got, want := *tg.Spec.Shards[0].Multiorch.Replicas, int32(3); got != want {
-					t.Errorf("Injected shard replicas mismatch. Replicas: %d, Want: %d", got, want)
-				}
+				got, want := *tg.Spec.Shards[0].Multiorch.Replicas, int32(3)
+				ck.Eq(want, got, "Injected shard replicas mismatch. Replicas")
 				if len(tg.Spec.Shards[0].Multiorch.Cells) != 1 ||
 					tg.Spec.Shards[0].Multiorch.Cells[0] != "zone-a" {
 					t.Errorf(
@@ -89,6 +90,7 @@ func TestReconcile_Databases(t *testing.T) {
 			},
 			existingObjects: []client.Object{coreTpl, cellTpl, shardTpl},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				tg := &multigresv1alpha1.TableGroup{}
 				tgName := name.JoinWithConstraints(
 					name.DefaultConstraints,
@@ -96,16 +98,16 @@ func TestReconcile_Databases(t *testing.T) {
 					"db1",
 					"tg1",
 				)
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					t.Context(),
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					tg,
-				); err != nil {
-					t.Fatalf("failed to get tablegroup: %v", err)
-				}
-				if got := tg.Spec.Shards[0].Multiorch.Cells[0]; got != "zone-custom" {
-					t.Errorf("Expected explicit cell 'zone-custom', got %s", got)
-				}
+				), "failed to get tablegroup")
+				ck.Eq(
+					"zone-custom",
+					tg.Spec.Shards[0].Multiorch.Cells[0],
+					"Expected explicit cell 'zone-custom', got",
+				)
 			},
 		},
 		"Reconcile: Implicit Cell Sorting": {
@@ -134,6 +136,7 @@ func TestReconcile_Databases(t *testing.T) {
 				},
 			},
 			validate: func(t testing.TB, c client.Client) {
+				ck := assert.NewCollecting(t)
 				ctx := t.Context()
 				tg := &multigresv1alpha1.TableGroup{}
 				tgName := name.JoinWithConstraints(
@@ -142,20 +145,18 @@ func TestReconcile_Databases(t *testing.T) {
 					"db1",
 					"tg1",
 				)
-				if err := c.Get(
+				ck.Require().NoError(c.Get(
 					ctx,
 					types.NamespacedName{Name: tgName, Namespace: namespace},
 					tg,
-				); err != nil {
-					t.Fatal(err)
-				}
+				))
 				cells := tg.Spec.Shards[0].Multiorch.Cells
-				if len(cells) != 2 {
-					t.Fatalf("Expected 2 cells, got %d", len(cells))
-				}
-				if cells[0] != "zone-a" || cells[1] != "zone-b" {
-					t.Errorf("Cells not sorted: %v", cells)
-				}
+				ck.Require().Len(cells, 2, "Expected 2 cells, got %d", len(cells))
+				ck.False(
+					cells[0] != "zone-a" || cells[1] != "zone-b",
+					"Cells not sorted: %v",
+					cells,
+				)
 			},
 		},
 		"Error: Explicit Shard Template Missing": {
@@ -322,9 +323,7 @@ func TestReconcileDatabases_BuildError_SchemeMismatch(t *testing.T) {
 	// So we should add ShardTemplate to the scheme too.
 	scheme.AddKnownTypes(multigresv1alpha1.GroupVersion, &multigresv1alpha1.ShardTemplate{})
 
-	if err := cl.Create(t.Context(), shardTpl); err != nil {
-		t.Fatal(err)
-	}
+	assert.NewAborting(t).NoError(cl.Create(t.Context(), shardTpl))
 	cluster.Spec.TemplateDefaults.ShardTemplate = "default-shard"
 
 	// Execution
@@ -391,8 +390,6 @@ func TestReconcileDatabases_Direct_Error_GlobalTopoRef(t *testing.T) {
 		t.Error("Expected error from reconcileDatabases, got nil")
 	} else {
 		expectedMsg := "failed to get global topo ref"
-		if !strings.Contains(err.Error(), expectedMsg) {
-			t.Errorf("Expected error containing %q, got %q", expectedMsg, err.Error())
-		}
+		assert.NewCollecting(t).StrContains(err.Error(), expectedMsg, "Expected error containing")
 	}
 }

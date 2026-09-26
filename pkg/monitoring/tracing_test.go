@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,9 +17,12 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestStartReconcileSpan(t *testing.T) {
+	c := assert.NewCollecting(t)
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
@@ -39,14 +41,10 @@ func TestStartReconcileSpan(t *testing.T) {
 	span.End()
 
 	spans := exporter.GetSpans()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
+	c.Require().Len(spans, 1, "expected 1 span, got %d", len(spans))
 
 	s := spans[0]
-	if s.Name != "MultigresCluster.Reconcile" {
-		t.Errorf("span name = %q, want %q", s.Name, "MultigresCluster.Reconcile")
-	}
+	c.Eq("MultigresCluster.Reconcile", s.Name, "span name")
 
 	wantAttrs := map[string]string{
 		"k8s.resource.name": "my-cluster",
@@ -58,23 +56,24 @@ func TestStartReconcileSpan(t *testing.T) {
 		for _, attr := range s.Attributes {
 			if string(attr.Key) == key {
 				found = true
-				if attr.Value.AsString() != want {
-					t.Errorf("attribute %q = %q, want %q", key, attr.Value.AsString(), want)
-				}
+				c.Eq(
+					want,
+					attr.Value.AsString(),
+					"attribute %q = %q, want",
+					key,
+					attr.Value.AsString(),
+				)
 			}
 		}
-		if !found {
-			t.Errorf("attribute %q not found on span", key)
-		}
+		c.True(found, "attribute %q not found on span", key)
 	}
 
 	// Verify the context carries the span.
-	if ctx == context.Background() {
-		t.Error("expected context to carry span")
-	}
+	c.False(ctx == context.Background(), "expected context to carry span")
 }
 
 func TestStartChildSpan(t *testing.T) {
+	c := assert.NewCollecting(t)
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
@@ -88,23 +87,13 @@ func TestStartChildSpan(t *testing.T) {
 	parent.End()
 
 	spans := exporter.GetSpans()
-	if len(spans) != 2 {
-		t.Fatalf("expected 2 spans, got %d", len(spans))
-	}
+	c.Require().Len(spans, 2, "expected 2 spans, got %d", len(spans))
 
 	// Child span should reference the parent's span context.
 	childSpan := spans[0]
 	parentSpan := spans[1]
-	if childSpan.Parent.SpanID() != parentSpan.SpanContext.SpanID() {
-		t.Errorf(
-			"child parent span ID = %s, want %s",
-			childSpan.Parent.SpanID(),
-			parentSpan.SpanContext.SpanID(),
-		)
-	}
-	if childSpan.Name != "ChildOperation" {
-		t.Errorf("child span name = %q, want %q", childSpan.Name, "ChildOperation")
-	}
+	c.Eq(parentSpan.SpanContext.SpanID(), childSpan.Parent.SpanID(), "child parent span ID")
+	c.Eq("ChildOperation", childSpan.Name, "child span name")
 }
 
 func TestRecordSpanError(t *testing.T) {
@@ -115,6 +104,7 @@ func TestRecordSpanError(t *testing.T) {
 	Tracer = tp.Tracer(tracerName)
 
 	t.Run("records error on span", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		exporter.Reset()
 		_, span := StartReconcileSpan(context.Background(), "Op", "n", "ns", "K")
 		testErr := errors.New("something failed")
@@ -122,21 +112,11 @@ func TestRecordSpanError(t *testing.T) {
 		span.End()
 
 		spans := exporter.GetSpans()
-		if len(spans) != 1 {
-			t.Fatalf("expected 1 span, got %d", len(spans))
-		}
+		c.Require().Len(spans, 1, "expected 1 span, got %d", len(spans))
 
 		s := spans[0]
-		if s.Status.Code != codes.Error {
-			t.Errorf("span status = %v, want Error", s.Status.Code)
-		}
-		if s.Status.Description != "something failed" {
-			t.Errorf(
-				"span status description = %q, want %q",
-				s.Status.Description,
-				"something failed",
-			)
-		}
+		c.Eq(codes.Error, s.Status.Code, "span status")
+		c.Eq("something failed", s.Status.Description, "span status description")
 
 		// Check that an error event was recorded.
 		foundErrorEvent := false
@@ -151,38 +131,30 @@ func TestRecordSpanError(t *testing.T) {
 				}
 			}
 		}
-		if !foundErrorEvent {
-			t.Error("expected an exception event on the span")
-		}
+		c.True(foundErrorEvent, "expected an exception event on the span")
 	})
 
 	t.Run("nil error is no-op", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		exporter.Reset()
 		_, span := StartReconcileSpan(context.Background(), "Op", "n", "ns", "K")
 		RecordSpanError(span, nil)
 		span.End()
 
 		spans := exporter.GetSpans()
-		if len(spans) != 1 {
-			t.Fatalf("expected 1 span, got %d", len(spans))
-		}
-		if spans[0].Status.Code == codes.Error {
-			t.Error("nil error should not set error status")
-		}
+		c.Require().Len(spans, 1, "expected 1 span, got %d", len(spans))
+		c.NotEq(codes.Error, spans[0].Status.Code, "nil error should not set error status")
 	})
 }
 
 func TestInitTracing_NoopWhenEndpointUnset(t *testing.T) {
 	// Ensure OTEL_EXPORTER_OTLP_ENDPOINT is unset.
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	c := assert.NewAborting(t)
 
 	shutdown, err := InitTracing(context.Background(), "test-svc", "v0.0.1")
-	if err != nil {
-		t.Fatalf("InitTracing() returned error: %v", err)
-	}
-	if err := shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown() returned error: %v", err)
-	}
+	c.NoError(err, "InitTracing() returned error")
+	c.NoError(shutdown(context.Background()), "shutdown() returned error")
 }
 
 func TestInjectAndExtractTraceContext(t *testing.T) {
@@ -194,6 +166,7 @@ func TestInjectAndExtractTraceContext(t *testing.T) {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	t.Run("round-trips trace context through annotations", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		ctx, span := Tracer.Start(context.Background(), "webhook")
 		originalTraceID := span.SpanContext().TraceID()
 
@@ -204,18 +177,13 @@ func TestInjectAndExtractTraceContext(t *testing.T) {
 		if _, ok := annotations[annotationTraceparent]; !ok {
 			t.Fatal("expected traceparent annotation to be set")
 		}
-		if _, ok := annotations[annotationTraceparentTS]; !ok {
-			t.Fatal("expected traceparent-ts annotation to be set")
-		}
+		_, ok := annotations[annotationTraceparentTS]
+		c.Require().True(ok, "expected traceparent-ts annotation to be set")
 
 		parentCtx, isStale := ExtractTraceContext(annotations)
-		if isStale {
-			t.Error("fresh annotation should not be stale")
-		}
+		c.False(isStale, "fresh annotation should not be stale")
 		sc := trace.SpanFromContext(parentCtx).SpanContext()
-		if sc.TraceID() != originalTraceID {
-			t.Errorf("extracted trace ID = %s, want %s", sc.TraceID(), originalTraceID)
-		}
+		c.Eq(originalTraceID, sc.TraceID(), "extracted trace ID")
 	})
 
 	t.Run("stale annotation", func(t *testing.T) {
@@ -230,20 +198,15 @@ func TestInjectAndExtractTraceContext(t *testing.T) {
 		annotations[annotationTraceparentTS] = strconv.FormatInt(staleTS, 10)
 
 		_, isStale := ExtractTraceContext(annotations)
-		if !isStale {
-			t.Error("expected stale annotation to be detected")
-		}
+		assert.NewCollecting(t).True(isStale, "expected stale annotation to be detected")
 	})
 
 	t.Run("missing annotation returns background context", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		parentCtx, isStale := ExtractTraceContext(map[string]string{})
-		if isStale {
-			t.Error("empty annotations should not be stale")
-		}
+		c.False(isStale, "empty annotations should not be stale")
 		sc := trace.SpanFromContext(parentCtx).SpanContext()
-		if sc.IsValid() {
-			t.Error("expected invalid span context from empty annotations")
-		}
+		c.False(sc.IsValid(), "expected invalid span context from empty annotations")
 	})
 
 	t.Run("missing timestamp treated as stale", func(t *testing.T) {
@@ -255,9 +218,7 @@ func TestInjectAndExtractTraceContext(t *testing.T) {
 		delete(annotations, annotationTraceparentTS)
 
 		_, isStale := ExtractTraceContext(annotations)
-		if !isStale {
-			t.Error("missing timestamp should be treated as stale")
-		}
+		assert.NewCollecting(t).True(isStale, "missing timestamp should be treated as stale")
 	})
 }
 
@@ -280,9 +241,8 @@ func TestEnrichLoggerWithTrace(t *testing.T) {
 		logger := log.FromContext(enrichedCtx)
 		// We can't easily inspect logr values, but we can verify the function
 		// doesn't panic and returns a different context.
-		if enrichedCtx == ctx {
-			t.Error("expected enriched context to differ from original")
-		}
+		assert.NewCollecting(t).
+			False(enrichedCtx == ctx, "expected enriched context to differ from original")
 		_ = logger
 	})
 
@@ -290,9 +250,7 @@ func TestEnrichLoggerWithTrace(t *testing.T) {
 		ctx := logr.NewContext(context.Background(), logr.Discard())
 		result := EnrichLoggerWithTrace(ctx)
 		// With no valid span, the context should be returned unchanged.
-		if result != ctx {
-			t.Error("expected unchanged context for invalid span")
-		}
+		assert.NewCollecting(t).False(result != ctx, "expected unchanged context for invalid span")
 	})
 }
 
@@ -303,17 +261,12 @@ func TestInitTracing_WithEndpoint(t *testing.T) {
 	// tracer re-acquisition.
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	c := assert.NewAborting(t)
 
 	shutdown, err := InitTracing(context.Background(), "test-svc", "v0.0.1")
-	if err != nil {
-		t.Fatalf("InitTracing() returned error: %v", err)
-	}
-	if shutdown == nil {
-		t.Fatal("expected non-nil shutdown function")
-	}
-	if err := shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown() returned error: %v", err)
-	}
+	c.NoError(err, "InitTracing() returned error")
+	c.NotNil(shutdown, "expected non-nil shutdown function")
+	c.NoError(shutdown(context.Background()), "shutdown() returned error")
 }
 
 func TestInitTracing_ExporterError(t *testing.T) {
@@ -321,23 +274,19 @@ func TestInitTracing_ExporterError(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	// Set invalid exporter type to trigger error in autoexport.NewSpanExporter
 	t.Setenv("OTEL_TRACES_EXPORTER", "invalid-exporter-type")
+	c := assert.NewCollecting(t)
 
 	// InitTracing should fail
 	shutdown, err := InitTracing(context.Background(), "test-svc", "v0.0.1")
-	if err == nil {
-		t.Fatal("InitTracing() should have failed with invalid exporter type")
-	}
-	if shutdown != nil {
-		t.Fatal("shutdown function should be nil on error")
-	}
-	if !strings.Contains(err.Error(), "creating OTLP exporter") {
-		t.Errorf("unexpected error message: %v", err)
-	}
+	c.Require().Error(err, "InitTracing() should have failed with invalid exporter type")
+	c.Require().Nil(shutdown, "shutdown function should be nil on error")
+	c.StrContains(err.Error(), "creating OTLP exporter", "unexpected error message: %v", err)
 }
 
 func TestInitTracing_ResourceError(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
 	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	c := assert.NewCollecting(t)
 
 	injectedErr := errors.New("synthetic resource failure")
 	original := newResource
@@ -347,18 +296,10 @@ func TestInitTracing_ResourceError(t *testing.T) {
 	t.Cleanup(func() { newResource = original })
 
 	shutdown, err := InitTracing(context.Background(), "test-svc", "v0.0.1")
-	if err == nil {
-		t.Fatal("expected error from InitTracing when resource creation fails")
-	}
-	if !strings.Contains(err.Error(), "creating OTel resource") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-	if !errors.Is(err, injectedErr) {
-		t.Errorf("expected wrapped injectedErr, got: %v", err)
-	}
-	if shutdown != nil {
-		t.Fatal("shutdown function should be nil on error")
-	}
+	c.Require().Error(err, "expected error from InitTracing when resource creation fails")
+	c.StrContains(err.Error(), "creating OTel resource", "unexpected error message: %v", err)
+	c.ErrorIs(err, injectedErr, "expected wrapped injectedErr, got")
+	c.Require().Nil(shutdown, "shutdown function should be nil on error")
 }
 
 func TestInjectTraceContext_TracestateRename(t *testing.T) {
@@ -386,9 +327,8 @@ func TestInjectTraceContext_TracestateRename(t *testing.T) {
 	if _, ok := annotations["tracestate"]; ok {
 		t.Error("standard 'tracestate' key should be renamed")
 	}
-	if _, ok := annotations["multigres.com/tracestate"]; !ok {
-		t.Error("expected 'multigres.com/tracestate' annotation to be set")
-	}
+	_, ok := annotations["multigres.com/tracestate"]
+	assert.NewCollecting(t).True(ok, "expected 'multigres.com/tracestate' annotation to be set")
 }
 
 func TestExtractTraceContext_InvalidTimestamp(t *testing.T) {
@@ -408,21 +348,18 @@ func TestExtractTraceContext_InvalidTimestamp(t *testing.T) {
 	annotations[annotationTraceparentTS] = "not-a-number"
 
 	_, isStale := ExtractTraceContext(annotations)
-	if !isStale {
-		t.Error("invalid timestamp should be treated as stale")
-	}
+	assert.NewCollecting(t).True(isStale, "invalid timestamp should be treated as stale")
 }
 
 func TestInjectTraceContext_InvalidSpanContext(t *testing.T) {
 	annotations := make(map[string]string)
 	InjectTraceContext(context.Background(), annotations)
 
-	if len(annotations) != 0 {
-		t.Errorf("expected no annotations for invalid span, got %v", annotations)
-	}
+	assert.NewCollecting(t).Empty(annotations, "expected no annotations for invalid span, got")
 }
 
 func TestExtractTraceContext_WithTracestate(t *testing.T) {
+	c := assert.NewAborting(t)
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
@@ -441,14 +378,11 @@ func TestExtractTraceContext_WithTracestate(t *testing.T) {
 	span.End()
 
 	// Verify the tracestate was injected under our custom key.
-	if _, ok := annotations["multigres.com/tracestate"]; !ok {
-		t.Fatal("expected multigres.com/tracestate annotation")
-	}
+	_, ok := annotations["multigres.com/tracestate"]
+	c.True(ok, "expected multigres.com/tracestate annotation")
 
 	// Now extract and verify the tracestate is restored.
 	extractedCtx, _ := ExtractTraceContext(annotations)
 	sc := trace.SpanFromContext(extractedCtx).SpanContext()
-	if !sc.IsValid() {
-		t.Fatal("expected valid span context after extraction")
-	}
+	c.True(sc.IsValid(), "expected valid span context after extraction")
 }

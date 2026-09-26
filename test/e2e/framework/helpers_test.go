@@ -5,43 +5,38 @@ package framework
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestMinimalFixtureUsesFailureSafeBootstrapCohort(t *testing.T) {
+	c := assert.NewAborting(t)
 	cluster := MustLoadCluster("config/samples/minimal.yaml", "test")
 	pool := cluster.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["default"]
-	if pool.ReplicasPerCell == nil {
-		t.Fatal("synthetic default pool replicasPerCell is nil")
-	}
-	if got, want := *pool.ReplicasPerCell, int32(3); got != want {
-		t.Fatalf("synthetic default pool replicasPerCell = %d, want %d", got, want)
-	}
+	c.NotNil(pool.ReplicasPerCell, "synthetic default pool replicasPerCell is nil")
+	got, want := *pool.ReplicasPerCell, int32(3)
+	c.Eq(want, got, "synthetic default pool replicasPerCell")
 }
 
 func TestTemplatedFixturePreservesReferences(t *testing.T) {
+	c := assert.NewAborting(t)
 	cluster := MustLoadCluster("test/e2e/fixtures/templated.yaml", "test")
 	WithCIResources(&cluster.Spec) // Callers may apply resources more than once.
-	require.Equal(
-		t,
-		multigresv1alpha1.TemplateRef("e2e-core"),
-		cluster.Spec.TemplateDefaults.CoreTemplate,
-	)
-	require.Nil(t, cluster.Spec.GlobalTopoServer)
-	require.Nil(t, cluster.Spec.Multiadmin)
-	require.Nil(t, cluster.Spec.MultiadminWeb)
-	require.Equal(t, multigresv1alpha1.TemplateRef("e2e-cell"), cluster.Spec.Cells[0].CellTemplate)
-	require.Nil(t, cluster.Spec.Cells[0].Spec)
+	c.EqDeep(multigresv1alpha1.TemplateRef("e2e-core"), cluster.Spec.TemplateDefaults.CoreTemplate)
+	c.Nil(cluster.Spec.GlobalTopoServer)
+	c.Nil(cluster.Spec.Multiadmin)
+	c.Nil(cluster.Spec.MultiadminWeb)
+	c.EqDeep(multigresv1alpha1.TemplateRef("e2e-cell"), cluster.Spec.Cells[0].CellTemplate)
+	c.Nil(cluster.Spec.Cells[0].Spec)
 	shard := cluster.Spec.Databases[0].TableGroups[0].Shards[0]
-	require.Equal(t, multigresv1alpha1.TemplateRef("e2e-shard"), shard.ShardTemplate)
-	require.Nil(t, shard.Spec)
+	c.EqDeep(multigresv1alpha1.TemplateRef("e2e-shard"), shard.ShardTemplate)
+	c.Nil(shard.Spec)
 
 	template := MustLoadShardTemplate("test/e2e/fixtures/templates/shard.yaml", "test")
 	pool := template.Spec.Pools["default"]
-	require.NotNil(t, pool.ReplicasPerCell)
-	require.Equal(t, int32(3), *pool.ReplicasPerCell)
+	c.NotNil(pool.ReplicasPerCell)
+	c.EqDeep(int32(3), *pool.ReplicasPerCell)
 }
 
 func TestWithCIResourcesPreservesTemplateConfiguration(t *testing.T) {
@@ -51,6 +46,7 @@ func TestWithCIResourcesPreservesTemplateConfiguration(t *testing.T) {
 			name = "template defaults"
 		}
 		t.Run(name, func(t *testing.T) {
+			c := assert.NewAborting(t)
 			spec := multigresv1alpha1.MultigresClusterSpec{
 				GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{TemplateRef: "core"},
 				Multiadmin:       &multigresv1alpha1.MultiadminConfig{TemplateRef: "core"},
@@ -82,18 +78,21 @@ func TestWithCIResourcesPreservesTemplateConfiguration(t *testing.T) {
 			before := spec.DeepCopy()
 			WithCIResources(&spec)
 			WithCIResources(&spec)
-			require.Equal(t, before, &spec)
+			c.EqDeep(before, &spec)
 			if defaults {
 				spec.Databases[0].TableGroups[0].Shards = nil
 				WithCIResources(&spec)
-				require.Nil(t, spec.Databases[0].TableGroups[0].Shards[0].Spec,
-					"a synthesized shard must still inherit its default template")
+				c.Nil(
+					spec.Databases[0].TableGroups[0].Shards[0].Spec,
+					"a synthesized shard must still inherit its default template",
+				)
 			}
 		})
 	}
 }
 
 func TestWithCIResourcesPreservesOverridesAndExternalTopo(t *testing.T) {
+	c := assert.NewAborting(t)
 	spec := multigresv1alpha1.MultigresClusterSpec{
 		GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 			External: &multigresv1alpha1.ExternalTopoServerSpec{
@@ -115,19 +114,19 @@ func TestWithCIResourcesPreservesOverridesAndExternalTopo(t *testing.T) {
 		},
 	}
 	WithCIResources(&spec)
-	require.Nil(t, spec.GlobalTopoServer.Etcd)
-	require.Equal(
-		t,
+	c.Nil(spec.GlobalTopoServer.Etcd)
+	c.EqDeep(
 		[]multigresv1alpha1.EndpointUrl{"http://etcd:2379"},
 		spec.GlobalTopoServer.External.Endpoints,
 	)
-	require.Nil(t, spec.Cells[0].Spec)
-	require.NotNil(t, spec.Cells[0].Overrides)
-	require.Nil(t, spec.Databases[0].TableGroups[0].Shards[0].Spec)
-	require.NotNil(t, spec.Databases[0].TableGroups[0].Shards[0].Overrides)
+	c.Nil(spec.Cells[0].Spec)
+	c.NotNil(spec.Cells[0].Overrides)
+	c.Nil(spec.Databases[0].TableGroups[0].Shards[0].Spec)
+	c.NotNil(spec.Databases[0].TableGroups[0].Shards[0].Overrides)
 }
 
 func TestWithCIResourcesPreservesInlineConfiguration(t *testing.T) {
+	c := assert.NewAborting(t)
 	cluster := MustLoadCluster("config/samples/no-templates.yaml", "test")
 	spec := &cluster.Spec
 	before := spec.DeepCopy()
@@ -138,9 +137,9 @@ func TestWithCIResourcesPreservesInlineConfiguration(t *testing.T) {
 		ShardTemplate: "shard",
 	}
 	WithCIResources(spec)
-	require.Equal(t, before.GlobalTopoServer, spec.GlobalTopoServer)
-	require.Equal(t, before.Multiadmin, spec.Multiadmin)
-	require.Equal(t, before.MultiadminWeb, spec.MultiadminWeb)
-	require.Equal(t, before.Cells, spec.Cells)
-	require.Equal(t, before.Databases, spec.Databases)
+	c.EqDeep(before.GlobalTopoServer, spec.GlobalTopoServer)
+	c.EqDeep(before.Multiadmin, spec.Multiadmin)
+	c.EqDeep(before.MultiadminWeb, spec.MultiadminWeb)
+	c.EqDeep(before.Cells, spec.Cells)
+	c.EqDeep(before.Databases, spec.Databases)
 }

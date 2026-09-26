@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +32,8 @@ import (
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	multigreswebhook "github.com/multigres/multigres-operator/pkg/webhook"
+
+	"github.com/multigres/testkit/assert"
 )
 
 const (
@@ -171,7 +172,9 @@ func createDefaults(c client.Client) error {
 		&multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+				},
 			},
 		},
 		&multigresv1alpha1.ShardTemplate{
@@ -180,8 +183,10 @@ func createDefaults(c client.Client) error {
 		},
 		&storagev1.StorageClass{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:        "standard",
-				Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"},
+				Name: "standard",
+				Annotations: map[string]string{
+					"storageclass.kubernetes.io/is-default-class": "true",
+				},
 			},
 			Provisioner: "k8s.io/fake",
 		},
@@ -209,7 +214,11 @@ func waitForClusterList(t *testing.T, c client.Client, clusterName string) {
 			t.Fatalf("Timeout waiting for cluster '%s' to appear in List() cache", clusterName)
 		case <-ticker.C:
 			clusters := &multigresv1alpha1.MultigresClusterList{}
-			if err := c.List(context.Background(), clusters, client.InNamespace(testNamespace)); err != nil {
+			if err := c.List(
+				context.Background(),
+				clusters,
+				client.InNamespace(testNamespace),
+			); err != nil {
 				continue
 			}
 			for _, item := range clusters.Items {
@@ -247,6 +256,7 @@ func setTestShardPostgresPasswordSecretRef(shard *multigresv1alpha1.Shard) {
 
 func TestWebhook_Mutation(t *testing.T) {
 	t.Run("Should Inject System Catalog and Defaults", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "mutation-test",
@@ -259,31 +269,34 @@ func TestWebhook_Mutation(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.Require().NoError(k8sClient.Create(ctx, cluster), "Failed to create cluster")
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatalf("Failed to get cluster: %v", err)
-		}
+		c.Require().
+			NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched), "Failed to get cluster")
 
 		if len(fetched.Spec.Databases) == 0 {
 			t.Error("Webhook failed to inject 'postgres' database")
 		} else {
 			db := fetched.Spec.Databases[0]
-			if db.Name != "postgres" || !db.Default {
-				t.Errorf("System database incorrect. Got Name=%s Default=%v", db.Name, db.Default)
-			}
+			c.False(
+				db.Name != "postgres" || !db.Default,
+				"System database incorrect. Got Name=%s Default=%v",
+				db.Name,
+				db.Default,
+			)
 		}
 
-		if fetched.Spec.TemplateDefaults.CoreTemplate != "default" {
-			t.Errorf("Expected CoreTemplate to be promoted to 'default', got %q", fetched.Spec.TemplateDefaults.CoreTemplate)
-		}
+		c.Eq(
+			"default",
+			fetched.Spec.TemplateDefaults.CoreTemplate,
+			"Expected CoreTemplate to be promoted to 'default', got",
+		)
 
-		if fetched.Spec.Multiadmin != nil {
-			t.Error("Expected spec.multiadmin to be nil (preserved dynamic link to template, no overrides provided)")
-		}
+		c.Nil(
+			fetched.Spec.Multiadmin,
+			"Expected spec.multiadmin to be nil (preserved dynamic link to template, no overrides provided)",
+		)
 	})
 }
 
@@ -304,12 +317,12 @@ func TestWebhook_Validation(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err == nil {
-			t.Fatal("Expected error creating cluster with missing template, got nil")
-		}
+		assert.NewAborting(t).
+			Error(k8sClient.Create(ctx, cluster), "Expected error creating cluster with missing template, got nil")
 	})
 
 	t.Run("Should Reject Unknown Postgres Parameter", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "bad-guc", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -336,24 +349,24 @@ func TestWebhook_Validation(t *testing.T) {
 		setTestPostgresPasswordSecretRef(cluster)
 
 		err := k8sClient.Create(ctx, cluster)
-		if err == nil {
-			t.Fatal("expected rejection for unknown postgres parameter")
-		}
-		if !strings.Contains(err.Error(), "unknown parameter") {
-			t.Fatalf("expected 'unknown parameter' error, got: %v", err)
-		}
+		c.Error(err, "expected rejection for unknown postgres parameter")
+		c.StrContains(
+			err.Error(),
+			"unknown parameter",
+			"expected 'unknown parameter' error, got: %v",
+			err,
+		)
 	})
 }
 
 func TestWebhook_TemplateProtection(t *testing.T) {
 	t.Run("Should Prevent Deleting In-Use Template", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		tpl := &multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "production-core", Namespace: testNamespace},
 			Spec:       multigresv1alpha1.CoreTemplateSpec{},
 		}
-		if err := k8sClient.Create(ctx, tpl); err != nil {
-			t.Fatalf("Failed to create template: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, tpl), "Failed to create template")
 
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
@@ -369,9 +382,7 @@ func TestWebhook_TemplateProtection(t *testing.T) {
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, cluster), "Failed to create cluster")
 
 		// CRITICAL: Use cachedClient here.
 		// We must wait until the Webhook's internal cache sees the cluster.
@@ -379,9 +390,7 @@ func TestWebhook_TemplateProtection(t *testing.T) {
 		// would see 0 clusters and allow the delete.
 		waitForClusterList(t, cachedClient, "prod-cluster")
 
-		if err := k8sClient.Delete(ctx, tpl); err == nil {
-			t.Fatal("Expected error deleting in-use template, got nil")
-		}
+		c.Error(k8sClient.Delete(ctx, tpl), "Expected error deleting in-use template, got nil")
 	})
 }
 
@@ -394,9 +403,8 @@ func TestWebhook_ChildResourceProtection(t *testing.T) {
 			},
 		}
 
-		if err := k8sClient.Create(ctx, cell); err == nil {
-			t.Fatal("Expected error creating Child Resource directly, got nil")
-		}
+		assert.NewAborting(t).
+			Error(k8sClient.Create(ctx, cell), "Expected error creating Child Resource directly, got nil")
 	})
 }
 
@@ -406,6 +414,7 @@ func TestWebhook_ChildResourceProtection(t *testing.T) {
 
 func TestWebhook_CellAppendOnly(t *testing.T) {
 	t.Run("Should Reject Cell Removal", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "cell-removal-test",
@@ -421,28 +430,24 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, cluster), "Failed to create cluster")
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatalf("Failed to get cluster: %v", err)
-		}
+		c.NoError(
+			k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched),
+			"Failed to get cluster",
+		)
 
 		fetched.Spec.Cells = []multigresv1alpha1.CellConfig{
 			{Name: "cell-a", ZoneID: "use1-az1"},
 		}
 		err := k8sClient.Update(ctx, fetched)
-		if err == nil {
-			t.Fatal("Expected error removing a cell, got nil")
-		}
-		if !strings.Contains(err.Error(), "Append-Only") {
-			t.Fatalf("Expected 'Append-Only' in error, got: %v", err)
-		}
+		c.Error(err, "Expected error removing a cell, got nil")
+		c.StrContains(err.Error(), "Append-Only", "Expected 'Append-Only' in error, got: %v", err)
 	})
 
 	t.Run("Should Reject Cell Rename", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "cell-rename-test",
@@ -457,29 +462,25 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, cluster), "Failed to create cluster")
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatalf("Failed to get cluster: %v", err)
-		}
+		c.NoError(
+			k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched),
+			"Failed to get cluster",
+		)
 
 		// Replace the cell with a different name — effectively a rename
 		fetched.Spec.Cells = []multigresv1alpha1.CellConfig{
 			{Name: "renamed-cell", ZoneID: "use1-az1"},
 		}
 		err := k8sClient.Update(ctx, fetched)
-		if err == nil {
-			t.Fatal("Expected error renaming a cell, got nil")
-		}
-		if !strings.Contains(err.Error(), "Append-Only") {
-			t.Fatalf("Expected 'Append-Only' in error, got: %v", err)
-		}
+		c.Error(err, "Expected error renaming a cell, got nil")
+		c.StrContains(err.Error(), "Append-Only", "Expected 'Append-Only' in error, got: %v", err)
 	})
 
 	t.Run("Should Allow Adding New Cells", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "cell-add-test",
@@ -494,21 +495,18 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, cluster), "Failed to create cluster")
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatalf("Failed to get cluster: %v", err)
-		}
+		c.NoError(
+			k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched),
+			"Failed to get cluster",
+		)
 
 		fetched.Spec.Cells = append(fetched.Spec.Cells, multigresv1alpha1.CellConfig{
 			Name: "cell-y", ZoneID: "use1-az2",
 		})
-		if err := k8sClient.Update(ctx, fetched); err != nil {
-			t.Fatalf("Expected appending a cell to succeed, got: %v", err)
-		}
+		c.NoError(k8sClient.Update(ctx, fetched), "Expected appending a cell to succeed, got")
 	})
 }
 
@@ -518,6 +516,7 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 
 func TestWebhook_OverridePrecedence(t *testing.T) {
 	t.Run("Inline Spec Should Override Template", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		tplName := "base-template"
 		tpl := &multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: tplName, Namespace: testNamespace},
@@ -525,9 +524,7 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 				Multiadmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
 			},
 		}
-		if err := k8sClient.Create(ctx, tpl); err != nil {
-			t.Fatalf("Failed to create template: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, tpl), "Failed to create template")
 
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "override-test", Namespace: testNamespace},
@@ -542,32 +539,31 @@ func TestWebhook_OverridePrecedence(t *testing.T) {
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Failed to create cluster: %v", err)
-		}
+		c.NoError(k8sClient.Create(ctx, cluster), "Failed to create cluster")
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatal(err)
-		}
+		c.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched))
 
-		if fetched.Spec.Multiadmin.Spec.Replicas == nil || *fetched.Spec.Multiadmin.Spec.Replicas != 3 {
-			t.Errorf("Expected inline overrides (3) to win over template (1), got: %v", fetched.Spec.Multiadmin.Spec.Replicas)
+		if fetched.Spec.Multiadmin.Spec.Replicas == nil ||
+			*fetched.Spec.Multiadmin.Spec.Replicas != 3 {
+			t.Errorf(
+				"Expected inline overrides (3) to win over template (1), got: %v",
+				fetched.Spec.Multiadmin.Spec.Replicas,
+			)
 		}
 	})
 }
 
 func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 	t.Run("Specific TemplateRef Should NOT be Expanded (Spec Conflict)", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		specTpl := &multigresv1alpha1.CoreTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "specific-large", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CoreTemplateSpec{
 				Multiadmin: &multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
 			},
 		}
-		if err := k8sClient.Create(ctx, specTpl); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(ctx, specTpl))
 
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "ref-precedence-test", Namespace: testNamespace},
@@ -579,26 +575,26 @@ func TestWebhook_SpecificRefPrecedence(t *testing.T) {
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(ctx, cluster))
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched))
 
-		if fetched.Spec.Multiadmin.Spec != nil {
-			t.Errorf("Expected Multiadmin.Spec to be nil when TemplateRef is set, but got: %v", fetched.Spec.Multiadmin.Spec)
-		}
-		if fetched.Spec.Multiadmin.TemplateRef != "specific-large" {
-			t.Errorf("Expected TemplateRef to be preserved")
-		}
+		c.Nil(
+			fetched.Spec.Multiadmin.Spec,
+			"Expected Multiadmin.Spec to be nil when TemplateRef is set, but got",
+		)
+		c.Eq(
+			"specific-large",
+			fetched.Spec.Multiadmin.TemplateRef,
+			"Expected TemplateRef to be preserved",
+		)
 	})
 }
 
 func TestWebhook_SystemCatalogIdempotency(t *testing.T) {
 	t.Run("Should Not Duplicate Existing System Catalog", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "idempotency-test", Namespace: testNamespace},
 			Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -617,35 +613,26 @@ func TestWebhook_SystemCatalogIdempotency(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Create(ctx, cluster))
 
 		fetched := &multigresv1alpha1.MultigresCluster{}
-		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
-			t.Fatal(err)
-		}
+		c.Require().NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched))
 
-		if len(fetched.Spec.Databases) != 1 {
-			t.Errorf("Expected 1 database, got %d", len(fetched.Spec.Databases))
-		}
+		c.Len(fetched.Spec.Databases, 1, "Expected 1 database, got %d", len(fetched.Spec.Databases))
 		tgList := fetched.Spec.Databases[0].TableGroups
-		if len(tgList) != 1 {
-			t.Errorf("Expected 1 tablegroup, got %d", len(tgList))
-		}
+		c.Len(tgList, 1, "Expected 1 tablegroup, got %d", len(tgList))
 	})
 }
 
 func TestWebhook_DeepTemplateProtection(t *testing.T) {
 	t.Run("Should Protect Deeply Nested ShardTemplate", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		stName := "sensitive-shard-tpl"
 		st := &multigresv1alpha1.ShardTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: stName, Namespace: testNamespace},
 			Spec:       multigresv1alpha1.ShardTemplateSpec{},
 		}
-		if err := k8sClient.Create(ctx, st); err != nil {
-			t.Fatal(err)
-		}
+		c.NoError(k8sClient.Create(ctx, st))
 
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
@@ -676,29 +663,22 @@ func TestWebhook_DeepTemplateProtection(t *testing.T) {
 			},
 		}
 		setTestPostgresPasswordSecretRef(cluster)
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatal(err)
-		}
+		c.NoError(k8sClient.Create(ctx, cluster))
 
 		waitForClusterList(t, cachedClient, "deep-ref-cluster")
 
-		if err := k8sClient.Delete(ctx, st); err == nil {
-			t.Fatal("Expected error deleting in-use ShardTemplate, got nil")
-		}
+		c.Error(k8sClient.Delete(ctx, st), "Expected error deleting in-use ShardTemplate, got nil")
 	})
 }
 
 func TestWebhook_StorageClassValidation(t *testing.T) {
 	t.Run("Should Reject When No Default SC and No Explicit Class", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		// Remove the default StorageClass annotation
 		sc := &storagev1.StorageClass{}
-		if err := k8sClient.Get(ctx, client.ObjectKey{Name: "standard"}, sc); err != nil {
-			t.Fatalf("Failed to get SC: %v", err)
-		}
+		c.NoError(k8sClient.Get(ctx, client.ObjectKey{Name: "standard"}, sc), "Failed to get SC")
 		sc.Annotations["storageclass.kubernetes.io/is-default-class"] = "false"
-		if err := k8sClient.Update(ctx, sc); err != nil {
-			t.Fatalf("Failed to update SC: %v", err)
-		}
+		c.NoError(k8sClient.Update(ctx, sc), "Failed to update SC")
 
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
@@ -713,30 +693,26 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 		setTestPostgresPasswordSecretRef(cluster)
 
 		err := k8sClient.Create(ctx, cluster)
-		if err == nil {
-			t.Fatal("Expected rejection due to missing default StorageClass, got nil")
-		}
-		if !strings.Contains(err.Error(), "no default StorageClass found") {
-			t.Fatalf("Expected 'no default StorageClass found' in error, got: %v", err)
-		}
+		c.Error(err, "Expected rejection due to missing default StorageClass, got nil")
+		c.StrContains(
+			err.Error(),
+			"no default StorageClass found",
+			"Expected 'no default StorageClass found' in error, got: %v",
+			err,
+		)
 
 		// Restore the default SC for subsequent tests
 		sc.Annotations["storageclass.kubernetes.io/is-default-class"] = "true"
-		if err := k8sClient.Update(ctx, sc); err != nil {
-			t.Fatalf("Failed to restore SC: %v", err)
-		}
+		c.NoError(k8sClient.Update(ctx, sc), "Failed to restore SC")
 	})
 
 	t.Run("Should Accept With Explicit Class Even Without Default SC", func(t *testing.T) {
+		c := assert.NewAborting(t)
 		// Remove the default StorageClass annotation
 		sc := &storagev1.StorageClass{}
-		if err := k8sClient.Get(ctx, client.ObjectKey{Name: "standard"}, sc); err != nil {
-			t.Fatalf("Failed to get SC: %v", err)
-		}
+		c.NoError(k8sClient.Get(ctx, client.ObjectKey{Name: "standard"}, sc), "Failed to get SC")
 		sc.Annotations["storageclass.kubernetes.io/is-default-class"] = "false"
-		if err := k8sClient.Update(ctx, sc); err != nil {
-			t.Fatalf("Failed to update SC: %v", err)
-		}
+		c.NoError(k8sClient.Update(ctx, sc), "Failed to update SC")
 
 		cluster := &multigresv1alpha1.MultigresCluster{
 			ObjectMeta: metav1.ObjectMeta{
@@ -767,8 +743,11 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 							Spec: &multigresv1alpha1.ShardInlineSpec{
 								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 									"default": {
-										Type:    "readWrite",
-										Storage: multigresv1alpha1.StorageSpec{Class: "manual", Size: "10Gi"},
+										Type: "readWrite",
+										Storage: multigresv1alpha1.StorageSpec{
+											Class: "manual",
+											Size:  "10Gi",
+										},
 									},
 								},
 							},
@@ -780,14 +759,13 @@ func TestWebhook_StorageClassValidation(t *testing.T) {
 
 		setTestPostgresPasswordSecretRef(cluster)
 
-		if err := k8sClient.Create(ctx, cluster); err != nil {
-			t.Fatalf("Expected acceptance with explicit storage class, got: %v", err)
-		}
+		c.NoError(
+			k8sClient.Create(ctx, cluster),
+			"Expected acceptance with explicit storage class, got",
+		)
 
 		// Restore the default SC
 		sc.Annotations["storageclass.kubernetes.io/is-default-class"] = "true"
-		if err := k8sClient.Update(ctx, sc); err != nil {
-			t.Fatalf("Failed to restore SC: %v", err)
-		}
+		c.NoError(k8sClient.Update(ctx, sc), "Failed to restore SC")
 	})
 }

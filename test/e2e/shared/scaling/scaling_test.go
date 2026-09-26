@@ -9,6 +9,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestStatelessScaling verifies that scaling stateless components (multiadmin,
@@ -22,16 +24,13 @@ func TestStatelessScaling(t *testing.T) {
 
 func testScaleMultiadmin(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Verify initial: 1 multiadmin replica.
@@ -53,16 +52,13 @@ func testScaleMultiadmin(t *testing.T) {
 
 func testScaleMultigateway(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Verify initial: 1 multigateway replica.
@@ -91,16 +87,13 @@ func testScaleMultigateway(t *testing.T) {
 
 func testLargeScaleMultiadmin(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Scale 1 → 5.
@@ -120,16 +113,13 @@ func testLargeScaleMultiadmin(t *testing.T) {
 
 func testLargeScaleMultigateway(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	cr := framework.MustLoadCluster("test/e2e/fixtures/base.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 	cluster.WaitForAllPodsReady(t, ns)
 
 	// Scale 1 → 5.

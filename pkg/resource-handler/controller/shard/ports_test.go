@@ -5,6 +5,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildMultipoolerContainerPorts(t *testing.T) {
@@ -36,6 +38,7 @@ func TestBuildMultipoolerContainerPorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := buildMultipoolerContainerPorts()
 
 			if len(got) != len(tt.want) {
@@ -48,25 +51,21 @@ func TestBuildMultipoolerContainerPorts(t *testing.T) {
 			}
 
 			for i, port := range got {
-				if port.Name != tt.want[i].Name {
-					t.Errorf("port[%d].Name = %s, want %s", i, port.Name, tt.want[i].Name)
-				}
-				if port.ContainerPort != tt.want[i].ContainerPort {
-					t.Errorf(
-						"port[%d].ContainerPort = %d, want %d",
-						i,
-						port.ContainerPort,
-						tt.want[i].ContainerPort,
-					)
-				}
-				if port.Protocol != tt.want[i].Protocol {
-					t.Errorf(
-						"port[%d].Protocol = %s, want %s",
-						i,
-						port.Protocol,
-						tt.want[i].Protocol,
-					)
-				}
+				c.Eq(tt.want[i].Name, port.Name, "port[%d].Name = %s, want", i, port.Name)
+				c.Eq(
+					tt.want[i].ContainerPort,
+					port.ContainerPort,
+					"port[%d].ContainerPort = %d, want",
+					i,
+					port.ContainerPort,
+				)
+				c.Eq(
+					tt.want[i].Protocol,
+					port.Protocol,
+					"port[%d].Protocol = %s, want",
+					i,
+					port.Protocol,
+				)
 			}
 		})
 	}
@@ -110,6 +109,7 @@ func TestBuildPoolHeadlessServicePorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := buildPoolHeadlessServicePorts()
 
 			if len(got) != len(tt.want) {
@@ -122,28 +122,22 @@ func TestBuildPoolHeadlessServicePorts(t *testing.T) {
 			}
 
 			for i, port := range got {
-				if port.Name != tt.want[i].Name {
-					t.Errorf("port[%d].Name = %s, want %s", i, port.Name, tt.want[i].Name)
-				}
-				if port.Port != tt.want[i].Port {
-					t.Errorf("port[%d].Port = %d, want %d", i, port.Port, tt.want[i].Port)
-				}
-				if port.TargetPort != tt.want[i].TargetPort {
-					t.Errorf(
-						"port[%d].TargetPort = %v, want %v",
-						i,
-						port.TargetPort,
-						tt.want[i].TargetPort,
-					)
-				}
-				if port.Protocol != tt.want[i].Protocol {
-					t.Errorf(
-						"port[%d].Protocol = %s, want %s",
-						i,
-						port.Protocol,
-						tt.want[i].Protocol,
-					)
-				}
+				c.Eq(tt.want[i].Name, port.Name, "port[%d].Name = %s, want", i, port.Name)
+				c.Eq(tt.want[i].Port, port.Port, "port[%d].Port = %d, want", i, port.Port)
+				c.Eq(
+					tt.want[i].TargetPort,
+					port.TargetPort,
+					"port[%d].TargetPort = %v, want",
+					i,
+					port.TargetPort,
+				)
+				c.Eq(
+					tt.want[i].Protocol,
+					port.Protocol,
+					"port[%d].Protocol = %s, want",
+					i,
+					port.Protocol,
+				)
 			}
 		})
 	}
@@ -173,6 +167,7 @@ func TestBuildMultiorchContainerPorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := buildMultiorchContainerPorts()
 
 			if len(got) != len(tt.want) {
@@ -185,25 +180,21 @@ func TestBuildMultiorchContainerPorts(t *testing.T) {
 			}
 
 			for i, port := range got {
-				if port.Name != tt.want[i].Name {
-					t.Errorf("port[%d].Name = %s, want %s", i, port.Name, tt.want[i].Name)
-				}
-				if port.ContainerPort != tt.want[i].ContainerPort {
-					t.Errorf(
-						"port[%d].ContainerPort = %d, want %d",
-						i,
-						port.ContainerPort,
-						tt.want[i].ContainerPort,
-					)
-				}
-				if port.Protocol != tt.want[i].Protocol {
-					t.Errorf(
-						"port[%d].Protocol = %s, want %s",
-						i,
-						port.Protocol,
-						tt.want[i].Protocol,
-					)
-				}
+				c.Eq(tt.want[i].Name, port.Name, "port[%d].Name = %s, want", i, port.Name)
+				c.Eq(
+					tt.want[i].ContainerPort,
+					port.ContainerPort,
+					"port[%d].ContainerPort = %d, want",
+					i,
+					port.ContainerPort,
+				)
+				c.Eq(
+					tt.want[i].Protocol,
+					port.Protocol,
+					"port[%d].Protocol = %s, want",
+					i,
+					port.Protocol,
+				)
 			}
 		})
 	}
@@ -235,6 +226,7 @@ func TestBuildMultiorchServicePorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := buildMultiorchServicePorts()
 
 			if len(got) != len(tt.want) {
@@ -247,28 +239,22 @@ func TestBuildMultiorchServicePorts(t *testing.T) {
 			}
 
 			for i, port := range got {
-				if port.Name != tt.want[i].Name {
-					t.Errorf("port[%d].Name = %s, want %s", i, port.Name, tt.want[i].Name)
-				}
-				if port.Port != tt.want[i].Port {
-					t.Errorf("port[%d].Port = %d, want %d", i, port.Port, tt.want[i].Port)
-				}
-				if port.TargetPort != tt.want[i].TargetPort {
-					t.Errorf(
-						"port[%d].TargetPort = %v, want %v",
-						i,
-						port.TargetPort,
-						tt.want[i].TargetPort,
-					)
-				}
-				if port.Protocol != tt.want[i].Protocol {
-					t.Errorf(
-						"port[%d].Protocol = %s, want %s",
-						i,
-						port.Protocol,
-						tt.want[i].Protocol,
-					)
-				}
+				c.Eq(tt.want[i].Name, port.Name, "port[%d].Name = %s, want", i, port.Name)
+				c.Eq(tt.want[i].Port, port.Port, "port[%d].Port = %d, want", i, port.Port)
+				c.Eq(
+					tt.want[i].TargetPort,
+					port.TargetPort,
+					"port[%d].TargetPort = %v, want",
+					i,
+					port.TargetPort,
+				)
+				c.Eq(
+					tt.want[i].Protocol,
+					port.Protocol,
+					"port[%d].Protocol = %s, want",
+					i,
+					port.Protocol,
+				)
 			}
 		})
 	}
@@ -293,6 +279,7 @@ func TestBuildPostgresExporterContainerPorts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			got := buildPostgresExporterContainerPorts()
 
 			if len(got) != len(tt.want) {
@@ -305,25 +292,21 @@ func TestBuildPostgresExporterContainerPorts(t *testing.T) {
 			}
 
 			for i, port := range got {
-				if port.Name != tt.want[i].Name {
-					t.Errorf("port[%d].Name = %s, want %s", i, port.Name, tt.want[i].Name)
-				}
-				if port.ContainerPort != tt.want[i].ContainerPort {
-					t.Errorf(
-						"port[%d].ContainerPort = %d, want %d",
-						i,
-						port.ContainerPort,
-						tt.want[i].ContainerPort,
-					)
-				}
-				if port.Protocol != tt.want[i].Protocol {
-					t.Errorf(
-						"port[%d].Protocol = %s, want %s",
-						i,
-						port.Protocol,
-						tt.want[i].Protocol,
-					)
-				}
+				c.Eq(tt.want[i].Name, port.Name, "port[%d].Name = %s, want", i, port.Name)
+				c.Eq(
+					tt.want[i].ContainerPort,
+					port.ContainerPort,
+					"port[%d].ContainerPort = %d, want",
+					i,
+					port.ContainerPort,
+				)
+				c.Eq(
+					tt.want[i].Protocol,
+					port.Protocol,
+					"port[%d].Protocol = %s, want",
+					i,
+					port.Protocol,
+				)
 			}
 		})
 	}

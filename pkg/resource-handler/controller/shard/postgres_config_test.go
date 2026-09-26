@@ -16,36 +16,33 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/postgresconfig"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestSetPostgresConfigStatus(t *testing.T) {
 	r := &ShardReconciler{}
 
 	t.Run("settled clears InProgress and stamps time", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		r.setPostgresConfigStatus(shard, false, nil)
 		st := shard.Status.PostgresConfig
-		if st == nil || st.InProgress {
-			t.Fatalf("status = %+v, want InProgress false", st)
-		}
-		if st.LastAppliedAt == nil {
-			t.Error("LastAppliedAt should be set when settled")
-		}
-		if st.Error != "" {
-			t.Errorf("Error = %q, want empty", st.Error)
-		}
+		c.Require().False(st == nil || st.InProgress, "status = %+v, want InProgress false", st)
+		c.NotNil(st.LastAppliedAt, "LastAppliedAt should be set when settled")
+		c.Eq("", st.Error, "Error")
 	})
 
 	t.Run("in-progress sets InProgress and does not stamp", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		r.setPostgresConfigStatus(shard, true, nil)
 		st := shard.Status.PostgresConfig
-		if !st.InProgress {
-			t.Error("InProgress should be true during a rollout")
-		}
-		if st.LastAppliedAt != nil {
-			t.Error("LastAppliedAt should not be stamped while a rollout is in progress")
-		}
+		c.True(st.InProgress, "InProgress should be true during a rollout")
+		c.Nil(
+			st.LastAppliedAt,
+			"LastAppliedAt should not be stamped while a rollout is in progress",
+		)
 	})
 
 	// The key fix: a rollout driven by a PostgresConfigRef edit (or a new
@@ -60,9 +57,8 @@ func TestSetPostgresConfigStatus(t *testing.T) {
 			},
 		}
 		r.setPostgresConfigStatus(shard, true, nil)
-		if !shard.Status.PostgresConfig.InProgress {
-			t.Error("InProgress should be true for a content-driven rollout at a steady generation")
-		}
+		assert.NewCollecting(t).
+			True(shard.Status.PostgresConfig.InProgress, "InProgress should be true for a content-driven rollout at a steady generation")
 	})
 
 	t.Run("settling after a rollout re-stamps LastAppliedAt", func(t *testing.T) {
@@ -77,9 +73,8 @@ func TestSetPostgresConfigStatus(t *testing.T) {
 		}
 		r.setPostgresConfigStatus(shard, false, nil)
 		st := shard.Status.PostgresConfig
-		if st.InProgress {
-			t.Error("InProgress should clear once the config settles")
-		}
+		assert.NewCollecting(t).
+			False(st.InProgress, "InProgress should clear once the config settles")
 		if st.LastAppliedAt == nil || !st.LastAppliedAt.After(past.Time) {
 			t.Errorf("LastAppliedAt should advance on settle, got %v", st.LastAppliedAt)
 		}
@@ -99,15 +94,12 @@ func TestSetPostgresConfigStatus(t *testing.T) {
 	})
 
 	t.Run("config error is reported and is not in progress", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{}
 		r.setPostgresConfigStatus(shard, false, errTest)
 		st := shard.Status.PostgresConfig
-		if st.InProgress {
-			t.Error("InProgress should be false when a config error is reported")
-		}
-		if !strings.Contains(st.Error, "boom") {
-			t.Errorf("Error = %q, want it to contain the failure", st.Error)
-		}
+		c.False(st.InProgress, "InProgress should be false when a config error is reported")
+		c.StrContains(st.Error, "boom", "Error")
 	})
 }
 
@@ -117,15 +109,12 @@ func TestRenderEffectiveConfig(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("no ref returns a stable hash", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		r := &ShardReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 		shard := &multigresv1alpha1.Shard{ObjectMeta: metav1.ObjectMeta{Name: "s1"}}
 		rc := r.renderEffectiveConfig(context.Background(), shard)
-		if rc.err != nil {
-			t.Fatalf("unexpected error: %v", rc.err)
-		}
-		if len(rc.restartHash) != 64 {
-			t.Errorf("hash length = %d, want 64", len(rc.restartHash))
-		}
+		c.Require().NoError(rc.err, "unexpected error")
+		c.Len(rc.restartHash, 64, "hash length = %d, want 64", len(rc.restartHash))
 	})
 
 	t.Run("missing ref ConfigMap surfaces an error", func(t *testing.T) {
@@ -136,9 +125,8 @@ func TestRenderEffectiveConfig(t *testing.T) {
 				PostgresConfigRef: &multigresv1alpha1.PostgresConfigRef{Name: "missing", Key: "k"},
 			},
 		}
-		if r.renderEffectiveConfig(context.Background(), shard).err == nil {
-			t.Error("expected error for missing ConfigMap")
-		}
+		assert.NewCollecting(t).
+			Error(r.renderEffectiveConfig(context.Background(), shard).err, "expected error for missing ConfigMap")
 	})
 }
 
@@ -148,6 +136,7 @@ func TestRenderEffectiveConfig(t *testing.T) {
 // reload-hash — the wiring that makes a removal-only reload-safe change verifiable
 // (see postgresconfig.TestReloadMarkerDetectsRemoval for the removal semantics).
 func TestRenderEffectiveConfig_ReloadMarker(t *testing.T) {
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -159,9 +148,7 @@ func TestRenderEffectiveConfig_ReloadMarker(t *testing.T) {
 			Spec:       multigresv1alpha1.ShardSpec{PostgresConfig: cfg},
 		}
 		rc := r.renderEffectiveConfig(context.Background(), shard)
-		if rc.err != nil {
-			t.Fatalf("renderEffectiveConfig error: %v", rc.err)
-		}
+		c.Require().NoError(rc.err, "renderEffectiveConfig error")
 		return rc
 	}
 
@@ -171,34 +158,32 @@ func TestRenderEffectiveConfig_ReloadMarker(t *testing.T) {
 
 	// The marker lands in the delivered file and in the RPC expected settings,
 	// with its value equal to the reload-hash.
-	if !strings.Contains(rc.content, postgresconfig.ReloadMarkerGUC+" = '"+rc.reloadHash+"'") {
-		t.Errorf("delivered config missing marker line for %q:\n%s",
-			postgresconfig.ReloadMarkerGUC, rc.content)
-	}
-	if got := rc.reloadSettings[postgresconfig.ReloadMarkerGUC]; got != rc.reloadHash {
-		t.Errorf("reloadSettings[%q] = %q, want reload-hash %q",
-			postgresconfig.ReloadMarkerGUC, got, rc.reloadHash)
-	}
+	c.StrContains(
+		rc.content,
+		postgresconfig.ReloadMarkerGUC+" = '"+rc.reloadHash+"'",
+		"delivered config missing marker line for %q:\n",
+		postgresconfig.ReloadMarkerGUC,
+	)
+	got := rc.reloadSettings[postgresconfig.ReloadMarkerGUC]
+	c.Eq(
+		rc.reloadHash,
+		got,
+		"reloadSettings[%q] = %q, want reload-hash",
+		postgresconfig.ReloadMarkerGUC,
+		got,
+	)
 
 	// Removing the reload-safe param moves the reload-hash (hence the marker) but
 	// leaves the restart-hash untouched — still a reload, not a pod recreation.
 	rcRemoved := render(nil)
-	if rc.restartHash != rcRemoved.restartHash {
-		t.Errorf(
-			"restart-hash moved on a reload-only removal: %s -> %s",
-			rc.restartHash,
-			rcRemoved.restartHash,
-		)
-	}
-	if rc.reloadHash == rcRemoved.reloadHash {
-		t.Fatalf(
-			"reload-hash did not move when the reload-safe param was removed (still %s)",
-			rc.reloadHash,
-		)
-	}
-	if rc.reloadSettings[postgresconfig.ReloadMarkerGUC] == rcRemoved.reloadSettings[postgresconfig.ReloadMarkerGUC] {
-		t.Error("marker did not move on a reload-safe removal; a stale mount would pass the gate")
-	}
+	c.Eq(rcRemoved.restartHash, rc.restartHash, "restart-hash moved on a reload-only removal")
+	c.Require().
+		NotEq(rcRemoved.reloadHash, rc.reloadHash, "reload-hash did not move when the reload-safe param was removed (still")
+	c.NotEq(
+		rcRemoved.reloadSettings[postgresconfig.ReloadMarkerGUC],
+		rc.reloadSettings[postgresconfig.ReloadMarkerGUC],
+		"marker did not move on a reload-safe removal; a stale mount would pass the gate",
+	)
 }
 
 var errTest = errTestType("boom")
@@ -220,9 +205,8 @@ func TestShardClusterName(t *testing.T) {
 				ShardName:      "0",
 			},
 		}
-		if got := shardClusterName(shard); got != "mycluster/mydb/mytg/0" {
-			t.Errorf("shardClusterName = %q, want mycluster/mydb/mytg/0", got)
-		}
+		assert.NewCollecting(t).
+			Eq("mycluster/mydb/mytg/0", shardClusterName(shard), "shardClusterName")
 	})
 
 	t.Run("drops empty components", func(t *testing.T) {
@@ -232,19 +216,16 @@ func TestShardClusterName(t *testing.T) {
 			},
 			Spec: multigresv1alpha1.ShardSpec{ShardName: "0"},
 		}
-		if got := shardClusterName(shard); got != "c/0" {
-			t.Errorf("shardClusterName = %q, want c/0", got)
-		}
+		assert.NewCollecting(t).Eq("c/0", shardClusterName(shard), "shardClusterName")
 	})
 
 	t.Run("falls back to object name without cluster label", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{ObjectMeta: metav1.ObjectMeta{Name: "fallback-shard"}}
-		if got := shardClusterName(shard); got != "fallback-shard" {
-			t.Errorf("shardClusterName = %q, want fallback-shard", got)
-		}
+		assert.NewCollecting(t).Eq("fallback-shard", shardClusterName(shard), "shardClusterName")
 	})
 
 	t.Run("rendered config carries the shard cluster_name", func(t *testing.T) {
+		c := assert.NewCollecting(t)
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   "obj-name",
@@ -257,12 +238,12 @@ func TestShardClusterName(t *testing.T) {
 			},
 		}
 		rendered, _, err := renderPostgresConfig(shard, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !strings.Contains(rendered, "cluster_name = 'mycluster/mydb/mytg/0'") {
-			t.Errorf("rendered config missing shard cluster_name:\n%s", rendered)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.StrContains(
+			rendered,
+			"cluster_name = 'mycluster/mydb/mytg/0'",
+			"rendered config missing shard cluster_name:\n",
+		)
 	})
 }
 
@@ -270,6 +251,7 @@ func TestReduceShardResources(t *testing.T) {
 	t.Run(
 		"max mem/cpu, min disk across pools with limit-then-request fallback",
 		func(t *testing.T) {
+			c := assert.NewCollecting(t)
 			shard := &multigresv1alpha1.Shard{
 				Spec: multigresv1alpha1.ShardSpec{
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -301,23 +283,16 @@ func TestReduceShardResources(t *testing.T) {
 				},
 			}
 			mem, cpu, disk := reduceShardResources(shard)
-			if mem != 2*(1<<30) {
-				t.Errorf("mem = %d, want 2Gi (max, pool b request)", mem)
-			}
-			if cpu != 4000 {
-				t.Errorf("cpu = %d millicores, want 4000 (max, pool b request)", cpu)
-			}
-			if disk != 5*(1<<30) {
-				t.Errorf("disk = %d, want 5Gi (min across pools)", disk)
-			}
+			c.Eq(2*(1<<30), mem, "mem")
+			c.Eq(4000, cpu, "cpu")
+			c.Eq(5*(1<<30), disk, "disk")
 		},
 	)
 
 	t.Run("no pools returns zeros", func(t *testing.T) {
 		mem, cpu, disk := reduceShardResources(&multigresv1alpha1.Shard{})
-		if mem != 0 || cpu != 0 || disk != 0 {
-			t.Errorf("got (%d, %d, %d), want all zero", mem, cpu, disk)
-		}
+		assert.NewCollecting(t).
+			False(mem != 0 || cpu != 0 || disk != 0, "got (%d, %d, %d), want all zero", mem, cpu, disk)
 	})
 
 	t.Run("pools without resources return zeros", func(t *testing.T) {
@@ -325,15 +300,15 @@ func TestReduceShardResources(t *testing.T) {
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"a": {}},
 		}}
 		mem, cpu, disk := reduceShardResources(shard)
-		if mem != 0 || cpu != 0 || disk != 0 {
-			t.Errorf("got (%d, %d, %d), want all zero", mem, cpu, disk)
-		}
+		assert.NewCollecting(t).
+			False(mem != 0 || cpu != 0 || disk != 0, "got (%d, %d, %d), want all zero", mem, cpu, disk)
 	})
 }
 
 // A shard with no PostgresConfigRef still gets an operator-owned ConfigMap
 // rendering the baseline — the operator always owns the file.
 func TestReconcilePostgresConfig_RendersBaselineWithoutRef(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -347,33 +322,30 @@ func TestReconcilePostgresConfig_RendersBaselineWithoutRef(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	cfg := r.renderEffectiveConfig(context.Background(), shard)
-	if err := r.reconcilePostgresConfig(context.Background(), shard, cfg); err != nil {
-		t.Fatalf("reconcilePostgresConfig() error = %v", err)
-	}
+	ck.Require().
+		NoError(r.reconcilePostgresConfig(context.Background(), shard, cfg), "reconcilePostgresConfig() error =")
 
 	// The operator ConfigMap must exist with the rendered baseline.
 	got := &corev1.ConfigMap{}
-	if err := c.Get(context.Background(), client.ObjectKey{
+	ck.Require().NoError(c.Get(context.Background(), client.ObjectKey{
 		Namespace: "default",
 		Name:      PostgresConfigMapName("s1"),
-	}, got); err != nil {
-		t.Fatalf("operator ConfigMap not created: %v", err)
-	}
+	}, got), "operator ConfigMap not created")
 	rendered := got.Data[PostgresConfigMapKey]
-	if !strings.Contains(rendered, "shared_buffers = 64MB") {
-		t.Errorf("rendered baseline missing default shared_buffers:\n%s", rendered)
-	}
+	ck.StrContains(
+		rendered,
+		"shared_buffers = 64MB",
+		"rendered baseline missing default shared_buffers:\n",
+	)
 
 	// The content hash annotation must be stamped.
-	if len(shard.Annotations[metadata.AnnotationPostgresConfigHash]) != 64 {
-		t.Errorf("hash annotation = %q, want a 64-char SHA-256 hex",
-			shard.Annotations[metadata.AnnotationPostgresConfigHash])
-	}
+	ck.Len(shard.Annotations[metadata.AnnotationPostgresConfigHash], 64, "hash annotation")
 }
 
 // A shard with a PostgresConfigRef renders the baseline plus the ref content
 // into the operator ConfigMap.
 func TestReconcilePostgresConfig_MergesRefContent(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -396,42 +368,34 @@ func TestReconcilePostgresConfig_MergesRefContent(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	cfg := r.renderEffectiveConfig(context.Background(), shard)
-	if err := r.reconcilePostgresConfig(context.Background(), shard, cfg); err != nil {
-		t.Fatalf("reconcilePostgresConfig() error = %v", err)
-	}
+	ck.Require().
+		NoError(r.reconcilePostgresConfig(context.Background(), shard, cfg), "reconcilePostgresConfig() error =")
 
 	got := &corev1.ConfigMap{}
-	if err := c.Get(context.Background(), client.ObjectKey{
+	ck.Require().NoError(c.Get(context.Background(), client.ObjectKey{
 		Namespace: "default",
 		Name:      PostgresConfigMapName("s1"),
-	}, got); err != nil {
-		t.Fatalf("operator ConfigMap not created: %v", err)
-	}
+	}, got), "operator ConfigMap not created")
 	rendered := got.Data[PostgresConfigMapKey]
 	// Baseline present, and the ref rendered BEFORE it so the operator's
 	// resource-derived baseline wins last-write-wins: the baseline's
 	// shared_buffers = 64MB must override the ref's 8GB. The deprecated ref must
 	// not override the operator's sizing math — only inline spec.postgresConfig.
-	if !strings.Contains(rendered, "shared_buffers = 64MB") {
-		t.Errorf("rendered config missing baseline:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "shared_buffers = '8GB'") {
-		t.Errorf("rendered config missing ref content:\n%s", rendered)
-	}
-	if strings.Index(
-		rendered,
-		"shared_buffers = '8GB'",
-	) > strings.Index(
+	ck.StrContains(rendered, "shared_buffers = 64MB", "rendered config missing baseline:\n")
+	ck.StrContains(rendered, "shared_buffers = '8GB'", "rendered config missing ref content:\n")
+	ck.LessOrEqual(strings.Index(
 		rendered,
 		"shared_buffers = 64MB",
-	) {
-		t.Errorf("ref content should precede the baseline so the baseline wins:\n%s", rendered)
-	}
+	), strings.Index(
+		rendered,
+		"shared_buffers = '8GB'",
+	), "ref content should precede the baseline so the baseline wins:\n%s", rendered)
 }
 
 // The inline spec.postgresConfig map is rendered last, so it overrides both the
 // baseline and any PostgresConfigRef content.
 func TestReconcilePostgresConfig_InlineMapWins(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -455,23 +419,21 @@ func TestReconcilePostgresConfig_InlineMapWins(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	cfg := r.renderEffectiveConfig(context.Background(), shard)
-	if err := r.reconcilePostgresConfig(context.Background(), shard, cfg); err != nil {
-		t.Fatalf("reconcilePostgresConfig() error = %v", err)
-	}
+	ck.Require().
+		NoError(r.reconcilePostgresConfig(context.Background(), shard, cfg), "reconcilePostgresConfig() error =")
 
 	got := &corev1.ConfigMap{}
-	if err := c.Get(context.Background(), client.ObjectKey{
+	ck.Require().NoError(c.Get(context.Background(), client.ObjectKey{
 		Namespace: "default",
 		Name:      PostgresConfigMapName("s1"),
-	}, got); err != nil {
-		t.Fatalf("operator ConfigMap not created: %v", err)
-	}
+	}, got), "operator ConfigMap not created")
 	rendered := got.Data[PostgresConfigMapKey]
-	if !strings.Contains(rendered, "work_mem = '64MB'") {
-		t.Errorf("rendered config missing inline override:\n%s", rendered)
-	}
+	ck.StrContains(rendered, "work_mem = '64MB'", "rendered config missing inline override:\n")
 	// The inline map must appear after the ref content so it wins last-write-wins.
-	if strings.Index(rendered, "work_mem = '64MB'") < strings.Index(rendered, "work_mem = '1MB'") {
-		t.Errorf("inline map should follow the ref content:\n%s", rendered)
-	}
+	ck.GreaterOrEqual(
+		strings.Index(rendered, "work_mem = '1MB'"),
+		strings.Index(rendered, "work_mem = '64MB'"),
+		"inline map should follow the ref content:\n%s",
+		rendered,
+	)
 }

@@ -15,17 +15,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func pkiScheme(tb testing.TB) *runtime.Scheme {
 	tb.Helper()
+	c := assert.NewAborting(tb)
 	s := runtime.NewScheme()
-	if err := admissionregistrationv1.AddToScheme(s); err != nil {
-		tb.Fatal(err)
-	}
-	if err := appsv1.AddToScheme(s); err != nil {
-		tb.Fatal(err)
-	}
+	c.NoError(admissionregistrationv1.AddToScheme(s))
+	c.NoError(appsv1.AddToScheme(s))
 	return s
 }
 
@@ -40,6 +39,7 @@ func TestPatchWebhookCABundle(t *testing.T) {
 
 	t.Run("Patches Both Webhook Configs via SSA", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		mutating := &admissionregistrationv1.MutatingWebhookConfiguration{
 			ObjectMeta: metav1.ObjectMeta{Name: MutatingWebhookName},
@@ -69,57 +69,44 @@ func TestPatchWebhookCABundle(t *testing.T) {
 			WithObjects(mutating, validating).
 			Build()
 
-		if err := PatchWebhookCABundle(context.Background(), cl, caBundle); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		c.Require().
+			NoError(PatchWebhookCABundle(context.Background(), cl, caBundle), "unexpected error")
 
 		// Verify mutating: caBundle + annotation
 		got := &admissionregistrationv1.MutatingWebhookConfiguration{}
-		if err := cl.Get(
+		c.Require().NoError(cl.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(mutating),
 			got,
-		); err != nil {
-			t.Fatal(err)
-		}
-		if string(got.Webhooks[0].ClientConfig.CABundle) != string(caBundle) {
-			t.Errorf(
-				"mutating CABundle = %q, want %q",
-				got.Webhooks[0].ClientConfig.CABundle,
-				caBundle,
-			)
-		}
-		if got.Annotations[CertStrategyAnnotation] != CertStrategySelfSigned {
-			t.Errorf(
-				"mutating annotation = %q, want %q",
-				got.Annotations[CertStrategyAnnotation],
-				CertStrategySelfSigned,
-			)
-		}
+		))
+		c.Eq(
+			string(caBundle),
+			string(got.Webhooks[0].ClientConfig.CABundle),
+			"mutating CABundle = %q, want %q",
+			got.Webhooks[0].ClientConfig.CABundle,
+			caBundle,
+		)
+		c.Eq(CertStrategySelfSigned, got.Annotations[CertStrategyAnnotation], "mutating annotation")
 
 		// Verify validating: caBundle + annotation
 		gotV := &admissionregistrationv1.ValidatingWebhookConfiguration{}
-		if err := cl.Get(
+		c.Require().NoError(cl.Get(
 			context.Background(),
 			client.ObjectKeyFromObject(validating),
 			gotV,
-		); err != nil {
-			t.Fatal(err)
-		}
-		if string(gotV.Webhooks[0].ClientConfig.CABundle) != string(caBundle) {
-			t.Errorf(
-				"validating CABundle = %q, want %q",
-				gotV.Webhooks[0].ClientConfig.CABundle,
-				caBundle,
-			)
-		}
-		if gotV.Annotations[CertStrategyAnnotation] != CertStrategySelfSigned {
-			t.Errorf(
-				"validating annotation = %q, want %q",
-				gotV.Annotations[CertStrategyAnnotation],
-				CertStrategySelfSigned,
-			)
-		}
+		))
+		c.Eq(
+			string(caBundle),
+			string(gotV.Webhooks[0].ClientConfig.CABundle),
+			"validating CABundle = %q, want %q",
+			gotV.Webhooks[0].ClientConfig.CABundle,
+			caBundle,
+		)
+		c.Eq(
+			CertStrategySelfSigned,
+			gotV.Annotations[CertStrategyAnnotation],
+			"validating annotation",
+		)
 	})
 
 	t.Run("Tolerates NotFound", func(t *testing.T) {
@@ -127,9 +114,8 @@ func TestPatchWebhookCABundle(t *testing.T) {
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).Build()
 
-		if err := PatchWebhookCABundle(context.Background(), cl, caBundle); err != nil {
-			t.Fatalf("expected no error for missing configs, got: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(PatchWebhookCABundle(context.Background(), cl, caBundle), "expected no error for missing configs, got")
 	})
 
 	t.Run("Error: Mutating Get Failure", func(t *testing.T) {
@@ -148,9 +134,8 @@ func TestPatchWebhookCABundle(t *testing.T) {
 			Build()
 
 		err := PatchWebhookCABundle(context.Background(), cl, caBundle)
-		if err == nil || !strings.Contains(err.Error(), "failed to get mutating webhook config") {
-			t.Errorf("expected mutating get error, got: %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to get mutating webhook config"), "expected mutating get error, got: %v", err)
 	})
 
 	t.Run("Error: Mutating Patch Failure", func(t *testing.T) {
@@ -182,9 +167,8 @@ func TestPatchWebhookCABundle(t *testing.T) {
 			Build()
 
 		err := PatchWebhookCABundle(context.Background(), cl, caBundle)
-		if err == nil || !strings.Contains(err.Error(), "patch fail") {
-			t.Errorf("expected patch error, got: %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "patch fail"), "expected patch error, got: %v", err)
 	})
 
 	t.Run("Error: Validating Get Failure", func(t *testing.T) {
@@ -203,9 +187,8 @@ func TestPatchWebhookCABundle(t *testing.T) {
 			Build()
 
 		err := PatchWebhookCABundle(context.Background(), cl, caBundle)
-		if err == nil || !strings.Contains(err.Error(), "failed to get validating webhook config") {
-			t.Errorf("expected validating get error, got: %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to get validating webhook config"), "expected validating get error, got: %v", err)
 	})
 
 	t.Run("Error: Validating Patch Failure", func(t *testing.T) {
@@ -237,9 +220,8 @@ func TestPatchWebhookCABundle(t *testing.T) {
 			Build()
 
 		err := PatchWebhookCABundle(context.Background(), cl, caBundle)
-		if err == nil || !strings.Contains(err.Error(), "patch fail") {
-			t.Errorf("expected patch error, got: %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "patch fail"), "expected patch error, got: %v", err)
 	})
 
 	t.Run("Skips Patching When No Webhooks", func(t *testing.T) {
@@ -259,9 +241,8 @@ func TestPatchWebhookCABundle(t *testing.T) {
 			WithObjects(mutating, validating).
 			Build()
 
-		if err := PatchWebhookCABundle(context.Background(), cl, caBundle); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assert.NewAborting(t).
+			NoError(PatchWebhookCABundle(context.Background(), cl, caBundle), "unexpected error")
 	})
 }
 
@@ -279,9 +260,8 @@ func TestHasCertAnnotation(t *testing.T) {
 		}
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(mutating).Build()
-		if !HasCertAnnotation(context.Background(), cl) {
-			t.Error("expected true when mutating has annotation")
-		}
+		assert.NewCollecting(t).
+			True(HasCertAnnotation(context.Background(), cl), "expected true when mutating has annotation")
 	})
 
 	t.Run("True When Validating Has Annotation", func(t *testing.T) {
@@ -295,9 +275,8 @@ func TestHasCertAnnotation(t *testing.T) {
 		}
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(validating).Build()
-		if !HasCertAnnotation(context.Background(), cl) {
-			t.Error("expected true when validating has annotation")
-		}
+		assert.NewCollecting(t).
+			True(HasCertAnnotation(context.Background(), cl), "expected true when validating has annotation")
 	})
 
 	t.Run("False When No Annotation", func(t *testing.T) {
@@ -308,18 +287,16 @@ func TestHasCertAnnotation(t *testing.T) {
 		}
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(mutating).Build()
-		if HasCertAnnotation(context.Background(), cl) {
-			t.Error("expected false when no annotation")
-		}
+		assert.NewCollecting(t).
+			False(HasCertAnnotation(context.Background(), cl), "expected false when no annotation")
 	})
 
 	t.Run("False When Configs Missing", func(t *testing.T) {
 		t.Parallel()
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).Build()
-		if HasCertAnnotation(context.Background(), cl) {
-			t.Error("expected false when configs don't exist")
-		}
+		assert.NewCollecting(t).
+			False(HasCertAnnotation(context.Background(), cl), "expected false when configs don't exist")
 	})
 }
 
@@ -331,6 +308,7 @@ func TestFindOperatorDeployment(t *testing.T) {
 
 	t.Run("Found by Labels", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -342,16 +320,17 @@ func TestFindOperatorDeployment(t *testing.T) {
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(dep).Build()
 		got, err := FindOperatorDeployment(context.Background(), cl, namespace, labels, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got == nil || got.Name != "my-operator" {
-			t.Errorf("expected deployment 'my-operator', got %v", got)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(
+			got == nil || got.Name != "my-operator",
+			"expected deployment 'my-operator', got %v",
+			got,
+		)
 	})
 
 	t.Run("Found by Name", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		dep := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{
@@ -368,42 +347,37 @@ func TestFindOperatorDeployment(t *testing.T) {
 			nil,
 			"explicit-name",
 		)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got == nil || got.Name != "explicit-name" {
-			t.Errorf("expected deployment 'explicit-name', got %v", got)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(
+			got == nil || got.Name != "explicit-name",
+			"expected deployment 'explicit-name', got %v",
+			got,
+		)
 	})
 
 	t.Run("Not Found Returns nil", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).Build()
 		got, err := FindOperatorDeployment(context.Background(), cl, namespace, nil, "nonexistent")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != nil {
-			t.Errorf("expected nil, got %v", got)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Nil(got, "expected nil, got")
 	})
 
 	t.Run("No Labels No Name Returns nil", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).Build()
 		got, err := FindOperatorDeployment(context.Background(), cl, namespace, nil, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != nil {
-			t.Errorf("expected nil, got %v", got)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.Nil(got, "expected nil, got")
 	})
 
 	t.Run("Multiple Matches Picks Oldest", func(t *testing.T) {
 		t.Parallel()
+		c := assert.NewCollecting(t)
 
 		older := metav1.NewTime(time.Now().Add(-1 * time.Hour))
 		newer := metav1.NewTime(time.Now())
@@ -426,12 +400,12 @@ func TestFindOperatorDeployment(t *testing.T) {
 
 		cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(dep1, dep2).Build()
 		got, err := FindOperatorDeployment(context.Background(), cl, namespace, labels, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got == nil || got.Name != "op-older" {
-			t.Errorf("expected oldest deployment 'op-older', got %v", got)
-		}
+		c.Require().NoError(err, "unexpected error")
+		c.False(
+			got == nil || got.Name != "op-older",
+			"expected oldest deployment 'op-older', got %v",
+			got,
+		)
 	})
 
 	t.Run("Error: List Failure", func(t *testing.T) {
@@ -447,9 +421,8 @@ func TestFindOperatorDeployment(t *testing.T) {
 			Build()
 
 		_, err := FindOperatorDeployment(context.Background(), cl, namespace, labels, "")
-		if err == nil || !strings.Contains(err.Error(), "failed to list deployments by labels") {
-			t.Errorf("expected list error, got: %v", err)
-		}
+		assert.NewCollecting(t).
+			False(err == nil || !strings.Contains(err.Error(), "failed to list deployments by labels"), "expected list error, got: %v", err)
 	})
 
 	t.Run("Error: Get by Name Failure", func(t *testing.T) {
@@ -465,9 +438,10 @@ func TestFindOperatorDeployment(t *testing.T) {
 			Build()
 
 		_, err := FindOperatorDeployment(context.Background(), cl, namespace, nil, "some-name")
-		if err == nil ||
-			!strings.Contains(err.Error(), "failed to get operator deployment by name") {
-			t.Errorf("expected get error, got: %v", err)
-		}
+		assert.NewCollecting(t).False(err == nil ||
+			!strings.Contains(
+				err.Error(),
+				"failed to get operator deployment by name",
+			), "expected get error, got: %v", err)
 	})
 }

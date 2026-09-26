@@ -3,7 +3,6 @@ package multigrescluster
 import (
 	"context"
 	"path"
-	"reflect"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -18,10 +17,13 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestConvergedTopologyReconcileDoesNotWrite(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ctx := t.Context()
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "default"},
@@ -50,15 +52,11 @@ func TestConvergedTopologyReconcileDoesNotWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn, err := store.ConnForCell(ctx, topoclient.GlobalCell)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ck.NoError(err)
 	versions := map[string]string{}
 	for _, file := range []string{path.Join(topoclient.CellsPath, "cell1", topoclient.CellFile), path.Join(topoclient.DatabasesPath, "db", topoclient.DatabaseFile)} {
 		_, v, err := conn.Get(ctx, file)
-		if err != nil {
-			t.Fatal(err)
-		}
+		ck.NoError(err)
 		versions[file] = v.String()
 	}
 	for range 5 {
@@ -67,18 +65,15 @@ func TestConvergedTopologyReconcileDoesNotWrite(t *testing.T) {
 		}
 		for file, want := range versions {
 			_, v, err := conn.Get(ctx, file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if v.String() != want {
-				t.Fatalf("converged reconcile rewrote %s", file)
-			}
+			ck.NoError(err)
+			ck.Eq(want, v.String(), "converged reconcile rewrote %s", file)
 		}
 	}
 }
 
 func TestReconcileTopologySharedTopo(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
@@ -126,42 +121,35 @@ func TestReconcileTopologySharedTopo(t *testing.T) {
 		cluster,
 		resolver.NewResolver(client, "default"),
 	)
-	if err != nil {
-		t.Fatalf("reconcileTopology() error = %v", err)
-	}
-	if result.RequeueAfter != 0 {
-		t.Fatalf("RequeueAfter = %v, want 0", result.RequeueAfter)
-	}
+	c.Require().NoError(err, "reconcileTopology() error =")
+	c.Require().Eq(0, result.RequeueAfter, "RequeueAfter")
 
-	if openedRef.Address != "http://global-etcd:2379" {
-		t.Fatalf("expected topology store to open global address, got %q", openedRef.Address)
-	}
-	if openedRef.RootPath != "/multigres/clusters/cluster/global" {
-		t.Fatalf("expected topology store to open global root, got %q", openedRef.RootPath)
-	}
+	c.Require().
+		Eq("http://global-etcd:2379", openedRef.Address, "expected topology store to open global address, got")
+	c.Require().
+		Eq("/multigres/clusters/cluster/global", openedRef.RootPath, "expected topology store to open global root, got")
 
 	cell, err := store.GetCell(context.Background(), "cell1")
-	if err != nil {
-		t.Fatalf("cell not found: %v", err)
-	}
-	if !reflect.DeepEqual(cell.ServerAddresses, []string{"http://cell1-local-etcd:2379"}) {
-		t.Errorf("expected cell record to point at local topology, got %v", cell.ServerAddresses)
-	}
-	if cell.Root != "/multigres/clusters/cluster/cells/cell1" {
-		t.Errorf("expected cell record local root, got %q", cell.Root)
-	}
+	c.Require().NoError(err, "cell not found")
+	c.EqDiff(
+		[]string{"http://cell1-local-etcd:2379"},
+		cell.ServerAddresses,
+		"expected cell record to point at local topology, got",
+	)
+	c.Eq(
+		"/multigres/clusters/cluster/cells/cell1",
+		cell.Root,
+		"expected cell record local root, got",
+	)
 
 	db, err := store.GetDatabase(context.Background(), "commerce")
-	if err != nil {
-		t.Fatalf("database not found in global topology store: %v", err)
-	}
-	if db.Name != "commerce" {
-		t.Errorf("expected database commerce, got %q", db.Name)
-	}
+	c.Require().NoError(err, "database not found in global topology store")
+	c.Eq("commerce", db.Name, "expected database commerce, got")
 }
 
 func TestReconcileTopologyManagedLocalTopo(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
@@ -194,9 +182,8 @@ func TestReconcileTopologyManagedLocalTopo(t *testing.T) {
 		WithObjects(cluster, k8sCell, ts).
 		Build()
 	ts.Status.ObservedGeneration = ts.Generation
-	if err := client.Status().Update(context.Background(), ts); err != nil {
-		t.Fatalf("failed to update TopoServer status: %v", err)
-	}
+	c.Require().
+		NoError(client.Status().Update(context.Background(), ts), "failed to update TopoServer status")
 	reconciler := &MultigresClusterReconciler{
 		Client:   client,
 		Scheme:   scheme,
@@ -210,31 +197,26 @@ func TestReconcileTopologyManagedLocalTopo(t *testing.T) {
 		cluster,
 		resolver.NewResolver(client, "default"),
 	)
-	if err != nil {
-		t.Fatalf("reconcileTopology() error = %v", err)
-	}
-	if result.RequeueAfter != 0 {
-		t.Fatalf("RequeueAfter = %v, want 0", result.RequeueAfter)
-	}
+	c.Require().NoError(err, "reconcileTopology() error =")
+	c.Require().Eq(0, result.RequeueAfter, "RequeueAfter")
 
 	cell, err := store.GetCell(context.Background(), "cell1")
-	if err != nil {
-		t.Fatalf("cell not found: %v", err)
-	}
+	c.Require().NoError(err, "cell not found")
 	wantAddress := topo.ManagedLocalTopoServerAddress(
 		name.JoinWithConstraints(name.DefaultConstraints, "cluster", "cell1"),
 		"default",
 	)
-	if !reflect.DeepEqual(cell.ServerAddresses, []string{wantAddress}) {
-		t.Errorf("expected managed local topology service, got %v", cell.ServerAddresses)
-	}
-	if cell.Root != "/multigres/default/cluster/cell1" {
-		t.Errorf("expected default local root, got %q", cell.Root)
-	}
+	c.EqDiff(
+		[]string{wantAddress},
+		cell.ServerAddresses,
+		"expected managed local topology service, got",
+	)
+	c.Eq("/multigres/default/cluster/cell1", cell.Root, "expected default local root, got")
 }
 
 func TestReconcileTopologyWaitsForManagedLocalTopoNotOwnedByCell(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
@@ -266,9 +248,10 @@ func TestReconcileTopologyWaitsForManagedLocalTopoNotOwnedByCell(t *testing.T) {
 		WithObjects(cluster, cell, ts).
 		Build()
 	ts.Status.ObservedGeneration = ts.Generation
-	if err := client.Status().Update(context.Background(), ts); err != nil {
-		t.Fatalf("failed to update TopoServer status: %v", err)
-	}
+	c.NoError(
+		client.Status().Update(context.Background(), ts),
+		"failed to update TopoServer status",
+	)
 	reconciler := &MultigresClusterReconciler{
 		Client:   client,
 		Scheme:   scheme,
@@ -284,16 +267,13 @@ func TestReconcileTopologyWaitsForManagedLocalTopoNotOwnedByCell(t *testing.T) {
 		cluster,
 		resolver.NewResolver(client, "default"),
 	)
-	if err != nil {
-		t.Fatalf("reconcileTopology() error = %v", err)
-	}
-	if result.RequeueAfter != localTopoServerRequeueDelay {
-		t.Fatalf("RequeueAfter = %v, want %v", result.RequeueAfter, localTopoServerRequeueDelay)
-	}
+	c.NoError(err, "reconcileTopology() error =")
+	c.Eq(localTopoServerRequeueDelay, result.RequeueAfter, "RequeueAfter")
 }
 
 func TestReconcileTopologyWaitsForManagedLocalTopo(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
@@ -331,12 +311,8 @@ func TestReconcileTopologyWaitsForManagedLocalTopo(t *testing.T) {
 		cluster,
 		resolver.NewResolver(client, "default"),
 	)
-	if err != nil {
-		t.Fatalf("reconcileTopology() error = %v", err)
-	}
-	if result.RequeueAfter != localTopoServerRequeueDelay {
-		t.Fatalf("RequeueAfter = %v, want %v", result.RequeueAfter, localTopoServerRequeueDelay)
-	}
+	c.NoError(err, "reconcileTopology() error =")
+	c.Eq(localTopoServerRequeueDelay, result.RequeueAfter, "RequeueAfter")
 	if _, err := store.GetCell(context.Background(), "cell1"); err == nil {
 		t.Fatal("cell should not be registered before managed local TopoServer is ready")
 	}
@@ -344,6 +320,7 @@ func TestReconcileTopologyWaitsForManagedLocalTopo(t *testing.T) {
 
 func TestReconcileTopologyKeepsExistingCellRecordWhileManagedLocalTopoWaits(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
@@ -367,7 +344,7 @@ func TestReconcileTopologyKeepsExistingCellRecordWhileManagedLocalTopoWaits(t *t
 	}
 
 	store := newClusterTopologyMemoryStore(t)
-	if err := topo.RegisterCellFromSpec(
+	c.Require().NoError(topo.RegisterCellFromSpec(
 		context.Background(),
 		store,
 		record.NewFakeRecorder(10),
@@ -378,9 +355,7 @@ func TestReconcileTopologyKeepsExistingCellRecordWhileManagedLocalTopoWaits(t *t
 			Address:  "http://global-etcd:2379",
 			RootPath: "/multigres/global",
 		},
-	); err != nil {
-		t.Fatalf("failed to seed existing cell topology: %v", err)
-	}
+	), "failed to seed existing cell topology")
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
 	reconciler := &MultigresClusterReconciler{
@@ -397,27 +372,18 @@ func TestReconcileTopologyKeepsExistingCellRecordWhileManagedLocalTopoWaits(t *t
 		cluster,
 		resolver.NewResolver(client, "default"),
 	)
-	if err != nil {
-		t.Fatalf("reconcileTopology() error = %v", err)
-	}
-	if result.RequeueAfter != localTopoServerRequeueDelay {
-		t.Fatalf("RequeueAfter = %v, want %v", result.RequeueAfter, localTopoServerRequeueDelay)
-	}
+	c.Require().NoError(err, "reconcileTopology() error =")
+	c.Require().Eq(localTopoServerRequeueDelay, result.RequeueAfter, "RequeueAfter")
 
 	cell, err := store.GetCell(context.Background(), "cell1")
-	if err != nil {
-		t.Fatalf("existing cell record should remain available: %v", err)
-	}
-	if !reflect.DeepEqual(cell.ServerAddresses, []string{"http://global-etcd:2379"}) {
-		t.Errorf("existing cell address = %v, want global topology address", cell.ServerAddresses)
-	}
-	if cell.Root != "/multigres/global" {
-		t.Errorf("existing cell root = %q, want global topology root", cell.Root)
-	}
+	c.Require().NoError(err, "existing cell record should remain available")
+	c.EqDiff([]string{"http://global-etcd:2379"}, cell.ServerAddresses, "existing cell address")
+	c.Eq("/multigres/global", cell.Root, "existing cell root")
 }
 
 func TestReconcileTopologyKeepsPendingDeletionCellRecord(t *testing.T) {
 	t.Parallel()
+	c := assert.NewAborting(t)
 
 	scheme := setupScheme()
 	cluster := &multigresv1alpha1.MultigresCluster{
@@ -448,7 +414,7 @@ func TestReconcileTopologyKeepsPendingDeletionCellRecord(t *testing.T) {
 
 	store := newClusterTopologyMemoryStore(t)
 	for _, cellName := range []multigresv1alpha1.CellName{"cell1", "cell2"} {
-		if err := topo.RegisterCellFromSpec(
+		c.NoError(topo.RegisterCellFromSpec(
 			context.Background(),
 			store,
 			record.NewFakeRecorder(10),
@@ -459,9 +425,7 @@ func TestReconcileTopologyKeepsPendingDeletionCellRecord(t *testing.T) {
 				Address:  "http://global-etcd:2379",
 				RootPath: "/multigres/global",
 			},
-		); err != nil {
-			t.Fatalf("failed to seed cell %s topology: %v", cellName, err)
-		}
+		), "failed to seed cell %s topology", cellName)
 	}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, pendingCell).Build()
@@ -480,12 +444,8 @@ func TestReconcileTopologyKeepsPendingDeletionCellRecord(t *testing.T) {
 		resolver.NewResolver(client, "default"),
 		true,
 	)
-	if err != nil {
-		t.Fatalf("reconcileTopology() error = %v", err)
-	}
-	if result.RequeueAfter != 0 {
-		t.Fatalf("RequeueAfter = %v, want 0", result.RequeueAfter)
-	}
+	c.NoError(err, "reconcileTopology() error =")
+	c.Eq(0, result.RequeueAfter, "RequeueAfter")
 
 	if _, err := store.GetCell(context.Background(), "cell1"); err != nil {
 		t.Fatalf("active cell record should remain: %v", err)

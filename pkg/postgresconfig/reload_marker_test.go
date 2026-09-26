@@ -1,11 +1,13 @@
 package postgresconfig
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestStampAndSplitStampsMarker(t *testing.T) {
+	c := assert.NewCollecting(t)
 	const conf = `work_mem = '4MB'
 max_wal_size = '1GB'
 `
@@ -13,39 +15,24 @@ max_wal_size = '1GB'
 
 	// The marker line is appended to the returned file with value == reload-hash.
 	wantLine := ReloadMarkerGUC + " = '" + split.ReloadHash + "'"
-	if !strings.Contains(rendered, wantLine) {
-		t.Errorf("rendered config missing marker line %q:\n%s", wantLine, rendered)
-	}
+	c.StrContains(rendered, wantLine, "rendered config missing marker line")
 
 	// The marker is present in the expected-settings map, unquoted, == reload-hash.
-	if got := split.ReloadSettings[ReloadMarkerGUC]; got != split.ReloadHash {
-		t.Errorf(
-			"ReloadSettings[%q] = %q, want reload-hash %q",
-			ReloadMarkerGUC,
-			got,
-			split.ReloadHash,
-		)
-	}
+	got := split.ReloadSettings[ReloadMarkerGUC]
+	c.Eq(split.ReloadHash, got, "ReloadSettings[%q] = %q, want reload-hash", ReloadMarkerGUC, got)
 
 	// The reload-hash covers the real settings only, not the marker: hashing the
 	// reload settings with the marker removed must reproduce the reload-hash.
 	delete(split.ReloadSettings, ReloadMarkerGUC)
-	if h := hashSettings(split.ReloadSettings); h != split.ReloadHash {
-		t.Errorf(
-			"reload-hash includes the marker: %s over settings-without-marker != %s",
-			h,
-			split.ReloadHash,
-		)
-	}
+	c.Eq(split.ReloadHash, hashSettings(split.ReloadSettings), "reload-hash includes the marker")
 }
 
 func TestStampAndSplitMarkerOnAllRestartConfig(t *testing.T) {
 	// A config with only restart-only settings still gets a marker, so even an
 	// all-restart render carries a version marker in its reload settings.
 	_, split := StampAndSplit("shared_buffers = '128MB'\n")
-	if split.ReloadSettings[ReloadMarkerGUC] != split.ReloadHash {
-		t.Errorf("marker not stamped for an all-restart config: %v", split.ReloadSettings)
-	}
+	assert.NewCollecting(t).
+		Eq(split.ReloadHash, split.ReloadSettings[ReloadMarkerGUC], "marker not stamped for an all-restart config: %v", split.ReloadSettings)
 }
 
 // TestReloadMarkerDetectsRemoval is the core guard for the removal-only fix. When
@@ -57,6 +44,7 @@ func TestStampAndSplitMarkerOnAllRestartConfig(t *testing.T) {
 // (carrying the previous marker) fails the gate and the reload is retried until
 // the kubelet syncs.
 func TestReloadMarkerDetectsRemoval(t *testing.T) {
+	c := assert.NewCollecting(t)
 	const withParam = `work_mem = '4MB'
 random_page_cost = '1.1'
 `
@@ -69,22 +57,15 @@ random_page_cost = '1.1'
 
 	// Neither config has a restart-only setting, so the restart-hash is unchanged
 	// (this stays a reload, not a pod recreation).
-	if before.RestartHash != after.RestartHash {
-		t.Errorf("restart-hash moved on a reload-only removal: %s -> %s",
-			before.RestartHash, after.RestartHash)
-	}
+	c.Eq(after.RestartHash, before.RestartHash, "restart-hash moved on a reload-only removal")
 
 	// The removal changed the reload-safe partition, so the reload-hash — and thus
 	// the marker value — must move.
-	if before.ReloadHash == after.ReloadHash {
-		t.Fatalf("reload-hash did not move when a reload-safe setting was removed (still %s)",
-			before.ReloadHash)
-	}
+	c.Require().
+		NotEq(after.ReloadHash, before.ReloadHash, "reload-hash did not move when a reload-safe setting was removed (still")
 	beforeMarker := before.ReloadSettings[ReloadMarkerGUC]
 	afterMarker := after.ReloadSettings[ReloadMarkerGUC]
-	if beforeMarker == afterMarker {
-		t.Fatalf("marker did not move on removal: %q", afterMarker)
-	}
+	c.Require().NotEq(afterMarker, beforeMarker, "marker did not move on removal")
 
 	// The crux: every non-marker expected setting of the post-removal config is
 	// still satisfied by the pre-removal (stale) file — so without the marker the
@@ -94,9 +75,7 @@ random_page_cost = '1.1'
 	for name, want := range after.ReloadSettings {
 		staleVal, present := staleFile[name]
 		if name == ReloadMarkerGUC {
-			if present {
-				t.Errorf("stale file unexpectedly already carries the marker")
-			}
+			c.False(present, "stale file unexpectedly already carries the marker")
 			continue // the marker is what the stale file cannot satisfy
 		}
 		if !present || unquoteValue(staleVal) != want {

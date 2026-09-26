@@ -17,6 +17,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestShardMinAvailable(t *testing.T) {
@@ -36,19 +38,16 @@ func TestShardMinAvailable(t *testing.T) {
 			shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{
 				Replicas: ptr.To(tc.replicas),
 			}}
-			if got := shardMinAvailable(shard); got != tc.want {
-				t.Fatalf("shardMinAvailable() = %d, want %d", got, tc.want)
-			}
+			assert.NewAborting(t).Eq(tc.want, shardMinAvailable(shard), "shardMinAvailable()")
 		})
 	}
 }
 
 func TestBuildShardPodDisruptionBudgetsDoNotOverlap(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add Shard scheme: %v", err)
-	}
+	c.Require().NoError(multigresv1alpha1.AddToScheme(scheme), "add Shard scheme")
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -75,35 +74,22 @@ func TestBuildShardPodDisruptionBudgetsDoNotOverlap(t *testing.T) {
 	}
 
 	pdbs, err := BuildShardPodDisruptionBudgets(shard, scheme)
-	if err != nil {
-		t.Fatalf("build PDBs: %v", err)
-	}
-	if len(pdbs) != 1 {
-		t.Fatalf("PDB count = %d, want one shard-wide budget", len(pdbs))
-	}
-	if got := pdbs[0].Spec.MinAvailable.IntValue(); got != 3 {
-		t.Errorf("shard minAvailable = %d, want 3", got)
-	}
+	c.Require().NoError(err, "build PDBs")
+	c.Require().Len(pdbs, 1, "PDB count = %d, want one shard-wide budget", len(pdbs))
+	c.Eq(3, pdbs[0].Spec.MinAvailable.IntValue(), "shard minAvailable")
 	selector := pdbs[0].Spec.Selector.MatchLabels
-	if _, scopedToCell := selector[metadata.LabelMultigresCell]; scopedToCell {
-		t.Errorf("shard PDB must not select a cell: %#v", selector)
-	}
-	if _, scopedToPool := selector[metadata.LabelMultigresPool]; scopedToPool {
-		t.Errorf("shard PDB must not select a pool: %#v", selector)
-	}
+	_, scopedToCell := selector[metadata.LabelMultigresCell]
+	c.False(scopedToCell, "shard PDB must not select a cell: %#v", selector)
+	_, scopedToPool := selector[metadata.LabelMultigresPool]
+	c.False(scopedToPool, "shard PDB must not select a pool: %#v", selector)
 }
 
 func TestReconcileShardPDBReplacesLegacyPoolCellPDBs(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	scheme := runtime.NewScheme()
-	if err := multigresv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add Shard scheme: %v", err)
-	}
-	if err := policyv1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add policy scheme: %v", err)
-	}
-	if err := corev1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add Pod scheme: %v", err)
-	}
+	ck.Require().NoError(multigresv1alpha1.AddToScheme(scheme), "add Shard scheme")
+	ck.Require().NoError(policyv1.AddToScheme(scheme), "add policy scheme")
+	ck.Require().NoError(corev1.AddToScheme(scheme), "add Pod scheme")
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -122,9 +108,7 @@ func TestReconcileShardPDBReplacesLegacyPoolCellPDBs(t *testing.T) {
 	}
 
 	desired, err := BuildShardPodDisruptionBudget(shard, scheme)
-	if err != nil {
-		t.Fatalf("build desired PDB: %v", err)
-	}
+	ck.Require().NoError(err, "build desired PDB")
 
 	legacy := &policyv1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
@@ -135,9 +119,8 @@ func TestReconcileShardPDBReplacesLegacyPoolCellPDBs(t *testing.T) {
 	}
 	legacy.Labels[metadata.LabelMultigresPool] = "primary"
 	legacy.Labels[metadata.LabelMultigresCell] = "zone1"
-	if err := ctrl.SetControllerReference(shard, legacy, scheme); err != nil {
-		t.Fatalf("set legacy owner reference: %v", err)
-	}
+	ck.Require().
+		NoError(ctrl.SetControllerReference(shard, legacy, scheme), "set legacy owner reference")
 
 	unmanaged := legacy.DeepCopy()
 	unmanaged.Name = "unmanaged-pdb"
@@ -149,17 +132,13 @@ func TestReconcileShardPDBReplacesLegacyPoolCellPDBs(t *testing.T) {
 		Build()
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
-	if err := r.reconcileShardPDB(t.Context(), shard); err != nil {
-		t.Fatalf("reconcile shard PDB: %v", err)
-	}
+	ck.Require().NoError(r.reconcileShardPDB(t.Context(), shard), "reconcile shard PDB")
 
-	if err := c.Get(
+	ck.NoError(c.Get(
 		t.Context(),
 		client.ObjectKeyFromObject(desired),
 		&policyv1.PodDisruptionBudget{},
-	); err != nil {
-		t.Errorf("shard-wide PDB should exist: %v", err)
-	}
+	), "shard-wide PDB should exist")
 	if err := c.Get(
 		t.Context(),
 		client.ObjectKeyFromObject(legacy),
@@ -167,17 +146,16 @@ func TestReconcileShardPDBReplacesLegacyPoolCellPDBs(t *testing.T) {
 	); !apierrors.IsNotFound(err) {
 		t.Errorf("legacy PDB should be deleted, got: %v", err)
 	}
-	if err := c.Get(
+	ck.NoError(c.Get(
 		t.Context(),
 		client.ObjectKeyFromObject(unmanaged),
 		&policyv1.PodDisruptionBudget{},
-	); err != nil {
-		t.Errorf("unmanaged PDB should be preserved: %v", err)
-	}
+	), "unmanaged PDB should be preserved")
 }
 
 func TestReconcileShardPDBCountsMaintenanceSurge(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	scheme := maintenanceSurgeTestScheme(t)
 	shard := maintenanceSurgeTestShard()
 	shard.Spec.Replicas = ptr.To(int32(3))
@@ -192,18 +170,10 @@ func TestReconcileShardPDBCountsMaintenanceSurge(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, surge).Build()
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
-	if err := r.reconcileShardPDB(t.Context(), shard); err != nil {
-		t.Fatalf("reconcile shard PDB: %v", err)
-	}
+	ck.NoError(r.reconcileShardPDB(t.Context(), shard), "reconcile shard PDB")
 	desired, err := BuildShardPodDisruptionBudget(shard, scheme)
-	if err != nil {
-		t.Fatalf("build shard PDB: %v", err)
-	}
+	ck.NoError(err, "build shard PDB")
 	actual := &policyv1.PodDisruptionBudget{}
-	if err := c.Get(t.Context(), client.ObjectKeyFromObject(desired), actual); err != nil {
-		t.Fatalf("get shard PDB: %v", err)
-	}
-	if got := actual.Spec.MinAvailable.IntValue(); got != 3 {
-		t.Fatalf("minAvailable with one surge = %d, want 3", got)
-	}
+	ck.NoError(c.Get(t.Context(), client.ObjectKeyFromObject(desired), actual), "get shard PDB")
+	ck.Eq(3, actual.Spec.MinAvailable.IntValue(), "minAvailable with one surge")
 }

@@ -8,6 +8,8 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestInlineCluster applies config/samples/no-templates.yaml and verifies the
@@ -15,17 +17,14 @@ import (
 // succeeds through the multigateway.
 func TestInlineCluster(t *testing.T) {
 	t.Parallel()
+	ck := assert.NewAborting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.NoError(err, "create CR client")
 
 	// Load and apply the inline (no-templates) sample.
 	cr := framework.MustLoadCluster("config/samples/no-templates.yaml", ns)
-	if err := c.Create(context.Background(), cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.NoError(c.Create(context.Background(), cr), "create MultigresCluster")
 
 	// Verify child CRDs.
 	framework.WaitForCRDCount(t, c, ns,

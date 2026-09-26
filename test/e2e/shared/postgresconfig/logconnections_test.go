@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/multigres/multigres-operator/test/e2e/framework"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestLogConnectionsTakesEffect is a regression test for a postgresql.conf change
@@ -25,18 +27,15 @@ import (
 // This test flips log_connections on against a running cluster and asserts the
 // effective value read back through the gateway actually becomes "on".
 func TestLogConnectionsTakesEffect(t *testing.T) {
+	ck := assert.NewCollecting(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
-	if err != nil {
-		t.Fatalf("create CR client: %v", err)
-	}
+	ck.Require().NoError(err, "create CR client")
 	ctx := context.Background()
 
 	cr := framework.MustLoadCluster("config/samples/no-templates.yaml", ns)
 	framework.WithCIResources(&cr.Spec)
-	if err := c.Create(ctx, cr); err != nil {
-		t.Fatalf("create MultigresCluster: %v", err)
-	}
+	ck.Require().NoError(c.Create(ctx, cr), "create MultigresCluster")
 
 	// Wait for Postgres to come up and serve queries through the gateway.
 	framework.WaitForPod(t, c, ns, "postgres")
@@ -52,9 +51,7 @@ func TestLogConnectionsTakesEffect(t *testing.T) {
 	// the initial config still converging.
 	framework.WaitForShardConfigSettled(t, c, ns)
 	before := poolPodUIDs(t, ctx, c, ns)
-	if len(before) == 0 {
-		t.Fatal("no pool pods found before enabling log_connections")
-	}
+	ck.Require().NotEmpty(before, "no pool pods found before enabling log_connections")
 
 	// Turn log_connections on via the inline spec.postgresConfig map. Send the full
 	// databases array with the one changed value: JSON merge-patch replaces arrays
@@ -86,7 +83,10 @@ func TestLogConnectionsTakesEffect(t *testing.T) {
 			break
 		}
 	}
-	if !recreated {
-		t.Errorf("expected pool pods to be recreated to apply log_connections, but UIDs were unchanged: before=%v after=%v", before, after)
-	}
+	ck.True(
+		recreated,
+		"expected pool pods to be recreated to apply log_connections, but UIDs were unchanged: before=%v after=%v",
+		before,
+		after,
+	)
 }

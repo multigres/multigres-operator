@@ -14,34 +14,32 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/multigres/testkit/assert"
 )
 
 // TestCreateEnvtestEnvironment tests environment creation.
 func TestCreateEnvtestEnvironment(t *testing.T) {
 	t.Parallel()
+	c := assert.NewCollecting(t)
 
 	testPaths := []string{"/test/path1", "/test/path2"}
 	env := createEnvtestEnvironment(t, testPaths)
 
-	if env == nil {
-		t.Fatal("createEnvtestEnvironment() returned nil")
-	}
+	c.Require().NotNil(env, "createEnvtestEnvironment() returned nil")
 
-	if len(env.CRDDirectoryPaths) != 2 {
-		t.Errorf("CRDDirectoryPaths length = %d, want 2", len(env.CRDDirectoryPaths))
-	}
+	c.Len(
+		env.CRDDirectoryPaths,
+		2,
+		"CRDDirectoryPaths length = %d, want 2",
+		len(env.CRDDirectoryPaths),
+	)
 
-	if env.CRDDirectoryPaths[0] != testPaths[0] {
-		t.Errorf("CRDDirectoryPaths[0] = %s, want %s", env.CRDDirectoryPaths[0], testPaths[0])
-	}
+	c.Eq(testPaths[0], env.CRDDirectoryPaths[0], "CRDDirectoryPaths[0]")
 
-	if env.CRDDirectoryPaths[1] != testPaths[1] {
-		t.Errorf("CRDDirectoryPaths[1] = %s, want %s", env.CRDDirectoryPaths[1], testPaths[1])
-	}
+	c.Eq(testPaths[1], env.CRDDirectoryPaths[1], "CRDDirectoryPaths[1]")
 
-	if !env.ErrorIfCRDPathMissing {
-		t.Error("ErrorIfCRDPathMissing should be true")
-	}
+	c.True(env.ErrorIfCRDPathMissing, "ErrorIfCRDPathMissing should be true")
 }
 
 // TestStartEnvtest tests both success and error paths.
@@ -73,6 +71,7 @@ func TestStartEnvtest(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			mock := &mockTB{TB: t}
 			env := tc.setupFunc(mock)
@@ -80,17 +79,11 @@ func TestStartEnvtest(t *testing.T) {
 
 			cfg := startEnvtest(mock, env)
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			c.Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 
 			if !tc.wantFatal {
-				if cfg == nil {
-					t.Error("Config should not be nil on success")
-				}
-				if cfg.Host == "" {
-					t.Error("Config.Host should not be empty on success")
-				}
+				c.NotNil(cfg, "Config should not be nil on success")
+				c.NotEq("", cfg.Host, "Config.Host should not be empty on success")
 			}
 		})
 	}
@@ -117,6 +110,7 @@ func TestCreateEnvtestDir(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			mock := &mockTB{TB: t}
 
@@ -125,13 +119,9 @@ func TestCreateEnvtestDir(t *testing.T) {
 				os.RemoveAll(dir)
 			})
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			c.Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 
-			if !tc.wantFatal && dir == "" {
-				t.Error("createEnvtestDir() returned empty string")
-			}
+			c.False(!tc.wantFatal && dir == "", "createEnvtestDir() returned empty string")
 		})
 	}
 }
@@ -184,38 +174,29 @@ func TestWriteKubeconfigFile(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			mock := &mockTB{TB: t}
 			path := tc.setupPath(t)
 
 			writeKubeconfigFile(mock, path, tc.content)
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			c.Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 
 			if !tc.wantFatal {
 				// Verify file was written
 				content, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatalf("Failed to read written file: %v", err)
-				}
+				c.Require().NoError(err, "Failed to read written file")
 
 				// Verify content matches
-				if string(content) != string(tc.content) {
-					t.Errorf("File content = %q, want %q", string(content), string(tc.content))
-				}
+				c.Eq(string(tc.content), string(content), "File content")
 
 				// Verify file permissions
 				info, err := os.Stat(path)
-				if err != nil {
-					t.Fatalf("Failed to stat file: %v", err)
-				}
+				c.Require().NoError(err, "Failed to stat file")
 
 				expectedMode := os.FileMode(0o600)
-				if info.Mode().Perm() != expectedMode {
-					t.Errorf("File permissions = %o, want %o", info.Mode().Perm(), expectedMode)
-				}
+				c.Eq(expectedMode, info.Mode().Perm(), "File permissions")
 			}
 		})
 	}
@@ -255,9 +236,7 @@ func TestSetUpClient(t *testing.T) {
 
 			SetUpClient(mock, cfg, scheme)
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			assert.NewCollecting(t).Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 		})
 	}
 }
@@ -315,9 +294,8 @@ func TestStartManager_Internal(t *testing.T) {
 				scheme := runtime.NewScheme()
 				mgr := SetUpManager(t, cfg, scheme)
 				// Add a runnable that will fail on Start
-				if err := mgr.Add(&failingRunnable{}); err != nil {
-					t.Fatalf("Failed to add failing runnable: %v", err)
-				}
+				assert.NewAborting(t).
+					NoError(mgr.Add(&failingRunnable{}), "Failed to add failing runnable")
 				return t.Context(), mgr
 			},
 			wantFatal: false,
@@ -328,6 +306,7 @@ func TestStartManager_Internal(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			mock := &mockTB{TB: t}
 			ctx, mgr := tc.setupFunc(mock)
@@ -341,13 +320,9 @@ func TestStartManager_Internal(t *testing.T) {
 				<-done
 			}
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			c.Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 
-			if mock.errorCalled != tc.wantError {
-				t.Errorf("errorCalled = %v, want %v", mock.errorCalled, tc.wantError)
-			}
+			c.Eq(tc.wantError, mock.errorCalled, "errorCalled")
 		})
 	}
 }
@@ -384,9 +359,7 @@ func TestCleanEnvtest(t *testing.T) {
 			cleanup := cleanEnvtest(mock, env)
 			cleanup()
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			assert.NewCollecting(t).Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 		})
 	}
 }
@@ -433,9 +406,7 @@ func TestSetUpManager(t *testing.T) {
 
 			SetUpManager(mock, cfg, scheme)
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			assert.NewCollecting(t).Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 		})
 	}
 }
@@ -465,6 +436,7 @@ func TestGenerateKubeconfigFile(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 
 			mock := &mockTB{TB: t}
 
@@ -475,13 +447,12 @@ func TestGenerateKubeconfigFile(t *testing.T) {
 				}
 			})
 
-			if mock.fatalCalled != tc.wantFatal {
-				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
-			}
+			c.Eq(tc.wantFatal, mock.fatalCalled, "fatalCalled")
 
-			if !tc.wantFatal && kubeconfigPath == "" {
-				t.Error("kubeconfigPath should not be empty on success")
-			}
+			c.False(
+				!tc.wantFatal && kubeconfigPath == "",
+				"kubeconfigPath should not be empty on success",
+			)
 		})
 	}
 }
@@ -549,9 +520,8 @@ func TestGetKubeconfigFromUserAdder(t *testing.T) {
 			t.Parallel()
 
 			_, err := getKubeconfigFromUserAdder(tc.adder)
-			if (err != nil) != tc.wantError {
-				t.Errorf("getKubeconfigFromUserAdder() error = %v, wantError %v", err, tc.wantError)
-			}
+			assert.NewCollecting(t).
+				ErrorWhen(tc.wantError, err, "getKubeconfigFromUserAdder() error")
 		})
 	}
 }

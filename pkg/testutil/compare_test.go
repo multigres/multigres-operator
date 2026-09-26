@@ -10,6 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/multigres/multigres-operator/pkg/testutil"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestComparisonOptions(t *testing.T) {
@@ -164,9 +166,8 @@ func TestComparisonOptions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			diff := cmp.Diff(tc.obj1, tc.obj2, tc.options...)
-			if diff != "" {
-				t.Errorf("%s should make objects match, but found diff:\n%s", name, diff)
-			}
+			assert.NewCollecting(t).
+				Eq("", diff, "%s should make objects match, but found diff:\n", name)
 		})
 	}
 }
@@ -221,9 +222,8 @@ func TestIgnoreProbeDefaults(t *testing.T) {
 		testutil.IgnoreMetaRuntimeFields(),
 		testutil.IgnorePodSpecDefaults(),
 	)
-	if diff != "" {
-		t.Errorf("IgnoreProbeDefaults should ignore probe defaults, but found diff:\n%s", diff)
-	}
+	assert.NewCollecting(t).
+		Eq("", diff, "IgnoreProbeDefaults should ignore probe defaults, but found diff:\n")
 }
 
 func TestIgnorePVCRuntimeFields(t *testing.T) {
@@ -259,10 +259,6 @@ func TestIgnorePVCRuntimeFields(t *testing.T) {
 		testutil.IgnorePVCRuntimeFields(),
 		testutil.IgnoreMetaRuntimeFields(),
 	)
-	if diff != "" {
-		t.Errorf(
-			"IgnorePVCRuntimeFields should ignore finalizers and VolumeMode, but found diff:\n%s",
-			diff,
-		)
-	}
+	assert.NewCollecting(t).
+		Eq("", diff, "IgnorePVCRuntimeFields should ignore finalizers and VolumeMode, but found diff:\n")
 }

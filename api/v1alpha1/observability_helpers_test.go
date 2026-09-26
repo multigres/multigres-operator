@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/multigres/testkit/assert"
 )
 
 func TestBuildOTELEnvVars(t *testing.T) {
@@ -115,15 +117,8 @@ func TestBuildOTELEnvVars(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			got := BuildOTELEnvVars(tc.cfg)
-			if len(got) != len(tc.want) {
-				t.Fatalf(
-					"len(BuildOTELEnvVars()) = %d, want %d\n  got:  %v\n  want: %v",
-					len(got),
-					len(tc.want),
-					got,
-					tc.want,
-				)
-			}
+			assert.NewAborting(t).
+				Len(got, len(tc.want), "len(BuildOTELEnvVars()) = %d, want %d\n  got:  %v\n  want: %v", len(got), len(tc.want), got, tc.want)
 			for i := range got {
 				if got[i].Name != tc.want[i].Name || got[i].Value != tc.want[i].Value {
 					t.Errorf("env[%d] = {%q, %q}, want {%q, %q}",
@@ -165,15 +160,8 @@ func TestBuildOTELEnvVarsWithResourceAttributes(t *testing.T) {
 		},
 	}
 
-	if len(got) != len(want) {
-		t.Fatalf(
-			"len(BuildOTELEnvVarsWithResourceAttributes()) = %d, want %d\n  got:  %v\n  want: %v",
-			len(got),
-			len(want),
-			got,
-			want,
-		)
-	}
+	assert.NewAborting(t).
+		Len(got, len(want), "len(BuildOTELEnvVarsWithResourceAttributes()) = %d, want %d\n  got:  %v\n  want: %v", len(got), len(want), got, want)
 	for i := range got {
 		if got[i].Name != want[i].Name || got[i].Value != want[i].Value {
 			t.Errorf("env[%d] = {%q, %q}, want {%q, %q}",
@@ -186,40 +174,27 @@ func TestBuildOTELEnvVars_FallbackToEnv(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://from-env:4318")
 	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://metrics-from-env:4318/v1/metrics")
 	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+	c := assert.NewCollecting(t)
 
 	// nil config should fall back to env vars.
 	got := BuildOTELEnvVars(nil)
-	if len(got) < 3 {
-		t.Fatalf("expected at least 3 env vars from fallback, got %d: %v", len(got), got)
-	}
-	if got[0].Value != "http://from-env:4318" {
-		t.Errorf("endpoint = %q, want %q", got[0].Value, "http://from-env:4318")
-	}
-	if got[1].Value != "http://metrics-from-env:4318/v1/metrics" {
-		t.Errorf(
-			"metrics endpoint = %q, want %q",
-			got[1].Value,
-			"http://metrics-from-env:4318/v1/metrics",
-		)
-	}
-	if got[2].Value != "http/protobuf" {
-		t.Errorf("protocol = %q, want %q", got[2].Value, "http/protobuf")
-	}
+	c.Require().
+		GreaterOrEqual(3, len(got), "expected at least 3 env vars from fallback, got %d: %v", len(got), got)
+	c.Eq("http://from-env:4318", got[0].Value, "endpoint")
+	c.Eq("http://metrics-from-env:4318/v1/metrics", got[1].Value, "metrics endpoint")
+	c.Eq("http/protobuf", got[2].Value, "protocol")
 }
 
 func TestBuildOTELEnvVars_CRDOverridesEnv(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://from-env:4318")
+	c := assert.NewCollecting(t)
 
 	cfg := &ObservabilityConfig{
 		OTLPEndpoint: "http://from-crd:4318",
 	}
 	got := BuildOTELEnvVars(cfg)
-	if len(got) == 0 {
-		t.Fatal("expected at least 1 env var")
-	}
-	if got[0].Value != "http://from-crd:4318" {
-		t.Errorf("endpoint = %q, want CRD value %q", got[0].Value, "http://from-crd:4318")
-	}
+	c.Require().NotEmpty(got, "expected at least 1 env var")
+	c.Eq("http://from-crd:4318", got[0].Value, "endpoint")
 }
 
 func TestEnvOrCRD(t *testing.T) {
@@ -258,9 +233,7 @@ func TestEnvOrCRD(t *testing.T) {
 				func(c *ObservabilityConfig) string { return c.OTLPEndpoint },
 				"TEST_ENVORCRD",
 			)
-			if got != tc.want {
-				t.Errorf("envOrCRD() = %q, want %q", got, tc.want)
-			}
+			assert.NewCollecting(t).Eq(tc.want, got, "envOrCRD()")
 		})
 	}
 }
@@ -414,70 +387,37 @@ func TestMergeBackupConfig(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			c := assert.NewCollecting(t)
 			got := MergeBackupConfig(tc.child, tc.parent)
 			if tc.want == nil {
-				if got != nil {
-					t.Errorf("MergeBackupConfig() = %+v, want nil", got)
-				}
+				c.Nil(got, "MergeBackupConfig()")
 				return
 			}
-			if got == nil {
-				t.Fatalf("MergeBackupConfig() = nil, want %+v", tc.want)
-			}
-			if got.Type != tc.want.Type {
-				t.Errorf("Type = %q, want %q", got.Type, tc.want.Type)
-			}
+			c.Require().NotNil(got, "MergeBackupConfig() = nil, want %+v", tc.want)
+			c.Eq(tc.want.Type, got.Type, "Type")
 			if tc.want.Filesystem != nil {
-				if got.Filesystem == nil {
-					t.Fatal("Filesystem = nil, want non-nil")
-				}
-				if got.Filesystem.Path != tc.want.Filesystem.Path {
-					t.Errorf(
-						"Filesystem.Path = %q, want %q",
-						got.Filesystem.Path,
-						tc.want.Filesystem.Path,
-					)
-				}
-				if got.Filesystem.Storage.Size != tc.want.Filesystem.Storage.Size {
-					t.Errorf(
-						"Filesystem.Storage.Size = %q, want %q",
-						got.Filesystem.Storage.Size,
-						tc.want.Filesystem.Storage.Size,
-					)
-				}
+				c.Require().NotNil(got.Filesystem, "Filesystem = nil, want non-nil")
+				c.Eq(tc.want.Filesystem.Path, got.Filesystem.Path, "Filesystem.Path")
+				c.Eq(
+					tc.want.Filesystem.Storage.Size,
+					got.Filesystem.Storage.Size,
+					"Filesystem.Storage.Size",
+				)
 			}
 			if tc.want.S3 != nil {
-				if got.S3 == nil {
-					t.Fatal("S3 = nil, want non-nil")
-				}
-				if got.S3.Bucket != tc.want.S3.Bucket {
-					t.Errorf("S3.Bucket = %q, want %q", got.S3.Bucket, tc.want.S3.Bucket)
-				}
-				if got.S3.Region != tc.want.S3.Region {
-					t.Errorf("S3.Region = %q, want %q", got.S3.Region, tc.want.S3.Region)
-				}
-				if got.S3.Endpoint != tc.want.S3.Endpoint {
-					t.Errorf("S3.Endpoint = %q, want %q", got.S3.Endpoint, tc.want.S3.Endpoint)
-				}
-				if got.S3.CredentialsSecret != tc.want.S3.CredentialsSecret {
-					t.Errorf(
-						"S3.CredentialsSecret = %q, want %q",
-						got.S3.CredentialsSecret,
-						tc.want.S3.CredentialsSecret,
-					)
-				}
+				c.Require().NotNil(got.S3, "S3 = nil, want non-nil")
+				c.Eq(tc.want.S3.Bucket, got.S3.Bucket, "S3.Bucket")
+				c.Eq(tc.want.S3.Region, got.S3.Region, "S3.Region")
+				c.Eq(tc.want.S3.Endpoint, got.S3.Endpoint, "S3.Endpoint")
+				c.Eq(tc.want.S3.CredentialsSecret, got.S3.CredentialsSecret, "S3.CredentialsSecret")
 			}
 			if tc.want.PgBackRestTLS != nil {
-				if got.PgBackRestTLS == nil {
-					t.Fatal("PgBackRestTLS = nil, want non-nil")
-				}
-				if got.PgBackRestTLS.SecretName != tc.want.PgBackRestTLS.SecretName {
-					t.Errorf(
-						"PgBackRestTLS.SecretName = %q, want %q",
-						got.PgBackRestTLS.SecretName,
-						tc.want.PgBackRestTLS.SecretName,
-					)
-				}
+				c.Require().NotNil(got.PgBackRestTLS, "PgBackRestTLS = nil, want non-nil")
+				c.Eq(
+					tc.want.PgBackRestTLS.SecretName,
+					got.PgBackRestTLS.SecretName,
+					"PgBackRestTLS.SecretName",
+				)
 			}
 		})
 	}
