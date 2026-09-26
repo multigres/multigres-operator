@@ -9,6 +9,7 @@ ARG BUILD_DATE=unknown
 WORKDIR /workspace
 COPY go.mod go.sum ./
 COPY api/ ./api/
+COPY pkg/ ./pkg/
 COPY tools/observer/go.mod tools/observer/go.sum ./tools/observer/
 
 WORKDIR /workspace/tools/observer
