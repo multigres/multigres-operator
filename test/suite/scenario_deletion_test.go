@@ -1,11 +1,14 @@
 package suite
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -252,6 +255,150 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 	c.True(deletedByCluster,
 		"TableGroup %s disappeared without a recorded delete from multigrescluster",
 		orphanKey.Name)
+}
+
+// TestReadyForDeletionProtocol_OrphanCellDrains asserts that a Cell which falls
+// out of a settled cluster's spec completes its drain handshake: multigrescluster
+// stamps AnnotationPendingDeletion on it, the Cell controller's own reconcile
+// answers with ReadyForDeletion, and multigrescluster then deletes it.
+//
+// The stamp is a merge patch that changes only that annotation: no generation
+// bump, no project-ref change, no label change, no status wipe. So the Cell
+// controller's For predicate is the only thing that can turn it into a
+// reconcile, and the test makes sure nothing else does. The Cell's last pass
+// before the edit must have asked for no requeue; this harness clamps every
+// RequeueAfter to RequeueClamp, so a Cell that was still rescheduling itself
+// would rerun within milliseconds and drain regardless of the predicate.
+// Nothing about the Cell's owned TopoServer, Deployment or Service changes
+// when it is orphaned, so the Owns() watches stay silent too. A predicate
+// that drops the annotation leaves the Cell annotated and never ready, and
+// this fails at the deletion wait.
+//
+// The orphan is produced through the API server the way a user can produce
+// it: the append-only rule on MultigresClusterSpec.Cells
+// (oldSelf.all(c, c.name in self.map(x, x.name))) is a transition rule on an
+// optional field, so the API server skips it when the new object has no
+// spec.cells at all, and a JSON patch removing the field is accepted. If that
+// gap is ever closed, this test fails at the patch below rather than passing
+// vacuously, and needs another route to an orphan Cell.
+//
+// The return trip restores spec.cells after the drain and requires a fresh
+// Cell, under the same name, that carries no PendingDeletion annotation and
+// brings the cluster back to Healthy. envtest runs no garbage collector, so
+// the deleted Cell's Deployment and Service outlive it here; the new Cell has
+// to adopt or replace them, which a real cluster would have collected first.
+func TestReadyForDeletionProtocol_OrphanCellDrains(t *testing.T) {
+	c := newCase(t)
+	cluster := c.MinimalCluster("scenario-del-cell")
+	c.WaitForClusterHealthy(cluster)
+
+	settled := &MultigresCluster{}
+	c.NoError(c.Get(client.ObjectKeyFromObject(cluster), settled), "get settled cluster")
+	originalCells := settled.Spec.Cells
+	c.Len(originalCells, 1, "want exactly one cell in spec before orphaning it")
+
+	cells := &multigresv1alpha1.CellList{}
+	c.NoError(
+		c.List(cells, client.MatchingLabels{"multigres.com/cluster": cluster.Name}),
+		"list cells",
+	)
+	c.Len(cells.Items, 1, "want exactly one Cell before orphaning it")
+	orphanKey := client.ObjectKeyFromObject(&cells.Items[0])
+	orphanUID := cells.Items[0].UID
+
+	// Quiescence lets every write-triggered reconcile finish; it cannot see
+	// a nil-error requeue that writes nothing, so the Cell's own last pass is
+	// checked for one separately.
+	c.RequireQuiescent(2*time.Second, 30*time.Second)
+	var lastPass *ctrltest.Reconcile
+	for _, r := range Suite.Reconciles.InNamespace(c.NS) {
+		if r.Controller == "cell" && !r.Gated && r.Request.NamespacedName == orphanKey {
+			lastPass = &r
+		}
+	}
+	c.NotNil(lastPass, "no recorded reconcile of Cell %s", orphanKey.Name)
+	c.True(lastPass.Err == nil && lastPass.RequestedAfter == 0,
+		"Cell %s's last pass before the edit asked to run again (err=%v, after=%s), "+
+			"which could drain it without the predicate", orphanKey.Name,
+		lastPass.Err, lastPass.RequestedAfter)
+
+	editAt := time.Now()
+	removeCells := []byte(`[{"op":"remove","path":"/spec/cells"}]`)
+	c.NoError(
+		c.Patch(settled, client.RawPatch(types.JSONPatchType, removeCells)),
+		"remove spec.cells",
+	)
+
+	c.Eventually(30*time.Second, "orphaned Cell "+orphanKey.Name+" to drain and be deleted",
+		func() error {
+			cell := &multigresv1alpha1.Cell{}
+			err := c.Get(orphanKey, cell)
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("still present: pendingDeletion=%q readyForDeletion=%v",
+				cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+				meta.IsStatusConditionTrue(cell.Status.Conditions,
+					multigresv1alpha1.ConditionReadyForDeletion))
+		})
+
+	// The deletion above is only correct if it went through the handshake:
+	// the Cell controller wrote its own status after the edit, and
+	// multigrescluster, which gates its delete on ReadyForDeletion, issued
+	// the delete. Polled rather than scanned once, because the recorder logs
+	// a write when the call returns, which can be after the API server has
+	// already made the Cell's absence visible to the read above.
+	c.Eventually(5*time.Second, "the drain of Cell "+orphanKey.Name+" to be attributed",
+		func() error {
+			cellAnswered, clusterDeleted := false, false
+			for _, op := range Suite.Ops.OpsInNamespace(c.NS) {
+				if op.Key != orphanKey || ctrltest.KindSuffix(op.Kind) != "Cell" ||
+					op.At.Before(editAt) {
+					continue
+				}
+				switch {
+				case op.Controller == "cell" && strings.HasPrefix(op.Verb, "status-"):
+					cellAnswered = true
+				case op.Controller == "multigrescluster" && op.Verb == "delete":
+					clusterDeleted = true
+				}
+			}
+			if !cellAnswered {
+				return fmt.Errorf("no status write from the cell controller after the edit")
+			}
+			if !clusterDeleted {
+				return fmt.Errorf("no delete recorded from multigrescluster")
+			}
+			return nil
+		})
+
+	// Return trip: putting the cell back must yield a working Cell, not one
+	// that inherits the drain.
+	c.updateCluster(cluster, func(got *MultigresCluster) {
+		got.Spec.Cells = originalCells
+	})
+	c.WaitForClusterHealthy(cluster)
+	c.Eventually(30*time.Second, "Cell "+orphanKey.Name+" to be recreated and Healthy",
+		func() error {
+			cell := &multigresv1alpha1.Cell{}
+			if err := c.Get(orphanKey, cell); err != nil {
+				return err
+			}
+			if cell.UID == orphanUID {
+				return fmt.Errorf("still the orphaned Cell (uid %s)", orphanUID)
+			}
+			if v := cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; v != "" {
+				return fmt.Errorf("recreated Cell carries PendingDeletion=%q", v)
+			}
+			if cell.Status.Phase != multigresv1alpha1.PhaseHealthy {
+				return fmt.Errorf("phase is %q", cell.Status.Phase)
+			}
+			return nil
+		})
+	c.RequireQuiescent(2*time.Second, 30*time.Second)
 }
 
 // conditionSetTrue reports whether ev records a status.conditions entry whose
