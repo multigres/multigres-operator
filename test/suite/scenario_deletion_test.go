@@ -1,11 +1,15 @@
 package suite
 
 import (
+	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -252,6 +256,150 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 	c.True(deletedByCluster,
 		"TableGroup %s disappeared without a recorded delete from multigrescluster",
 		orphanKey.Name)
+}
+
+// TestReadyForDeletionProtocol_AnnotationAloneStartsHandshake pins the first
+// hop of the same protocol TestReadyForDeletionProtocol exercises: that the
+// PendingDeletion annotation landing on a TableGroup, on its own, is enough
+// for TableGroupReconciler's watch to enqueue it.
+//
+// This is the production flow: a cluster is built with two TableGroups,
+// waited for and settled (RequireQuiescent), then one is removed from spec.
+// multigrescluster's own orphan-pruning loop is what discovers and annotates
+// it, by label, on an object that has existed and been idle for a while, not
+// on one just created. Its owner reference is left intact throughout, so the
+// delete that follows is attributable to the handshake rather than to an
+// orphan with no controller.
+//
+// The target TableGroup must be settled (RequireQuiescent) before it is
+// annotated, not built fresh and annotated immediately: TableGroupReconciler's
+// own For() watch and multigrescluster's Owns(TableGroup) watch both fire off
+// the same TableGroup-create API event, so a freshly created TableGroup risks
+// TableGroupReconciler's first reconcile already observing PendingDeletion
+// set, which would pass regardless of whether the update-path predicate under
+// test actually lets the annotation-only event through. Settling first makes
+// the annotation strictly an update to an old, idle object, isolating this
+// hop from that race.
+//
+// A second TableGroup requires the pooler simulator to elect a primary per
+// Shard rather than per namespace (test/suite/fakes.go): two TableGroups in
+// one namespace are two separate shards, and electing by namespace alone
+// leaves every pod but one without a primary in podRoles, so the namespace
+// would never reach RequireQuiescent.
+func TestReadyForDeletionProtocol_AnnotationAloneStartsHandshake(t *testing.T) {
+	c := newCase(t)
+
+	// MinimalCluster leaves Spec.Databases empty and relies on
+	// multigrescluster defaulting it in memory (this suite does not run the
+	// admission webhook that would otherwise persist that default), so there
+	// is no existing entry to append a second TableGroup to after the fact.
+	// Writing both explicitly at creation avoids needing to reconstruct
+	// whatever the reconciler would have defaulted.
+	const secondTGName = "second"
+	cluster := c.newCluster("scenario-del-annotation", func(spec *MultigresClusterSpec) {
+		spec.Databases = []multigresv1alpha1.DatabaseConfig{{
+			Name:    "postgres",
+			Default: true,
+			TableGroups: []multigresv1alpha1.TableGroupConfig{
+				{
+					Name:    "default",
+					Default: true,
+					Shards:  []multigresv1alpha1.ShardConfig{{Name: "0-inf"}},
+				},
+				{
+					Name:   secondTGName,
+					Shards: []multigresv1alpha1.ShardConfig{{Name: "0-inf"}},
+				},
+			},
+		}}
+	})
+
+	c.WaitForClusterHealthy(cluster)
+
+	tgLabels := client.MatchingLabels{
+		"multigres.com/cluster":    cluster.Name,
+		"multigres.com/tablegroup": secondTGName,
+	}
+	var secondTG multigresv1alpha1.TableGroup
+	c.Eventually(15*time.Second, "second tablegroup to be created", func() error {
+		found := &TableGroupList{}
+		if err := c.List(found, tgLabels); err != nil {
+			return err
+		}
+		if len(found.Items) != 1 {
+			return fmt.Errorf("got %d tablegroups matching %v, want 1", len(found.Items), tgLabels)
+		}
+		secondTG = found.Items[0]
+		return nil
+	})
+	secondKey := client.ObjectKeyFromObject(&secondTG)
+
+	var secondShard Shard
+	c.Eventually(15*time.Second, "second tablegroup's child shard to be created", func() error {
+		found := &ShardList{}
+		if err := c.List(found, tgLabels); err != nil {
+			return err
+		}
+		if len(found.Items) != 1 {
+			return fmt.Errorf("got %d shards matching %v, want 1", len(found.Items), tgLabels)
+		}
+		secondShard = found.Items[0]
+		return nil
+	})
+	secondShardKey := client.ObjectKeyFromObject(&secondShard)
+
+	// Settles both TableGroups' own Create-triggered reconciles, and their
+	// Shards converging to Healthy, before either is removed from spec. What
+	// follows tests only the update-path predicate against an object that
+	// has been sitting idle.
+	c.RequireQuiescent(10*time.Second, 90*time.Second)
+
+	c.NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &MultigresCluster{}
+		if err := c.Get(client.ObjectKeyFromObject(cluster), fresh); err != nil {
+			return err
+		}
+		fresh.Spec.Databases[0].TableGroups = slices.DeleteFunc(
+			fresh.Spec.Databases[0].TableGroups,
+			func(tg multigresv1alpha1.TableGroupConfig) bool {
+				return string(tg.Name) == secondTGName
+			},
+		)
+		return c.Update(fresh)
+	}), "remove second tablegroup")
+
+	// multigrescluster's orphan-pruning loop discovers the removed
+	// TableGroup by label and annotates it with PendingDeletion. The only
+	// actor that can then put PendingDeletion onto the child Shard is the
+	// TableGroup's own reconcile, and the only way that reconcile gets
+	// enqueued is the manager's watch evaluating the For predicate against
+	// that annotation-only update.
+	waitCtx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	for {
+		var shard Shard
+		err := c.Get(secondShardKey, &shard)
+		if apierrors.IsNotFound(err) {
+			// Gone through the full handshake, including garbage collection
+			// once the parent itself was deleted.
+			return
+		}
+		c.NoError(err, "get second tablegroup's child shard")
+		if shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion] != "" {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf(
+				"child Shard %s never received PendingDeletion after the parent "+
+					"TableGroup %s was removed from the cluster spec; the For "+
+					"predicate dropped multigrescluster's annotation-only update "+
+					"and nothing else was left to revisit either object",
+				secondShardKey.Name, secondKey.Name,
+			)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // conditionSetTrue reports whether ev records a status.conditions entry whose
