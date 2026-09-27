@@ -3348,6 +3348,22 @@ func TestIsShardHealthy_MissingPodCountsAsUnhealthy(t *testing.T) {
 	}
 }
 
+// sharedBackupPVCTestShard returns the Shard fixture shared by the
+// TestReconcileSharedBackupPVC subtests that exercise a filesystem-backed PVC.
+func sharedBackupPVCTestShard() *multigresv1alpha1.Shard {
+	return &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-shard", Namespace: "default",
+			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "db",
+			TableGroupName: "tg",
+			ShardName:      "s1",
+		},
+	}
+}
+
 func TestReconcileSharedBackupPVC(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -3375,17 +3391,7 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 	})
 
 	t.Run("nil backup creates PVC with defaults", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-shard", Namespace: "default",
-				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
-			},
-			Spec: multigresv1alpha1.ShardSpec{
-				DatabaseName:   "db",
-				TableGroupName: "tg",
-				ShardName:      "s1",
-			},
-		}
+		shard := sharedBackupPVCTestShard()
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -3406,17 +3412,7 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 	})
 
 	t.Run("error on patch failure", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-shard", Namespace: "default",
-				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
-			},
-			Spec: multigresv1alpha1.ShardSpec{
-				DatabaseName:   "db",
-				TableGroupName: "tg",
-				ShardName:      "s1",
-			},
-		}
+		shard := sharedBackupPVCTestShard()
 
 		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
@@ -3432,6 +3428,102 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 		err := r.reconcileSharedBackupPVC(context.Background(), shard)
 		if err == nil {
 			t.Error("expected error on PVC patch failure")
+		}
+	})
+
+	// cleanupShardPVCs marks the shared backup PVC orphan rather than
+	// deleting it, because resolvePodIndex finds no ordinal in its
+	// name-hash suffix. The apply below does not undo that: the payload
+	// never mentions the label, and server-side apply only removes fields
+	// this manager already owns. So the reclaim path has to clear it
+	// explicitly, or multigres-gc collects a backup volume that is back in
+	// active use.
+	t.Run("reuse clears a stale orphan label", func(t *testing.T) {
+		shard := sharedBackupPVCTestShard()
+
+		stale, err := BuildSharedBackupPVC(shard, true, scheme)
+		if err != nil {
+			t.Fatalf("build shared backup PVC: %v", err)
+		}
+		stale.Labels[metadata.LabelOrphan] = "2026-09-19T00:00:00Z"
+		stale.OwnerReferences = nil
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, stale).Build()
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(t.Context(), shard); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := c.Get(
+			t.Context(),
+			types.NamespacedName{Name: stale.Name, Namespace: "default"},
+			pvc,
+		); err != nil {
+			t.Fatalf("PVC should exist: %v", err)
+		}
+		if since, ok := pvc.Labels[metadata.LabelOrphan]; ok {
+			t.Errorf(
+				"shared backup PVC %s still carries %s=%s after being reclaimed",
+				pvc.Name, metadata.LabelOrphan, since,
+			)
+		}
+	})
+
+	// The pre-existing "error on patch failure" subtest above seeds no PVC, so
+	// ClearOrphan returns early without patching and only the SSA patch below
+	// it ever sees the injected failure. This pins the clear itself: a
+	// swallowed ClearOrphan error would otherwise fall through to SSA and
+	// report success with the orphan label still on the PVC. The failure is
+	// keyed off ResourceVersion rather than type, since both the merge patch
+	// (ClearOrphan, on the object just fetched by Get, which carries the
+	// fake client's assigned ResourceVersion) and the SSA apply (on a freshly
+	// built object with none) are the same *corev1.PersistentVolumeClaim type.
+	t.Run("error on clear-orphan patch failure", func(t *testing.T) {
+		shard := sharedBackupPVCTestShard()
+
+		stale, err := BuildSharedBackupPVC(shard, true, scheme)
+		if err != nil {
+			t.Fatalf("build shared backup PVC: %v", err)
+		}
+		stale.Labels[metadata.LabelOrphan] = "2026-09-19T00:00:00Z"
+		stale.OwnerReferences = nil
+
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, stale).Build()
+		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+			OnPatch: func(obj client.Object) error {
+				pvc, ok := obj.(*corev1.PersistentVolumeClaim)
+				if ok && pvc.ResourceVersion != "" {
+					return testutil.ErrNetworkTimeout
+				}
+				return nil
+			},
+		})
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(t.Context(), shard); err == nil {
+			t.Error("expected error when clearing the orphan label fails")
+		}
+	})
+
+	t.Run("error on read failure before reclaim", func(t *testing.T) {
+		shard := sharedBackupPVCTestShard()
+		pvcName := BuildSharedBackupPVCName(shard)
+
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+			OnGet: func(key client.ObjectKey) error {
+				if key.Name == pvcName {
+					return testutil.ErrNetworkTimeout
+				}
+				return nil
+			},
+		})
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(t.Context(), shard); err == nil {
+			t.Error("expected error when the existing shared backup PVC cannot be read")
 		}
 	})
 }
