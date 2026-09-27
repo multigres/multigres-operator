@@ -14,9 +14,13 @@ import (
 )
 
 // reconcilePoolerReadiness projects Multigres's own data-plane assessment onto
-// the Pod readiness gate consumed by Kubernetes and the shard PDB. Missing
-// observations fail closed so a newly-created or unreachable pooler is not
-// counted toward the disruption budget.
+// the Pod readiness gate consumed by Kubernetes and the shard PDB. The gate is
+// only satisfied by a condition Status of exactly True, so a missing
+// observation still fails closed: it reports Unknown rather than manufacturing
+// a negative result Multigres never gave, but Unknown is just as unready as
+// False to every reader of this condition. Only an actual negative assessment
+// from Multigres (the pooler responded, and reports not ready) is reported
+// False.
 func (r *ShardReconciler) reconcilePoolerReadiness(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -42,17 +46,29 @@ func (r *ShardReconciler) reconcilePoolerReadiness(
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		observation, ok := observations[pod.Name]
-		if !ok {
-			observation = posture.Readiness{
-				Reason:  "ObservationUnavailable",
-				Message: "Multigres data-plane readiness has not been observed",
+
+		// An observation Multigres actually made can be True or False; a
+		// missing one is neither, since nothing was observed to be wrong.
+		// Reporting it False would assert a negative Multigres never gave,
+		// so it is Unknown instead: still not True, so the readiness gate
+		// still fails closed, but not a fabricated claim of unreadiness.
+		// observation.Observed is what actually distinguishes the two: a
+		// map entry can exist (ok is true) for a pod posture.Evaluate seeded
+		// but never got to check, e.g. because its cell's own topology
+		// listing failed partway through the same pass. When an entry exists
+		// but is unobserved, posture.Evaluate already set a Reason/Message
+		// for it (e.g. a failed Status RPC), which is more useful on the pod
+		// than a generic placeholder, so it is kept rather than overwritten.
+		conditionStatus := corev1.ConditionUnknown
+		if ok && observation.Observed {
+			conditionStatus = corev1.ConditionFalse
+			if observation.Ready {
+				conditionStatus = corev1.ConditionTrue
 			}
+		} else if !ok {
+			observation = posture.UnobservedReadiness
 		}
 
-		conditionStatus := corev1.ConditionFalse
-		if observation.Ready {
-			conditionStatus = corev1.ConditionTrue
-		}
 		if poolerReadinessConditionMatches(
 			pod.Status.Conditions,
 			conditionStatus,

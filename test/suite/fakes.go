@@ -2,6 +2,7 @@ package suite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,9 +36,10 @@ const defaultSimCell = "zone-a"
 type topoRegistry struct {
 	ctx context.Context
 
-	mu     sync.Mutex
-	stores map[string]topoclient.Store
-	facts  map[string]*memorytopo.Factory
+	mu               sync.Mutex
+	stores           map[string]topoclient.Store
+	facts            map[string]*memorytopo.Factory
+	callsUnavailable map[string]bool
 }
 
 func newTopoRegistry(ctx context.Context) *topoRegistry {
@@ -73,7 +75,77 @@ func (r *topoRegistry) client(ns string) (topoclient.Store, error) {
 
 // ForShard is ShardReconciler.CreateTopoStore.
 func (r *topoRegistry) ForShard(shard *Shard) (topoclient.Store, error) {
-	return r.client(shard.Namespace)
+	store, err := r.client(shard.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	// Always wrapped, not only while a call-failure outage is active: the
+	// wrapper delegates straight through when callsUnavailable is unset for
+	// ns, so this costs nothing and keeps ForShard's return type uniform
+	// regardless of which mode (if any) a test is using.
+	return callFailingTopoStore{Store: store, registry: r, ns: shard.Namespace}, nil
+}
+
+// callFailingTopoStore wraps a real, working topoclient.Store but forces
+// GetMultipoolersByCell to fail UNAVAILABLE while its namespace's call-failure
+// mode is active. This is production's actual outage shape:
+// topoclient.OpenServer (topo.NewStoreFromShard's real path) wraps the
+// connection in a WrapperConn whose dial is lazy, so a store handle is always
+// valid and it is the calls against it that fail once the underlying
+// connection is down. A config-level dial failure (a bad TLS Secret, an
+// unknown implementation name) is a different, narrower case, covered
+// directly in the shard package's own unit tests via CreateTopoStore rather
+// than through this registry. Also note this only fails
+// GetMultipoolersByCell: it is not a general outage model, so it says nothing
+// about, say, a Status RPC against a pooler client failing.
+type callFailingTopoStore struct {
+	topoclient.Store
+	registry *topoRegistry
+	ns       string
+}
+
+// errCallsUnavailable satisfies topo.IsTopoUnavailable the same way
+// WrapperConn.getConnection's real UNAVAILABLE error does.
+var errCallsUnavailable = errors.New(
+	"no connection available: topology calls simulated unavailable",
+)
+
+func (s callFailingTopoStore) GetMultipoolersByCell(
+	ctx context.Context,
+	cellName string,
+	opt *topoclient.GetMultipoolersByCellOptions,
+) ([]*topoclient.MultipoolerInfo, error) {
+	if s.registry.callsFail(s.ns) {
+		return nil, errCallsUnavailable
+	}
+	return s.Store.GetMultipoolersByCell(ctx, cellName, opt)
+}
+
+// SetCallsUnavailable makes every namespaced topo store's GetMultipoolersByCell
+// fail UNAVAILABLE for ns until the returned function is called, without ever
+// making the dial itself fail. Use this to simulate an etcd outage.
+func (r *topoRegistry) SetCallsUnavailable(ns string) func() {
+	r.mu.Lock()
+	if r.callsUnavailable == nil {
+		r.callsUnavailable = map[string]bool{}
+	}
+	r.callsUnavailable[ns] = true
+	r.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			delete(r.callsUnavailable, ns)
+			r.mu.Unlock()
+		})
+	}
+}
+
+func (r *topoRegistry) callsFail(ns string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.callsUnavailable[ns]
 }
 
 // ForClusterRef is MultigresClusterReconciler.CreateTopoStore. The ref carries

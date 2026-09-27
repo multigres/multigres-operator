@@ -373,6 +373,11 @@ func TestEvaluate(t *testing.T) {
 		if !result.Incomplete {
 			t.Error("expected RPC failure to mark observation incomplete")
 		}
+		// A failed Status RPC is a gap in observation, not Multigres reporting
+		// the pooler unhealthy: it must not be confused with a real negative.
+		if result.Readiness["replica-pod"].Observed {
+			t.Error("expected Observed=false when the Status RPC itself failed")
+		}
 	})
 
 	t.Run("unavailable topology cell returns incomplete observation", func(t *testing.T) {
@@ -385,7 +390,7 @@ func TestEvaluate(t *testing.T) {
 		}
 
 		result, err := posture.Evaluate(
-			context.Background(), store, rpcclient.NewFakeClient(), shard, nil,
+			t.Context(), store, rpcclient.NewFakeClient(), shard, []string{"replica-pod"},
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -395,6 +400,59 @@ func TestEvaluate(t *testing.T) {
 		}
 		if result.Message != "posture observation incomplete" {
 			t.Errorf("unexpected message: %q", result.Message)
+		}
+		// A pod that never matched anything is only a confirmed absence once
+		// every cell was actually listed. Here the shard's one cell failed to
+		// list at all, so the pod must not be reported as a real
+		// AwaitingRegistration negative.
+		readiness := result.Readiness["replica-pod"]
+		if readiness.Observed {
+			t.Error("expected Observed=false when the pod's cell failed to list")
+		}
+		if readiness.Ready {
+			t.Error("expected Ready=false for an unmatched pod")
+		}
+	})
+
+	t.Run("unregistered pod on reachable topology is a confirmed negative", func(t *testing.T) {
+		t.Parallel()
+		shard := testShard()
+
+		replica := poolerInfo(
+			"replica-pod", clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
+			clustermetadata.PoolerLifecycleStatus_LIFECYCLE_UNKNOWN,
+		)
+		store := &mockTopoStore{
+			getMultipoolersByCellFunc: func(ctx context.Context, cellName string, opt *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{replica}, nil
+			},
+		}
+		rpc := rpcclient.NewFakeClient()
+		withStatus(rpc, replica, multipoolermanagerdata.PostgresStatus_POSTGRES_STATUS_STANDBY)
+
+		result, err := posture.Evaluate(
+			t.Context(), store, rpc, shard,
+			[]string{"replica-pod", "not-yet-registered-pod"},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected result, got nil")
+		}
+		// The cell listing succeeded outright, so a pod this shard manages
+		// but topology has never heard of is a real, confirmed fact, not a
+		// gap: it must read as an actual negative, exactly as before this
+		// package tracked Observed at all.
+		readiness := result.Readiness["not-yet-registered-pod"]
+		if !readiness.Observed {
+			t.Error("expected Observed=true: the cell was listed successfully")
+		}
+		if readiness.Ready {
+			t.Error("expected Ready=false for a pod topology has never heard of")
+		}
+		if readiness.Reason != "AwaitingRegistration" {
+			t.Errorf("reason = %q, want AwaitingRegistration", readiness.Reason)
 		}
 	})
 

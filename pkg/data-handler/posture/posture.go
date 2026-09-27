@@ -42,19 +42,40 @@ type Result struct {
 // connections, the pooler is willing to participate, and its committed rule
 // includes it in the shard cohort.
 type Readiness struct {
-	Ready   bool
-	Reason  string
-	Message string
+	Ready bool
+	// Observed reports whether this is a real answer from Multigres: a
+	// topology entry whose Status RPC succeeded, or a confirmed absence from
+	// a cell that was actually listed. It is false for a gap in observation
+	// instead: a cell whose listing failed, or a Status RPC that itself
+	// failed. Ready is only ever true when Observed is true, so a caller that
+	// only checks Ready already treats an unobserved pooler as not ready;
+	// reconcilePoolerReadiness additionally reports Unknown rather than False
+	// whenever Observed is false, so a lost observation is never confused
+	// with Multigres itself reporting the pooler not ready.
+	Observed bool
+	Reason   string
+	Message  string
 }
 
 // reasonAwaitingRegistration is the readiness reason carried by a managed pod
-// that has no corresponding pooler in the shard topology.
+// confirmed absent from the shard topology: every cell was listed
+// successfully and none of them had a matching pooler.
 //
-// Every managed pod is seeded with it and only overwritten once a topology
-// entry matches. Note this is NOT what Result.Incomplete reports: that covers
-// an unreachable cell, a topology entry with no matching pod, or an UNKNOWN
-// posture, all of which are the opposite direction.
+// It is recorded only by the confirmation loop below, once every cell has
+// actually been listed. Note this is NOT what Result.Incomplete reports: that
+// covers an unreachable cell, a topology entry with no matching pod, or an
+// UNKNOWN posture, all of which are the opposite direction.
 const reasonAwaitingRegistration = "AwaitingRegistration"
+
+// UnobservedReadiness is the Readiness recorded for a managed pod before
+// Evaluate has confirmed it one way or the other. reconcilePoolerReadiness
+// uses the same value for a pod it has no Evaluate result for at all (e.g.
+// a config-level topology dial error), so both gaps in observation read
+// identically on the pod.
+var UnobservedReadiness = Readiness{
+	Reason:  "ObservationUnavailable",
+	Message: "Multigres data-plane readiness has not been observed",
+}
 
 // Evaluate compares each managed pooler's observed postgres state with its
 // topology role. It returns nil when topology contains no active poolers, as
@@ -69,19 +90,29 @@ func Evaluate(
 	postures := make(map[string]string)
 	readiness := make(map[string]Readiness, len(managedPodNames))
 	for _, podName := range managedPodNames {
-		readiness[podName] = Readiness{
-			Reason:  reasonAwaitingRegistration,
-			Message: "pooler has not registered in the shard topology",
-		}
+		readiness[podName] = UnobservedReadiness
 	}
 	isTopoPrimary := make(map[string]bool)
 	incomplete := false
+	// cellUnavailable, distinct from incomplete: incomplete also covers an
+	// orphaned topology entry or an UNKNOWN posture reading, neither of which
+	// says anything about whether an unmatched managed pod was actually
+	// checked. cellUnavailable specifically means at least one cell's own
+	// listing failed, so a pod that never matched any entry might simply
+	// belong to that cell rather than being confirmed absent everywhere.
+	// It is shard-global rather than per-cell, so one cell failing its
+	// listing reports Unknown even for unmatched pods in other, healthy
+	// cells; conservative, since the alternative is guessing which cell an
+	// unmatched pod would have belonged to.
+	cellUnavailable := false
+	matched := make(map[string]bool, len(managedPodNames))
 
 	for _, cell := range topo.CollectCells(shard) {
 		poolers, err := store.GetMultipoolersByCell(ctx, cell, topo.ShardFilter(shard))
 		if err != nil {
 			if topo.IsTopoUnavailable(err) {
 				incomplete = true
+				cellUnavailable = true
 				continue
 			}
 			return nil, fmt.Errorf("listing poolers in cell %q for posture check: %w", cell, err)
@@ -103,8 +134,27 @@ func Evaluate(
 				rpcClient,
 				p.Multipooler,
 			)
+			matched[podName] = true
 			if postures[podName] == "UNKNOWN" {
 				incomplete = true
+			}
+		}
+	}
+
+	// A pod that never matched any topology entry is a confirmed
+	// "not registered" fact only once every cell was actually listed. If any
+	// cell's own listing failed, an unmatched pod might simply belong to
+	// that cell, and reporting it as a confirmed AwaitingRegistration
+	// negative would assert something that was never actually checked.
+	if !cellUnavailable {
+		for _, podName := range managedPodNames {
+			if matched[podName] {
+				continue
+			}
+			readiness[podName] = Readiness{
+				Observed: true,
+				Reason:   reasonAwaitingRegistration,
+				Message:  "pooler has not registered in the shard topology",
 			}
 		}
 	}
@@ -170,8 +220,9 @@ func observePooler(
 	resp, err := rpcClient.Status(rpcCtx, mp, &multipoolermanagerdatapb.StatusRequest{})
 	if err != nil {
 		return "UNKNOWN", Readiness{
-			Reason:  "StatusUnavailable",
-			Message: fmt.Sprintf("multipooler status RPC failed: %v", err),
+			Observed: false,
+			Reason:   "StatusUnavailable",
+			Message:  fmt.Sprintf("multipooler status RPC failed: %v", err),
 		}
 	}
 	return poolerReadiness(resp, mp.GetId())
@@ -185,14 +236,16 @@ func poolerReadiness(
 	posture := postureString(status.GetPostgresStatus())
 	if !status.GetIsInitialized() {
 		return posture, Readiness{
-			Reason:  "NotInitialized",
-			Message: "pooler initialization has not completed",
+			Observed: true,
+			Reason:   "NotInitialized",
+			Message:  "pooler initialization has not completed",
 		}
 	}
 	if !status.GetPostgresReady() {
 		return posture, Readiness{
-			Reason:  "PostgresNotReady",
-			Message: "PostgreSQL is not accepting connections",
+			Observed: true,
+			Reason:   "PostgresNotReady",
+			Message:  "PostgreSQL is not accepting connections",
 		}
 	}
 	eligibility := resp.GetAvailabilityStatus().GetCohortEligibilityStatus()
@@ -200,20 +253,23 @@ func poolerReadiness(
 		eligibility.GetSignal() !=
 			clustermetadatapb.CohortEligibilitySignal_COHORT_ELIGIBILITY_SIGNAL_ELIGIBLE {
 		return posture, Readiness{
-			Reason:  "CohortIneligible",
-			Message: "pooler is not eligible to participate in the shard cohort",
+			Observed: true,
+			Reason:   "CohortIneligible",
+			Message:  "pooler is not eligible to participate in the shard cohort",
 		}
 	}
 	if !committedCohortContains(resp, id) {
 		return posture, Readiness{
-			Reason:  "NotCohortMember",
-			Message: "pooler is not a member of its committed shard cohort",
+			Observed: true,
+			Reason:   "NotCohortMember",
+			Message:  "pooler is not a member of its committed shard cohort",
 		}
 	}
 	return posture, Readiness{
-		Ready:   true,
-		Reason:  "DataPlaneReady",
-		Message: "PostgreSQL is ready and the pooler is an eligible shard cohort member",
+		Observed: true,
+		Ready:    true,
+		Reason:   "DataPlaneReady",
+		Message:  "PostgreSQL is ready and the pooler is an eligible shard cohort member",
 	}
 }
 
