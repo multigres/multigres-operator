@@ -13,11 +13,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/cert"
 	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 // reconcilePgHbaConfigMap creates or updates the pg_hba ConfigMap for a shard.
@@ -346,6 +348,18 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply shared backup PVC: %w", err)
+	}
+
+	// Tearing a Shard down marks this PVC orphan rather than deleting it
+	// (cleanupShardPVCs), and a replacement Shard of the same name reclaims
+	// it. The apply above cannot undo the mark: the payload never mentions
+	// the label, and server-side apply only removes fields this manager
+	// owns, while MarkOrphan wrote it with a merge patch. Left in place,
+	// multigres-gc deletes a backup volume that is back in service. The
+	// apply response is the server's copy of the PVC, so the label is
+	// checked against current state rather than a possibly stale cache.
+	if err := pvcutil.ClearOrphan(ctx, log.FromContext(ctx), r.Client, desired); err != nil {
+		return fmt.Errorf("failed to clear orphan label on shared backup PVC: %w", err)
 	}
 
 	r.Recorder.Eventf(

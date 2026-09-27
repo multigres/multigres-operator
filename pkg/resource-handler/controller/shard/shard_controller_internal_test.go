@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +36,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 // Helper functions moved from shard_controller_test_util_test.go
@@ -3351,6 +3353,22 @@ func TestIsShardHealthy_MissingPodCountsAsUnhealthy(t *testing.T) {
 	}
 }
 
+// sharedBackupPVCTestShard returns the Shard fixture shared by the
+// TestReconcileSharedBackupPVC subtests that exercise a filesystem-backed PVC.
+func sharedBackupPVCTestShard() *multigresv1alpha1.Shard {
+	return &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-shard", Namespace: "default",
+			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "db",
+			TableGroupName: "tg",
+			ShardName:      "s1",
+		},
+	}
+}
+
 func TestReconcileSharedBackupPVC(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -3378,17 +3396,7 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 	})
 
 	t.Run("nil backup creates PVC with defaults", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-shard", Namespace: "default",
-				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
-			},
-			Spec: multigresv1alpha1.ShardSpec{
-				DatabaseName:   "db",
-				TableGroupName: "tg",
-				ShardName:      "s1",
-			},
-		}
+		shard := sharedBackupPVCTestShard()
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
@@ -3409,17 +3417,7 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 	})
 
 	t.Run("error on patch failure", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "test-shard", Namespace: "default",
-				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
-			},
-			Spec: multigresv1alpha1.ShardSpec{
-				DatabaseName:   "db",
-				TableGroupName: "tg",
-				ShardName:      "s1",
-			},
-		}
+		shard := sharedBackupPVCTestShard()
 
 		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
@@ -3435,6 +3433,120 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 		err := r.reconcileSharedBackupPVC(context.Background(), shard)
 		if err == nil {
 			t.Error("expected error on PVC patch failure")
+		}
+	})
+
+	// orphanedBackupPVC seeds the state a torn-down Shard leaves behind: the
+	// PVC its builder produced, then marked by the same MarkOrphan call
+	// cleanupShardPVCs makes, which stamps the label and strips the dead
+	// Shard's ownerRef.
+	orphanedBackupPVC := func(t *testing.T, c client.Client, dead *multigresv1alpha1.Shard) {
+		t.Helper()
+		pvc, err := BuildSharedBackupPVC(dead, ShouldDeleteShardLevelPVCOnRemoval(dead), scheme)
+		if err != nil {
+			t.Fatalf("build shared backup PVC: %v", err)
+		}
+		if err := c.Create(t.Context(), pvc); err != nil {
+			t.Fatalf("create shared backup PVC: %v", err)
+		}
+		now := time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC)
+		if err := pvcutil.MarkOrphan(t.Context(), c, pvc, dead.UID, now); err != nil {
+			t.Fatalf("mark shared backup PVC orphan: %v", err)
+		}
+		if !pvcutil.HasOrphanLabel(pvc) || len(pvc.OwnerReferences) != 0 {
+			t.Fatalf("seed is not an orphan: labels=%v owners=%v", pvc.Labels, pvc.OwnerReferences)
+		}
+	}
+
+	// Two incarnations of one Shard: same name, so the same PVC name, but a
+	// new UID, as when a TableGroup recreates a deleted child.
+	incarnation := func(uid types.UID, policy multigresv1alpha1.PVCRetentionPolicyType) *multigresv1alpha1.Shard {
+		shard := sharedBackupPVCTestShard()
+		shard.UID = uid
+		shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{WhenDeleted: policy}
+		return shard
+	}
+
+	// The server-side apply cannot remove the label: the payload never
+	// mentions it, and SSA only removes fields this manager owns, while
+	// MarkOrphan wrote it with a merge patch.
+	t.Run("reclaim by a replacement shard clears the orphan label", func(t *testing.T) {
+		dead := incarnation("uid-dead", multigresv1alpha1.DeletePVCRetentionPolicy)
+		live := incarnation("uid-live", multigresv1alpha1.DeletePVCRetentionPolicy)
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+		orphanedBackupPVC(t, c, dead)
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(t.Context(), live); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{}
+		key := types.NamespacedName{Name: BuildSharedBackupPVCName(live), Namespace: "default"}
+		if err := c.Get(t.Context(), key, pvc); err != nil {
+			t.Fatalf("PVC should exist: %v", err)
+		}
+		if since, ok := pvc.Labels[metadata.LabelOrphan]; ok {
+			t.Errorf("reclaimed PVC %s still carries %s=%s", pvc.Name, metadata.LabelOrphan, since)
+		}
+		owner := metav1.GetControllerOf(pvc)
+		if owner == nil || owner.UID != live.UID {
+			t.Errorf("reclaimed PVC controller = %v, want the live shard %s", owner, live.UID)
+		}
+	})
+
+	// The policy can change between the teardown and the reclaim. Under
+	// Retain the apply adds no ownerRef, and reconcilePVCOwnerRefs skips
+	// orphan-labelled PVCs, so nothing else would ever clear it either.
+	t.Run("reclaim under a Retain policy still clears the orphan label", func(t *testing.T) {
+		dead := incarnation("uid-dead", multigresv1alpha1.DeletePVCRetentionPolicy)
+		live := incarnation("uid-live", multigresv1alpha1.RetainPVCRetentionPolicy)
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+		orphanedBackupPVC(t, c, dead)
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(t.Context(), live); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{}
+		key := types.NamespacedName{Name: BuildSharedBackupPVCName(live), Namespace: "default"}
+		if err := c.Get(t.Context(), key, pvc); err != nil {
+			t.Fatalf("PVC should exist: %v", err)
+		}
+		if since, ok := pvc.Labels[metadata.LabelOrphan]; ok {
+			t.Errorf("reclaimed PVC %s still carries %s=%s", pvc.Name, metadata.LabelOrphan, since)
+		}
+		if owner := metav1.GetControllerOf(pvc); owner != nil {
+			t.Errorf("Retain-policy PVC has controller %v, want none", owner)
+		}
+	})
+
+	// A swallowed clear failure would report success with the label still
+	// on the PVC. The SSA payload is a freshly built object with no
+	// ResourceVersion; the clear patches the apply response, which has one,
+	// so that is what tells the two patches apart.
+	t.Run("error on clear-orphan patch failure", func(t *testing.T) {
+		dead := incarnation("uid-dead", multigresv1alpha1.DeletePVCRetentionPolicy)
+		live := incarnation("uid-live", multigresv1alpha1.DeletePVCRetentionPolicy)
+
+		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live).Build()
+		orphanedBackupPVC(t, base, dead)
+		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+			OnPatch: func(obj client.Object) error {
+				pvc, ok := obj.(*corev1.PersistentVolumeClaim)
+				if ok && pvc.ResourceVersion != "" {
+					return testutil.ErrNetworkTimeout
+				}
+				return nil
+			},
+		})
+		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+		if err := r.reconcileSharedBackupPVC(t.Context(), live); err == nil {
+			t.Error("expected error when clearing the orphan label fails")
 		}
 	})
 }
