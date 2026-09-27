@@ -114,6 +114,10 @@ func postureTestReconciler(
 	}, c
 }
 
+// postureTestPod is a pool pod: reconcilePosture's own pod list is scoped to
+// PoolComponentName (a shard's multiorch pod carries the same four identity
+// labels but is never a pooler), so a pod fixture without this label is
+// invisible to it regardless of what the test otherwise sets up.
 func postureTestPod() *corev1.Pod {
 	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Name:      "pooler-0",
@@ -123,6 +127,7 @@ func postureTestPod() *corev1.Pod {
 			metadata.LabelMultigresDatabase:   "database",
 			metadata.LabelMultigresTableGroup: "table-group",
 			metadata.LabelMultigresShard:      "0",
+			metadata.LabelAppComponent:        PoolComponentName,
 		},
 	}}
 }
@@ -244,8 +249,14 @@ func TestReconcilePostureDebouncesFirstInconsistency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second reconcilePosture() error = %v", err)
 	}
-	if retryAfter != 0 {
-		t.Error("second inconsistent posture observation requested another debounce requeue")
+	// The mismatch is now accepted into status (PostureConsistent=False), but
+	// this mock pooler never reports IsInitialized/PostgresReady, so it has
+	// also never reached posture readiness. An accepted-but-not-ready shard
+	// must keep requesting a requeue: nothing but this controller's own
+	// backoff will ever look again, since neither a status recovery in
+	// topology nor a role fix changes a Kubernetes object.
+	if retryAfter <= 0 {
+		t.Error("second inconsistent posture observation (still not ready) requested no requeue")
 	}
 	if !conditionIsFalse(shard.Status.Conditions, posture.ConditionConsistent) {
 		t.Errorf(
@@ -296,8 +307,11 @@ func TestReconcilePostureDebouncesFirstIncompleteObservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second reconcilePosture() error = %v", err)
 	}
-	if retryAfter != 0 {
-		t.Error("second incomplete posture observation requested another debounce requeue")
+	// Accepted into status (Unknown/ObservationIncomplete), but a pooler whose
+	// Status RPC errors has also never reached posture readiness, so this must
+	// still requeue rather than strand the pod until the 10h resync.
+	if retryAfter <= 0 {
+		t.Error("second incomplete posture observation (still not ready) requested no requeue")
 	}
 	for _, condition := range shard.Status.Conditions {
 		if condition.Type != posture.ConditionConsistent {

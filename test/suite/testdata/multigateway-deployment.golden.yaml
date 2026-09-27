@@ -1,0 +1,89 @@
+metadata:
+  labels:
+    app.kubernetes.io/component: multigateway
+    app.kubernetes.io/instance: golden-cluster
+    app.kubernetes.io/managed-by: multigres-operator
+    app.kubernetes.io/name: multigres
+    app.kubernetes.io/part-of: multigres
+    multigres.com/cell: zone1
+  name: golden-cluster-zone1-multigateway-90bac2c9
+  namespace: default
+  ownerReferences:
+  - apiVersion: multigres.com/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: Cell
+    name: golden-cell
+    uid: golden-cell-uid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: multigateway
+      app.kubernetes.io/instance: golden-cluster
+      multigres.com/cell: zone1
+  strategy: {}
+  template:
+    metadata:
+      annotations:
+        multigres.com/project-ref: golden-cluster
+      labels:
+        app.kubernetes.io/component: multigateway
+        app.kubernetes.io/instance: golden-cluster
+        app.kubernetes.io/managed-by: multigres-operator
+        app.kubernetes.io/name: multigres
+        app.kubernetes.io/part-of: multigres
+        multigres.com/cell: zone1
+    spec:
+      containers:
+      - args:
+        - multigateway
+        - --http-port
+        - "15100"
+        - --grpc-port
+        - "15170"
+        - --pg-port
+        - "5432"
+        - --pg-replica-port
+        - "5433"
+        - --topo-global-server-addresses
+        - global-topo:2379
+        - --topo-global-root
+        - /multigres/global
+        - --cell
+        - zone1
+        - --log-level
+        - info
+        image: ghcr.io/multigres/multigres:golden-fixture
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 15100
+          periodSeconds: 10
+        name: multigateway
+        ports:
+        - containerPort: 15100
+          name: http
+          protocol: TCP
+        - containerPort: 15170
+          name: grpc
+          protocol: TCP
+        - containerPort: 5432
+          name: postgres
+          protocol: TCP
+        - containerPort: 5433
+          name: pg-replica
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 15100
+          periodSeconds: 5
+        resources: {}
+        startupProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /ready
+            port: 15100
+          periodSeconds: 5
+status: {}

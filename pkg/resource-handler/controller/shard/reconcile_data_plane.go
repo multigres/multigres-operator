@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -73,7 +74,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 
 			// A resolver error breaks the sequence of posture observations. It must
 			// not let a strike from before the transport outage combine with the
-			// first unsettled observation after recovery.
+			// first unsettled observation after recovery. notConvergedSince needs no
+			// matching reset here: this path (like the nil-topology one below)
+			// returns its own fixed delay independent of that map, so a stale entry
+			// left over from before the outage only shortens the path to the
+			// backoff's ceiling once posture resumes, it never suppresses a requeue
+			// that is actually owed. That is intentional, not a gap.
 			r.recordPostureObservation(shard, false)
 
 			// A partial observation cannot clear a confirmed posture failure. Keep a
@@ -205,8 +211,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 				shard,
 				fmt.Sprintf("Failed to check backup health: %v", err),
 			)
-			if patchErr := r.Status().
-				Patch(ctx, shard, client.MergeFrom(backupBase)); patchErr != nil {
+			if patchErr := r.Status().Patch(
+				ctx,
+				shard,
+				client.MergeFrom(backupBase),
+				client.FieldOwner("multigres-resource-handler"),
+			); patchErr != nil {
 				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
 			}
 		} else if result != nil {
@@ -222,7 +232,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 				r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
 			}
 
-			if err := r.Status().Patch(ctx, shard, client.MergeFrom(backupBase)); err != nil {
+			if err := r.Status().Patch(
+				ctx,
+				shard,
+				client.MergeFrom(backupBase),
+				client.FieldOwner("multigres-resource-handler"),
+			); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
 				logger.Error(err, "Failed to update shard backup status")
@@ -270,12 +285,16 @@ func (r *ShardReconciler) reconcilePodRoles(
 ) {
 	logger := log.FromContext(ctx)
 
-	// List managed pods for this shard (same pattern as reconcilePoolerPrune).
+	// List managed pool pods for this shard (same pattern as
+	// reconcilePoolerPrune). Scoped to pool pods: only they can ever match a
+	// topology pooler entry, and a shard's multiorch pod carries the same four
+	// identity labels but is never one.
 	lbls := map[string]string{
 		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
 		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
 		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
 		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+		metadata.LabelAppComponent:        PoolComponentName,
 	}
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList,
@@ -317,7 +336,12 @@ func (r *ShardReconciler) reconcilePodRoles(
 	}
 
 	if rolesChanged {
-		if err := r.Status().Patch(ctx, shard, client.MergeFrom(statusBase)); err != nil {
+		if err := r.Status().Patch(
+			ctx,
+			shard,
+			client.MergeFrom(statusBase),
+			client.FieldOwner("multigres-resource-handler"),
+		); err != nil {
 			logger.Error(err, "Failed to update shard pod roles")
 		}
 	}
@@ -331,6 +355,22 @@ const (
 	// client cannot be built yet (e.g. operator client cert not issued).
 	poolerClientRetryDelay = 10 * time.Second
 
+	// A shard that is not converged, whatever the reason, is requeued on a
+	// backoff rather than left to the 10h resync. The delay is clamped elapsed
+	// time since the shard was first observed not-converged, not a per-pass
+	// count: a burst of unrelated pod/status events must not itself advance
+	// the backoff. The floor is the multipooler container's own readiness
+	// probe period, so the operator never polls topology more aggressively
+	// than the kubelet polls the pod, and the ceiling matches the
+	// empty-topology path.
+	readinessBackoffMinDelay = 5 * time.Second
+	readinessBackoffMaxDelay = time.Minute
+	// readinessBackoffJitter adds upward jitter. controller-runtime does not
+	// jitter RequeueAfter, and a fleet that lost convergence together
+	// (topology restart, mass scale-up) would otherwise retry in lockstep
+	// against the topology server that just came back.
+	readinessBackoffJitter = 0.2
+
 	reasonPoolerClientUnavailable    = "PoolerClientUnavailable"
 	reasonAwaitingPoolerRegistration = "AwaitingPoolerRegistration"
 	reasonObservationPending         = "ObservationPending"
@@ -343,11 +383,17 @@ func (r *ShardReconciler) reconcilePosture(
 	shard *multigresv1alpha1.Shard,
 	rpcClient rpcclient.MultipoolerClient,
 ) (time.Duration, error) {
+	// Pool pods only: a shard's multiorch pod carries the same four identity
+	// labels (buildMultiorchLabelsWithCell merges them in) but is never a
+	// pooler, so an unfiltered list seeds it AwaitingRegistration forever and
+	// anyPodNotReady never clears. reconcilePoolerReadiness already scopes
+	// this way; posture.Evaluate must match it.
 	lbls := map[string]string{
 		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
 		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
 		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
 		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+		metadata.LabelAppComponent:        PoolComponentName,
 	}
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList,
@@ -374,6 +420,8 @@ func (r *ShardReconciler) reconcilePosture(
 		// An empty topology is expected during bootstrap, but it is not a settled
 		// posture observation. Keep polling until poolers register rather than
 		// leaving a previous transport condition stuck until the periodic resync.
+		// This path always returns a fixed 1-minute delay of its own regardless of
+		// notConvergedSince, so it needs no matching reset there either.
 		r.recordPostureObservation(shard, false)
 		setPostureUnknownUnlessFalse(
 			shard,
@@ -436,10 +484,76 @@ func (r *ShardReconciler) reconcilePosture(
 		r.Recorder.Event(shard, "Warning", reason, result.Message)
 	}
 
+	// A shard is converged only once posture is settled AND every managed pod
+	// has reached posture readiness. Neither half implies the other: an
+	// accepted mismatch or accepted Incomplete observation (strikes past
+	// threshold) is settled but still has a pod sitting NotReady, and a shard
+	// mid-bootstrap with every pooler registered but no primary elected yet is
+	// neither inconsistent nor incomplete but has nothing actually ready.
+	// Registration itself, and any change multiorch makes in topology, are
+	// writes to the topology store with no Kubernetes event behind them, so
+	// nothing but this controller's own requeue will ever look again. Without
+	// it, a settled-but-not-ready shard sits until controller-runtime's 10h
+	// resync; a shard with a genuinely stuck pod (Pending, crash-looping,
+	// quarantined) sits forever, since a lost watch never recovers it.
+	//
+	// The debounce above stays authoritative for whether an unsettled
+	// observation is accepted into status: this never fires while
+	// `unsettled && strikes < postureStrikeThreshold`, so it cannot preempt or
+	// shorten that window, only pick up once it ends.
+	notConverged := unsettled || anyPodNotReady(result.Readiness)
+	elapsed := r.recordNotConverged(shard, notConverged)
+
 	if unsettled && strikes < postureStrikeThreshold {
 		return postureDebounceRequeueDelay, nil
 	}
+	if notConverged {
+		return readinessBackoffDelay(elapsed), nil
+	}
 	return 0, nil
+}
+
+// anyPodNotReady reports whether any managed pod has not yet reached posture
+// readiness.
+//
+// Deliberately broader than a check for the seeded "AwaitingRegistration"
+// reason alone. A pod whose pooler has never registered carries that reason,
+// but every other reason poolerReadiness can return (NotInitialized,
+// PostgresNotReady, CohortIneligible, NotCohortMember) means Ready is false
+// too, and all of them are reachable by a shard that Evaluate reports as
+// neither inconsistent nor incomplete, since that result only compares
+// postures against topology roles and does not require a primary to exist. A
+// shard mid-bootstrap with every pooler registered but no primary elected
+// settles there, looking "consistent" while nothing is actually ready.
+func anyPodNotReady(readiness map[string]posture.Readiness) bool {
+	for _, r := range readiness {
+		if !r.Ready {
+			return true
+		}
+	}
+	return false
+}
+
+// readinessBackoffDelay clamps elapsed (time since the shard was first
+// observed not-converged) to [readinessBackoffMinDelay,
+// readinessBackoffMaxDelay], with upward jitter.
+//
+// Elapsed-time-based rather than a per-pass count: Owns(&corev1.Pod{}) and
+// For(&Shard{}) carry no predicates, so a pod's Pending -> ContainerCreating ->
+// per-container-Ready transitions, an operator gate patch, and a drain's 2s
+// requeues are each their own reconcile. A scale-up alone is at least five of
+// those before there is anything to register, and a wall-clock burst of
+// events must not by itself run the delay up to the ceiling: two reconciles a
+// second apart are five seconds not-converged either way, whether they were
+// one pass or five.
+func readinessBackoffDelay(elapsed time.Duration) time.Duration {
+	d := elapsed
+	if d < readinessBackoffMinDelay {
+		d = readinessBackoffMinDelay
+	} else if d > readinessBackoffMaxDelay {
+		d = readinessBackoffMaxDelay
+	}
+	return wait.Jitter(d, readinessBackoffJitter)
 }
 
 func setPostureUnknownUnlessFalse(
@@ -490,6 +604,18 @@ func withDataPlaneRequeue(
 	return result
 }
 
+// recordPostureObservation counts consecutive unsettled observations for one
+// shard and returns the running total.
+//
+// A settled observation deletes the entry rather than writing zero. The two
+// mean the same thing to every reader, since a missing key reads as zero, but
+// they differ in what the map holds: writing zero keeps an entry for every
+// shard this process has ever reconciled, while deleting keeps only the
+// shards currently accumulating strikes, which in a healthy cluster is none.
+// A Go map's table is sized by its peak simultaneous entries and does not
+// shrink on delete, so this is what keeps that peak bounded by currently
+// unsettled shards rather than by cumulative shards over the operator's
+// lifetime.
 func (r *ShardReconciler) recordPostureObservation(
 	shard *multigresv1alpha1.Shard,
 	unsettled bool,
@@ -498,15 +624,74 @@ func (r *ShardReconciler) recordPostureObservation(
 
 	r.postureStrikesMu.Lock()
 	defer r.postureStrikesMu.Unlock()
+	if !unsettled {
+		delete(r.postureStrikes, key)
+		return 0
+	}
 	if r.postureStrikes == nil {
 		r.postureStrikes = make(map[string]int)
 	}
-	if unsettled {
-		r.postureStrikes[key]++
-	} else {
-		r.postureStrikes[key] = 0
-	}
+	r.postureStrikes[key]++
 	return r.postureStrikes[key]
+}
+
+// recordNotConverged tracks, per shard, the time a shard was first observed
+// not converged (unsettled, or some managed pod not posture-ready), and
+// returns how long that has been true. Same delete-on-settle pattern as
+// recordPostureObservation, and a separate map for the same reason that one
+// is not reused here: this one picks the backoff, and posture strikes must
+// keep gating only posture.Apply.
+//
+// Storing the first-seen time rather than a per-pass count is what makes
+// readinessBackoffDelay a function of elapsed wall-clock time instead of
+// event count; see readinessBackoffDelay's own doc for why that matters.
+func (r *ShardReconciler) recordNotConverged(
+	shard *multigresv1alpha1.Shard,
+	notConverged bool,
+) time.Duration {
+	key := fmt.Sprintf("%s/%s", shard.Namespace, shard.Name)
+	now := r.now()
+
+	r.notConvergedMu.Lock()
+	defer r.notConvergedMu.Unlock()
+	if !notConverged {
+		delete(r.notConvergedSince, key)
+		return 0
+	}
+	if r.notConvergedSince == nil {
+		r.notConvergedSince = make(map[string]time.Time)
+	}
+	first, ok := r.notConvergedSince[key]
+	if !ok {
+		first = now
+		r.notConvergedSince[key] = first
+	}
+	return now.Sub(first)
+}
+
+// now returns the reconciler's clock, defaulting to time.Now so production
+// code never has to set Clock. Tests inject Clock to drive
+// recordNotConverged's elapsed-time math deterministically.
+func (r *ShardReconciler) now() time.Time {
+	if r.Clock != nil {
+		return r.Clock()
+	}
+	return time.Now()
+}
+
+// forgetStrikes drops namespace/name's entry from both strike maps. Called on
+// a Shard's deletion and not-found paths so a shard deleted mid-backoff, in
+// either counter, does not leak its entry for the life of the process.
+func (r *ShardReconciler) forgetStrikes(namespace, name string) {
+	key := fmt.Sprintf("%s/%s", namespace, name)
+
+	r.postureStrikesMu.Lock()
+	delete(r.postureStrikes, key)
+	r.postureStrikesMu.Unlock()
+
+	r.notConvergedMu.Lock()
+	delete(r.notConvergedSince, key)
+	r.notConvergedMu.Unlock()
 }
 
 // reconcileDrainState iterates pods with drain annotations and runs the
@@ -518,11 +703,17 @@ func (r *ShardReconciler) reconcileDrainState(
 ) (bool, error) {
 	logger := log.FromContext(ctx)
 
+	// Pool pods only: the drain-requested annotation this loop acts on is only
+	// ever set by the pool scale-down/rolling-update path (reconcile_pool_pods.go),
+	// never on a shard's multiorch pod, so this is currently a no-op filter.
+	// Scoped anyway for the same reason reconcilePosture now is: relying on an
+	// annotation nothing else sets is a coincidence, not a guarantee.
 	lbls := map[string]string{
 		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
 		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
 		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
 		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+		metadata.LabelAppComponent:        PoolComponentName,
 	}
 	podList := &corev1.PodList{}
 	if err := r.List(
@@ -641,11 +832,17 @@ func (r *ShardReconciler) reconcilePoolerPrune(
 		return
 	}
 
+	// Pool pods only: topo.MarkDeadPoolers matches this set's names against
+	// topology pooler entries, and a multiorch pod's name never matches one
+	// (it is not a pooler), so including it here is currently a no-op. Scoped
+	// anyway to keep this list's meaning ("pods that can be poolers") aligned
+	// with what it is actually used for.
 	lbls := map[string]string{
 		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
 		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
 		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
 		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+		metadata.LabelAppComponent:        PoolComponentName,
 	}
 	podList := &corev1.PodList{}
 	if err := r.List(

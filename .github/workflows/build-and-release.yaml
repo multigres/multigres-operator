@@ -50,7 +50,9 @@ jobs:
           cache: false
 
       - name: Run tests
-        run: go test ./... -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+        run: |
+          go test $(go list ./... | grep -v /test/suite) \
+            -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
 
       - name: Run observer tests against current operator API
         working-directory: tools/observer

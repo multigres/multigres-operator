@@ -71,7 +71,16 @@ func (r *ShardReconciler) reconcilePoolerReadiness(
 			Reason:             observation.Reason,
 			Message:            observation.Message,
 		})
-		if err := r.Status().Patch(ctx, pod, client.MergeFrom(base)); err != nil {
+		// Named apart from the Shard's own status manager: the claim here is over
+		// one condition on a Pod whose status otherwise belongs to kubelet, not
+		// over the Shard's status, and a manager name is the only record of which
+		// concern took a field. Same reasoning as the storage-class guard.
+		if err := r.Status().Patch(
+			ctx,
+			pod,
+			client.MergeFrom(base),
+			client.FieldOwner("multigres-resource-handler-readiness"),
+		); err != nil {
 			return fmt.Errorf("patch pooler readiness for pod %s: %w", pod.Name, err)
 		}
 	}

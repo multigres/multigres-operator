@@ -108,7 +108,7 @@ KUSTOMIZE_VERSION ?= v5.6.0
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT_VERSION ?= v2.13.2
 
 CERT_MANAGER_VERSION ?= v1.19.2
 
@@ -278,22 +278,65 @@ build-installer: manifests generate kustomize ## Generate consolidated install Y
 
 ##@ Test
 
+# test/suite is the multi-controller envtest suite. It carries no build tag, so
+# every `go test ./...` call site has to exclude it by path or it lands in the
+# required check before it is ready. That is one filter per call site, which is
+# the deliberate trade against a tag that someone forgets on a new file.
+#
+# -v is load-bearing rather than cosmetic. Each KnownDefect pin logs the defect
+# it is standing on while that defect is still present, and without -v go test
+# discards the output of a passing test, so a green CI run shows none of them.
+# The suite is meant to be readable as the operator's live defect list, and -v
+# is what makes that list visible without waiting for a pin to expire.
+.PHONY: test-suite
+test-suite: manifests generate fmt vet setup-envtest ## Run the multi-controller test suite
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+		go test -v -p 1 -timeout 20m ./test/suite/...
+
+# A separate target rather than a flag on the one above. Measured 2026-09-19:
+# 183s against a 166s baseline, so about 10% rather than the roughly-double a
+# CPU-bound suite would pay. This one spends most of its wall clock waiting for
+# controllers to converge, and the race detector does not slow down waiting.
+#
+# Kept separate anyway, because the cost is not the same everywhere: certificate
+# generation is the one CPU-bound step here and has been measured swinging
+# between 14 and 75 seconds under -race, which is enough to turn a wait sized
+# against the normal run into a flake. A budget that holds on both is looser
+# than the default target should carry.
+#
+# Worth having at all because this suite is the only place five controllers
+# share one manager, and the operator holds exactly one piece of state across
+# reconcile goroutines: ShardReconciler.postureStrikes, a map guarded by a
+# mutex. Nothing here exercises contention on it today, since the suite pins
+# MaxConcurrentReconciles to 1 and controller-runtime already serialises
+# reconciles per object key, so this is a standing check that the answer has
+# not changed rather than a hunt for a known race.
+#
+# The timeout is generous rather than tight: the instrumented run is only
+# slightly slower on average, but its slow tail is much fatter, and a timeout
+# that fires on the tail reads as a hang rather than as the flake it is.
+.PHONY: test-suite-race
+test-suite-race: manifests generate fmt vet setup-envtest ## Run the multi-controller test suite under the race detector
+	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+		go test -race -v -p 1 -timeout 40m ./test/suite/...
+
 .PHONY: test
 test: manifests generate fmt vet ## Run tests (no integration testing)
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 $$(go list ./... | grep -v /e2e) -coverprofile=cover.out
+		go test -p 1 $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet setup-envtest ## Run integration tests
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e) -coverprofile=cover.out
+		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out
 
 .PHONY: test-coverage
 test-coverage: manifests generate fmt vet setup-envtest ## Generate coverage report with HTML
 	@mkdir -p coverage
 	@echo "==> Generating coverage..."
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 -tags=integration,verbose ./... -coverprofile=coverage/combined.out -covermode=atomic
+		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) \
+		-coverprofile=coverage/combined.out -covermode=atomic
 	@echo "==> Generating HTML report..."
 	@go tool cover -html=coverage/combined.out -o=coverage/combined.html
 	@echo "Generated: coverage/combined.html"
@@ -679,10 +722,13 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 # golangci-lint's own go.mod selects an older toolchain than this module
 # targets, and a linter built with a lower Go version refuses to run. Pin the
-# build toolchain to the one resolved by this module's go.mod.
+# build toolchain to the one resolved by this module's go.mod, and put that
+# version in the binary's name: CI restores bin/ from older caches, and a
+# name keyed only on the linter's version would reuse a binary built by the
+# previous toolchain after a Go bump.
 $(GOLANGCI_LINT): export GOTOOLCHAIN = $(shell go env GOVERSION)
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION),$(shell go env GOVERSION))
 
 .PHONY: install-certmanager
 install-certmanager: ## Install Cert-Manager into the cluster
@@ -695,16 +741,17 @@ install-certmanager: ## Install Cert-Manager into the cluster
 # $1 - target path with name of binary
 # $2 - package url which can be installed
 # $3 - specific version of package
+# $4 - optional extra suffix for the binary's name, e.g. the Go version it was built with
 define go-install-tool
-@[ -f "$(1)-$(3)" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)" ] || { \
+@[ -f "$(1)-$(3)$(if $(4),-$(4))" ] && [ "$$(readlink -- "$(1)" 2>/dev/null)" = "$(1)-$(3)$(if $(4),-$(4))" ] || { \
 set -e; \
 package=$(2)@$(3) ;\
 echo "Downloading $${package}" ;\
 rm -f $(1) ;\
 GOBIN=$(LOCALBIN) go install $${package} ;\
-mv $(1) $(1)-$(3) ;\
+mv $(1) $(1)-$(3)$(if $(4),-$(4)) ;\
 } ;\
-ln -sf $$(realpath $(1)-$(3)) $(1)
+ln -sf $$(realpath $(1)-$(3)$(if $(4),-$(4))) $(1)
 endef
 
 ##@ Backward Compatibility Aliases
