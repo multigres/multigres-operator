@@ -412,11 +412,17 @@ func TestShardLifecycle(t *testing.T) {
 	// itself, and that count is not the operator's to keep. A step's
 	// allow-list is an exact multiset with no "N events of this kind" form,
 	// so a declared count is sound only where the code fixes it. Pod
-	// readiness here is paced by the data-plane sim (pkg/ctrltest/datasim.go)
-	// racing reconcilePoolerReadiness's own readiness-gate patch on the same
-	// Pod, and measured over runs of this test a pod settles in three status
-	// modifications most of the time and four sometimes, which failed step 1
-	// on an unpermitted event about one run in five. A fourth speculative
+	// readiness here is paced by the data-plane sim (ctrltest/datasim.go)
+	// racing reconcilePoolerReadiness's own readiness-gate write on the same
+	// Pod. Both writes now merge by condition type (this one a server-side
+	// apply of the single PoolerDataReady entry, the sim's a strategic merge
+	// patch since testkit v0.2.1), so neither deletes the other's condition
+	// any more, but how many status modifications a pod takes to settle is
+	// still set by how the two writers interleave, not by the operator's
+	// code. Measured before either change, on the merge-patch code, a pod
+	// settled in three status modifications most of the time and four
+	// sometimes, which failed step 1 on an unpermitted event about one run
+	// in five. That ratio was not re-measured. A fourth speculative
 	// Changed leaf would only move that boundary, since nothing bounds the
 	// sequence at three or four either. Do not restore the closed step: it
 	// pinned the harness, not the operator.
@@ -453,7 +459,11 @@ func TestShardLifecycle(t *testing.T) {
 	// reconcilePoolerReadiness writes its readiness gate on the same object,
 	// and the number of modifications that takes is a property of that race:
 	// three most of the time, four often enough to fail one run in five,
-	// measured here twice, at step 1 and again at step 4.
+	// measured here twice, at step 1 and again at step 4, before this
+	// change and on the merge-patch code. See the note at step 1 above:
+	// neither writer deletes the other's condition any more, but the count
+	// still depends on their interleaving rather than on the code, and the
+	// ratio itself was not re-measured.
 	//
 	// Note what is not available as a middle road: keeping Pod in the watch
 	// while declining to enumerate status modifications. There is no "N events
