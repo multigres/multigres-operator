@@ -174,9 +174,10 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	}
 
 	tableGroup := &tablegroupcontroller.TableGroupReconciler{
-		Client:   s.Ops.For("tablegroup", base),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
+		Client:    s.Ops.For("tablegroup", base),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("tablegroup-controller"),
+		APIReader: mgr.GetAPIReader(),
 	}
 	if err := tableGroup.SetupWithManagerReconciler(
 		mgr, s.Reconciles.Wrap("tablegroup", tableGroup), opts,

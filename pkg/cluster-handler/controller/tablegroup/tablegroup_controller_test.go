@@ -94,6 +94,12 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 		expectedEvents     []string                        // events expected to be recorded
 		expectedResult     *ctrl.Result
 		validate           func(testing.TB, client.Client)
+		// useAPIReader, when true, gives the reconciler a second fake client
+		// backed only by apiReaderObjects, standing in for the uncached API
+		// server. Leaving it false lets APIReader fall back to Client, which
+		// is what every case above this needs.
+		useAPIReader     bool
+		apiReaderObjects []client.Object
 	}{
 		"Create: Shard Creation": {
 			tableGroup:      baseTG.DeepCopy(),
@@ -737,6 +743,111 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				}
 			},
 		},
+		"Success: Handle Pending Deletion (Cache Lag Does Not Report Ready)": {
+			// The child Shard exists only through APIReader, standing in for
+			// the API server. Client, standing in for the informer cache,
+			// has not observed it. If handlePendingDeletion lists through
+			// Client instead, it sees zero children and reports ready having
+			// drained nothing; this is the vacuous-ready bug.
+			tableGroup: baseTG.DeepCopy(),
+			preReconcileUpdate: func(t testing.TB, tg *multigresv1alpha1.TableGroup) {
+				if tg.Annotations == nil {
+					tg.Annotations = make(map[string]string)
+				}
+				tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion] = "2026-01-01T00:00:00Z"
+			},
+			useAPIReader: true,
+			apiReaderObjects: []client.Object{
+				// Already carries PendingDeletion, so this case never
+				// exercises setShardPendingDeletion's own Patch, which would
+				// otherwise go through the "cache" fake client and return
+				// NotFound (it never had this Shard). A real cached client's
+				// writes still reach the server; this is a fixture shortcut
+				// for the fake-client split, not a claim about how the real
+				// client behaves.
+				&multigresv1alpha1.Shard{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: name.JoinWithConstraints(
+							name.DefaultConstraints,
+							clusterName,
+							dbName,
+							tgLabelName,
+							"shard-0",
+						),
+						Namespace: namespace,
+						Labels: map[string]string{
+							"multigres.com/cluster":    clusterName,
+							"multigres.com/database":   dbName,
+							"multigres.com/tablegroup": tgLabelName,
+						},
+						Annotations: map[string]string{
+							multigresv1alpha1.AnnotationPendingDeletion: "2026-01-01T00:00:00Z",
+						},
+					},
+					Spec: multigresv1alpha1.ShardSpec{ShardName: "shard-0"},
+				},
+			},
+			expectedResult: ptr.To(ctrl.Result{RequeueAfter: 5 * time.Second}),
+			validate: func(t testing.TB, c client.Client) {
+				updatedTG := &multigresv1alpha1.TableGroup{}
+				if err := c.Get(
+					t.Context(),
+					types.NamespacedName{Name: tgName, Namespace: namespace},
+					updatedTG,
+				); err != nil {
+					t.Fatalf("failed to get tablegroup: %v", err)
+				}
+				if meta.IsStatusConditionTrue(
+					updatedTG.Status.Conditions,
+					multigresv1alpha1.ConditionReadyForDeletion,
+				) {
+					t.Error(
+						"TableGroup reported ReadyForDeletion having never observed " +
+							"its child Shard through the authoritative list",
+					)
+				}
+			},
+		},
+		"Success: Handle Pending Deletion (Never Created Reaches Ready)": {
+			// PendingDeletion is set and the spec still declares a Shard, but
+			// none was ever created on the server (neither Client nor
+			// APIReader has one). An authoritative zero here means nothing to
+			// drain, not "not yet observed", so this must reach
+			// ReadyForDeletion rather than wait forever for a child that will
+			// never appear (stepApplyDesiredShards never runs again once
+			// PendingDeletion is set).
+			tableGroup: baseTG.DeepCopy(),
+			preReconcileUpdate: func(t testing.TB, tg *multigresv1alpha1.TableGroup) {
+				if tg.Annotations == nil {
+					tg.Annotations = make(map[string]string)
+				}
+				tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion] = "2026-01-01T00:00:00Z"
+			},
+			useAPIReader:     true,
+			apiReaderObjects: []client.Object{},
+			expectedEvents: []string{
+				"Normal ReadyForDeletion TableGroup test-tg marked ready for deletion",
+			},
+			validate: func(t testing.TB, c client.Client) {
+				updatedTG := &multigresv1alpha1.TableGroup{}
+				if err := c.Get(
+					t.Context(),
+					types.NamespacedName{Name: tgName, Namespace: namespace},
+					updatedTG,
+				); err != nil {
+					t.Fatalf("failed to get tablegroup: %v", err)
+				}
+				if !meta.IsStatusConditionTrue(
+					updatedTG.Status.Conditions,
+					multigresv1alpha1.ConditionReadyForDeletion,
+				) {
+					t.Error(
+						"TableGroup with a Shard that was never created should still " +
+							"reach ReadyForDeletion",
+					)
+				}
+			},
+		},
 	}
 
 	for name, tc := range tests {
@@ -768,6 +879,13 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				Client:   baseClient,
 				Scheme:   scheme,
 				Recorder: recorder,
+			}
+			if tc.useAPIReader {
+				reconciler.APIReader = fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithObjects(tc.apiReaderObjects...).
+					WithStatusSubresource(&multigresv1alpha1.TableGroup{}, &multigresv1alpha1.Shard{}).
+					Build()
 			}
 
 			req := ctrl.Request{
