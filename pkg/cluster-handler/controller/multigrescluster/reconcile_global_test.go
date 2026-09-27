@@ -24,8 +24,166 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/testutil"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
+
+// TestReconcileGlobalTopoServer_ExternalPruneScope covers the defect where an
+// external global topology pruned every TopoServer sharing the cluster label,
+// including a cell's own local TopoServer. The prune must delete only a
+// TopoServer that carries the global-topo component label and is
+// controller-owned by this cluster, and each of those two checks is pinned
+// on its own: a fixture that fails only the ownership check and a fixture
+// that fails only the component check must each survive, in addition to the
+// cell's own local TopoServer (which fails both) surviving and the real
+// global TopoServer being deleted.
+func TestReconcileGlobalTopoServer_ExternalPruneScope(t *testing.T) {
+	scheme := setupScheme()
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default", UID: "cluster-uid"},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{"http://external-etcd:2379"},
+				},
+			},
+		},
+	}
+
+	clusterOwnerRef := metav1.OwnerReference{
+		APIVersion: multigresv1alpha1.GroupVersion.String(),
+		Kind:       "MultigresCluster",
+		Name:       cluster.Name,
+		UID:        cluster.UID,
+		Controller: ptr.To(true),
+	}
+
+	globalTopo := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-global-topo",
+			Namespace: "default",
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster: cluster.Name,
+				metadata.LabelAppComponent:     metadata.ComponentGlobalTopo,
+			},
+			OwnerReferences: []metav1.OwnerReference{clusterOwnerRef},
+		},
+		Spec: multigresv1alpha1.TopoServerSpec{
+			Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:leftover"},
+		},
+	}
+
+	// A cell's local TopoServer carries the same cluster label as the global
+	// one, but differs on both the component label and the controller owner
+	// at once: component local-topo, controller-owned by the Cell rather than
+	// the cluster. That is what a real controller-produced object looks like,
+	// but it means this fixture alone cannot tell which check, if either, is
+	// doing the work: either one alone would spare it. The two fixtures below
+	// isolate each check on its own.
+	localTopo := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-zone-a-local-topo",
+			Namespace: "default",
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster: cluster.Name,
+				metadata.LabelAppComponent:     "local-topo",
+			},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: multigresv1alpha1.GroupVersion.String(),
+				Kind:       "Cell",
+				Name:       "test-zone-a",
+				UID:        "cell-uid",
+				Controller: ptr.To(true),
+			}},
+		},
+		Spec: multigresv1alpha1.TopoServerSpec{
+			Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:local"},
+		},
+	}
+
+	// Same label pair as globalTopo (cluster label plus the global-topo
+	// component), but unowned: the shape of an object a user created by hand,
+	// or one left behind by a same-named cluster deleted with
+	// --cascade=orphan. The component label alone would not spare this one;
+	// only the ownership check does, so this pins that check on its own.
+	wrongOwnerGlobalTopo := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-global-topo-orphaned",
+			Namespace: "default",
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster: cluster.Name,
+				metadata.LabelAppComponent:     metadata.ComponentGlobalTopo,
+			},
+		},
+		Spec: multigresv1alpha1.TopoServerSpec{
+			Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:orphaned"},
+		},
+	}
+
+	// Controller-owned by the cluster, same as globalTopo, but a component
+	// other than global-topo. The ownership check alone would not spare this
+	// one; only the component label does, so this pins that check on its own.
+	wrongComponentOwnedByCluster := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-not-global-topo",
+			Namespace: "default",
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster: cluster.Name,
+				metadata.LabelAppComponent:     "local-topo",
+			},
+			OwnerReferences: []metav1.OwnerReference{clusterOwnerRef},
+		},
+		Spec: multigresv1alpha1.TopoServerSpec{
+			Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:wrong-component"},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(cluster, globalTopo, localTopo, wrongOwnerGlobalTopo, wrongComponentOwnedByCluster).
+		Build()
+	r := &MultigresClusterReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	if err := r.reconcileGlobalTopoServer(
+		t.Context(),
+		cluster,
+		resolver.NewResolver(c, "default"),
+	); err != nil {
+		t.Fatalf("reconcileGlobalTopoServer() error = %v", err)
+	}
+
+	exists := func(name string) bool {
+		t.Helper()
+		err := c.Get(t.Context(),
+			types.NamespacedName{Name: name, Namespace: "default"},
+			&multigresv1alpha1.TopoServer{},
+		)
+		switch {
+		case err == nil:
+			return true
+		case apierrors.IsNotFound(err):
+			return false
+		default:
+			t.Fatalf("Get(%s): %v", name, err)
+			return false
+		}
+	}
+
+	if exists(globalTopo.Name) {
+		t.Errorf("expected global TopoServer %s to be deleted", globalTopo.Name)
+	}
+	for _, survivor := range []*multigresv1alpha1.TopoServer{
+		localTopo, wrongOwnerGlobalTopo, wrongComponentOwnedByCluster,
+	} {
+		if !exists(survivor.Name) {
+			t.Errorf("expected TopoServer %s to survive", survivor.Name)
+		}
+	}
+}
 
 func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 	scheme := setupScheme()
