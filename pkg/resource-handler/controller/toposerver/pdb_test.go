@@ -55,6 +55,7 @@ func TestBuildPodDisruptionBudget(t *testing.T) {
 			Selector: &metav1.LabelSelector{
 				MatchLabels: metadata.GetSelectorLabels(labels),
 			},
+			UnhealthyPodEvictionPolicy: ptr.To(policyv1.AlwaysAllow),
 		},
 	}
 

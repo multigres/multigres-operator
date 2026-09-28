@@ -22,6 +22,7 @@ func BuildPodDisruptionBudget(
 	labels := metadata.BuildStandardLabels(clusterName, ComponentName)
 	labels = metadata.MergeLabels(labels, toposerver.GetLabels())
 	maxUnavailable := intstr.FromInt32(1)
+	unhealthyPodEvictionPolicy := policyv1.AlwaysAllow
 
 	pdb := &policyv1.PodDisruptionBudget{
 		ObjectMeta: metav1.ObjectMeta{
@@ -34,6 +35,7 @@ func BuildPodDisruptionBudget(
 			Selector: &metav1.LabelSelector{
 				MatchLabels: metadata.GetSelectorLabels(labels),
 			},
+			UnhealthyPodEvictionPolicy: &unhealthyPodEvictionPolicy,
 		},
 	}
 
