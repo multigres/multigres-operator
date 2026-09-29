@@ -3,7 +3,8 @@ name: Nightly upstream compatibility
 on:
 # Poll once after the upstream 05:00 UTC build. The run selects only a fully
 # successful nightly build; an in-progress build is never consumed. A SHA
-# is skipped only after its promotion PR was successfully created or updated.
+# older than the last promoted revision is skipped. The same SHA is retested
+# because the published Supabase image or operator revision may have changed.
 # Manual runs remain diagnostic and never promote or checkpoint a revision.
   schedule:
     - cron: "0 9 * * *"
@@ -19,6 +20,16 @@ on:
         required: false
         default: main
         type: string
+      supabase-image:
+        description: Supabase image digest (empty selects the latest published Multigres variant)
+        required: false
+        default: ""
+        type: string
+      allow-newer-pgctld:
+        description: Allow a deliberate pgctld-only upgrade ahead of the operator Multigres pin
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -167,10 +178,10 @@ jobs:
                 jq -r '.status'
             )"
             case "$relation" in
-              identical | behind)
+              behind)
                 should_run=false
                 ;;
-              ahead)
+              identical | ahead)
                 ;;
               *)
                 echo "::error::Upstream SHA diverges from the last green SHA"
@@ -180,11 +191,11 @@ jobs:
           fi
           echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
 
-      - name: Record skipped duplicate or stale request
+      - name: Record skipped stale request
         if: steps.gate.outputs.should_run == 'false'
         env:
           SHA: ${{ steps.resolve.outputs.sha }}
-        run: echo "Skipping $SHA because it is not newer than the last green SHA."
+        run: echo "Skipping $SHA because it is older than the last promoted SHA."
 
   preflight:
     name: Verify immutable nightly
@@ -288,6 +299,46 @@ jobs:
           verify_image "$PGCTLD_IMAGE"
           verify_image "$MULTIADMIN_WEB_IMAGE"
 
+  supabase:
+    name: Resolve Supabase candidate
+    needs: resolve
+    if: needs.resolve.outputs.should-run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      image: ${{ steps.candidate.outputs.image }}
+      version: ${{ steps.candidate.outputs.version }}
+      source-sha: ${{ steps.candidate.outputs.source_sha }}
+      multigres-sha: ${{ steps.candidate.outputs.multigres_sha }}
+      operator-multigres-sha: ${{ steps.candidate.outputs.operator_multigres_sha }}
+    steps:
+      - name: Check out workflow helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve and validate Supabase image
+        id: candidate
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          OPERATOR_SHA: ${{ needs.resolve.outputs.operator-sha }}
+          SUPABASE_IMAGE: ${{ inputs.supabase-image }}
+          ALLOW_NEWER_PGCTLD: ${{ inputs.allow-newer-pgctld }}
+        with:
+          script: |
+            const { resolveSupabase } = require('./scripts/supabase-compatibility.js');
+            const candidate = await resolveSupabase({
+              github,
+              operatorSha: process.env.OPERATOR_SHA,
+              image: process.env.SUPABASE_IMAGE,
+              allowNewer: process.env.ALLOW_NEWER_PGCTLD === 'true',
+            });
+            for (const [key, value] of Object.entries(candidate)) core.setOutput(key, value);
+            await core.summary.addHeading('Supabase candidate')
+              .addCodeBlock(JSON.stringify(candidate, null, 2), 'json').write();
+
   e2e:
     name: Canary e2e
     needs: [resolve, preflight]
@@ -305,9 +356,27 @@ jobs:
       multipooler-image: ${{ needs.preflight.outputs.multigres-image }}
       multigateway-image: ${{ needs.preflight.outputs.multigres-image }}
 
+  e2e-supabase:
+    name: Supabase canary e2e
+    needs: [resolve, preflight, supabase]
+    if: needs.preflight.result == 'success' && needs.supabase.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      ref: ${{ needs.resolve.outputs.operator-sha }}
+      timeout-minutes: 30
+      postgres-image: ${{ needs.supabase.outputs.image }}
+      artifact-suffix: supabase
+      multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
+      multiadmin-web-image: ${{ needs.preflight.outputs.multiadmin-web-image }}
+      multiorch-image: ${{ needs.preflight.outputs.multigres-image }}
+      multipooler-image: ${{ needs.preflight.outputs.multigres-image }}
+      multigateway-image: ${{ needs.preflight.outputs.multigres-image }}
+
   report:
     name: Record compatibility result
-    needs: [resolve, preflight, e2e]
+    needs: [resolve, preflight, supabase, e2e, e2e-supabase]
     if: >-
       always() &&
       (needs.resolve.result != 'success' ||
@@ -323,6 +392,8 @@ jobs:
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          SUPABASE_RESULT: ${{ needs.supabase.result }}
+          SUPABASE_E2E_RESULT: ${{ needs.e2e-supabase.result }}
           EVENT_NAME: ${{ github.event_name }}
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short-sha }}
@@ -339,7 +410,9 @@ jobs:
             const succeeded =
               process.env.RESOLVE_RESULT === 'success' &&
               process.env.PREFLIGHT_RESULT === 'success' &&
-              process.env.E2E_RESULT === 'success';
+              process.env.E2E_RESULT === 'success' &&
+              process.env.SUPABASE_RESULT === 'success' &&
+              process.env.SUPABASE_E2E_RESULT === 'success';
             const canonicalRun =
               process.env.OPERATOR_REF === 'main' &&
               process.env.EVENT_NAME === 'schedule' &&
@@ -349,7 +422,9 @@ jobs:
             const failureStage =
               process.env.RESOLVE_RESULT !== 'success' ? 'SHA resolution/validation' :
               process.env.PREFLIGHT_RESULT !== 'success' ? 'nightly image preflight' :
-              'operator e2e';
+              process.env.SUPABASE_RESULT !== 'success' ? 'Supabase candidate validation' :
+              process.env.E2E_RESULT !== 'success' ? 'vanilla operator e2e' :
+              'Supabase operator e2e';
             const upstreamSha = process.env.UPSTREAM_SHA || 'unknown';
             const shortSha = process.env.SHORT_SHA || 'unknown';
 
@@ -469,18 +544,22 @@ jobs:
           always() &&
           (needs.resolve.result != 'success' ||
            needs.preflight.result != 'success' ||
-           needs.e2e.result != 'success')
+           needs.e2e.result != 'success' ||
+           needs.supabase.result != 'success' ||
+           needs.e2e-supabase.result != 'success')
         env:
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          SUPABASE_RESULT: ${{ needs.supabase.result }}
+          SUPABASE_E2E_RESULT: ${{ needs.e2e-supabase.result }}
         run: |
-          echo "::error::Canary results: resolve=$RESOLVE_RESULT preflight=$PREFLIGHT_RESULT e2e=$E2E_RESULT"
+          echo "::error::Canary results: resolve=$RESOLVE_RESULT preflight=$PREFLIGHT_RESULT e2e=$E2E_RESULT supabase=$SUPABASE_RESULT supabase-e2e=$SUPABASE_E2E_RESULT"
           exit 1
 
   promote:
     name: Promote verified runtime defaults
-    needs: [resolve, preflight, e2e]
+    needs: [resolve, preflight, supabase, e2e, e2e-supabase]
     if: >-
       github.repository == 'multigres/multigres-operator' &&
       github.event_name == 'schedule' &&
@@ -488,7 +567,9 @@ jobs:
       needs.resolve.outputs.operator-ref == 'main' &&
       needs.resolve.outputs.should-run == 'true' &&
       needs.preflight.result == 'success' &&
-      needs.e2e.result == 'success'
+      needs.e2e.result == 'success' &&
+      needs.supabase.result == 'success' &&
+      needs.e2e-supabase.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -518,6 +599,13 @@ jobs:
         env:
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           OPERATOR_SHA: ${{ needs.resolve.outputs.operator-sha }}
+          SUPABASE_IMAGE: ${{ needs.supabase.outputs.image }}
+          SUPABASE_VERSION: ${{ needs.supabase.outputs.version }}
+          SUPABASE_SOURCE_SHA: ${{ needs.supabase.outputs.source-sha }}
+          SUPABASE_MULTIGRES_SHA: ${{ needs.supabase.outputs.multigres-sha }}
+          OPERATOR_MULTIGRES_SHA: ${{ needs.supabase.outputs.operator-multigres-sha }}
+          VANILLA_RESULT: ${{ needs.e2e.result }}
+          SUPABASE_RESULT: ${{ needs.e2e-supabase.result }}
           NIGHTLY_RUN_ID: ${{ needs.resolve.outputs.nightly-run-id }}
           NIGHTLY_RUN_ATTEMPT: ${{ needs.resolve.outputs.nightly-run-attempt }}
           MULTIGRES_IMAGE: ${{ needs.preflight.outputs.multigres-image }}

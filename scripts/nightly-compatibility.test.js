@@ -123,7 +123,7 @@ for (const flags of [{ FAIL_VERIFY: 'true' }, { WRONG_SUBJECT: 'true' }]) {
 }
 
 test('a green canary closes the incident independently of a failed promotion', async (t) => {
-  const env = { RESOLVE_RESULT: 'success', PREFLIGHT_RESULT: 'success', E2E_RESULT: 'success', PROMOTION_RESULT: 'failure', EVENT_NAME: 'schedule', OPERATOR_REF: 'main', UPSTREAM_SHA: 'a'.repeat(40) };
+  const env = { RESOLVE_RESULT: 'success', PREFLIGHT_RESULT: 'success', E2E_RESULT: 'success', SUPABASE_RESULT: 'success', SUPABASE_E2E_RESULT: 'success', PROMOTION_RESULT: 'failure', EVENT_NAME: 'schedule', OPERATOR_REF: 'main', UPSTREAM_SHA: 'a'.repeat(40) };
   for (const [key, value] of Object.entries(env)) {
     const original = process.env[key];
     process.env[key] = value;
@@ -147,8 +147,8 @@ test('a green canary closes the incident independently of a failed promotion', a
 test('report and promotion have separate permissions and only promotion writes handled state', () => {
   const report = workflow.split('\n  report:\n')[1].split('\n  promote:\n')[0];
   const promotion = workflow.split('\n  promote:\n')[1];
-  assert.match(report, /needs: \[resolve, preflight, e2e\]/);
-  assert.match(promotion, /needs: \[resolve, preflight, e2e\]/);
+  assert.match(report, /needs: \[resolve, preflight, supabase, e2e, e2e-supabase\]/);
+  assert.match(promotion, /needs: \[resolve, preflight, supabase, e2e, e2e-supabase\]/);
   assert.match(report, /permissions:\n      issues: write[^\n]*\n    steps:/);
   assert.match(promotion, /permissions:\n      contents: write\n      pull-requests: write\n    steps:/);
   assert.ok(!report.includes('upload-artifact'));
@@ -156,3 +156,87 @@ test('report and promotion have separate permissions and only promotion writes h
   assert.ok(promotion.indexOf('Create or update promotion PR') < promotion.indexOf('Write promoted state'));
   assert.ok(!promotion.includes('continue-on-error'));
 });
+
+for (const relation of ['identical', 'ahead', 'behind', 'diverged']) {
+  test(`scheduled gate handles ${relation} upstream revision`, (t) => {
+    // The first comparison verifies membership in main; the second compares
+    // with the last promoted revision.
+    const code = step('Validate and gate upstream SHA');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canary-gate-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dir, 'curl'), `#!/bin/bash
+case "$*" in
+  *compare/main...*) printf '%s' '{"status":"behind"}' ;;
+  *) printf '%s' '{"status":"${relation}"}' ;;
+esac
+`, { mode: 0o755 });
+    const output = path.join(dir, 'output');
+    fs.writeFileSync(output, '');
+    const result = spawnSync('bash', ['-eo', 'pipefail', '-c', code], {
+      encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_OUTPUT: output,
+        SHA: 'a'.repeat(40), LAST_GREEN_SHA: 'b'.repeat(40), EVENT_NAME: 'schedule', OPERATOR_REF: 'main' },
+    });
+    assert.equal(result.status === 0, relation !== 'diverged', result.stderr);
+    assert.equal(fs.readFileSync(output, 'utf8'), relation === 'diverged' ? '' : `should_run=${relation !== 'behind'}\n`);
+  });
+}
+
+for (const failed of ['resolve', 'preflight', 'supabase', 'e2e', 'e2e-supabase']) {
+  for (const result of ['failure', 'cancelled', 'skipped', '']) {
+    test(`promotion gate rejects ${failed} ${result || 'missing'}`, () => {
+      const condition = workflow.split('\n  promote:\n')[1].split('    if: >-\n')[1].split('    runs-on:')[0];
+      const values = {
+        'github.repository': 'multigres/multigres-operator', 'github.event_name': 'schedule',
+        'github.ref': 'refs/heads/main', 'needs.resolve.outputs.operator-ref': 'main',
+        'needs.resolve.outputs.should-run': 'true',
+      };
+      for (const job of ['resolve', 'preflight', 'supabase', 'e2e', 'e2e-supabase']) values[`needs.${job}.result`] = job === failed ? result : 'success';
+      // GitHub applies success() implicitly to this job's needs. Evaluate it
+      // alongside the explicit condition to cover failed and absent results.
+      const dependenciesPass = ['resolve', 'preflight', 'supabase', 'e2e', 'e2e-supabase'].every((job) => values[`needs.${job}.result`] === 'success');
+      const expression = condition.replace(/(?:github|needs)\.[\w.-]+/g, (key) => {
+        assert.ok(Object.hasOwn(values, key), `Unknown workflow input ${key}`);
+        return JSON.stringify(values[key]);
+      });
+      assert.equal(dependenciesPass && new Function(`return (${expression});`)(), false);
+    });
+  }
+}
+
+test('Supabase lane uses the same operator and non-Postgres images', () => {
+  const vanilla = workflow.split('\n  e2e:\n')[1].split('\n  e2e-supabase:\n')[0];
+  const supabase = workflow.split('\n  e2e-supabase:\n')[1].split('\n  report:\n')[0];
+  for (const key of ['ref', 'multiadmin-image', 'multiadmin-web-image', 'multiorch-image', 'multipooler-image', 'multigateway-image']) {
+    const input = (text) => text.match(new RegExp(`^      ${key}: (.+)$`, 'm'))[1];
+    assert.equal(input(vanilla), input(supabase));
+  }
+  assert.match(supabase, /postgres-image: \$\{\{ needs.supabase.outputs.image \}\}/);
+  assert.match(supabase, /artifact-suffix: supabase/);
+});
+
+for (const result of ['failure', 'cancelled', 'skipped', '']) {
+  test(`vanilla success cannot clear the incident when Supabase is ${result || 'missing'}`, async (t) => {
+    const env = {
+      RESOLVE_RESULT: 'success', PREFLIGHT_RESULT: 'success', E2E_RESULT: 'success',
+      SUPABASE_RESULT: 'success', SUPABASE_E2E_RESULT: result,
+      EVENT_NAME: 'schedule', OPERATOR_REF: 'main', UPSTREAM_SHA: 'a'.repeat(40),
+    };
+    for (const [key, value] of Object.entries(env)) {
+      const original = process.env[key];
+      process.env[key] = value;
+      t.after(() => { if (original === undefined) delete process.env[key]; else process.env[key] = original; });
+    }
+    const updates = [];
+    const issues = {
+      getLabel: async () => {}, listForRepo: async () => {}, createComment: async () => {},
+      update: async (args) => updates.push(args),
+    };
+    const github = { rest: { issues }, paginate: async () => [{ number: 574, body: '<!-- nightly-compatibility-canary -->' }] };
+    const context = { repo: { owner: 'multigres', repo: 'multigres-operator' }, ref: 'refs/heads/main', runId: 123 };
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    await new AsyncFunction('github', 'context', 'core', step('Update tracking issue', 'script', 10))(github, context, {});
+    assert.equal(updates.length, 1);
+    assert.notEqual(updates[0].state, 'closed');
+    assert.ok(updates[0].body.includes('Supabase operator e2e'));
+  });
+}

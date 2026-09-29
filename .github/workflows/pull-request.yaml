@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: node --test scripts/promote-runtime-images.test.js scripts/nightly-compatibility.test.js scripts/e2e-images.test.js
+      - run: node --test scripts/promote-runtime-images.test.js scripts/nightly-compatibility.test.js scripts/e2e-images.test.js scripts/supabase-compatibility.test.js
       - name: Validate committed promotion record
         if: github.head_ref == 'chore/promote-runtime-images'
         run: node scripts/promote-runtime-images.js --check

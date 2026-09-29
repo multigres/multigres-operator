@@ -16,7 +16,7 @@ const COMPONENTS = {
 };
 
 function validateRecord(record) {
-  assert.equal(record.schema_version, 1);
+  assert.ok([1, 2].includes(record.schema_version), 'Unsupported promotion record version');
   for (const sha of [record.upstream_sha, record.operator_sha]) {
     assert.match(sha, /^[0-9a-f]{40}$/);
   }
@@ -29,6 +29,14 @@ function validateRecord(record) {
   assert.deepEqual(Object.keys(record.images).sort(), ['multiadmin-web', 'multigres', 'pgctld']);
   for (const [name, image] of Object.entries(record.images)) {
     assert.match(image, new RegExp(`^ghcr\\.io/multigres/${name}@sha256:[0-9a-f]{64}$`));
+  }
+  if (record.schema_version === 2) {
+    assert.deepEqual(record.lanes, { vanilla: 'success', supabase: 'success' });
+    assert.match(record.supabase.image, /^docker\.io\/supabase\/postgres@sha256:[0-9a-f]{64}$/);
+    assert.match(record.supabase.version, /^(?:[0-9]+(?:\.[0-9]+){3}-multigres|digest)$/);
+    for (const key of ['source_sha', 'multigres_sha', 'operator_multigres_sha']) {
+      assert.match(record.supabase[key], /^[0-9a-f]{40}$/);
+    }
   }
 }
 
@@ -63,6 +71,12 @@ function sameImages(a, b) {
   return Object.keys(a.images).every((name) => a.images[name] === b.images[name]);
 }
 
+function sameSupabase(a, b) {
+  return a.supabase && b.supabase &&
+    ['image', 'source_sha', 'multigres_sha', 'operator_multigres_sha'].every((key) =>
+      a.supabase[key] === b.supabase[key]);
+}
+
 function pullRequestBody(previous, record) {
   const rows = Object.entries(COMPONENTS).map(([name, component]) =>
     `| ${name} | \`${previous[name]}\` | \`${record.images[component]}\` |`).join('\n');
@@ -76,7 +90,15 @@ function pullRequestBody(previous, record) {
 | --- | --- | --- |
 ${rows}
 
-All three digests passed source-revision and build-provenance checks and contain linux/amd64 and linux/arm64 images. The promotion record and six defaults are committed atomically. Etcd and Postgres exporter defaults are unchanged.
+Both vanilla and Supabase lanes passed against the tested operator revision and nightly Multigres images.
+
+- Supabase version: \`${record.supabase.version}\`
+- Supabase image: \`${record.supabase.image}\`
+- Supabase source: [${record.supabase.source_sha}](https://github.com/supabase/postgres/commit/${record.supabase.source_sha})
+- Bundled pgctld revision: \`${record.supabase.multigres_sha}\`
+- Operator Multigres pin: \`${record.supabase.operator_multigres_sha}\`
+
+All three upstream digests passed source-revision and build-provenance checks and contain linux/amd64 and linux/arm64 images. The promotion record and six defaults are committed atomically. Etcd and Postgres exporter defaults are unchanged.
 
 The promotion e2e check builds this PR's committed defaults without image overrides. Maintainer review and passing checks are required before merge.
 `;
@@ -88,6 +110,7 @@ async function promote({ github, context, record }) {
   assert.equal(context.eventName, 'schedule');
   assert.equal(context.ref, 'refs/heads/main');
   validateRecord(record);
+  assert.equal(record.schema_version, 2, 'Promotion requires successful results from both lanes');
   assert.equal(record.operator_sha, context.sha);
   assert.equal(String(record.canary_run.id), String(context.runId));
   assert.equal(String(record.canary_run.attempt), String(context.runAttempt));
@@ -151,13 +174,14 @@ async function promote({ github, context, record }) {
     if (relation === 'identical') assert.ok(sameImages(prior, record), 'Immutable image set changed for the same revision');
   }
 
-  if (main.record && sameImages(main.record, record)) {
+  if (main.record && sameImages(main.record, record) && sameSupabase(main.record, record)) {
     return { changed: false, merged: true };
   }
 
   let head = branch?.object.sha;
   let proposed = record;
-  const unchanged = pending?.record && sameImages(pending.record, record);
+  const unchanged = pending?.record && sameImages(pending.record, record) &&
+    sameSupabase(pending.record, record) && pending.record.operator_sha === record.operator_sha;
   if (unchanged) {
     // Keep the original evidence for this digest set, but still repair a missing
     // or failed PR update before the workflow may checkpoint the revision.
@@ -209,7 +233,15 @@ async function promote({ github, context, record }) {
 function recordFromEnv(env) {
   const run = (repo, id, attempt) => ({ id, attempt, url: `https://github.com/multigres/${repo}/actions/runs/${id}/attempts/${attempt}` });
   return {
-    schema_version: 1,
+    schema_version: 2,
+    lanes: { vanilla: env.VANILLA_RESULT, supabase: env.SUPABASE_RESULT },
+    supabase: {
+      image: env.SUPABASE_IMAGE,
+      version: env.SUPABASE_VERSION,
+      source_sha: env.SUPABASE_SOURCE_SHA,
+      multigres_sha: env.SUPABASE_MULTIGRES_SHA,
+      operator_multigres_sha: env.OPERATOR_MULTIGRES_SHA,
+    },
     upstream_sha: env.UPSTREAM_SHA,
     operator_sha: env.OPERATOR_SHA,
     nightly_run: run('multigres', env.NIGHTLY_RUN_ID, env.NIGHTLY_RUN_ATTEMPT),
