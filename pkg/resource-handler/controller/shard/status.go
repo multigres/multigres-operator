@@ -83,6 +83,9 @@ func (r *ShardReconciler) updateStatus(
 	case postureCondition != nil && postureCondition.Status == metav1.ConditionUnknown:
 		shard.Status.Phase = multigresv1alpha1.PhaseProgressing
 		shard.Status.Message = "Postgres posture check incomplete"
+	case shard.Status.PoolsReady && shard.Status.OrchReady && !hasPrimary(shard.Status.PodRoles):
+		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
+		shard.Status.Message = "No primary pod for shard"
 	case shard.Status.PoolsReady && shard.Status.OrchReady:
 		shard.Status.Phase = multigresv1alpha1.PhaseHealthy
 		shard.Status.Message = "Ready"
