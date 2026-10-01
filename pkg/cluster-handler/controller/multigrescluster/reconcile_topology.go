@@ -50,8 +50,17 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 	cluster *multigresv1alpha1.MultigresCluster,
 	res *resolver.Resolver,
 	preservePendingDeletionCells ...bool,
-) (ctrl.Result, error) {
+) (result ctrl.Result, reconcileErr error) {
 	logger := log.FromContext(ctx)
+	failureReason := "TopologyReconcileFailed"
+	defer func() {
+		if reconcileErr != nil {
+			if topo.IsTopoUnavailable(reconcileErr) {
+				failureReason = "TopologyUnavailable"
+			}
+			r.markTopologyFailed(ctx, cluster, failureReason, reconcileErr, logger)
+		}
+	}()
 	preservePendingCells := len(preservePendingDeletionCells) > 0 &&
 		preservePendingDeletionCells[0]
 
@@ -89,7 +98,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 	store, err := r.openTopoStore(ctx, cluster.Namespace, globalTopoRef)
 	if err != nil {
 		if topo.IsTopoUnavailable(err) {
-			return r.handleTopoUnavailable(cluster, logger)
+			return r.handleTopoUnavailable(ctx, cluster, err, logger)
 		}
 		// A missing or unusable client credential is a configuration error, not a
 		// transient outage, so record it in the cluster's status as well as an
@@ -97,7 +106,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		// stays not ready is visible without reading the operator logs.
 		r.Recorder.Eventf(cluster, "Warning", "TopoConnectFailed",
 			"Failed to connect to topology server: %v", err)
-		r.markTopologyFailed(ctx, cluster, "TopoConnectFailed", err, logger)
+		failureReason = "TopoConnectFailed"
 		return ctrl.Result{}, fmt.Errorf("failed to open topology store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
@@ -122,7 +131,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 			),
 		); err != nil {
 			if topo.IsTopoUnavailable(err) {
-				return r.handleTopoUnavailable(cluster, logger)
+				return r.handleTopoUnavailable(ctx, cluster, err, logger)
 			}
 			return ctrl.Result{}, fmt.Errorf("failed to register cell '%s' in topology: %w",
 				cellCfg.Name, err)
@@ -143,7 +152,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 			cluster.Spec.DurabilityPolicy,
 		); err != nil {
 			if topo.IsTopoUnavailable(err) {
-				return r.handleTopoUnavailable(cluster, logger)
+				return r.handleTopoUnavailable(ctx, cluster, err, logger)
 			}
 			return ctrl.Result{}, fmt.Errorf("failed to register database '%s' in topology: %w",
 				dbConfig.Name, err)
@@ -160,7 +169,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 			topoCtx, store, r.Recorder, cluster, specDBNames,
 		); err != nil {
 			if topo.IsTopoUnavailable(err) {
-				return r.handleTopoUnavailable(cluster, logger)
+				return r.handleTopoUnavailable(ctx, cluster, err, logger)
 			}
 			return ctrl.Result{}, fmt.Errorf("failed to prune databases: %w", err)
 		}
@@ -175,7 +184,7 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		}
 		if err := topo.PruneCells(topoCtx, store, r.Recorder, cluster, cellNames); err != nil {
 			if topo.IsTopoUnavailable(err) {
-				return r.handleTopoUnavailable(cluster, logger)
+				return r.handleTopoUnavailable(ctx, cluster, err, logger)
 			}
 			return ctrl.Result{}, fmt.Errorf("failed to prune cells: %w", err)
 		}
@@ -336,11 +345,17 @@ func isPruningEnabled(cluster *multigresv1alpha1.MultigresCluster) bool {
 // During the grace period after cluster creation, it silently requeues.
 // After the grace period, it returns an error.
 func (r *MultigresClusterReconciler) handleTopoUnavailable(
+	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
-	logger interface{ Info(string, ...any) },
+	cause error,
+	logger interface {
+		Info(string, ...any)
+		Error(error, string, ...any)
+	},
 ) (ctrl.Result, error) {
 	resourceAge := time.Since(cluster.CreationTimestamp.Time)
 	if resourceAge < topoUnavailableGracePeriod {
+		r.markTopologyFailed(ctx, cluster, "TopologyUnavailable", cause, logger)
 		logger.Info("Topology server not available yet, requeueing",
 			"resourceAge", resourceAge.Round(time.Second).String(),
 			"gracePeriod", topoUnavailableGracePeriod.String(),
@@ -350,5 +365,5 @@ func (r *MultigresClusterReconciler) handleTopoUnavailable(
 			resourceAge.Round(time.Second))
 		return ctrl.Result{RequeueAfter: topoUnavailableRequeueDelay}, nil
 	}
-	return ctrl.Result{}, fmt.Errorf("topology server unavailable")
+	return ctrl.Result{}, fmt.Errorf("topology server unavailable: %w", cause)
 }

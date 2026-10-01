@@ -22,6 +22,9 @@ spec:
               Controller {{ $labels.controller }} has had a non-zero reconcile
               error rate for {{ $labels.namespace }}/{{ $labels.name }} over the
               last 5 minutes (current: {{ $value | humanize }}/s).
+              Inspect TopologyReady for topology errors and FailoverReady for their
+              impact on automatic failover; MultigresFailoverUnavailable reports
+              these failures separately at critical severity.
             runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/MultigresClusterReconcileErrors.md"
 
         - alert: MultigresClusterDegraded
@@ -77,6 +80,126 @@ spec:
               has had a non-zero error rate for the last 5 minutes
               (current: {{ $value | humanize }}/s).
             runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/MultigresWebhookErrors.md"
+
+        # ── Topology and failover ──────────────────────────────────
+
+        - alert: MultigresTopologyQuorumUnavailable
+          expr: multigres_operator_toposerver_quorum_available == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Topology unavailable for failover in {{ $labels.target_namespace }}/{{ $labels.name }}"
+            description: >-
+              {{ $labels.reason }}: the operator detected an etcd status error or cannot confirm quorum for one consistent etcd cluster.
+              Cluster {{ $labels.cluster }} has lost verified failover protection;
+              existing SQL connections may still serve traffic.
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresTopologyHealthUnknown
+          expr: >-
+            (multigres_operator_toposerver_quorum_available < 0)
+            or (time() - multigres_operator_toposerver_health_checked_timestamp_seconds > 120)
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Topology health observation missing for {{ $labels.target_namespace }}/{{ $labels.name }}"
+            description: "Etcd quorum checks are failing or stale. Failover protection cannot be verified for cluster {{ $labels.cluster }}."
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresTopologyMemberUnavailable
+          expr: multigres_operator_toposerver_member_up == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Etcd member {{ $labels.member }} is unavailable"
+            description: >-
+              Member {{ $labels.target_namespace }}/{{ $labels.member }} cannot complete
+              a linearizable read. Check the quorum alert before restarting other members.
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresTopologyBackendNearQuota
+          expr: >-
+            multigres_operator_toposerver_backend_bytes
+            / multigres_operator_toposerver_backend_quota_bytes > 0.8
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Etcd backend nearing quota on {{ $labels.member }}"
+            description: >-
+              Backend usage on {{ $labels.target_namespace }}/{{ $labels.member }}
+              is {{ $value | humanizePercentage }} of its quota. Exhausting the quota
+              blocks topology writes and puts failover protection at risk.
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresTopologyMemoryPressure
+          expr: >-
+            label_replace(label_replace(
+              max by (namespace, pod) (container_memory_working_set_bytes{container="etcd", pod!=""}),
+              "target_namespace", "$1", "namespace", "(.+)"),
+              "member", "$1", "pod", "(.+)")
+            / on (target_namespace, member) group_left (cluster, name)
+              (max by (cluster, name, target_namespace, member)
+                (multigres_operator_toposerver_memory_limit_bytes) > 0)
+            > 0.8
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Etcd memory pressure on {{ $labels.member }}"
+            description: >-
+              Member {{ $labels.target_namespace }}/{{ $labels.member }} is using
+              {{ $value | humanizePercentage }} of its memory limit. An OOM kill
+              can remove a quorum member and interrupt failover protection for {{ $labels.cluster }}.
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresTopologyMemberOOMKilled
+          expr: >-
+            (time() - multigres_operator_toposerver_member_oom_timestamp_seconds < 300)
+            and (multigres_operator_toposerver_member_oom_timestamp_seconds > 0)
+          labels:
+            severity: critical
+          annotations:
+            summary: "Etcd member {{ $labels.member }} was OOM-killed"
+            description: "An OOM kill removed member {{ $labels.target_namespace }}/{{ $labels.member }}. Check quorum and FailoverReady for cluster {{ $labels.cluster }} before restarting another member."
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresTopologyMemberRestarting
+          expr: increase(multigres_operator_toposerver_member_restarts_total[10m]) >= 3
+          labels:
+            severity: warning
+          annotations:
+            summary: "Etcd member {{ $labels.member }} is repeatedly restarting"
+            description: "Member {{ $labels.target_namespace }}/{{ $labels.member }} restarted at least three times in ten minutes. Check termination reasons, memory pressure, and quorum health."
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresFailoverUnavailable
+          expr: multigres_operator_cluster_failover_ready == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Failover protection unavailable for {{ $labels.target_namespace }}/{{ $labels.cluster }}"
+            description: >-
+              FailoverReady is false: {{ $labels.reason }}. Topology access or shard
+              orchestrators are unavailable. SQL availability does not imply that
+              automatic failover is working.
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
+
+        - alert: MultigresFailoverHealthUnknown
+          expr: >-
+            (multigres_operator_cluster_failover_ready < 0)
+            or (time() - multigres_operator_cluster_failover_checked_timestamp_seconds > 120)
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Failover protection unverified for {{ $labels.target_namespace }}/{{ $labels.cluster }}"
+            description: "Failover observations are unknown or stale. Inspect TopologyQuorumAvailable, TopologyReady, and shard OrchReady conditions."
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/TopologyHealth.md"
 
         # ── Backup & Drain ────────────────────────────────────────
 
@@ -138,7 +261,7 @@ spec:
         # ── Saturation ────────────────────────────────────────────
 
         - alert: MultigresControllerSaturated
-          expr: workqueue_depth{name=~"multigrescluster|tablegroup|shard|cell|toposerver"} > 50
+          expr: workqueue_depth{name=~"multigrescluster|tablegroup|shard|cell|toposerver|toposerver-health"} > 50
           for: 10m
           labels:
             severity: warning

@@ -60,6 +60,9 @@ spec:
     - exemplar-storage
     - native-histograms
   enableOTLPReceiver: true
+  additionalScrapeConfigs:
+    name: kubelet-cadvisor-scrape
+    key: scrape-configs.yaml
   serviceMonitorSelector:
     matchLabels:
       app.kubernetes.io/name: multigres-operator
@@ -125,3 +128,26 @@ spec:
       targetPort: 9090
       name: http
   type: ClusterIP
+
+---
+# cAdvisor supplies per-container memory usage for the topology pressure alert.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kubelet-cadvisor-scrape
+stringData:
+  scrape-configs.yaml: |
+    - job_name: kubelet-cadvisor
+      scheme: https
+      metrics_path: /metrics/cadvisor
+      scrape_interval: 30s
+      kubernetes_sd_configs:
+        - role: node
+      authorization:
+        credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        insecure_skip_verify: true
+      metric_relabel_configs:
+        - source_labels: [__name__, container]
+          regex: 'container_memory_working_set_bytes;etcd'
+          action: keep
