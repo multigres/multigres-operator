@@ -1109,6 +1109,16 @@ func TestShardReconciliation(t *testing.T) {
 						obj.SetName(hashedDeployName)
 						deploy.Spec.Selector.MatchLabels["app.kubernetes.io/instance"] = clusterName
 						deploy.Spec.Template.ObjectMeta.Labels["app.kubernetes.io/instance"] = clusterName
+
+						// multiorch advertises the Service DNS name via --hostname.
+						for i := range deploy.Spec.Template.Spec.Containers {
+							c := &deploy.Spec.Template.Spec.Containers[i]
+							if c.Name == "multiorch" {
+								c.Args = append(c.Args, fmt.Sprintf(
+									"--hostname=%s.%s.svc.cluster.local", hashedSvcName, tc.shard.Namespace,
+								))
+							}
+						}
 					}
 					if svc, ok := obj.(*corev1.Service); ok {
 						obj.SetName(hashedSvcName)

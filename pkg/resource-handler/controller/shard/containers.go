@@ -688,6 +688,8 @@ func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 	watchTarget := fmt.Sprintf("%s/%s/%s",
 		shard.Spec.DatabaseName, shard.Spec.TableGroupName, shard.Spec.ShardName)
 
+	// Advertise the Service DNS name; unlike multipooler (per-pod), Multiorch is a Deployment behind one Service.
+	serviceName := buildMultiorchNameWithCell(shard, cellName, nameutil.ServiceConstraints)
 	args := []string{
 		"multiorch", // Subcommand
 		"--http-port=15300",
@@ -697,6 +699,7 @@ func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) co
 		"--cell=" + cellName,
 		"--watch-targets=" + watchTarget,
 		"--log-level=" + string(shard.Spec.LogLevels.Multiorch),
+		fmt.Sprintf("--hostname=%s.%s.svc.cluster.local", serviceName, shard.Namespace),
 	}
 	if shardTLSConfigured(shard) {
 		args = append(args,
