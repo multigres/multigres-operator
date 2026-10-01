@@ -17,6 +17,10 @@ const image = (name, digit) => `ghcr.io/multigres/${name}@sha256:${digit.repeat(
 function record(digit = '2') {
   return recordFromEnv({
     UPSTREAM_SHA: sha(digit), OPERATOR_SHA: sha('a'),
+    VANILLA_RESULT: 'success', SUPABASE_RESULT: 'success',
+    SUPABASE_IMAGE: `docker.io/supabase/postgres@sha256:${'d'.repeat(64)}`,
+    SUPABASE_VERSION: '17.11.0.001-multigres', SUPABASE_SOURCE_SHA: sha('e'),
+    SUPABASE_MULTIGRES_SHA: sha('f'), OPERATOR_MULTIGRES_SHA: sha('f'),
     NIGHTLY_RUN_ID: '100', NIGHTLY_RUN_ATTEMPT: '2',
     GITHUB_RUN_ID: '200', GITHUB_RUN_ATTEMPT: '1',
     MULTIGRES_IMAGE: image('multigres', digit), PGCTLD_IMAGE: image('pgctld', digit),
@@ -241,3 +245,51 @@ test('first promotion rejects a nightly older than the existing source-pinned de
   await assert.rejects(promote(f), /older than the initial runtime defaults/);
   assert.ok(!f.calls.some((call) => /^(create|update)/.test(call.name)));
 });
+
+for (const lane of ['vanilla', 'supabase']) {
+  for (const result of ['failure', 'cancelled', 'skipped', undefined]) {
+    test(`rejects ${lane} ${result} before writing promotion`, async () => {
+      const f = fixture();
+      f.record.lanes[lane] = result;
+      await assert.rejects(promote(f));
+      assert.ok(!f.calls.some((call) => /^(create|update)/.test(call.name)));
+    });
+  }
+}
+
+test('new Supabase digest updates evidence even when nightly Multigres images are unchanged', async () => {
+  const f = fixture({ pendingRecord: record(), existingPR: true });
+  f.record.supabase.image = `docker.io/supabase/postgres@sha256:${'e'.repeat(64)}`;
+  f.record.supabase.source_sha = sha('f');
+  assert.equal((await promote(f)).changed, true);
+  assert.deepEqual(JSON.parse(f.branchFiles[RECORD]), f.record);
+  const body = f.calls.find((call) => call.name === 'updatePR').args.body;
+  assert.ok(body.includes(f.record.supabase.image));
+  assert.ok(body.includes(f.record.supabase.source_sha));
+});
+
+test('older records remain readable but cannot authorize new promotions', async () => {
+  const legacy = record();
+  legacy.schema_version = 1;
+  delete legacy.supabase;
+  delete legacy.lanes;
+  validateDefaults(replaceDefaults(source, legacy), legacy);
+  const f = fixture({ pendingRecord: legacy, existingPR: true });
+  assert.equal((await promote(f)).changed, true);
+  assert.equal(JSON.parse(f.branchFiles[RECORD]).schema_version, 2);
+  f.record = legacy;
+  await assert.rejects(promote(f), /both lanes/);
+});
+
+for (const mutate of [
+  (r) => { r.supabase.image = 'docker.io/supabase/postgres:latest'; },
+  (r) => { delete r.supabase.source_sha; },
+  (r) => { r.supabase.multigres_sha = 'unknown'; },
+]) {
+  test('incomplete Supabase evidence cannot authorize promotion', async () => {
+    const f = fixture();
+    mutate(f.record);
+    await assert.rejects(promote(f));
+    assert.ok(!f.calls.some((call) => /^(create|update)/.test(call.name)));
+  });
+}

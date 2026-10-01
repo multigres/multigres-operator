@@ -1,7 +1,7 @@
 # Runtime image promotion
 
 The nightly compatibility workflow promotes runtime defaults only after a
-scheduled canary on `multigres/multigres-operator`'s `main` branch passes. Proto
+scheduled canary with successful vanilla and Supabase lanes on `multigres/multigres-operator`'s `main` branch passes. Proto
 dependency sync does not change these defaults. Manual canaries are diagnostic;
 they cannot publish a promotion PR or mark an upstream revision handled.
 
@@ -12,13 +12,44 @@ freezes the operator commit being tested. Preflight resolves immutable image
 digests, checks for Linux amd64 and arm64 manifests, and verifies GitHub build
 attestations against the upstream source SHA, `refs/heads/main`, the nightly
 workflow identity, and the expected image repository. E2E then tests those exact
-digests against the frozen operator commit.
+digests against the frozen operator commit in both lanes. The Supabase lane
+replaces only Postgres/pgctld with the selected Supabase image; the operator and
+other nightly runtime images are identical across lanes. Each lane uses the
+existing reusable e2e workflow and has separate failure-log artifacts.
+
+The Supabase selector reads Docker Hub tags in publication order and picks the
+latest complete `<version>-multigres` tag, excluding architecture-specific and
+OrioleDB tags. It freezes the manifest digest before reading metadata or running
+tests. BuildKit provenance attached to that digest identifies the Supabase
+source commit; the selector reads `flake.lock` at that commit to identify the
+bundled Multigres revision. This is source metadata from the publisher, not a
+GitHub-signed build attestation. Images without the metadata, with conflicting
+platform source revisions, or using a separate `PGCTLD_REV` build argument fail
+selection rather than being assigned an unrelated flake revision.
+
+The bundled revision must equal the Multigres dependency in the tested
+operator's `go.mod`. A newer revision is accepted only when an on-demand run
+explicitly selects `allow-newer-pgctld` for a pgctld-only upgrade. Older or
+divergent revisions fail preflight with both revisions in the diagnostic. This
+can block a newly published image if its bundled pgctld lags the operator pin;
+a passing image build alone does not satisfy the revision policy.
+
+An on-demand run can supply `supabase-image` as a fully qualified
+`docker.io/supabase/postgres@sha256:<digest>` reference and `operator-ref` as a
+full operator commit. The same input can consume a future nightly image without
+adding another build or compatibility test path. Without an override, the lane
+uses a published image and relies on the existing Supabase image test coverage.
+Manual runs remain diagnostic and cannot promote.
 
 After a successful canary, the promotion job commits
-`config/runtime-image-promotion.json` with schema version 1, `upstream_sha`,
+`config/runtime-image-promotion.json` with schema version 2, `upstream_sha`,
 `operator_sha`, `nightly_run` and `canary_run` (IDs, attempts, and URLs), and an
 `images` map containing the three fully qualified digest references. This file is
-created by the first successful promotion; it is not seeded with untested images.
+created from successful validation; it is not seeded with untested images.
+The record also contains `lanes` with both results and `supabase` with the
+selected version, image digest, Supabase source SHA, bundled Multigres SHA, and
+tested operator's Multigres pin. Version 1 records remain readable as history,
+but cannot authorize a new promotion.
 
 The same Git commit updates these constants in `api/v1alpha1/image_defaults.go`:
 
@@ -55,7 +86,12 @@ against the source revisions in the existing pinned image tags. It refuses to pu
 the upstream revision is stale/divergent, or an already recorded source revision
 has a different digest set. Newer green sets replace all images and evidence in
 one tree/ref update, retaining branch ancestry without a force push. Reprocessing
-an identical set leaves its commit and original evidence unchanged.
+an identical set leaves its commit and original evidence unchanged. A changed
+Supabase digest updates the evidence even when the three upstream image digests
+are unchanged; a pending PR's evidence is also refreshed when the tested
+operator revision changes. Successful Supabase lane results provide the
+compatibility evidence for this bump; no second Supabase-side e2e run is needed
+for the same combination.
 
 Compatibility reporting and promotion are sibling terminal jobs. Reporting has
 only `issues: write`; promotion has only `contents: write` and
@@ -66,7 +102,9 @@ compatibility incident.
 Only successful PR publication (or verification that the same set is already
 published/merged) writes the `nightly-compatibility-promoted-<sha>` checkpoint.
 Resolution reads these checkpoints only from successful scheduled runs on main;
-older green-only artifacts do not count. A failed promotion remains eligible for
+older green-only artifacts do not count. Only upstream revisions older than the
+checkpoint are skipped. An identical upstream SHA is tested again because the
+selected Supabase image or operator revision can change independently. A failed promotion remains eligible for
 the next scheduled run. A failed PR API call may leave the complete candidate
 commit on the promotion branch; retry repairs PR publication before writing the
 checkpoint. No partially updated image set can become visible on the branch.
@@ -98,7 +136,7 @@ and [cert-manager's Kind setup](https://github.com/cert-manager/cert-manager/blo
 ## Local validation
 
 ```sh
-node --test scripts/promote-runtime-images.test.js scripts/nightly-compatibility.test.js scripts/e2e-images.test.js
+node --test scripts/promote-runtime-images.test.js scripts/nightly-compatibility.test.js scripts/e2e-images.test.js scripts/supabase-compatibility.test.js
 go test -tags=e2e ./test/e2e/framework -count=1
 actionlint .github/workflows/nightly-compatibility.yaml .github/workflows/pull-request.yaml .github/workflows/_reusable-e2e.yaml
 ```

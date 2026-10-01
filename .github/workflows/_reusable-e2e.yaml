@@ -25,6 +25,11 @@ on:
         default: 'shared'
         required: false
         type: string
+      artifact-suffix:
+        description: Suffix for logs when multiple image lanes run the same test suite
+        default: ''
+        required: false
+        type: string
       operator-image-artifact:
         description: >
           Name of an uploaded artifact containing operator-image.tar.
@@ -276,7 +281,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: kind-logs-${{ inputs.test-spec || 'all' }}
+          name: kind-logs-${{ inputs.test-spec || 'all' }}${{ inputs.artifact-suffix != '' && format('-{0}', inputs.artifact-suffix) || '' }}
           # Public-repository artifact: only collect from this disposable Kind
           # cluster, and never inject production credentials into E2E workloads.
           path: |
