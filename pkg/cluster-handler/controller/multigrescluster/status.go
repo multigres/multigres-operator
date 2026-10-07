@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 )
 
@@ -282,6 +283,16 @@ func (r *MultigresClusterReconciler) updateStatus(
 		}
 	}
 
+	r.updateHealthConditions(ctx, cluster, globalTopoSpec, topoServers.Items)
+	failover := meta.FindStatusCondition(cluster.Status.Conditions, conditionFailoverReady)
+	if failover.Status != metav1.ConditionTrue {
+		allHealthy = false
+	}
+	if failover.Status == metav1.ConditionFalse &&
+		(cluster.Status.InitializedAt != nil || (failover.Reason != "TopologyMissing" && failover.Reason != "OrchestratorUnavailable")) {
+		anyDegraded = true
+	}
+
 	if len(expectedCells) > 0 || len(expectedTableGroups) > 0 || expectsGlobalTopoServer {
 		allHealthy = false
 	}
@@ -290,6 +301,9 @@ func (r *MultigresClusterReconciler) updateStatus(
 	case anyDegraded:
 		cluster.Status.Phase = multigresv1alpha1.PhaseDegraded
 		cluster.Status.Message = "Cluster is degraded"
+		if failover.Status == metav1.ConditionFalse {
+			cluster.Status.Message = failover.Message
+		}
 	case allHealthy:
 		cluster.Status.Phase = multigresv1alpha1.PhaseHealthy
 		cluster.Status.Message = "Ready"
@@ -469,6 +483,24 @@ func (r *MultigresClusterReconciler) updateStatus(
 	); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
+
+	// Emit cluster-level metrics
+	monitoring.SetClusterInfo(
+		cluster.Name,
+		cluster.Namespace,
+		string(cluster.Status.Phase),
+		cluster.Status.InitializedAt != nil,
+	)
+	var totalShards int
+	for _, db := range cluster.Status.Databases {
+		totalShards += int(db.TotalShards)
+	}
+	monitoring.SetClusterTopology(
+		cluster.Name,
+		cluster.Namespace,
+		len(cluster.Status.Cells),
+		totalShards,
+	)
 
 	return nil
 }

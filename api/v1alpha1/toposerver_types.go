@@ -71,6 +71,10 @@ type TopoServerSpec struct {
 
 // TopoServerStatus defines the observed state of TopoServer.
 type TopoServerStatus struct {
+	// HealthCheckedAt is the completion time of the latest direct etcd health probe.
+	// +optional
+	HealthCheckedAt *metav1.Time `json:"healthCheckedAt,omitempty"`
+
 	// ObservedGeneration is the most recent generation observed.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

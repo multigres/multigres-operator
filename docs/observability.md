@@ -54,6 +54,19 @@ kubectl apply -f config/monitoring/prometheus-rules.yaml
 
 Each alert links to a dedicated runbook with investigation steps, PromQL queries, and remediation actions.
 
+## Topology health
+
+Managed etcd members are probed every 30 seconds. The operator exports quorum,
+backend size and quota, MVCC revision, memory limits, restarts, and observed OOM
+terminations. `TopologyQuorumAvailable` and `FailoverReady` on MultigresCluster
+separate topology and orchestrator health from SQL availability. Quorum loss and
+lost failover readiness raise critical alerts after one minute.
+
+The [topology health runbook](monitoring/runbooks/TopologyHealth.md) lists the
+metrics, thresholds, condition meanings, and investigation steps. Memory-pressure
+alerts require kubelet/cAdvisor metrics; the local observability overlay includes
+that scrape.
+
 ## Grafana Dashboards
 
 Three Grafana dashboards are included in `config/monitoring/`:
