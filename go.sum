@@ -122,6 +122,8 @@ github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek
 github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
 github.com/google/cel-go v0.29.2 h1:ZtDxkeiMmz0mxbKDYiNkE5Lk7V5edMRcaaDf2jX002k=
 github.com/google/cel-go v0.29.2/go.mod h1:X0bD6iVNR8pkROSOoHVdgTkzmRcosof7WQqCD6wcMc8=
+github.com/google/gnostic v0.7.1 h1:t5Kc7j/8kYr8t2u11rykRrPPovlEMG4+xdc/SpekATs=
+github.com/google/gnostic v0.7.1/go.mod h1:KSw6sxnxEBFM8jLPfJd46xZP+yQcfE8XkiqfZx5zR28=
 github.com/google/gnostic-models v0.7.1 h1:SisTfuFKJSKM5CPZkffwi6coztzzeYUhc3v4yxLWH8c=
 github.com/google/gnostic-models v0.7.1/go.mod h1:whL5G0m6dmc5cPxKc5bdKdEN3UjI7OUGxBlw57miDrQ=
 github.com/google/go-cmp v0.2.0/go.mod h1:oXzfMopK8JAjlY9xF4vHSVASa0yLyX7SntLO5aqRK0M=
@@ -197,8 +199,8 @@ github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJ
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFdJifH4BDsTlE89Zl93FEloxaWZfGcifgq8=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
-github.com/multigres/multigres v0.0.0-20261001082527-829712a6430e h1:JUfmm2XdcKusvWNYdbU2lBzqNpAhaJ7yGFZkhFG26aw=
-github.com/multigres/multigres v0.0.0-20261001082527-829712a6430e/go.mod h1:Efms5VpGXSTFNXm3FEIpxIg/3UeszwzSjcVCg+V06UU=
+github.com/multigres/multigres v0.0.0-20261008133658-4fb1294b639e h1:dMhbdvf+z0kkMtAutNYfi44gwAV7XfrjaCYOtP48zk4=
+github.com/multigres/multigres v0.0.0-20261008133658-4fb1294b639e/go.mod h1:JykIVgBbDwolqMlej0PbvthVJncmvj3AcKuMmJ8u5vo=
 github.com/multigres/testkit v0.2.1 h1:1SOV2jevblZBpobzaoFAy/lVqb2Donihjc+EovmbIAo=
 github.com/multigres/testkit v0.2.1/go.mod h1:3ONhsV/PNOUke7PID5HPlnxTLyQCcfOQ/JfLCRkSLOY=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
