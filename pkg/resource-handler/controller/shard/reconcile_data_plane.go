@@ -43,6 +43,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 				"Failed to connect to topology store: %v", err)
 		}
 		logger.Error(err, "Failed to get topo store, cannot update roles or execute drain")
+		// A dropped topo connection is a lost observation, not a confirmed-good
+		// one: readiness must fail closed rather than keep publishing whatever
+		// PoolerDataReady each pod last had for as long as the outage lasts.
+		if readinessErr := r.reconcilePoolerReadiness(ctx, shard, nil); readinessErr != nil {
+			return ctrl.Result{}, readinessErr
+		}
 		return ctrl.Result{RequeueAfter: topoUnavailableRequeueDelay}, nil
 	}
 	defer func() { _ = store.Close() }()
@@ -409,6 +415,12 @@ func (r *ShardReconciler) reconcilePosture(
 
 	result, err := posture.Evaluate(ctx, store, rpcClient, shard, podNames)
 	if err != nil {
+		// Same reasoning as the topo-connection failure above: an evaluation
+		// error is a lost observation, so readiness must fail closed instead of
+		// leaving a stale PoolerDataReady published for the life of the error.
+		if readinessErr := r.reconcilePoolerReadiness(ctx, shard, nil); readinessErr != nil {
+			return 0, readinessErr
+		}
 		r.Recorder.Eventf(shard, "Warning", "PostureCheckFailed",
 			"Failed to check postgres posture consistency: %v", err)
 		return 0, fmt.Errorf("evaluate posture consistency: %w", err)

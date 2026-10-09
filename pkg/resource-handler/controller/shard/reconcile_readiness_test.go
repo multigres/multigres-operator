@@ -52,7 +52,7 @@ func TestReconcilePoolerReadiness(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	if err := r.reconcilePoolerReadiness(t.Context(), shard, map[string]posture.Readiness{
-		pod.Name: {Ready: true, Reason: "DataPlaneReady", Message: "ready"},
+		pod.Name: {Observed: true, Ready: true, Reason: "DataPlaneReady", Message: "ready"},
 	}); err != nil {
 		t.Fatalf("reconcile readiness: %v", err)
 	}
@@ -76,9 +76,60 @@ func TestReconcilePoolerReadiness(t *testing.T) {
 	}
 	condition = readinessCondition(updated.Status.Conditions)
 	if condition == nil ||
-		condition.Status != corev1.ConditionFalse ||
+		condition.Status != corev1.ConditionUnknown ||
 		condition.Reason != "ObservationUnavailable" {
-		t.Fatalf("readiness condition = %#v, want false ObservationUnavailable", condition)
+		t.Fatalf("readiness condition = %#v, want unknown ObservationUnavailable", condition)
+	}
+
+	// A real negative assessment from Multigres is a different claim from a
+	// missing one, and must still report False rather than Unknown.
+	if err := r.reconcilePoolerReadiness(t.Context(), shard, map[string]posture.Readiness{
+		pod.Name: {
+			Observed: true,
+			Ready:    false,
+			Reason:   "PostgresNotReady",
+			Message:  "PostgreSQL is not accepting connections",
+		},
+	}); err != nil {
+		t.Fatalf("reconcile negative observation: %v", err)
+	}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated); err != nil {
+		t.Fatalf("get not-ready pod: %v", err)
+	}
+	condition = readinessCondition(updated.Status.Conditions)
+	if condition == nil ||
+		condition.Status != corev1.ConditionFalse ||
+		condition.Reason != "PostgresNotReady" {
+		t.Fatalf("readiness condition = %#v, want false PostgresNotReady", condition)
+	}
+
+	// A map entry that exists but was never actually checked (e.g. its Status
+	// RPC itself failed) must still read as Unknown, but keeps its own
+	// Reason/Message rather than a generic placeholder: that diagnostic (here,
+	// the RPC error) is the whole reason this entry is unobserved, and is lost
+	// if overwritten.
+	if err := r.reconcilePoolerReadiness(t.Context(), shard, map[string]posture.Readiness{
+		pod.Name: {
+			Observed: false,
+			Ready:    false,
+			Reason:   "StatusUnavailable",
+			Message:  "multipooler status RPC failed: fake rpc failure",
+		},
+	}); err != nil {
+		t.Fatalf("reconcile unobserved entry: %v", err)
+	}
+	if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated); err != nil {
+		t.Fatalf("get pod with unobserved entry: %v", err)
+	}
+	condition = readinessCondition(updated.Status.Conditions)
+	if condition == nil ||
+		condition.Status != corev1.ConditionUnknown ||
+		condition.Reason != "StatusUnavailable" ||
+		condition.Message != "multipooler status RPC failed: fake rpc failure" {
+		t.Fatalf(
+			"readiness condition = %#v, want unknown StatusUnavailable with the RPC error",
+			condition,
+		)
 	}
 }
 
