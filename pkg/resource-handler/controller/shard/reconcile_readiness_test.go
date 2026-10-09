@@ -61,7 +61,7 @@ func TestReconcilePoolerReadiness(t *testing.T) {
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated); err != nil {
 		t.Fatalf("get updated pod: %v", err)
 	}
-	condition := readinessCondition(updated.Status.Conditions)
+	condition := findPoolerReadinessCondition(updated.Status.Conditions)
 	if condition == nil ||
 		condition.Status != corev1.ConditionTrue ||
 		condition.Reason != "DataPlaneReady" {
@@ -74,19 +74,10 @@ func TestReconcilePoolerReadiness(t *testing.T) {
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), updated); err != nil {
 		t.Fatalf("get unready pod: %v", err)
 	}
-	condition = readinessCondition(updated.Status.Conditions)
+	condition = findPoolerReadinessCondition(updated.Status.Conditions)
 	if condition == nil ||
 		condition.Status != corev1.ConditionFalse ||
 		condition.Reason != "ObservationUnavailable" {
 		t.Fatalf("readiness condition = %#v, want false ObservationUnavailable", condition)
 	}
-}
-
-func readinessCondition(conditions []corev1.PodCondition) *corev1.PodCondition {
-	for i := range conditions {
-		if conditions[i].Type == PoolerDataReadyCondition {
-			return &conditions[i]
-		}
-	}
-	return nil
 }

@@ -765,7 +765,7 @@ func TestReconcilePostureBacksOffThenClearsOnceAPrimaryIsElected(t *testing.T) {
 		if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), got); err != nil {
 			t.Fatalf("get pod %s: %v", pod.Name, err)
 		}
-		condition := readinessCondition(got.Status.Conditions)
+		condition := findPoolerReadinessCondition(got.Status.Conditions)
 		if condition == nil || condition.Status != corev1.ConditionFalse {
 			t.Errorf("pod %s readiness condition = %#v, want False while waiting for a primary",
 				pod.Name, condition)
@@ -849,7 +849,7 @@ func TestReconcilePostureBacksOffThenClearsOnceAPrimaryIsElected(t *testing.T) {
 		if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), got); err != nil {
 			t.Fatalf("get pod %s: %v", pod.Name, err)
 		}
-		condition := readinessCondition(got.Status.Conditions)
+		condition := findPoolerReadinessCondition(got.Status.Conditions)
 		if condition == nil || condition.Status != corev1.ConditionTrue {
 			t.Errorf("pod %s readiness condition = %#v, want True once a primary is elected",
 				pod.Name, condition)

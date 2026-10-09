@@ -6,6 +6,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -53,67 +55,96 @@ func (r *ShardReconciler) reconcilePoolerReadiness(
 		if observation.Ready {
 			conditionStatus = corev1.ConditionTrue
 		}
-		if poolerReadinessConditionMatches(
-			pod.Status.Conditions,
-			conditionStatus,
-			observation.Reason,
-			observation.Message,
-		) {
+		existing := findPoolerReadinessCondition(pod.Status.Conditions)
+		if conditionMatches(existing, conditionStatus, observation.Reason, observation.Message) {
 			continue
 		}
 
-		base := pod.DeepCopy()
-		setPoolerReadinessCondition(pod, corev1.PodCondition{
+		desired := corev1.PodCondition{
 			Type:               PoolerDataReadyCondition,
 			Status:             conditionStatus,
 			LastProbeTime:      metav1.Now(),
 			LastTransitionTime: metav1.Now(),
 			Reason:             observation.Reason,
 			Message:            observation.Message,
-		})
-		// Named apart from the Shard's own status manager: the claim here is over
-		// one condition on a Pod whose status otherwise belongs to kubelet, not
-		// over the Shard's status, and a manager name is the only record of which
-		// concern took a field. Same reasoning as the storage-class guard.
+		}
+		if existing != nil && existing.Status == desired.Status {
+			desired.LastTransitionTime = existing.LastTransitionTime
+		}
+
+		encoded, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&desired)
+		if err != nil {
+			return fmt.Errorf("encode pooler readiness condition for pod %s: %w", pod.Name, err)
+		}
+
+		// A server-side apply whose payload carries exactly one entry of a
+		// listType=map/listMapKey=type list (PodStatus.Conditions is one, per
+		// its OpenAPI markers) merges that entry into the list by its `type`
+		// key instead of replacing the array, which is what a JSON merge
+		// patch (client.MergeFrom) does. That is the whole fix: kubelet's own
+		// entries (Ready, ContainersReady, ...), written after this
+		// reconcile's List, survive untouched even though this apply carries
+		// only the snapshot this reconcile read.
+		//
+		// FieldOwner names the manager for this one condition apart from the
+		// Shard's own status manager, since the claim is over a field on a
+		// Pod whose status otherwise belongs to kubelet. Same reasoning as
+		// the storage-class guard.
+		//
+		// ForceOwnership is required, not optional, and must not be removed:
+		// the binary this replaces wrote this same field under this same
+		// manager name via client.MergeFrom, which the API server records as
+		// an Update-operation managedFields entry. SSA treats (manager,
+		// operation) as distinct owners, so the first Apply from this
+		// manager after an upgrade conflicts with its own leftover Update
+		// entry unless forced. Without ForceOwnership, every write that
+		// changes reason, message or status fails from that point on, and
+		// the readiness gate sticks at its pre-upgrade value.
+		// No metadata.uid precondition: a stale observation could in principle
+		// land on a Pod recreated under the same name after this reconcile's
+		// List. Not a regression versus the prior MergeFrom patch, which had
+		// the same gap, so left as-is here.
+		apply := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": corev1.SchemeGroupVersion.String(),
+			"kind":       "Pod",
+			"metadata": map[string]any{
+				"name":      pod.Name,
+				"namespace": pod.Namespace,
+			},
+			"status": map[string]any{
+				"conditions": []any{encoded},
+			},
+		}}
 		if err := r.Status().Patch(
 			ctx,
-			pod,
-			client.MergeFrom(base),
+			apply,
+			client.Apply,
 			client.FieldOwner("multigres-resource-handler-readiness"),
+			client.ForceOwnership,
 		); err != nil {
-			return fmt.Errorf("patch pooler readiness for pod %s: %w", pod.Name, err)
+			return fmt.Errorf("apply pooler readiness for pod %s: %w", pod.Name, err)
 		}
 	}
 	return nil
 }
 
-func poolerReadinessConditionMatches(
-	conditions []corev1.PodCondition,
+func findPoolerReadinessCondition(conditions []corev1.PodCondition) *corev1.PodCondition {
+	for i := range conditions {
+		if conditions[i].Type == PoolerDataReadyCondition {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
+func conditionMatches(
+	existing *corev1.PodCondition,
 	conditionStatus corev1.ConditionStatus,
 	reason string,
 	message string,
 ) bool {
-	for _, condition := range conditions {
-		if condition.Type != PoolerDataReadyCondition {
-			continue
-		}
-		return condition.Status == conditionStatus &&
-			condition.Reason == reason &&
-			condition.Message == message
-	}
-	return false
-}
-
-func setPoolerReadinessCondition(pod *corev1.Pod, desired corev1.PodCondition) {
-	for i := range pod.Status.Conditions {
-		if pod.Status.Conditions[i].Type != PoolerDataReadyCondition {
-			continue
-		}
-		if pod.Status.Conditions[i].Status == desired.Status {
-			desired.LastTransitionTime = pod.Status.Conditions[i].LastTransitionTime
-		}
-		pod.Status.Conditions[i] = desired
-		return
-	}
-	pod.Status.Conditions = append(pod.Status.Conditions, desired)
+	return existing != nil &&
+		existing.Status == conditionStatus &&
+		existing.Reason == reason &&
+		existing.Message == message
 }
