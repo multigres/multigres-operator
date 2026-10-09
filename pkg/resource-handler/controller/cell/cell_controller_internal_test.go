@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -424,5 +425,60 @@ func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
 	}
 	if cell.Status.Phase != multigresv1alpha1.PhaseDegraded {
 		t.Errorf("expected PhaseDegraded, got %q", cell.Status.Phase)
+	}
+}
+
+func TestProjectRefOrGenerationChangedPredicate_Update(t *testing.T) {
+	newCell := func(annotations map[string]string) *multigresv1alpha1.Cell {
+		return &multigresv1alpha1.Cell{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        "test-cell",
+				Namespace:   "default",
+				Generation:  1,
+				Annotations: annotations,
+			},
+		}
+	}
+
+	tests := []struct {
+		name string
+		old  *multigresv1alpha1.Cell
+		new  *multigresv1alpha1.Cell
+		want bool
+	}{
+		{
+			name: "pending-deletion annotation added",
+			old:  newCell(nil),
+			new:  newCell(map[string]string{multigresv1alpha1.AnnotationPendingDeletion: "now"}),
+			want: true,
+		},
+		{
+			name: "pending-deletion annotation changed",
+			old:  newCell(map[string]string{multigresv1alpha1.AnnotationPendingDeletion: "then"}),
+			new:  newCell(map[string]string{multigresv1alpha1.AnnotationPendingDeletion: "now"}),
+			want: true,
+		},
+		{
+			name: "unrelated annotation changed",
+			old:  newCell(map[string]string{"example.com/unrelated": "a"}),
+			new:  newCell(map[string]string{"example.com/unrelated": "b"}),
+			want: false,
+		},
+		{
+			name: "no change",
+			old:  newCell(nil),
+			new:  newCell(nil),
+			want: false,
+		},
+	}
+
+	pred := projectRefOrGenerationChangedPredicate()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pred.Update(event.UpdateEvent{ObjectOld: tt.old, ObjectNew: tt.new})
+			if got != tt.want {
+				t.Errorf("Update() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
