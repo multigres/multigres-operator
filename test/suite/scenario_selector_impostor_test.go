@@ -28,14 +28,16 @@
 //     Read-only: collects names of cells pending deletion, for topology
 //     pruning. Never mutates or deletes anything itself. SAFE.
 //
-//   - reconcile_global.go:113      TopoServerList  {cluster}
-//     CONFIRMED LIVE DEFECT (Defect 2 in
-//     tasks/multigres-operator-bugs-found-by-the-suite.md). No component
-//     filter, no owner-reference check: when global topology is external,
-//     every TopoServer carrying the cluster label is deleted, including a
-//     cell's own local TopoServer (component "local-topo"), which this
-//     selector cannot tell apart from the managed global one (component
-//     "global-topo"). TESTED below:
+//   - reconcile_global.go:120      TopoServerList  {cluster, component=global-topo}
+//     FIXED. Was a confirmed live defect: no component filter and no
+//     owner-reference check meant that, when global topology is external,
+//     every TopoServer carrying the cluster label was deleted, including a
+//     cell's own local TopoServer (component "local-topo"), which the old
+//     selector could not tell apart from the managed global one (component
+//     "global-topo"). The selector now also requires the global-topo
+//     component label, and the delete now checks controller ownership by the
+//     cluster, which a cell's local TopoServer never has (it is
+//     controller-owned by its Cell). TESTED below:
 //     TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer.
 //
 //   - multigrescluster_controller.go:401  CellList        {cluster}, in
@@ -82,9 +84,8 @@
 //
 //   - certificate.go:394 (via pkg/util/certs.List)  no label selector,
 //     InNamespace only. The eventual delete (certs.Prune) checks
-//     OwnedBy(cert, ownerUID) before deleting anything: the one place in
-//     this controller that already does what reconcile_global.go:113 does
-//     not. SAFE, and the contrast is the original bug write-up's own point.
+//     OwnedBy(cert, ownerUID) before deleting anything, the same discipline
+//     the TopoServer prune above now also applies. SAFE.
 //
 //   - status.go:125, :150, :220  CellList / TableGroupList / TopoServerList
 //     {cluster}. Purely read, to aggregate MultigresCluster.Status; nothing
@@ -257,17 +258,12 @@ import (
 )
 
 // errLocalTopoDeleted is what the TopoServer script's invariant returns when
-// it sees the deletion that test pins.
+// it sees the deletion this test asserts against.
 //
-// A sentinel rather than a match on the harness's message text, because
-// KnownDefect reads any non-nil error as "the pinned defect is still live".
-// This pin's script can produce several other errors that are not that
-// deletion, and every one of them would otherwise keep the pin green: a
-// legitimate toposerver status write that the step's declaration failed to
-// account for, a step that timed out because that declaration has drifted from
-// what the controller now writes. Those are facts about this test, not about
-// the operator, so the check body has to be able to tell them apart, and it
-// cannot do that by reading a string the harness is free to reformat.
+// A sentinel rather than a match on the harness's message text, so the
+// failure this test reports names the exact violation (the cell's own local
+// TopoServer being deleted) rather than whichever error the script's
+// declaration or pacing happened to produce.
 var errLocalTopoDeleted = errors.New(
 	"the cell's own local TopoServer was deleted",
 )
@@ -289,17 +285,15 @@ var errLocalTopoDeleted = errors.New(
 const selectorImpostorNudgeAnnotation = "scenario-selector-impostor-test.multigres.com/nudge"
 
 // externalGlobalTopoCluster creates a MultigresCluster whose global topology is
-// external and whose one cell manages its own local TopoServer, the exact
-// combination tasks/multigres-operator-external-topo-deletes-local.md
-// reproduced on a live cluster: it is what makes reconcileGlobalTopoServer's
-// desired-is-nil branch run on every reconcile, while still giving the cell
-// controller a local TopoServer of its own to keep reapplying.
+// external and whose one cell manages its own local TopoServer: what makes
+// reconcileGlobalTopoServer's desired-is-nil branch run on every reconcile,
+// while still giving the cell controller a local TopoServer of its own to
+// keep reapplying.
 //
 // It returns an error rather than calling t.Fatalf as MinimalCluster does,
 // because its caller runs it inside a Script step's do: a Fatalf there would
-// Goexit out of the middle of a script, whereas Script.TryStep routes a failing
-// do to the test's own Fatalf and, crucially, never lets it reach KnownDefect
-// as though it were evidence about the operator.
+// Goexit out of the middle of a script, whereas Script.TryStep routes a
+// failing do to the test's own Fatalf.
 //
 // The password Secret is created here rather than shared with MinimalCluster
 // because the two fixtures differ in every other field; what is worth keeping
@@ -355,17 +349,19 @@ func (c *C) externalGlobalTopoCluster(clusterName string) error {
 	return nil
 }
 
-// TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer pins
-// Defect 2 from tasks/multigres-operator-bugs-found-by-the-suite.md:
-// reconcile_global.go:113 lists TopoServers by cluster label alone (no
-// component filter, no owner-reference check) and deletes every match
-// whenever global topology is external. A cell's own local TopoServer
-// carries that same cluster label, so it is not this controller's to
-// manage, but the selector cannot tell the difference.
+// TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer asserts
+// that the external-global-topo prune in reconcile_global.go never deletes a
+// cell's own local TopoServer. It used to: the prune listed TopoServers by
+// cluster label alone (no component filter, no owner-reference check) and
+// deleted every match whenever global topology is external, and a cell's own
+// local TopoServer carries that same cluster label. The selector now also
+// requires the global-topo component label, and the delete now requires
+// controller ownership by the cluster, which a cell's local TopoServer never
+// has.
 //
 // The impostor here is not synthetic: it is the real local TopoServer the cell
 // controller legitimately creates and keeps reapplying, which is exactly what
-// makes the write-up call this "a permanent create/delete loop" rather than a
+// made the fixed defect "a permanent create/delete loop" rather than a
 // one-off. That permanence is also what shapes the script below, because it
 // rules out the move every other test in this suite makes first. An object
 // caught in a create/delete loop never settles, so there is no converged
@@ -377,7 +373,7 @@ func (c *C) externalGlobalTopoCluster(clusterName string) error {
 // So the watch opens first, on an empty namespace, and the fixture is created
 // inside the script's own step. Every legitimate write the toposerver
 // controller then makes to the object is named as a permitted change, which
-// leaves the deletion as the one event nothing accounts for, and leaves nothing
+// leaves a deletion as the one event nothing accounts for, and leaves nothing
 // to wait out.
 func TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer(t *testing.T) {
 	c := newCase(t)
@@ -391,13 +387,7 @@ func TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer(t *testi
 
 	// The deletion is this test's entire claim, so it is asserted directly
 	// rather than inferred from being whatever event no step happened to
-	// permit. Script.TryStep and Script.TryFinish both run the invariants
-	// against an event before comparing it to the permitted set
-	// (script.go:224, :243, :294), so the delete is reported as this violation
-	// wherever it lands: while the step is still waiting on a status write,
-	// inside its settle window, or inside Finish's horizon. Combined with the
-	// sentinel above, that is what makes the pin's evidence the deletion on
-	// every run instead of whichever event happened to arrive first.
+	// permit.
 	script.Invariant(
 		"the cell's own local TopoServer is never deleted",
 		func(ev ctrltest.Event) error {
@@ -409,81 +399,41 @@ func TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer(t *testi
 		},
 	)
 
-	c.KnownDefect(
-		"pkg/cluster-handler/controller/multigrescluster/reconcile_global.go:113 "+
-			"(external-global-topo prune selector has no component filter or "+
-			"owner-reference check, so it also deletes a cell's own local TopoServer)",
+	stepErr := script.TryStep(
+		"the cell controller creates its own local TopoServer and the "+
+			"toposerver controller settles its status on it",
 		func() error {
-			stepErr := script.TryStep(
-				"the cell controller creates its own local TopoServer and the "+
-					"toposerver controller settles its status on it",
-				func() error {
-					return c.externalGlobalTopoCluster(clusterName)
-				},
-				// The toposerver controller's whole settling sequence on a
-				// TopoServer it has just been handed, measured over four runs
-				// against a cluster whose global topology is managed so this
-				// prune never fires, which is the one way to observe what the
-				// object does when it is left alone: the first condition, then
-				// the client and peer endpoints once the etcd StatefulSet
-				// exists, then Ready once DataPlaneSim has ticked that
-				// StatefulSet ready. Three writes, in that order, then quiet
-				// indefinitely.
-				//
-				// The paths are the narrowest that pick out one write each.
-				// status.conditions[0] belongs only to the first and
-				// status.clientService only to the second; the third's paths
-				// are a subset of the second's, so it is matched by
-				// elimination, which is what assignEvents does a search rather
-				// than a greedy first match for.
-				//
-				// No ordering is declared between them even though one was
-				// observed, because ordering is opt-in for changes that follow
-				// from the code and nothing here needs it: the deletion is
-				// caught by the invariant above, not by an order violation.
-				ctrltest.Added("TopoServer", localTopoName),
-				ctrltest.Changed("TopoServer", localTopoName, "status.conditions[0].type"),
-				ctrltest.Changed("TopoServer", localTopoName,
-					"status.clientService", "status.peerService"),
-				ctrltest.Changed("TopoServer", localTopoName, "status.phase"),
-			)
-			// TryFinish runs whatever the step returned, so that the script
-			// ends with Finish exactly once and the end-of-script backstop is
-			// satisfied on every path through this body. While the defect is
-			// live the step returns long before the object has finished
-			// settling, so the end of the script still has to be closed.
-			//
-			// The horizon is not load-bearing in either direction, which is the
-			// point of choosing it freely. While the defect is live nothing
-			// depends on it: the delete lands about 15ms after the create,
-			// inside the step. Once the defect is fixed this is the only window
-			// left in which a later prune pass could still be caught, and a
-			// longer horizon can only refuse more events, never permit one.
-			finishErr := script.TryFinish(10 * time.Second)
-
-			switch {
-			case errors.Is(stepErr, errLocalTopoDeleted):
-				return stepErr
-			case errors.Is(finishErr, errLocalTopoDeleted):
-				return finishErr
-			case stepErr != nil:
-				// Anything else is this test's own declaration or pacing
-				// rather than evidence about the operator, and a pin that
-				// confirmed on it would survive the fix it is supposed to
-				// expire on. Fatalf is the right side of the line
-				// Script.fatalf already draws for the same reason.
-				c.Fatalf("the script's declaration of the toposerver "+
-					"controller's settling sequence did not hold, which is a "+
-					"fact about this test rather than about the prune it pins: %v",
-					stepErr)
-			case finishErr != nil:
-				c.Fatalf("the script's end was not quiet, and not because of "+
-					"the deletion this test pins, which is a fact about this "+
-					"test rather than about the prune: %v", finishErr)
-			}
-			return nil
+			return c.externalGlobalTopoCluster(clusterName)
 		},
+		// The toposerver controller's whole settling sequence on a TopoServer
+		// it has just been handed: the first condition, then the client and
+		// peer endpoints once the etcd StatefulSet exists, then Ready once
+		// DataPlaneSim has ticked that StatefulSet ready. Three writes, in
+		// that order, then quiet indefinitely.
+		//
+		// The paths are the narrowest that pick out one write each.
+		// status.conditions[0] belongs only to the first and
+		// status.clientService only to the second; the third's paths are a
+		// subset of the second's, so it is matched by elimination, which is
+		// why assignEvents does a search rather than a greedy first match.
+		//
+		// No ordering is declared between them even though one was observed,
+		// because ordering is opt-in for changes that follow from the code
+		// and nothing here needs it: a deletion is caught by the invariant
+		// above, not by an order violation.
+		ctrltest.Added("TopoServer", localTopoName),
+		ctrltest.Changed("TopoServer", localTopoName, "status.conditions[0].type"),
+		ctrltest.Changed("TopoServer", localTopoName,
+			"status.clientService", "status.peerService"),
+		ctrltest.Changed("TopoServer", localTopoName, "status.phase"),
 	)
+	c.NoError(stepErr, "the cell's local TopoServer did not settle as declared")
+
+	// The prune runs on every reconcile while global topology is external, so
+	// the window after the step is where a reintroduced defect would show. A
+	// longer horizon can only refuse more events, never permit one.
+	c.NoError(script.TryFinish(10*time.Second),
+		"the script's end was not quiet, so something is still writing")
 }
 
 // TestSelectorImpostorShardOwnerRefReconcileAdoptsUnrelatedPVC pins a new
