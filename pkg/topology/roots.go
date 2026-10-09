@@ -23,11 +23,15 @@ type Roots struct {
 	clusterRoot string
 }
 
-// ForCluster applies the CN length limit only to managed topology TLS.
+// ForCluster applies the CN length limit only when the operator issues the
+// cluster's topology client certificate, whose CN is the cluster root.
 func ForCluster(cluster *multigresv1alpha1.MultigresCluster) (Roots, error) {
-	managedTLS := cluster.Spec.TopoTLS.IsEnabled() &&
-		(cluster.Spec.GlobalTopoServer == nil || cluster.Spec.GlobalTopoServer.External == nil)
-	return NewRoots(cluster.Annotations, cluster.Namespace, cluster.Name, managedTLS)
+	return NewRoots(
+		cluster.Annotations,
+		cluster.Namespace,
+		cluster.Name,
+		multigresv1alpha1.OperatorIssuesTopoClientCert(cluster),
+	)
 }
 
 // NewRoots uses the project ref, or namespace/name if absent.

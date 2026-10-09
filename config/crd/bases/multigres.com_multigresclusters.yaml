@@ -1551,13 +1551,18 @@ spec:
                                 an unmanaged, external topo server.
                               properties:
                                 caSecret:
-                                  description: CASecret is the name of the secret
-                                    containing the CA certificate.
+                                  description: |-
+                                    CASecret is the name of the secret containing the CA certificate.
+                                    For the global topology server, when neither this nor ClientCertSecret
+                                    is set and topoTLS is enabled, the operator issues the cluster's
+                                    topology client credential from topoTLS.issuerName and uses it as both
+                                    the CA bundle and the client keypair.
                                   maxLength: 253
                                   type: string
                                 clientCertSecret:
-                                  description: ClientCertSecret is the name of the
-                                    secret containing the client cert/key.
+                                  description: |-
+                                    ClientCertSecret is the name of the secret containing the client cert/key.
+                                    See CASecret for the credential used when neither is set.
                                   maxLength: 253
                                   type: string
                                 endpoints:
@@ -8577,13 +8582,18 @@ spec:
                       external topo server.
                     properties:
                       caSecret:
-                        description: CASecret is the name of the secret containing
-                          the CA certificate.
+                        description: |-
+                          CASecret is the name of the secret containing the CA certificate.
+                          For the global topology server, when neither this nor ClientCertSecret
+                          is set and topoTLS is enabled, the operator issues the cluster's
+                          topology client credential from topoTLS.issuerName and uses it as both
+                          the CA bundle and the client keypair.
                         maxLength: 253
                         type: string
                       clientCertSecret:
-                        description: ClientCertSecret is the name of the secret containing
-                          the client cert/key.
+                        description: |-
+                          ClientCertSecret is the name of the secret containing the client cert/key.
+                          See CASecret for the credential used when neither is set.
                         maxLength: 253
                         type: string
                       endpoints:

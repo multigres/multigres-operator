@@ -208,12 +208,16 @@ func buildTopoClientCertificate(
 	})
 }
 
-// managedTopologyForCertificate reports whether topology is managed and
-// checks configured roots against the shortened certificate prefix.
-func (r *MultigresClusterReconciler) managedTopologyForCertificate(
+// issuesTopoClientCert reports whether the operator issues the topology
+// client certificate and checks configured roots against the shortened
+// certificate prefix.
+func (r *MultigresClusterReconciler) issuesTopoClientCert(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (bool, error) {
+	if !multigresv1alpha1.OperatorIssuesTopoClientCert(cluster) {
+		return false, nil
+	}
 	res := resolver.NewResolver(r.Client, cluster.Namespace)
 	spec, err := res.ResolveGlobalTopo(ctx, cluster)
 	if err != nil {
@@ -221,63 +225,67 @@ func (r *MultigresClusterReconciler) managedTopologyForCertificate(
 			"failed to resolve global topology for client certificate: %w", err,
 		)
 	}
+	var globalRoot string
 	if spec.Etcd != nil {
-		roots, err := topology.ForCluster(cluster)
-		if err != nil {
-			return false, fmt.Errorf("deriving topology certificate identity: %w", err)
-		}
-		unbounded, err := topology.NewRoots(
-			cluster.Annotations,
-			cluster.Namespace,
-			cluster.Name,
-			false,
+		globalRoot = spec.Etcd.RootPath
+	} else if spec.External != nil {
+		globalRoot = spec.External.RootPath
+	}
+	roots, err := topology.ForCluster(cluster)
+	if err != nil {
+		return false, fmt.Errorf("deriving topology certificate identity: %w", err)
+	}
+	unbounded, err := topology.NewRoots(
+		cluster.Annotations,
+		cluster.Namespace,
+		cluster.Name,
+		false,
+	)
+	if err != nil {
+		return false, fmt.Errorf("deriving unbounded topology root: %w", err)
+	}
+	// Changing a saved root would abandon its existing keys.
+	// Reject roots outside the certificate prefix.
+	if roots == unbounded {
+		return true, nil
+	}
+	if !strings.HasPrefix(globalRoot, roots.KeyPrefix()) {
+		return false, fmt.Errorf(
+			"configured topology root %q is outside certificate identity %q; set the global topology root to %q and migrate any existing topology data",
+			globalRoot,
+			roots.ClusterRoot(),
+			roots.Global(),
 		)
+	}
+	for _, cell := range cluster.Spec.Cells {
+		cell.CellTemplate = cluster.Spec.EffectiveCellTemplate(cell.CellTemplate)
+		_, _, local, err := res.ResolveCell(ctx, cluster, &cell)
 		if err != nil {
-			return false, fmt.Errorf("deriving unbounded topology root: %w", err)
-		}
-		// Changing a saved root would abandon its existing keys.
-		// Reject roots outside the certificate prefix.
-		if roots == unbounded {
-			return true, nil
-		}
-		if !strings.HasPrefix(spec.Etcd.RootPath, roots.KeyPrefix()) {
 			return false, fmt.Errorf(
-				"configured topology root %q is outside certificate identity %q; set the global topology root to %q and migrate any existing topology data",
-				spec.Etcd.RootPath,
-				roots.ClusterRoot(),
-				roots.Global(),
+				"resolving cell %q topology for certificate: %w",
+				cell.Name,
+				err,
 			)
 		}
-		for _, cell := range cluster.Spec.Cells {
-			cell.CellTemplate = cluster.Spec.EffectiveCellTemplate(cell.CellTemplate)
-			_, _, local, err := res.ResolveCell(ctx, cluster, &cell)
-			if err != nil {
-				return false, fmt.Errorf(
-					"resolving cell %q topology for certificate: %w",
-					cell.Name,
-					err,
-				)
-			}
-			if local == nil {
-				continue
-			}
-			var localRoot string
-			if local.Etcd != nil {
-				localRoot = local.Etcd.RootPath
-			} else if local.External != nil {
-				localRoot = local.External.RootPath
-			}
-			if localRoot != "" && !strings.HasPrefix(localRoot, roots.KeyPrefix()) {
-				return false, fmt.Errorf(
-					"cell %q topology root %q is outside certificate identity %q; align the cell topology root and migrate any existing topology data",
-					cell.Name,
-					localRoot,
-					roots.ClusterRoot(),
-				)
-			}
+		if local == nil {
+			continue
+		}
+		var localRoot string
+		if local.Etcd != nil {
+			localRoot = local.Etcd.RootPath
+		} else if local.External != nil {
+			localRoot = local.External.RootPath
+		}
+		if localRoot != "" && !strings.HasPrefix(localRoot, roots.KeyPrefix()) {
+			return false, fmt.Errorf(
+				"cell %q topology root %q is outside certificate identity %q; align the cell topology root and migrate any existing topology data",
+				cell.Name,
+				localRoot,
+				roots.ClusterRoot(),
+			)
 		}
 	}
-	return spec.Etcd != nil, nil
+	return true, nil
 }
 
 // issuerName returns the cluster's configured cert-manager ClusterIssuer
@@ -335,17 +343,17 @@ func (r *MultigresClusterReconciler) reconcileCertificate(
 		desiredCerts = append(desiredCerts, internalCerts...)
 	}
 	if cluster.Spec.TopoTLS.IsEnabled() {
-		managed, err := r.managedTopologyForCertificate(ctx, cluster)
+		issue, err := r.issuesTopoClientCert(ctx, cluster)
 		if err != nil {
 			r.markTopologyFailed(ctx, cluster, "TopoCertificateFailed", err, log.FromContext(ctx))
 			return err
 		}
-		// An external topology server brings its own CA and client Secrets, so a
-		// credential issued from the cluster's own issuer would never be trusted
-		// and would sit unused. Only a managed etcd topology, whose serving
-		// certificate the operator issues from the same CA, gets a client
-		// credential.
-		if managed {
+		// The credential chains to the topology issuer, which also signs the
+		// serving certificate of a managed topology server and of a shared one
+		// named as external. An external server that names its own CA or client
+		// Secret brings its own trust, so a credential issued here would sit
+		// unused.
+		if issue {
 			topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme)
 			if err != nil {
 				r.markTopologyFailed(

@@ -123,6 +123,52 @@ func TestGlobalTopoRefResolvesExternalSecrets(t *testing.T) {
 	}
 }
 
+func TestGlobalTopoRefExternalWithTopoTLS(t *testing.T) {
+	enabled := &multigresv1alpha1.TopoTLSConfig{
+		Enabled:    ptr.To(true),
+		IssuerName: "multigres-infra-issuer",
+	}
+
+	t.Run("no secrets resolves the operator-issued secret", func(t *testing.T) {
+		ref := resolveTopoRef(t, topoRefCluster(enabled, &multigresv1alpha1.GlobalTopoServerSpec{
+			External: &multigresv1alpha1.ExternalTopoServerSpec{
+				Endpoints: []multigresv1alpha1.EndpointUrl{
+					"https://topo.infra.svc:2379",
+				},
+			},
+		}))
+
+		want := "test-cluster-topo-client-tls"
+		if ref.ClientCertSecret != want || ref.CASecret != want {
+			t.Errorf(
+				"CASecret=%q ClientCertSecret=%q, want both %q",
+				ref.CASecret, ref.ClientCertSecret, want,
+			)
+		}
+		if ref.Address != "https://topo.infra.svc:2379" {
+			t.Errorf("Address = %q, want the external endpoint", ref.Address)
+		}
+	})
+
+	t.Run("named secrets take precedence", func(t *testing.T) {
+		ref := resolveTopoRef(t, topoRefCluster(enabled, &multigresv1alpha1.GlobalTopoServerSpec{
+			//nolint:gosec // K8s resource names, not credentials
+			External: &multigresv1alpha1.ExternalTopoServerSpec{
+				Endpoints:        []multigresv1alpha1.EndpointUrl{"https://etcd.infra.svc:2379"},
+				CASecret:         "infra-etcd-ca",
+				ClientCertSecret: "proj-123-topo-client",
+			},
+		}))
+
+		if ref.CASecret != "infra-etcd-ca" {
+			t.Errorf("CASecret = %q, want infra-etcd-ca", ref.CASecret)
+		}
+		if ref.ClientCertSecret != "proj-123-topo-client" {
+			t.Errorf("ClientCertSecret = %q, want proj-123-topo-client", ref.ClientCertSecret)
+		}
+	})
+}
+
 func TestBuildGlobalTopoServerPropagatesTopoTLS(t *testing.T) {
 	scheme := setupScheme()
 	tls := &multigresv1alpha1.TopoTLSConfig{

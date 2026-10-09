@@ -236,11 +236,16 @@ type ExternalTopoServerSpec struct {
 	Implementation string `json:"implementation,omitempty"`
 
 	// CASecret is the name of the secret containing the CA certificate.
+	// For the global topology server, when neither this nor ClientCertSecret
+	// is set and topoTLS is enabled, the operator issues the cluster's
+	// topology client credential from topoTLS.issuerName and uses it as both
+	// the CA bundle and the client keypair.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	CASecret string `json:"caSecret,omitempty"`
 
 	// ClientCertSecret is the name of the secret containing the client cert/key.
+	// See CASecret for the credential used when neither is set.
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
 	ClientCertSecret string `json:"clientCertSecret,omitempty"`

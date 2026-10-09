@@ -14,26 +14,50 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
-func TestExternalTopologyKeepsLongRoot(t *testing.T) {
-	cluster := &multigresv1alpha1.MultigresCluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cluster-abcdefghijklmnop",
-			Namespace: "namespace-abcdefghijklmnopqrstu",
-		},
-		Spec: multigresv1alpha1.MultigresClusterSpec{
-			TopoTLS: &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)},
-			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
-				External: &multigresv1alpha1.ExternalTopoServerSpec{},
+func TestExternalTopologyRoots(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		external *multigresv1alpha1.ExternalTopoServerSpec
+		want     string
+	}{
+		// The server brings its own credentials, so the root is no
+		// certificate's common name and keeps its full length.
+		"own secrets keep the long root": {
+			//nolint:gosec // K8s resource names, not credentials
+			external: &multigresv1alpha1.ExternalTopoServerSpec{
+				CASecret:         "infra-etcd-ca",
+				ClientCertSecret: "infra-etcd-client",
 			},
+			want: "/multigres/namespace-abcdefghijklmnopqrstu/cluster-abcdefghijklmnop",
+		},
+		// The operator issues the client certificate, so the root is its
+		// common name and is bounded like a managed topology root.
+		"no secrets bound the root": {
+			external: &multigresv1alpha1.ExternalTopoServerSpec{},
+			want:     "/multigres-fallback/b-Tmo_r9oWzDWEuz_6f6LFOAmYO7ve1i4ksIy7qa9ac",
 		},
 	}
-	roots, err := ForCluster(cluster)
-	require.NoError(t, err)
-	assert.Equal(
-		t,
-		"/multigres/namespace-abcdefghijklmnopqrstu/cluster-abcdefghijklmnop",
-		roots.ClusterRoot(),
-	)
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cluster-abcdefghijklmnop",
+					Namespace: "namespace-abcdefghijklmnopqrstu",
+				},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					TopoTLS: &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)},
+					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+						External: tc.external,
+					},
+				},
+			}
+			roots, err := ForCluster(cluster)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, roots.ClusterRoot())
+		})
+	}
 }
 
 func TestRootsWithTopologyTLS(t *testing.T) {

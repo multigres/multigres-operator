@@ -49,11 +49,30 @@ func TopoClientTLSConfigured(ref GlobalTopoServerRef) bool {
 	return ref.ClientCertSecret != "" && ref.CASecret != ""
 }
 
+// OperatorIssuesTopoClientCert reports whether the operator issues the
+// cluster's topology client credential from TopoTLS.IssuerName. It does
+// whenever topology TLS is enabled, for a managed topology server and for an
+// external one that names no Secrets, such as a topology server shared by
+// several clusters and signed by that same issuer. An external server that
+// names its own CA or client Secret keeps them, and the operator issues
+// nothing.
+func OperatorIssuesTopoClientCert(cluster *MultigresCluster) bool {
+	if cluster == nil || !cluster.Spec.TopoTLS.IsEnabled() {
+		return false
+	}
+	global := cluster.Spec.GlobalTopoServer
+	if global == nil || global.External == nil {
+		return true
+	}
+	return global.External.CASecret == "" && global.External.ClientCertSecret == ""
+}
+
 // BuildTopoClientTLSVolume projects the client keypair and the CA bundle into a
 // single volume. The keypair comes from ClientCertSecret and the CA from
-// CASecret; for a managed topology server both name the same cert-manager
-// Secret, while an external topology server may split them across two. Both
-// Secrets follow the cert-manager key layout of tls.crt, tls.key and ca.crt.
+// CASecret; when the operator issues the credential both name the same
+// cert-manager Secret, while an external topology server that brings its own
+// may split them across two. Both Secrets follow the cert-manager key layout of
+// tls.crt, tls.key and ca.crt.
 func BuildTopoClientTLSVolume(ref GlobalTopoServerRef) corev1.Volume {
 	defaultMode := int32(0o444)
 	return corev1.Volume{

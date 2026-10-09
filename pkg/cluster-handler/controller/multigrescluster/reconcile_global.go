@@ -243,13 +243,13 @@ func (r *MultigresClusterReconciler) globalTopoRef(
 	} else if spec.Etcd != nil {
 		rootPath = spec.Etcd.RootPath
 		implementation = "etcd"
-		if cluster.Spec.TopoTLS.IsEnabled() {
-			// cert-manager writes ca.crt next to tls.crt and tls.key, so the
-			// operator-issued client credential is also the CA bundle.
-			secret := multigresv1alpha1.TopoClientCertSecretName(cluster.Name)
-			caSecret = secret
-			clientCertSecret = secret
-		}
+	}
+	if multigresv1alpha1.OperatorIssuesTopoClientCert(cluster) {
+		// cert-manager writes ca.crt next to tls.crt and tls.key, so the
+		// operator-issued client credential is also the CA bundle.
+		secret := multigresv1alpha1.TopoClientCertSecretName(cluster.Name)
+		caSecret = secret
+		clientCertSecret = secret
 	}
 
 	return multigresv1alpha1.GlobalTopoServerRef{

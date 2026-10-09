@@ -40,6 +40,80 @@ func TestTopoClientTLSConfigured(t *testing.T) {
 	}
 }
 
+func TestOperatorIssuesTopoClientCert(t *testing.T) {
+	enabled := true
+	disabled := false
+	external := func(ca, client string) *GlobalTopoServerSpec {
+		return &GlobalTopoServerSpec{External: &ExternalTopoServerSpec{
+			Endpoints:        []EndpointUrl{"https://etcd.example.com:2379"},
+			CASecret:         ca,
+			ClientCertSecret: client,
+		}}
+	}
+	tests := map[string]struct {
+		tls    *TopoTLSConfig
+		global *GlobalTopoServerSpec
+		want   bool
+	}{
+		"tls unset": {tls: nil, global: nil, want: false},
+		"tls disabled": {
+			tls:    &TopoTLSConfig{Enabled: &disabled},
+			global: nil,
+			want:   false,
+		},
+		"managed by default": {
+			tls:    &TopoTLSConfig{Enabled: &enabled},
+			global: nil,
+			want:   true,
+		},
+		"managed etcd": {
+			tls:    &TopoTLSConfig{Enabled: &enabled},
+			global: &GlobalTopoServerSpec{Etcd: &EtcdSpec{}},
+			want:   true,
+		},
+		"external without secrets": {
+			tls:    &TopoTLSConfig{Enabled: &enabled},
+			global: external("", ""),
+			want:   true,
+		},
+		"external with both": {
+			tls:    &TopoTLSConfig{Enabled: &enabled},
+			global: external("ca", "client"),
+			want:   false,
+		},
+		"external with only ca": {
+			tls:    &TopoTLSConfig{Enabled: &enabled},
+			global: external("ca", ""),
+			want:   false,
+		},
+		"external with only client": {
+			tls:    &TopoTLSConfig{Enabled: &enabled},
+			global: external("", "client"),
+			want:   false,
+		},
+		"external with tls disabled": {
+			tls: &TopoTLSConfig{Enabled: &disabled}, global: external("", ""), want: false,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cluster := &MultigresCluster{Spec: MultigresClusterSpec{
+				TopoTLS:          tc.tls,
+				GlobalTopoServer: tc.global,
+			}}
+			if got := OperatorIssuesTopoClientCert(cluster); got != tc.want {
+				t.Errorf("OperatorIssuesTopoClientCert() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOperatorIssuesTopoClientCertNilCluster(t *testing.T) {
+	if OperatorIssuesTopoClientCert(nil) {
+		t.Error("OperatorIssuesTopoClientCert(nil) = true, want false")
+	}
+}
+
 // A managed topology names one Secret for both the keypair and the CA; an
 // external topology may split them. The projection has to read the keypair from
 // ClientCertSecret and the CA from CASecret in either case.
