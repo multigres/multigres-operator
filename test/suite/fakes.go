@@ -171,19 +171,41 @@ func (p *poolerSim) tick(ctx context.Context) {
 	); err != nil {
 		return
 	}
-	byNamespace := map[string][]*corev1.Pod{}
+	// Keyed by shard identity, not just namespace: two TableGroups in one
+	// namespace are two separate shards, each with its own primary. Grouping
+	// by namespace alone elected a single leader across every pod in the
+	// namespace, so every pod outside whichever shard sorted first never saw
+	// a primary and requeued forever (reconcile_data_plane.go's "No primary
+	// in podRoles" loop). The real operator scopes roles the same way
+	// (reconcilePodRoles lists by these same four labels), so this key
+	// matches production rather than merely working around the old bug.
+	type shardKey struct {
+		namespace, cluster, database, tableGroup, shard string
+	}
+	byShard := map[shardKey][]*corev1.Pod{}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if !pod.DeletionTimestamp.IsZero() {
 			continue
 		}
-		byNamespace[pod.Namespace] = append(byNamespace[pod.Namespace], pod)
+		key := shardKey{
+			namespace:  pod.Namespace,
+			cluster:    pod.Labels[metadata.LabelMultigresCluster],
+			database:   pod.Labels[metadata.LabelMultigresDatabase],
+			tableGroup: pod.Labels[metadata.LabelMultigresTableGroup],
+			shard:      pod.Labels[metadata.LabelMultigresShard],
+		}
+		byShard[key] = append(byShard[key], pod)
 	}
-	for ns, group := range byNamespace {
-		p.tickNamespace(ctx, ns, group)
+	for key, group := range byShard {
+		p.tickNamespace(ctx, key.namespace, group)
 	}
 }
 
+// tickNamespace elects one primary among pods and registers each as a
+// multipooler. Despite the name, pods is scoped to a single shard by the
+// caller; the topology store and the held-registrations check are still
+// keyed by namespace alone, since both are genuinely namespace-scoped.
 func (p *poolerSim) tickNamespace(ctx context.Context, ns string, pods []*corev1.Pod) {
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
 

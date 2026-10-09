@@ -29,6 +29,13 @@ type TableGroupReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	// APIReader is an uncached client that reads directly from the API
+	// server. handlePendingDeletion uses it so the child Shard list it drains
+	// against cannot lag the informer cache. SetupWithManagerReconciler
+	// defaults it to mgr.GetAPIReader() when nil, so only a hand-built
+	// reconciler that never calls that method (unit tests, mainly) relies on
+	// the Client fallback below.
+	APIReader client.Reader
 }
 
 // Reconcile reads the state of the TableGroup and ensures its child Shards are in the desired state.
@@ -108,6 +115,27 @@ func withStepErrorHandling(recordSpanErr func(error), s step) step {
 	}
 }
 
+// pendingDeletionReader returns the uncached reader handlePendingDeletion
+// lists children through. Once PendingDeletion is set, stepApplyDesiredShards
+// never runs again for this TableGroup (stepHandlePendingDeletion
+// short-circuits every later reconcile before reaching it), and nothing else
+// creates a child Shard while the parent is still alive, so an authoritative
+// list is exact: N children on the server means exactly N to drain,
+// including zero. Controller-runtime's workqueue never runs two reconciles
+// of the same key at once, so any apply from an earlier pass has already
+// returned by the time this pass's List runs: it either reached the server,
+// in which case the authoritative list sees it, or it didn't, in which case
+// there is nothing to see. The cached client cannot make that promise, since
+// a child created moments ago may not have reached the informer cache yet,
+// and a list of zero from a lagging cache is indistinguishable from a list
+// of zero because nothing was ever created.
+func (r *TableGroupReconciler) pendingDeletionReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
 // handlePendingDeletion propagates PendingDeletion to all child Shards and sets
 // ReadyForDeletion on this TableGroup once every child reports ready. This
 // early-return path lists children itself because the normal child snapshot has
@@ -119,7 +147,7 @@ func (r *TableGroupReconciler) handlePendingDeletion(
 	l := log.FromContext(ctx)
 
 	shards := &multigresv1alpha1.ShardList{}
-	if err := r.List(ctx, shards, childShardSelector(tg)...); err != nil {
+	if err := r.pendingDeletionReader().List(ctx, shards, childShardSelector(tg)...); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to list shards for pending deletion: %w", err)
 	}
 
@@ -240,6 +268,9 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
+	}
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}
@@ -257,7 +288,14 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 }
 
 // projectRefOrGenerationChangedPredicate requeues when desired shard state can
-// change due to either spec updates or project-ref annotation updates.
+// change due to a spec update, a project-ref annotation update, or the
+// PendingDeletion annotation that starts this TableGroup's own drain
+// handshake. Without the last of those, MultigresClusterReconciler stamping
+// AnnotationPendingDeletion on an orphan TableGroup produces an update event
+// this predicate drops, since it changes neither generation nor project-ref,
+// and stepHandlePendingDeletion only runs on the next reconcile that some
+// unrelated event happens to trigger (e.g. an owned Shard's own status
+// update, since Owns() events are not filtered by this predicate at all).
 func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(event.CreateEvent) bool {
@@ -277,8 +315,12 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 
 			oldAnnotations := e.ObjectOld.GetAnnotations()
 			newAnnotations := e.ObjectNew.GetAnnotations()
-			return oldAnnotations[metadata.AnnotationProjectRef] !=
-				newAnnotations[metadata.AnnotationProjectRef]
+			if oldAnnotations[metadata.AnnotationProjectRef] !=
+				newAnnotations[metadata.AnnotationProjectRef] {
+				return true
+			}
+			return oldAnnotations[multigresv1alpha1.AnnotationPendingDeletion] !=
+				newAnnotations[multigresv1alpha1.AnnotationPendingDeletion]
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true
