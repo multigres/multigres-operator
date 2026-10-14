@@ -16,9 +16,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 
+	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -1209,6 +1211,13 @@ func TestShardReconciler_ReconcileNotFound(t *testing.T) {
 		},
 	}
 
+	monitoring.SetRollingUpdateInProgress(
+		"cluster-1", "nonexistent-shard", "primary", "zone-a", "default", true,
+	)
+	monitoring.SetRollingUpdateInProgress(
+		"cluster-1", "other-shard", "primary", "zone-a", "default", true,
+	)
+
 	result, err := reconciler.Reconcile(t.Context(), req)
 	if err != nil {
 		t.Errorf("Reconcile() should not error on NotFound, got: %v", err)
@@ -1216,6 +1225,29 @@ func TestShardReconciler_ReconcileNotFound(t *testing.T) {
 	if result.RequeueAfter > 0 {
 		t.Errorf("Reconcile() should not requeue on NotFound")
 	}
+
+	// Series for the deleted shard are dropped; other shards' series remain.
+	families, err := ctrlmetrics.Registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+	shards := map[string]bool{}
+	for _, f := range families {
+		if f.GetName() != "multigres_operator_rolling_update_in_progress" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "shard" {
+					shards[l.GetValue()] = true
+				}
+			}
+		}
+	}
+	if shards["nonexistent-shard"] || !shards["other-shard"] {
+		t.Errorf("expected only other-shard series after NotFound, got %v", shards)
+	}
+	monitoring.ForgetShard("other-shard", "default")
 }
 
 func TestShardReconciler_UpdateStatus(t *testing.T) {

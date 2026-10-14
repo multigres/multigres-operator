@@ -245,6 +245,69 @@ func TestSetRollingUpdateInProgress(t *testing.T) {
 	}
 }
 
+func TestForgetShard(t *testing.T) {
+	vecs := []*prometheus.GaugeVec{
+		shardPoolReplicas, poolPodsDrifted, lastBackupAgeSeconds,
+		rollingUpdateInProgress, shardPostureInconsistent, shardHasPrimary,
+	}
+	t.Cleanup(func() {
+		for _, v := range vecs {
+			v.Reset()
+		}
+	})
+
+	for _, shard := range []string{"shard-1", "shard-2"} {
+		SetShardPoolReplicas("cluster-1", shard, "primary", "zone-a", "default", 3, 3)
+		SetPoolPodsDrifted("cluster-1", shard, "primary", "zone-a", "default", 1)
+		SetLastBackupAge("cluster-1", shard, "default", time.Minute)
+		SetRollingUpdateInProgress("cluster-1", shard, "primary", "zone-a", "default", true)
+		SetShardPostureInconsistent("cluster-1", shard, "default", true)
+		SetShardHasPrimary("cluster-1", shard, "default", true)
+	}
+	// Same shard name in another namespace must survive.
+	SetRollingUpdateInProgress("cluster-1", "shard-1", "primary", "zone-a", "other", true)
+
+	ForgetShard("shard-1", "default")
+
+	for _, v := range vecs {
+		for _, labels := range collectLabels(t, v) {
+			if labels["shard"] == "shard-1" && labels["namespace"] == "default" {
+				t.Errorf("series for forgotten shard remains: %v", labels)
+			}
+		}
+	}
+	if val := gaugeValue(
+		t, rollingUpdateInProgress, "cluster-1", "shard-2", "primary", "zone-a", "default",
+	); val != 1 {
+		t.Errorf("expected shard-2 series preserved, got %f", val)
+	}
+	if val := gaugeValue(
+		t, rollingUpdateInProgress, "cluster-1", "shard-1", "primary", "zone-a", "other",
+	); val != 1 {
+		t.Errorf("expected other-namespace series preserved, got %f", val)
+	}
+}
+
+func collectLabels(t *testing.T, vec *prometheus.GaugeVec) []map[string]string {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 100)
+	vec.Collect(ch)
+	close(ch)
+	var out []map[string]string
+	for m := range ch {
+		d := &dto.Metric{}
+		if err := m.Write(d); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		l := map[string]string{}
+		for _, p := range d.GetLabel() {
+			l[p.GetName()] = p.GetValue()
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // --- helpers ---
 
 func TestSetShardHasPrimary(t *testing.T) {

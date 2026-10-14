@@ -100,3 +100,17 @@ func SetShardHasPrimary(cluster, shard, namespace string, hasPrimary bool) {
 	}
 	shardHasPrimary.WithLabelValues(cluster, shard, namespace).Set(val)
 }
+
+// ForgetShard deletes every per-shard series for a Shard that no longer exists,
+// so gauges such as rolling_update_in_progress do not stay stuck at their last
+// value. It matches on shard and namespace only because the NotFound path has
+// no cluster label.
+func ForgetShard(shard, namespace string) {
+	match := map[string]string{"shard": shard, "namespace": namespace}
+	shardPoolReplicas.DeletePartialMatch(match)
+	poolPodsDrifted.DeletePartialMatch(match)
+	lastBackupAgeSeconds.DeletePartialMatch(match)
+	rollingUpdateInProgress.DeletePartialMatch(match)
+	shardPostureInconsistent.DeletePartialMatch(match)
+	shardHasPrimary.DeletePartialMatch(match)
+}

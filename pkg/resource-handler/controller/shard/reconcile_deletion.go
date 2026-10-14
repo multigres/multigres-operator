@@ -17,6 +17,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/drain"
+	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -133,6 +134,9 @@ func (r *ShardReconciler) handleDeletion(
 	// The shard is done reconciling; drop its strike entries so a shard
 	// deleted mid-backoff does not leak its counters.
 	r.forgetStrikes(shard.Namespace, shard.Name)
+
+	// Drop its per-shard metric series so alerts stop firing for it.
+	monitoring.ForgetShard(shard.Name, shard.Namespace)
 
 	// Remove the finalizer last so Kubernetes can finish deletion now that the
 	// PVC cleanup has run.
