@@ -24,11 +24,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
@@ -573,6 +575,81 @@ func TestReconcileNotFoundReleasesPoolerClient(t *testing.T) {
 	default:
 		t.Fatal("pooler client cache was not notified for missing cluster")
 	}
+}
+
+func TestReconcileNotFoundForgetsClusterMetrics(t *testing.T) {
+	// clusterSeries counts the cluster-level series still exported for name.
+	clusterSeries := func(t *testing.T, name string) int {
+		t.Helper()
+		families, err := ctrlmetrics.Registry.Gather()
+		if err != nil {
+			t.Fatalf("Gather() error: %v", err)
+		}
+		n := 0
+		for _, f := range families {
+			if !strings.HasPrefix(f.GetName(), "multigres_operator_cluster_") {
+				continue
+			}
+			for _, m := range f.GetMetric() {
+				for _, l := range m.GetLabel() {
+					if (l.GetName() == "name" || l.GetName() == "cluster") && l.GetValue() == name {
+						n++
+					}
+				}
+			}
+		}
+		return n
+	}
+	setClusterGauges := func(name string) {
+		monitoring.SetClusterInfo(name, "test-ns", "Progressing", true)
+		monitoring.SetClusterTopology(name, "test-ns", 1, 2)
+	}
+	reconcile := func(t *testing.T, c client.Client, name string) error {
+		t.Helper()
+		r := &MultigresClusterReconciler{Client: c}
+		_, err := r.Reconcile(t.Context(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: name, Namespace: "test-ns"},
+		})
+		return err
+	}
+
+	t.Run("forgets all series of the missing cluster only", func(t *testing.T) {
+		t.Cleanup(func() {
+			monitoring.ForgetCluster("notfound-gone", "test-ns")
+			monitoring.ForgetCluster("notfound-kept", "test-ns")
+		})
+		setClusterGauges("notfound-gone")
+		setClusterGauges("notfound-kept")
+
+		c := fake.NewClientBuilder().WithScheme(setupScheme()).Build()
+		if err := reconcile(t, c, "notfound-gone"); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+
+		if n := clusterSeries(t, "notfound-gone"); n != 0 {
+			t.Errorf("expected no series for the missing cluster, got %d", n)
+		}
+		if n := clusterSeries(t, "notfound-kept"); n != 3 {
+			t.Errorf("expected 3 series kept for the other cluster, got %d", n)
+		}
+	})
+
+	t.Run("keeps series when Get fails with a non-NotFound error", func(t *testing.T) {
+		t.Cleanup(func() { monitoring.ForgetCluster("geterr-cluster", "test-ns") })
+		setClusterGauges("geterr-cluster")
+
+		injected := errors.New("injected get failure")
+		c := testutil.NewFakeClientWithFailures(
+			fake.NewClientBuilder().WithScheme(setupScheme()).Build(),
+			&testutil.FailureConfig{OnGet: testutil.FailOnKeyName("geterr-cluster", injected)},
+		)
+		if err := reconcile(t, c, "geterr-cluster"); !errors.Is(err, injected) {
+			t.Fatalf("expected injected error, got %v", err)
+		}
+		if n := clusterSeries(t, "geterr-cluster"); n != 3 {
+			t.Errorf("series must survive a transient Get error, got %d", n)
+		}
+	})
 }
 
 // ============================================================================

@@ -21,6 +21,14 @@ func SetClusterTopology(cluster, namespace string, cells, shards int) {
 	clusterShardsTotal.WithLabelValues(cluster, namespace).Set(float64(shards))
 }
 
+// ForgetCluster deletes all cluster-level series for a deleted MultigresCluster.
+func ForgetCluster(name, namespace string) {
+	clusterInfo.DeletePartialMatch(map[string]string{"name": name, "namespace": namespace})
+	match := map[string]string{"cluster": name, "namespace": namespace}
+	clusterCellsTotal.DeletePartialMatch(match)
+	clusterShardsTotal.DeletePartialMatch(match)
+}
+
 // SetCellGatewayReplicas sets the desired and ready gateway replica gauges for a Cell.
 func SetCellGatewayReplicas(cell, namespace string, desired, ready int32) {
 	cellGatewayReplicas.WithLabelValues(cell, namespace, "desired").Set(float64(desired))

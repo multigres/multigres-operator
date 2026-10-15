@@ -103,6 +103,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 			if r.PoolerClientCache != nil {
 				r.PoolerClientCache.ForgetCluster(req.NamespacedName)
 			}
+			monitoring.ForgetCluster(req.Name, req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)

@@ -52,6 +52,33 @@ func TestSetClusterTopology(t *testing.T) {
 	}
 }
 
+func TestForgetCluster(t *testing.T) {
+	t.Cleanup(func() {
+		clusterInfo.Reset()
+		clusterCellsTotal.Reset()
+		clusterShardsTotal.Reset()
+	})
+
+	SetClusterInfo("gone", "default", "Progressing", true)
+	SetClusterTopology("gone", "default", 3, 6)
+	SetClusterInfo("kept", "default", "Healthy", true)
+	SetClusterTopology("kept", "default", 1, 2)
+
+	ForgetCluster("gone", "default")
+
+	for _, vec := range []*prometheus.GaugeVec{clusterInfo, clusterCellsTotal, clusterShardsTotal} {
+		ch := make(chan prometheus.Metric, 10)
+		vec.Collect(ch)
+		close(ch)
+		if n := len(ch); n != 1 {
+			t.Errorf("expected only the kept cluster's series to remain, got %d series", n)
+		}
+	}
+	if val := gaugeValue(t, clusterInfo, "kept", "default", "Healthy", "true"); val != 1 {
+		t.Errorf("expected kept cluster's clusterInfo to be 1, got %f", val)
+	}
+}
+
 func TestSetCellGatewayReplicas(t *testing.T) {
 	t.Cleanup(func() { cellGatewayReplicas.Reset() })
 
