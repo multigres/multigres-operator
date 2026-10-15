@@ -753,7 +753,7 @@ func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
 		}
 	}
 
-	t.Run("series are dropped once the finalizer is removed and the shard is gone", func(t *testing.T) {
+	t.Run("series are dropped once the shard is gone", func(t *testing.T) {
 		const name = "lifecycle-gone"
 		t.Cleanup(func() { monitoring.ForgetShard(name, "default") })
 		setAllShardGauges("test-cluster", name, "default")
