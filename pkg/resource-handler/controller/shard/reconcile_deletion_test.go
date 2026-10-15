@@ -13,9 +13,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -709,6 +711,96 @@ func TestHandlePendingDeletion(t *testing.T) {
 			t.Errorf("Expected drain state %q, got %q",
 				metadata.DrainStateRequested,
 				updatedPod.Annotations[metadata.AnnotationDrainState])
+		}
+	})
+}
+
+func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	labels := map[string]string{
+		metadata.LabelMultigresCluster:    "test-cluster",
+		metadata.LabelMultigresDatabase:   "testdb",
+		metadata.LabelMultigresTableGroup: "default",
+		metadata.LabelMultigresShard:      "shard0",
+	}
+	newShard := func(name string) *multigresv1alpha1.Shard {
+		return &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				Namespace:         "default",
+				DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				Finalizers:        []string{shardFinalizer},
+				Labels:            labels,
+			},
+			Spec: multigresv1alpha1.ShardSpec{
+				DatabaseName:   "testdb",
+				TableGroupName: "default",
+				ShardName:      "shard0",
+			},
+		}
+	}
+	reconcile := func(r *ShardReconciler, name string) {
+		t.Helper()
+		if _, err := r.Reconcile(t.Context(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: name, Namespace: "default"},
+		}); err != nil {
+			t.Fatalf("Reconcile() error: %v", err)
+		}
+	}
+
+	t.Run("series are dropped once the finalizer is removed and the shard is gone", func(t *testing.T) {
+		const name = "lifecycle-gone"
+		t.Cleanup(func() { monitoring.ForgetShard(name, "default") })
+		setAllShardGauges("test-cluster", name, "default")
+
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(newShard(name)).Build()
+		r := &ShardReconciler{
+			Client:          c,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		reconcile(r, name) // handleDeletion removes the finalizer
+		err := c.Get(t.Context(), types.NamespacedName{Name: name, Namespace: "default"},
+			&multigresv1alpha1.Shard{})
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("expected shard to be gone after finalizer removal, got %v", err)
+		}
+
+		reconcile(r, name) // the delete event's reconcile sees NotFound
+		if got := shardGaugeFamilies(t, name, "default"); len(got) != 0 {
+			t.Errorf("expected no series after shard deletion, still present in %v", got)
+		}
+	})
+
+	t.Run("series are kept while pods are still terminating", func(t *testing.T) {
+		const name = "lifecycle-blocked"
+		t.Cleanup(func() { monitoring.ForgetShard(name, "default") })
+		setAllShardGauges("test-cluster", name, "default")
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "pod-0", Namespace: "default", Labels: labels},
+		}
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(newShard(name), pod).
+			Build()
+		r := &ShardReconciler{
+			Client:          c,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		reconcile(r, name)
+		if got := shardGaugeFamilies(t, name, "default"); len(got) != 6 {
+			t.Errorf("series must survive while the shard still exists, got %v", got)
 		}
 	})
 }

@@ -2,6 +2,9 @@ package monitoring
 
 import (
 	"errors"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,45 +249,132 @@ func TestSetRollingUpdateInProgress(t *testing.T) {
 }
 
 func TestForgetShard(t *testing.T) {
-	vecs := []*prometheus.GaugeVec{
+	perShard := []*prometheus.GaugeVec{
 		shardPoolReplicas, poolPodsDrifted, lastBackupAgeSeconds,
 		rollingUpdateInProgress, shardPostureInconsistent, shardHasPrimary,
 	}
-	t.Cleanup(func() {
-		for _, v := range vecs {
+	other := []*prometheus.GaugeVec{
+		clusterInfo, clusterCellsTotal, clusterShardsTotal, cellGatewayReplicas, toposerverReplicas,
+	}
+	reset := func() {
+		for _, v := range append(append([]*prometheus.GaugeVec{}, perShard...), other...) {
 			v.Reset()
+		}
+	}
+	t.Cleanup(reset)
+
+	populate := func(cluster, shard, namespace string) {
+		SetShardPoolReplicas(cluster, shard, "primary", "zone-a", namespace, 3, 3)
+		SetPoolPodsDrifted(cluster, shard, "primary", "zone-a", namespace, 1)
+		SetLastBackupAge(cluster, shard, namespace, time.Minute)
+		SetRollingUpdateInProgress(cluster, shard, "primary", "zone-a", namespace, true)
+		SetShardPostureInconsistent(cluster, shard, namespace, true)
+		SetShardHasPrimary(cluster, shard, namespace, true)
+	}
+	countSeries := func(shard, namespace string) int {
+		n := 0
+		for _, v := range perShard {
+			for _, l := range collectLabels(t, v) {
+				if l["shard"] == shard && l["namespace"] == namespace {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
+	t.Run("removes every per-shard series and leaves everything else", func(t *testing.T) {
+		reset()
+		populate("cluster-1", "shard-1", "default")
+		populate("cluster-1", "shard-2", "default")
+		// Name is a prefix-extension of the forgotten shard.
+		populate("cluster-1", "shard-10", "default")
+		// Same shard name in another namespace.
+		populate("cluster-1", "shard-1", "other")
+		SetClusterInfo("cluster-1", "default", "Ready", true)
+		SetClusterTopology("cluster-1", "default", 1, 4)
+		SetCellGatewayReplicas("zone-a", "default", 2, 2)
+		SetTopoServerReplicas("topo-1", "default", 3, 3)
+
+		want := countSeries("shard-1", "default")
+		if want != 7 {
+			t.Fatalf("expected 7 series for shard-1 before forgetting, got %d", want)
+		}
+
+		ForgetShard("shard-1", "default")
+
+		if n := countSeries("shard-1", "default"); n != 0 {
+			t.Errorf("expected no series for forgotten shard, got %d", n)
+		}
+		for _, k := range []struct{ shard, namespace string }{
+			{"shard-2", "default"}, {"shard-10", "default"}, {"shard-1", "other"},
+		} {
+			if n := countSeries(k.shard, k.namespace); n != want {
+				t.Errorf("series for %s/%s: expected %d, got %d", k.namespace, k.shard, want, n)
+			}
+		}
+		if val := gaugeValue(
+			t, rollingUpdateInProgress, "cluster-1", "shard-10", "primary", "zone-a", "default",
+		); val != 1 {
+			t.Errorf("expected shard-10 value preserved, got %f", val)
+		}
+		for _, v := range other {
+			if n := len(collectLabels(t, v)); n == 0 {
+				t.Errorf("non-shard gauge lost its series")
+			}
 		}
 	})
 
-	for _, shard := range []string{"shard-1", "shard-2"} {
-		SetShardPoolReplicas("cluster-1", shard, "primary", "zone-a", "default", 3, 3)
-		SetPoolPodsDrifted("cluster-1", shard, "primary", "zone-a", "default", 1)
-		SetLastBackupAge("cluster-1", shard, "default", time.Minute)
-		SetRollingUpdateInProgress("cluster-1", shard, "primary", "zone-a", "default", true)
-		SetShardPostureInconsistent("cluster-1", shard, "default", true)
-		SetShardHasPrimary("cluster-1", shard, "default", true)
+	t.Run("unknown shard and empty registry are no-ops", func(t *testing.T) {
+		reset()
+		ForgetShard("missing", "default")
+		populate("cluster-1", "shard-1", "default")
+		ForgetShard("missing", "default")
+		ForgetShard("shard-1", "missing")
+		if n := countSeries("shard-1", "default"); n != 7 {
+			t.Errorf("expected 7 series to remain, got %d", n)
+		}
+	})
+
+	t.Run("series can be recreated after forgetting", func(t *testing.T) {
+		reset()
+		populate("cluster-1", "shard-1", "default")
+		ForgetShard("shard-1", "default")
+		SetRollingUpdateInProgress("cluster-1", "shard-1", "primary", "zone-a", "default", true)
+		if val := gaugeValue(
+			t, rollingUpdateInProgress, "cluster-1", "shard-1", "primary", "zone-a", "default",
+		); val != 1 {
+			t.Errorf("expected recreated series=1, got %f", val)
+		}
+	})
+}
+
+// TestForgetShardCoversAllShardGauges fails when a GaugeVec with a "shard"
+// label is added to metrics.go without being cleaned up by ForgetShard.
+func TestForgetShardCoversAllShardGauges(t *testing.T) {
+	metricsSrc, err := os.ReadFile("metrics.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Same shard name in another namespace must survive.
-	SetRollingUpdateInProgress("cluster-1", "shard-1", "primary", "zone-a", "other", true)
+	recorderSrc, err := os.ReadFile("recorder.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forget := string(recorderSrc[strings.Index(string(recorderSrc), "func ForgetShard"):])
 
-	ForgetShard("shard-1", "default")
-
-	for _, v := range vecs {
-		for _, labels := range collectLabels(t, v) {
-			if labels["shard"] == "shard-1" && labels["namespace"] == "default" {
-				t.Errorf("series for forgotten shard remains: %v", labels)
-			}
+	decl := regexp.MustCompile(`(?s)\t(\w+) = prometheus\.NewGaugeVec\(.*?\[\]string\{([^}]*)\}`)
+	found := 0
+	for _, m := range decl.FindAllStringSubmatch(string(metricsSrc), -1) {
+		if !strings.Contains(m[2], `"shard"`) {
+			continue
+		}
+		found++
+		if !strings.Contains(forget, m[1]+".DeletePartialMatch") {
+			t.Errorf("%s has a shard label but ForgetShard does not delete its series", m[1])
 		}
 	}
-	if val := gaugeValue(
-		t, rollingUpdateInProgress, "cluster-1", "shard-2", "primary", "zone-a", "default",
-	); val != 1 {
-		t.Errorf("expected shard-2 series preserved, got %f", val)
-	}
-	if val := gaugeValue(
-		t, rollingUpdateInProgress, "cluster-1", "shard-1", "primary", "zone-a", "other",
-	); val != 1 {
-		t.Errorf("expected other-namespace series preserved, got %f", val)
+	if found < 6 {
+		t.Fatalf("expected to find at least 6 per-shard gauges in metrics.go, found %d", found)
 	}
 }
 
