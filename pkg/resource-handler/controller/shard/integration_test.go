@@ -29,9 +29,11 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
+	"github.com/multigres/multigres-operator/pkg/monitoring"
 	shardcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/shard"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -1964,4 +1966,167 @@ func waitForConfigMapContains(
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for ConfigMap %s to contain %q", name, want)
+}
+
+// shardGaugeFamilies returns the per-shard metric families that still have a
+// series for the given shard.
+func shardGaugeFamilies(t testing.TB, shard, namespace string) []string {
+	t.Helper()
+	families, err := ctrlmetrics.Registry.Gather()
+	require.NoError(t, err)
+	var got []string
+	for _, f := range families {
+		for _, m := range f.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			if labels["shard"] == shard && labels["namespace"] == namespace {
+				got = append(got, f.GetName())
+				break
+			}
+		}
+	}
+	return got
+}
+
+func newMetricsCleanupShard(name, shardName string) *multigresv1alpha1.Shard {
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      multigresv1alpha1.ShardName(shardName),
+			LogLevels: multigresv1alpha1.ComponentLogLevels{
+				Pgctld:       "info",
+				Multipooler:  "info",
+				Multiorch:    "info",
+				Multiadmin:   "info",
+				Multigateway: "info",
+			},
+			Multiorch: multigresv1alpha1.MultiorchSpec{
+				Cells: []multigresv1alpha1.CellName{"zone1"},
+			},
+			Images: multigresv1alpha1.ShardImages{
+				Multiorch:   "ghcr.io/multigres/multigres:main",
+				Multipooler: "ghcr.io/multigres/multigres:main",
+				Postgres:    "postgres:17",
+			},
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:        "global-topo:2379",
+				RootPath:       "/multigres/global",
+				Implementation: "etcd",
+			},
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"primary": {
+					Cells:           []multigresv1alpha1.CellName{"zone1"},
+					Type:            "readWrite",
+					ReplicasPerCell: ptr.To(int32(1)),
+					Storage:         multigresv1alpha1.StorageSpec{Size: "10Gi"},
+				},
+			},
+		},
+	}
+	setTestPostgresPasswordSecretRef(shard)
+	return shard
+}
+
+// TestShardMetricsCleanupAfterDeletion verifies that deleting Shards through
+// the API server removes their per-shard metric series via the controller's
+// real watch events, without invoking Reconcile by hand, and leaves other
+// shards' series intact. Shards are deleted together and the controller runs
+// with the production reconcile concurrency.
+func TestShardMetricsCleanupAfterDeletion(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(
+			filepath.Join("../../../../", "config", "crd", "bases"),
+		),
+	)
+	if err := (&shardcontroller.ShardReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("shard-controller"),
+	}).SetupWithManager(mgr, controller.Options{
+		MaxConcurrentReconciles: 20,
+		SkipNameValidation:      ptr.To(true),
+	}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	ctx := t.Context()
+	k8sClient := mgr.GetClient()
+	const (
+		namespace = "default"
+		cluster   = "test-cluster"
+	)
+	gone := []string{"metrics-cleanup-gone-0", "metrics-cleanup-gone-1", "metrics-cleanup-gone-2",
+		"metrics-cleanup-gone-3"}
+	kept := []string{"metrics-cleanup-kept-0", "metrics-cleanup-kept-1"}
+	all := append(append([]string{}, gone...), kept...)
+	t.Cleanup(func() {
+		for _, name := range all {
+			monitoring.ForgetShard(name, namespace)
+		}
+	})
+
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, namespace)
+	for i, name := range all {
+		require.NoError(t,
+			k8sClient.Create(ctx, newMetricsCleanupShard(name, fmt.Sprintf("%d", i))))
+	}
+
+	// Wait until the controller has reconciled every shard and added its
+	// finalizer, so the deletes below go through the real deletion path.
+	for _, name := range all {
+		require.Eventually(t, func() bool {
+			s := &multigresv1alpha1.Shard{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, s)
+			return err == nil && len(s.Finalizers) > 0
+		}, 30*time.Second, 200*time.Millisecond, "shard %s never got its finalizer", name)
+
+		monitoring.SetShardPoolReplicas(cluster, name, "primary", "zone1", namespace, 1, 1)
+		monitoring.SetPoolPodsDrifted(cluster, name, "primary", "zone1", namespace, 1)
+		monitoring.SetLastBackupAge(cluster, name, namespace, time.Minute)
+		monitoring.SetRollingUpdateInProgress(cluster, name, "primary", "zone1", namespace, true)
+		monitoring.SetShardPostureInconsistent(cluster, name, namespace, true)
+		monitoring.SetShardHasPrimary(cluster, name, namespace, true)
+		require.Len(t, shardGaugeFamilies(t, name, namespace), 6)
+	}
+
+	for _, name := range gone {
+		doomed := &multigresv1alpha1.Shard{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		}
+		require.NoError(t, k8sClient.Delete(ctx, doomed))
+	}
+
+	for _, name := range gone {
+		require.Eventually(t, func() bool {
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace},
+				&multigresv1alpha1.Shard{})
+			return client.IgnoreNotFound(err) == nil && err != nil
+		}, 60*time.Second, 200*time.Millisecond, "shard %s was not removed", name)
+
+		require.Eventually(t, func() bool {
+			return len(shardGaugeFamilies(t, name, namespace)) == 0
+		}, 30*time.Second, 200*time.Millisecond,
+			"series of deleted shard %s still present", name)
+	}
+
+	for _, name := range kept {
+		require.Len(t, shardGaugeFamilies(t, name, namespace), 6,
+			"series of shard %s that was not deleted must remain", name)
+	}
 }
