@@ -1,11 +1,14 @@
 package suite
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -252,6 +255,86 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 	c.True(deletedByCluster,
 		"TableGroup %s disappeared without a recorded delete from multigrescluster",
 		orphanKey.Name)
+}
+
+// TestReadyForDeletionProtocol_CellAnnotationAloneStartsHandshake pins a live
+// bug reachable through the API server, not just a hypothetical one.
+// MultigresClusterSpec.Cells carries a CEL rule intended to make it
+// append-only ("Cells cannot be removed or renamed",
+// api/v1alpha1/multigrescluster_types.go), but the rule
+// (oldSelf.all(c, c.name in self.map(x, x.name))) is a transition rule: it
+// compares the old and new values of the field and only runs when the field
+// is still present on the new object. A JSON patch that removes spec.cells
+// outright, or a kubectl apply of a manifest that simply omits it, never
+// gives the rule an old-vs-new comparison to make, so the API server accepts
+// it (pkg/webhook/handlers/validator.go has no independent cell-count check
+// to catch what the CEL rule misses). That orphans every Cell the cluster
+// owned: reconcileCells finds them missing from spec and stamps
+// AnnotationPendingDeletion on each with a merge patch that touches no other
+// field.
+//
+// Before CellReconciler's For predicate was extended to notice an
+// AnnotationPendingDeletion-only change, that update produced no event the
+// predicate would pass, and handlePendingDeletion never ran until some
+// unrelated event on an owned TopoServer, Deployment or Service happened to
+// re-enqueue the Cell, which for a settled Cell with no churn left could be
+// never. This test drives the real path (settle the cluster, then remove
+// spec.cells) rather than simulating the orphan some other way, so it fails
+// against that dropped predicate and passes once the annotation alone can
+// enqueue a reconcile.
+func TestReadyForDeletionProtocol_CellAnnotationAloneStartsHandshake(t *testing.T) {
+	c := newCase(t)
+	cluster := c.MinimalCluster("scenario-del-cell")
+	c.WaitForClusterHealthy(cluster)
+
+	cells := &multigresv1alpha1.CellList{}
+	c.NoError(
+		c.List(cells, client.MatchingLabels{"multigres.com/cluster": cluster.Name}),
+		"list cells",
+	)
+	c.Len(cells.Items, 1, "want exactly one Cell before orphaning it")
+	orphanKey := client.ObjectKeyFromObject(&cells.Items[0])
+
+	removeCells := []byte(`[{"op":"remove","path":"/spec/cells"}]`)
+	c.NoError(
+		c.Patch(cluster, client.RawPatch(types.JSONPatchType, removeCells)),
+		"remove spec.cells",
+	)
+
+	// multigrescluster's orphan-pruning loop now finds this Cell missing from
+	// spec and annotates it with PendingDeletion. The only way its
+	// ReadyForDeletion condition can flip true, or the Cell disappear
+	// entirely, is CellReconciler's own reconcile running, and the only way
+	// that reconcile gets enqueued from here is the manager's watch
+	// evaluating the For predicate against that annotation-only update.
+	waitCtx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	for {
+		var cell multigresv1alpha1.Cell
+		err := c.Get(orphanKey, &cell)
+		if apierrors.IsNotFound(err) {
+			// Gone through the full handshake, including the delete
+			// multigrescluster issues once ReadyForDeletion is true.
+			return
+		}
+		c.NoError(err, "get orphaned cell")
+		if meta.IsStatusConditionTrue(
+			cell.Status.Conditions,
+			multigresv1alpha1.ConditionReadyForDeletion,
+		) {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			t.Fatalf(
+				"Cell %s never reported ReadyForDeletion after spec.cells was removed; "+
+					"the For predicate dropped multigrescluster's annotation-only update "+
+					"and nothing else was left to revisit it",
+				orphanKey.Name,
+			)
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // conditionSetTrue reports whether ev records a status.conditions entry whose

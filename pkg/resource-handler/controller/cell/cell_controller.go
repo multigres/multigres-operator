@@ -707,7 +707,14 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 }
 
 // projectRefOrGenerationChangedPredicate requeues when desired gateway state can
-// change due to either spec updates or project-ref annotation updates.
+// change due to a spec update, a project-ref annotation update, or the
+// PendingDeletion annotation that starts this Cell's own drain handshake.
+// Without the last of those, MultigresClusterReconciler stamping
+// AnnotationPendingDeletion on an orphan Cell produces an update event this
+// predicate drops, since it changes neither generation nor project-ref, and
+// handlePendingDeletion only runs on the next reconcile that some unrelated
+// event happens to trigger (e.g. an owned TopoServer, Deployment or Service
+// update, since Owns() events are not filtered by this predicate at all).
 func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(event.CreateEvent) bool {
@@ -727,8 +734,12 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 
 			oldAnnotations := e.ObjectOld.GetAnnotations()
 			newAnnotations := e.ObjectNew.GetAnnotations()
-			return oldAnnotations[metadata.AnnotationProjectRef] !=
-				newAnnotations[metadata.AnnotationProjectRef]
+			if oldAnnotations[metadata.AnnotationProjectRef] !=
+				newAnnotations[metadata.AnnotationProjectRef] {
+				return true
+			}
+			return oldAnnotations[multigresv1alpha1.AnnotationPendingDeletion] !=
+				newAnnotations[multigresv1alpha1.AnnotationPendingDeletion]
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true
