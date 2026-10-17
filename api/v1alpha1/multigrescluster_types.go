@@ -58,8 +58,21 @@ import (
 // certificate at process start, so neither the enablement nor the issuer can be
 // changed on a running cluster without a coordinated migration. Both are fixed at
 // creation.
+//
+// mode can be set to lite only when the cluster is created. Clearing it
+// afterwards is allowed.
 // +kubebuilder:validation:XValidation:rule="has(self.topoTLS) == has(oldSelf.topoTLS) && (!has(self.topoTLS) || self.topoTLS == oldSelf.topoTLS)",message="topoTLS is immutable and can only be set when the cluster is created"
+// +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'lite' || (has(oldSelf.mode) && oldSelf.mode == 'lite')",message="mode can only be set to lite when the cluster is created"
 type MultigresClusterSpec struct {
+	// Mode selects how the cluster runs. Empty runs multigateway Deployments,
+	// multiorch and a cohort of pool pods per shard. "lite" runs one pod that
+	// serves the gateway and a single static-leader pooler in one process,
+	// with no multiorch and no multigateway Deployment, and allows one
+	// database, table group, shard, pool and pool cell.
+	// +optional
+	// +kubebuilder:validation:Enum=lite
+	Mode string `json:"mode,omitempty"`
+
 	// Images defines the container images for all components in the cluster.
 	// +optional
 	Images ClusterImages `json:"images,omitempty"`
@@ -197,6 +210,9 @@ type MultigresClusterSpec struct {
 	// +optional
 	TopoTLS *TopoTLSConfig `json:"topoTLS,omitempty"`
 }
+
+// ModeLite is the spec.mode value for a cluster that runs as one minigres pod.
+const ModeLite = "lite"
 
 // ============================================================================
 // Images Config Section Specs

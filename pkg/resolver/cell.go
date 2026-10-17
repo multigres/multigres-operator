@@ -30,7 +30,15 @@ func (r *Resolver) ResolveCell(
 	gateway, placement, localTopo := mergeCellConfig(tpl, cellSpec.Overrides, cellSpec.Spec)
 
 	// 3. Apply Deep Defaults (Level 4)
-	defaultStatelessSpec(&gateway.StatelessSpec, DefaultResourcesGateway(), 1)
+	if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+		// A Lite cell runs no multigateway Deployment, so its replica count
+		// is left unset.
+		if isResourcesZero(gateway.Resources) {
+			gateway.Resources = DefaultResourcesGateway()
+		}
+	} else {
+		defaultStatelessSpec(&gateway.StatelessSpec, DefaultResourcesGateway(), 1)
+	}
 	defaultGatewayBuffer(gateway)
 
 	// Note: We do NOT default LocalTopo here because it is optional.

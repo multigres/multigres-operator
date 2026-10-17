@@ -587,3 +587,32 @@ func TestResolver_ClientErrors_Cell(t *testing.T) {
 		t.Errorf("Error mismatch: got %v, want simulated error", err)
 	}
 }
+
+// TestResolver_ResolveCell_LiteMode checks that a Lite cell resolves without a
+// multigateway replica count, since no multigateway Deployment runs.
+func TestResolver_ResolveCell_LiteMode(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	r := NewResolver(fake.NewClientBuilder().WithScheme(scheme).Build(), "default")
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "lite", Namespace: "default"},
+		Spec:       multigresv1alpha1.MultigresClusterSpec{Mode: multigresv1alpha1.ModeLite},
+	}
+
+	gateway, _, _, err := r.ResolveCell(
+		t.Context(),
+		cluster,
+		&multigresv1alpha1.CellConfig{Name: "zone-a"},
+	)
+	if err != nil {
+		t.Fatalf("ResolveCell() error = %v", err)
+	}
+	if gateway.Replicas != nil {
+		t.Errorf("multigateway replicas = %d, want unset", *gateway.Replicas)
+	}
+	if diff := cmp.Diff(DefaultResourcesGateway(), gateway.Resources); diff != "" {
+		t.Errorf("multigateway resources (-want +got):\n%s", diff)
+	}
+}

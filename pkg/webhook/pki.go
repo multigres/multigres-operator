@@ -36,21 +36,51 @@ const (
 	certFieldOwner = "multigres-operator-cert"
 )
 
+// ConfigurationNames identifies the admission configurations owned by one operator.
+type ConfigurationNames struct {
+	Mutating   string
+	Validating string
+}
+
+func configurationNames(names []ConfigurationNames) ConfigurationNames {
+	result := ConfigurationNames{Mutating: MutatingWebhookName, Validating: ValidatingWebhookName}
+	if len(names) > 0 {
+		if names[0].Mutating != "" {
+			result.Mutating = names[0].Mutating
+		}
+		if names[0].Validating != "" {
+			result.Validating = names[0].Validating
+		}
+	}
+	return result
+}
+
 // PatchWebhookCABundle injects the CA bundle and cert-strategy annotation into
 // both the Mutating and Validating webhook configurations using Server-Side Apply.
 // Using SSA with a dedicated field owner ensures that user-side SSA upgrades
 // (e.g. kubectl apply --server-side -f install.yaml) do not wipe caBundle,
 // because different field managers own different fields.
-func PatchWebhookCABundle(ctx context.Context, c client.Client, caBundle []byte) error {
-	if err := patchMutatingWebhook(ctx, c, caBundle); err != nil {
+func PatchWebhookCABundle(
+	ctx context.Context,
+	c client.Client,
+	caBundle []byte,
+	configs ...ConfigurationNames,
+) error {
+	names := configurationNames(configs)
+	if err := patchMutatingWebhook(ctx, c, caBundle, names.Mutating); err != nil {
 		return err
 	}
-	return patchValidatingWebhook(ctx, c, caBundle)
+	return patchValidatingWebhook(ctx, c, caBundle, names.Validating)
 }
 
-func patchMutatingWebhook(ctx context.Context, c client.Client, caBundle []byte) error {
+func patchMutatingWebhook(
+	ctx context.Context,
+	c client.Client,
+	caBundle []byte,
+	configName string,
+) error {
 	existing := &admissionregistrationv1.MutatingWebhookConfiguration{}
-	if err := c.Get(ctx, types.NamespacedName{Name: MutatingWebhookName}, existing); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: configName}, existing); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -66,7 +96,7 @@ func patchMutatingWebhook(ctx context.Context, c client.Client, caBundle []byte)
 			Kind:       "MutatingWebhookConfiguration",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: MutatingWebhookName,
+			Name: configName,
 			Annotations: map[string]string{
 				CertStrategyAnnotation: CertStrategySelfSigned,
 			},
@@ -94,9 +124,14 @@ func patchMutatingWebhook(ctx context.Context, c client.Client, caBundle []byte)
 	)
 }
 
-func patchValidatingWebhook(ctx context.Context, c client.Client, caBundle []byte) error {
+func patchValidatingWebhook(
+	ctx context.Context,
+	c client.Client,
+	caBundle []byte,
+	configName string,
+) error {
 	existing := &admissionregistrationv1.ValidatingWebhookConfiguration{}
-	if err := c.Get(ctx, types.NamespacedName{Name: ValidatingWebhookName}, existing); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: configName}, existing); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -112,7 +147,7 @@ func patchValidatingWebhook(ctx context.Context, c client.Client, caBundle []byt
 			Kind:       "ValidatingWebhookConfiguration",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: ValidatingWebhookName,
+			Name: configName,
 			Annotations: map[string]string{
 				CertStrategyAnnotation: CertStrategySelfSigned,
 			},
@@ -144,9 +179,10 @@ func patchValidatingWebhook(ctx context.Context, c client.Client, caBundle []byt
 // cert-strategy annotation set by the operator. This is used during startup
 // to detect that the operator previously managed its own certs, even when
 // cert files exist on disk from surviving projected volumes.
-func HasCertAnnotation(ctx context.Context, c client.Client) bool {
+func HasCertAnnotation(ctx context.Context, c client.Client, configs ...ConfigurationNames) bool {
+	names := configurationNames(configs)
 	mutating := &admissionregistrationv1.MutatingWebhookConfiguration{}
-	if err := c.Get(ctx, types.NamespacedName{Name: MutatingWebhookName}, mutating); err == nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: names.Mutating}, mutating); err == nil {
 		if mutating.Annotations[CertStrategyAnnotation] == CertStrategySelfSigned {
 			return true
 		}
@@ -155,7 +191,7 @@ func HasCertAnnotation(ctx context.Context, c client.Client) bool {
 	validating := &admissionregistrationv1.ValidatingWebhookConfiguration{}
 	if err := c.Get(
 		ctx,
-		types.NamespacedName{Name: ValidatingWebhookName},
+		types.NamespacedName{Name: names.Validating},
 		validating,
 	); err == nil {
 		if validating.Annotations[CertStrategyAnnotation] == CertStrategySelfSigned {

@@ -43,6 +43,7 @@ func BuildCell(
 			Name:     cellCfg.Name,
 			ZoneID:   cellCfg.ZoneID,
 			Region:   cellCfg.Region,
+			Mode:     cluster.Spec.Mode,
 			Metadata: cellCfg.Metadata,
 			Images: multigresv1alpha1.CellImages{
 				Multigateway:     cluster.Spec.Images.Multigateway,

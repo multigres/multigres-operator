@@ -685,6 +685,183 @@ func buildMultipoolerContainer(
 	return c
 }
 
+// buildLiteContainer creates the main container of a Lite pod. It runs
+// minigres, which serves the cell's gateway and the shard's only pooler, as a
+// static leader, in one process. Its flags are the multipooler container's
+// with two exceptions: --pg-port is the gateway's client-facing port, because
+// the minigres pooler adopts the PostgreSQL port from pgctld, and
+// --service-map is not passed. The pod has no headless Service, so the
+// process advertises the pod IP as its hostname.
+func buildLiteContainer(
+	shard *multigresv1alpha1.Shard,
+	pool multigresv1alpha1.PoolSpec,
+	poolName string,
+	cellName string,
+	serviceID string,
+) corev1.Container {
+	image := multigresv1alpha1.DefaultMultipoolerImage
+	if shard.Spec.Images.Multipooler != "" {
+		image = string(shard.Spec.Images.Multipooler)
+	}
+
+	args := []string{
+		"minigres", // Subcommand
+		fmt.Sprintf("--http-port=%d", DefaultMultipoolerHTTPPort),
+		fmt.Sprintf("--grpc-port=%d", DefaultMultipoolerGRPCPort),
+		fmt.Sprintf("--pg-port=%d", DefaultLitePostgresPort),
+		"--pooler-dir=" + PoolerDirMountPath,
+		"--socket-file=" + PostgresSocketPath, // Unix socket path; auth is controlled by pg_hba.
+		"--topo-global-server-addresses=" + shard.Spec.GlobalTopoServer.Address,
+		"--topo-global-root=" + shard.Spec.GlobalTopoServer.RootPath,
+		"--cell=" + cellName,
+		"--database=" + string(shard.Spec.DatabaseName),
+		"--table-group=" + string(shard.Spec.TableGroupName),
+		"--shard=" + string(shard.Spec.ShardName),
+		"--service-id=" + serviceID,
+		"--pgctld-addr=localhost:15470",
+		"--log-level=" + string(shard.Spec.LogLevels.Multipooler),
+		// See buildMultipoolerContainer.
+		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
+	}
+
+	if shard.Spec.Backup != nil {
+		args = append(args,
+			"--pgbackrest-cert-file="+PgBackRestCertMountPath+"/pgbackrest.crt",
+			"--pgbackrest-key-file="+PgBackRestCertMountPath+"/pgbackrest.key",
+			"--pgbackrest-ca-file="+PgBackRestCertMountPath+"/ca.crt",
+		)
+	}
+	if shardTLSConfigured(shard) {
+		args = append(args,
+			"--grpc-cert", ShardTLSCertFile,
+			"--grpc-key", ShardTLSKeyFile,
+			"--grpc-ca", ShardTLSCAFile,
+			"--grpc-server-ca", ShardTLSCAFile,
+			"--multipooler-grpc-cert", ShardTLSCertFile,
+			"--multipooler-grpc-key", ShardTLSKeyFile,
+			"--multipooler-grpc-ca", ShardTLSCAFile,
+			"--multipooler-grpc-server-name",
+			multigresv1alpha1.ComponentCertCommonName(
+				multigresv1alpha1.ComponentMultiPoolerTLS,
+				shard.Labels[metadata.LabelMultigresCluster],
+				shard.Namespace,
+			),
+			"--multipooler-grpc-require-tls",
+		)
+	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		args = append(args, multigresv1alpha1.TopoClientTLSArgs()...)
+	}
+	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
+		args = append(args,
+			"--pgbackrest-cipher-key-file="+PgBackRestCipherKeyFilePath,
+		)
+	}
+	args = append(args, "--hostname=$(POD_IP)")
+
+	c := corev1.Container{
+		Name:            "minigres",
+		Image:           image,
+		Args:            args,
+		Ports:           buildLiteContainerPorts(),
+		Resources:       pool.Multipooler.Resources,
+		SecurityContext: buildMultipoolerSecurityContext(pool),
+		StartupProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/live",
+					Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
+				},
+			},
+			PeriodSeconds:    5,
+			FailureThreshold: 30,
+		},
+		LivenessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/live",
+					Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
+				},
+			},
+			PeriodSeconds: 10,
+		},
+		// /ready is the gateway half's readiness: the pooler is discovered and
+		// the gateway is serving. The pooler's PRIMARY role is reported by the
+		// Shard's Primary condition.
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/ready",
+					Port: intstr.FromInt32(DefaultMultipoolerHTTPPort),
+				},
+			},
+			PeriodSeconds: 5,
+		},
+	}
+
+	env := []corev1.EnvVar{
+		{
+			Name: "POD_IP",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"},
+			},
+		},
+		{
+			Name:  "PGDATA",
+			Value: PgDataPath,
+		},
+		pgUserEnvVar(shard.Spec.PostgresSuperuser),
+		pgPasswordFileEnvVar(),
+	}
+	env = append(env, s3EnvVars(shard.Spec.Backup)...)
+	if otelVars := buildRuntimeOTELEnvVars(shard, "minigres"); len(otelVars) > 0 {
+		env = append(env, otelVars...)
+	}
+	c.Env = env
+
+	c.VolumeMounts = []corev1.VolumeMount{
+		{
+			Name:      DataVolumeName,
+			MountPath: PoolerDirMountPath,
+		},
+		{
+			Name:      BackupVolumeName,
+			MountPath: BackupMountPath,
+		},
+		{
+			Name:      SocketDirVolumeName,
+			MountPath: SocketDirMountPath,
+		},
+		postgresPasswordVolumeMount(),
+	}
+	if shard.Spec.Backup != nil {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      PgBackRestCertVolumeName,
+			MountPath: PgBackRestCertMountPath,
+			ReadOnly:  true,
+		})
+	}
+	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      PgBackRestCipherKeyVolumeName,
+			MountPath: PgBackRestCipherKeyMountPath,
+			ReadOnly:  true,
+		})
+	}
+	if shardTLSConfigured(shard) {
+		c.VolumeMounts = append(c.VolumeMounts, shardTLSVolumeMount())
+	}
+	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
+		c.VolumeMounts = append(c.VolumeMounts, multigresv1alpha1.TopoClientTLSVolumeMount())
+	}
+	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
+		shard.Spec.Observability,
+	); otelMount != nil {
+		c.VolumeMounts = append(c.VolumeMounts, *otelMount)
+	}
+	return c
+}
+
 // buildMultiorchContainer creates the Multiorch container spec for a specific cell.
 func buildMultiorchContainer(shard *multigresv1alpha1.Shard, cellName string) corev1.Container {
 	image := multigresv1alpha1.DefaultMultiorchImage

@@ -64,6 +64,9 @@ spec:
               certificate at process start, so neither the enablement nor the issuer can be
               changed on a running cluster without a coordinated migration. Both are fixed at
               creation.
+
+              mode can be set to lite only when the cluster is created. Clearing it
+              afterwards is allowed.
             properties:
               backup:
                 description: Backup configures the default backup settings for the
@@ -9970,6 +9973,16 @@ spec:
                     - error
                     type: string
                 type: object
+              mode:
+                description: |-
+                  Mode selects how the cluster runs. Empty runs multigateway Deployments,
+                  multiorch and a cohort of pool pods per shard. "lite" runs one pod that
+                  serves the gateway and a single static-leader pooler in one process,
+                  with no multiorch and no multigateway Deployment, and allows one
+                  database, table group, shard, pool and pool cell.
+                enum:
+                - lite
+                type: string
               multiadmin:
                 description: Multiadmin defines the configuration for the Multiadmin
                   component.
@@ -12353,6 +12366,9 @@ spec:
                 created
               rule: has(self.topoTLS) == has(oldSelf.topoTLS) && (!has(self.topoTLS)
                 || self.topoTLS == oldSelf.topoTLS)
+            - message: mode can only be set to lite when the cluster is created
+              rule: '!has(self.mode) || self.mode != ''lite'' || (has(oldSelf.mode)
+                && oldSelf.mode == ''lite'')'
           status:
             description: MultigresClusterStatus defines the observed state.
             properties:

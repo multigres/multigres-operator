@@ -118,8 +118,9 @@ func (r *CellReconciler) Reconcile(
 		return ctrl.Result{RequeueAfter: localTopoServerRecheckDelay}, nil
 	}
 
-	// Reconcile Multigateway Deployment
-	{
+	// Reconcile Multigateway Deployment. A Lite cell has none: the gateway
+	// runs inside the shard's Lite pod.
+	if cell.Spec.Mode != multigresv1alpha1.ModeLite {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "Cell.ReconcileDeployment")
 		if err := r.reconcileMultigatewayDeployment(ctx, cell); err != nil {
 			monitoring.RecordSpanError(childSpan, err)
@@ -172,7 +173,8 @@ func (r *CellReconciler) Reconcile(
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
 	r.Recorder.Event(cell, "Normal", "Synced", "Successfully reconciled Cell")
 
-	if cell.Status.Phase != multigresv1alpha1.PhaseHealthy {
+	if cell.Spec.Mode == multigresv1alpha1.ModeLite ||
+		cell.Status.Phase != multigresv1alpha1.PhaseHealthy {
 		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
 	}
 	return ctrl.Result{}, nil
@@ -518,6 +520,9 @@ func (r *CellReconciler) patchLocalTopoServerWaitingStatus(
 
 // updateStatus updates the Cell status based on observed state.
 func (r *CellReconciler) updateStatus(ctx context.Context, cell *multigresv1alpha1.Cell) error {
+	if cell.Spec.Mode == multigresv1alpha1.ModeLite {
+		return r.updateLiteStatus(ctx, cell)
+	}
 	oldPhase := cell.Status.Phase
 	// Get the Multigateway Deployment to check status
 	mgDeploy := &appsv1.Deployment{}
@@ -573,7 +578,14 @@ func (r *CellReconciler) updateStatus(ctx context.Context, cell *multigresv1alph
 
 	cell.Status.ObservedGeneration = cell.Generation
 
-	// 1. Construct the Patch Object
+	return r.patchWorkloadStatus(ctx, cell, oldPhase)
+}
+
+func (r *CellReconciler) patchWorkloadStatus(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+	oldPhase multigresv1alpha1.Phase,
+) error {
 	patchObj := &multigresv1alpha1.Cell{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: multigresv1alpha1.GroupVersion.String(),

@@ -97,6 +97,9 @@ func main() {
 	var webhookServiceNamespace string
 	var webhookServiceAccount string
 	var webhookServiceName string
+	var watchNamespace string
+	var litePodPriorityClassName string
+	var webhookNames multigreswebhook.ConfigurationNames
 
 	defaultNS := os.Getenv("POD_NAMESPACE")
 	if defaultNS == "" {
@@ -115,6 +118,32 @@ func main() {
 		)
 		os.Exit(1)
 	}
+
+	flag.StringVar(
+		&watchNamespace,
+		"watch-namespace",
+		os.Getenv("WATCH_NAMESPACE"),
+		"Comma-separated workload namespaces to watch; empty watches all namespaces. The operator namespace is always included.",
+	)
+	flag.StringVar(
+		&webhookNames.Mutating,
+		"mutating-webhook-configuration-name",
+		multigreswebhook.MutatingWebhookName,
+		"Mutating webhook configuration whose certificate this operator manages.",
+	)
+	flag.StringVar(
+		&webhookNames.Validating,
+		"validating-webhook-configuration-name",
+		multigreswebhook.ValidatingWebhookName,
+		"Validating webhook configuration whose certificate this operator manages.",
+	)
+
+	flag.StringVar(
+		&litePodPriorityClassName,
+		"lite-pod-priority-class",
+		"",
+		"PriorityClass for Lite database pods; empty uses the Kubernetes default.",
+	)
 
 	// General Flags
 	flag.StringVar(
@@ -316,7 +345,7 @@ func main() {
 				"webhook certificates not found on disk; enabling internal certificate rotation",
 			)
 			useInternalCerts = true
-		case multigreswebhook.HasCertAnnotation(context.Background(), tmpClient):
+		case multigreswebhook.HasCertAnnotation(context.Background(), tmpClient, webhookNames):
 			setupLog.Info(
 				"webhook certificates found on disk with operator cert-strategy annotation; resuming internal certificate rotation",
 			)
@@ -334,16 +363,17 @@ func main() {
 	config.Burst = 100
 
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		HealthProbeBindAddress: probeAddr,
-		PprofBindAddress:       pprofAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "multigres-operator.multigres.com",
+		Scheme:                  scheme,
+		Metrics:                 metricsServerOptions,
+		HealthProbeBindAddress:  probeAddr,
+		PprofBindAddress:        pprofAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "multigres-operator.multigres.com",
+		LeaderElectionNamespace: defaultNS,
 		// RELEASE LEADER ON CANCEL: Enables faster failover during rolling upgrades
 		LeaderElectionReleaseOnCancel: true,
 
-		Cache: cacheopts.New(defaultNS),
+		Cache: cacheopts.New(defaultNS, watchNamespace),
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
 			Port:    webhookPort,
 			CertDir: webhookCertDir,
@@ -387,7 +417,12 @@ func main() {
 					"app.kubernetes.io/managed-by": "multigres-operator",
 				},
 				PostReconcileHook: func(ctx context.Context, caBundle []byte) error {
-					return multigreswebhook.PatchWebhookCABundle(ctx, tmpClient, caBundle)
+					return multigreswebhook.PatchWebhookCABundle(
+						ctx,
+						tmpClient,
+						caBundle,
+						webhookNames,
+					)
 				},
 			},
 		)
@@ -469,11 +504,12 @@ func main() {
 	}
 
 	if err = (&shardcontroller.ShardReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		Recorder:      mgr.GetEventRecorderFor("shard-controller"),
-		APIReader:     mgr.GetAPIReader(),
-		PoolerClients: poolerClients,
+		Client:                   mgr.GetClient(),
+		Scheme:                   mgr.GetScheme(),
+		Recorder:                 mgr.GetEventRecorderFor("shard-controller"),
+		APIReader:                mgr.GetAPIReader(),
+		PoolerClients:            poolerClients,
+		LitePodPriorityClassName: litePodPriorityClassName,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Shard")
 		os.Exit(1)

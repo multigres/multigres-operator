@@ -26,6 +26,11 @@ const (
 
 	// DefaultMultiorchGRPCPort is the default port for Multiorch gRPC traffic.
 	DefaultMultiorchGRPCPort int32 = 15370
+
+	// DefaultLitePostgresPort is the client-facing PostgreSQL port of the
+	// gateway half of a Lite pod. It differs from DefaultPostgresPort because
+	// PostgreSQL itself listens on that port in the same pod.
+	DefaultLitePostgresPort int32 = 15432
 )
 
 // buildMultipoolerContainerPorts creates the port definitions for the multipooler sidecar container.
@@ -45,6 +50,28 @@ func buildMultipoolerContainerPorts() []corev1.ContainerPort {
 		{
 			Name:          "postgres",
 			ContainerPort: DefaultPostgresPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}
+}
+
+// buildLiteContainerPorts creates the port definitions for the minigres
+// container of a Lite pod. The postgres port is the gateway's client port.
+func buildLiteContainerPorts() []corev1.ContainerPort {
+	return []corev1.ContainerPort{
+		{
+			Name:          "http",
+			ContainerPort: DefaultMultipoolerHTTPPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+		{
+			Name:          "grpc",
+			ContainerPort: DefaultMultipoolerGRPCPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+		{
+			Name:          "postgres",
+			ContainerPort: DefaultLitePostgresPort,
 			Protocol:      corev1.ProtocolTCP,
 		},
 	}

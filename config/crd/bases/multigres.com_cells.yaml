@@ -218,6 +218,14 @@ spec:
                   the cell's topology record. Set from the parent cluster's cells[].metadata.
                 maxLength: 4096
                 type: string
+              mode:
+                description: |-
+                  Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode.
+                  The cell controller reads it to decide whether the cell runs a
+                  multigateway Deployment.
+                enum:
+                - lite
+                type: string
               multigateway:
                 description: Multigateway fully resolved config.
                 properties:

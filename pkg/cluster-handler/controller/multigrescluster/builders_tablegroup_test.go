@@ -63,6 +63,19 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("Propagates Mode", func(t *testing.T) {
+		c := cluster.DeepCopy()
+		c.Spec.Mode = multigresv1alpha1.ModeLite
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-lite"}
+		got, err := BuildTableGroup(c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if got.Spec.Mode != multigresv1alpha1.ModeLite {
+			t.Errorf("Mode = %q, want %q", got.Spec.Mode, multigresv1alpha1.ModeLite)
+		}
+	})
+
 	t.Run("CustomPostgresSuperuser", func(t *testing.T) {
 		c := *cluster
 		c.Spec.PostgresSuperuser = "admin"

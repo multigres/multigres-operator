@@ -56,6 +56,60 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 		expectError     string
 		validate        func(testing.TB, *multigresv1alpha1.MultigresCluster)
 	}{
+		"Lite Mode: No Template -> No Multiorch Or Gateway Replicas": {
+			input: &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "lite", Namespace: "test-ns"},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Mode:  multigresv1alpha1.ModeLite,
+					Cells: []multigresv1alpha1.CellConfig{{Name: "c1"}},
+				},
+			},
+			existingObjects: []client.Object{},
+			validate: func(t testing.TB, cluster *multigresv1alpha1.MultigresCluster) {
+				t.Helper()
+				if cluster.Spec.Mode != multigresv1alpha1.ModeLite {
+					t.Fatalf("Mode = %q, want %q", cluster.Spec.Mode, multigresv1alpha1.ModeLite)
+				}
+
+				cellSpec := cluster.Spec.Cells[0].Spec
+				if cellSpec == nil {
+					t.Fatal("cell spec was not materialized")
+				}
+				if cellSpec.Multigateway.Replicas != nil {
+					t.Errorf(
+						"multigateway replicas = %d, want unset",
+						*cellSpec.Multigateway.Replicas,
+					)
+				}
+
+				shard := cluster.Spec.Databases[0].TableGroups[0].Shards[0]
+				if shard.Spec == nil {
+					t.Fatal("shard spec was not materialized")
+				}
+				if diff := cmp.Diff(
+					multigresv1alpha1.MultiorchSpec{},
+					shard.Spec.Multiorch,
+				); diff != "" {
+					t.Errorf("multiorch spec was defaulted (-want +got):\n%s", diff)
+				}
+				pool, ok := shard.Spec.Pools["default"]
+				if !ok {
+					t.Fatalf("default pool missing: %v", shard.Spec.Pools)
+				}
+				if pool.ReplicasPerCell == nil || *pool.ReplicasPerCell != 1 {
+					t.Errorf("replicasPerCell = %v, want 1", pool.ReplicasPerCell)
+				}
+
+				// The topology server and multiadmin are defaulted as for any cluster.
+				topoServer := cluster.Spec.GlobalTopoServer
+				if topoServer == nil || topoServer.Etcd == nil {
+					t.Error("globalTopoServer was not defaulted")
+				}
+				if cluster.Spec.Multiadmin == nil || cluster.Spec.Multiadmin.Spec == nil {
+					t.Error("multiadmin was not defaulted")
+				}
+			},
+		},
 		"Happy Path: No Template -> Materializes Defaults": {
 			input: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "no-template", Namespace: "test-ns"},

@@ -305,7 +305,7 @@ func buildHeadlessServiceName(shard *multigresv1alpha1.Shard, poolName, cellName
 //
 // Fields included: images, commands, args, env vars, resources, volume mounts,
 // probes, container security contexts, pod readiness gates, pod affinity, and
-// node selector.
+// node selector and priority class.
 //
 // Hash write errors are discarded throughout because hash.Hash.Write never returns an error
 // per the hash.Hash interface contract (it panics on failure instead).
@@ -349,6 +349,10 @@ func ComputeSpecHash(pod *corev1.Pod) string {
 
 	if spec.TerminationGracePeriodSeconds != nil {
 		_, _ = fmt.Fprintf(h, "tgp=%d", *spec.TerminationGracePeriodSeconds)
+	}
+
+	if spec.PriorityClassName != "" {
+		_, _ = fmt.Fprintf(h, "priorityClass=%s", spec.PriorityClassName)
 	}
 
 	if spec.ServiceAccountName != "" {

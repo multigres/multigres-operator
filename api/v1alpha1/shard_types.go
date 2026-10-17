@@ -201,6 +201,12 @@ type ShardSpec struct {
 	// +optional
 	DurabilityPolicy string `json:"durabilityPolicy,omitempty"`
 
+	// Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode
+	// through the TableGroup.
+	// +optional
+	// +kubebuilder:validation:Enum=lite
+	Mode string `json:"mode,omitempty"`
+
 	// PostgresSuperuser is the resolved Postgres superuser name propagated from
 	// MultigresCluster. Used to populate POSTGRES_USER on pgctld and multipooler.
 	// +optional
@@ -280,6 +286,16 @@ type PostgresConfigStatus struct {
 	// +optional
 	Error string `json:"error,omitempty"`
 }
+
+const (
+	// ConditionPrimary is true when a Lite shard's pooler reports the PRIMARY
+	// routing role over its Status RPC. Pod readiness does not set it.
+	ConditionPrimary = "Primary"
+
+	// ConditionUpToDate is true when a Lite shard's pod carries the spec-hash
+	// of the pod the operator would build for it now.
+	ConditionUpToDate = "UpToDate"
+)
 
 // ShardStatus defines the observed state of Shard.
 type ShardStatus struct {

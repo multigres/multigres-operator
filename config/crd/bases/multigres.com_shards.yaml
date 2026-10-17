@@ -360,6 +360,13 @@ spec:
                     - error
                     type: string
                 type: object
+              mode:
+                description: |-
+                  Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode
+                  through the TableGroup.
+                enum:
+                - lite
+                type: string
               multiorch:
                 description: Multiorch is the fully resolved configuration for the
                   shard orchestrator.

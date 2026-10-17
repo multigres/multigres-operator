@@ -344,6 +344,15 @@ func (r *Resolver) ValidateClusterLogic(
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
+	// ------------------------------------------------------------------
+	// 0g. Lite Mode Shape
+	// ------------------------------------------------------------------
+	if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+		if err := r.validateLiteMode(ctx, cluster, cellNames); err != nil {
+			return nil, fmt.Errorf("validation failed: %w", err)
+		}
+	}
+
 	// Iterate through every Shard and "Simulate" Resolution
 	for _, db := range cluster.Spec.Databases {
 		dbBackup := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
@@ -397,6 +406,7 @@ func (r *Resolver) ValidateClusterLogic(
 						AllCellNames:            cellNames,
 						InheritedBackup:         tgBackup,
 						MaterializeCellDefaults: true,
+						Mode:                    cluster.Spec.Mode,
 					},
 				)
 				if err != nil {
@@ -464,51 +474,55 @@ func (r *Resolver) ValidateClusterLogic(
 				// ------------------------------------------------------------------
 				// 3. Durability achievability warnings
 				// ------------------------------------------------------------------
-				for poolName, pool := range pools {
-					durabilityPolicy := effectiveDatabaseDurabilityPolicy(db, cluster)
-					if durabilityPolicy == "" {
-						durabilityPolicy = DefaultDurabilityPolicy
-					}
-					replicas := DefaultPoolReplicasPerCell
-					if pool.ReplicasPerCell != nil {
-						replicas = *pool.ReplicasPerCell
-					}
-					cellCount := len(pool.Cells)
-					if cellCount == 0 {
-						cellCount = len(cellNames)
-					}
-					totalReplicas := int(replicas) * cellCount
-
-					switch durabilityPolicy {
-					case "MULTI_CELL_AT_LEAST_2":
-						if cellCount >= 2 {
-							continue
+				// Skipped in Lite mode, which runs one static-leader pooler by
+				// design.
+				if cluster.Spec.Mode != multigresv1alpha1.ModeLite {
+					for poolName, pool := range pools {
+						durabilityPolicy := effectiveDatabaseDurabilityPolicy(db, cluster)
+						if durabilityPolicy == "" {
+							durabilityPolicy = DefaultDurabilityPolicy
 						}
-						warnings = append(warnings, fmt.Sprintf(
-							"pool '%s' in shard '%s' spans %d cell(s); "+
-								"durability policy %q requires at least %d distinct cells.",
-							poolName,
-							shard.Name,
-							cellCount,
-							durabilityPolicy,
-							2,
-						))
-
-					default:
-						if totalReplicas >= 2 {
-							continue
+						replicas := DefaultPoolReplicasPerCell
+						if pool.ReplicasPerCell != nil {
+							replicas = *pool.ReplicasPerCell
 						}
-						warnings = append(warnings, fmt.Sprintf(
-							"pool '%s' in shard '%s' has replicasPerCell=%d across %d cell(s) (%d total); "+
-								"durability policy %q requires at least %d total poolers.",
-							poolName,
-							shard.Name,
-							replicas,
-							cellCount,
-							totalReplicas,
-							durabilityPolicy,
-							2,
-						))
+						cellCount := len(pool.Cells)
+						if cellCount == 0 {
+							cellCount = len(cellNames)
+						}
+						totalReplicas := int(replicas) * cellCount
+
+						switch durabilityPolicy {
+						case "MULTI_CELL_AT_LEAST_2":
+							if cellCount >= 2 {
+								continue
+							}
+							warnings = append(warnings, fmt.Sprintf(
+								"pool '%s' in shard '%s' spans %d cell(s); "+
+									"durability policy %q requires at least %d distinct cells.",
+								poolName,
+								shard.Name,
+								cellCount,
+								durabilityPolicy,
+								2,
+							))
+
+						default:
+							if totalReplicas >= 2 {
+								continue
+							}
+							warnings = append(warnings, fmt.Sprintf(
+								"pool '%s' in shard '%s' has replicasPerCell=%d across %d cell(s) (%d total); "+
+									"durability policy %q requires at least %d total poolers.",
+								poolName,
+								shard.Name,
+								replicas,
+								cellCount,
+								totalReplicas,
+								durabilityPolicy,
+								2,
+							))
+						}
 					}
 				}
 
@@ -613,6 +627,7 @@ func (r *Resolver) ValidateClusterLogic(
 						AllCellNames:            cellNames,
 						InheritedBackup:         tgBackup,
 						MaterializeCellDefaults: true,
+						Mode:                    cluster.Spec.Mode,
 					},
 				)
 				if err != nil {
@@ -698,6 +713,117 @@ func effectiveDatabaseDurabilityPolicy(
 		db.DurabilityPolicy,
 		cluster.Spec.DurabilityPolicy,
 	)
+}
+
+// validateLiteMode rejects a Lite cluster whose spec does not fit the one pod
+// Lite runs: one database, table group and shard, served by one pool with one
+// pooler in one cell, with no multiorch and no multigateway replicas. The pool,
+// multiorch and gateway checks run on the resolved specs, so a template or an
+// override cannot add a component that Lite does not run.
+func (r *Resolver) validateLiteMode(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	cellNames []multigresv1alpha1.CellName,
+) error {
+	if cluster.Spec.CertCommonName != "" {
+		return fmt.Errorf(
+			"lite mode does not support certCommonName: public PostgreSQL TLS is not configured on the Lite pod",
+		)
+	}
+	if len(cluster.Spec.Databases) != 1 {
+		return fmt.Errorf(
+			"lite mode requires exactly one database, found %d",
+			len(cluster.Spec.Databases),
+		)
+	}
+	db := cluster.Spec.Databases[0]
+	if len(db.TableGroups) != 1 {
+		return fmt.Errorf(
+			"lite mode requires exactly one table group in database '%s', found %d",
+			db.Name, len(db.TableGroups),
+		)
+	}
+	tg := db.TableGroups[0]
+	if len(tg.Shards) != 1 {
+		return fmt.Errorf(
+			"lite mode requires exactly one shard in table group '%s', found %d",
+			tg.Name, len(tg.Shards),
+		)
+	}
+
+	shard := tg.Shards[0]
+	if shard.ShardTemplate == "" && cluster.Spec.TemplateDefaults.ShardTemplate != "" {
+		shard.ShardTemplate = cluster.Spec.TemplateDefaults.ShardTemplate
+	}
+	resolved, err := r.ResolveShard(ctx, &shard, ResolveShardOptions{
+		AllCellNames: cellNames,
+		InheritedBackup: multigresv1alpha1.MergeBackupConfig(
+			tg.Backup,
+			multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup),
+		),
+		MaterializeCellDefaults: true,
+		Mode:                    multigresv1alpha1.ModeLite,
+	})
+	if err != nil {
+		return fmt.Errorf("cannot resolve shard '%s': %w", shard.Name, err)
+	}
+	if len(resolved.Pools) != 1 {
+		return fmt.Errorf(
+			"lite mode requires exactly one pool in shard '%s', found %d",
+			shard.Name, len(resolved.Pools),
+		)
+	}
+	for poolName, pool := range resolved.Pools {
+		if pool.ReplicasPerCell != nil && *pool.ReplicasPerCell != 1 {
+			return fmt.Errorf(
+				"lite mode requires replicasPerCell unset or 1 in pool '%s', found %d",
+				poolName, *pool.ReplicasPerCell,
+			)
+		}
+		if len(pool.Cells) != 1 {
+			return fmt.Errorf(
+				"lite mode requires exactly one cell in pool '%s', found %d",
+				poolName, len(pool.Cells),
+			)
+		}
+	}
+
+	for _, cell := range cluster.Spec.Cells {
+		cellCfg := cell
+		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
+		gateway, _, _, err := r.ResolveCell(ctx, cluster, &cellCfg)
+		if err != nil {
+			return fmt.Errorf("cannot resolve cell '%s': %w", cell.Name, err)
+		}
+		if gateway.Replicas != nil && *gateway.Replicas != 0 {
+			return fmt.Errorf(
+				"lite mode requires multigateway replicas unset or 0 in cell '%s', found %d",
+				cell.Name, *gateway.Replicas,
+			)
+		}
+	}
+
+	if replicas := resolved.Multiorch.Replicas; replicas != nil && *replicas != 0 {
+		return fmt.Errorf(
+			"lite mode requires multiorch replicas unset or 0 in shard '%s', found %d",
+			shard.Name, *replicas,
+		)
+	}
+
+	if policy := cluster.Spec.DurabilityPolicy; policy != "" && policy != DefaultDurabilityPolicy {
+		return fmt.Errorf(
+			"lite mode requires durabilityPolicy unset or %q, found %q",
+			DefaultDurabilityPolicy, policy,
+		)
+	}
+	if policy := db.DurabilityPolicy; policy != "" && policy != DefaultDurabilityPolicy {
+		return fmt.Errorf(
+			"lite mode requires durabilityPolicy unset or %q in database '%s', found %q",
+			DefaultDurabilityPolicy, db.Name, policy,
+		)
+	}
+
+	return nil
 }
 
 // dnsLabelRegex matches valid DNS labels per RFC 1123. This mirrors the

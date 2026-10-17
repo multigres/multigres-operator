@@ -76,6 +76,7 @@ func BuildTableGroup(
 				dbCfg.DurabilityPolicy,
 				cluster.Spec.DurabilityPolicy,
 			),
+			Mode:                      cluster.Spec.Mode,
 			PostgresSuperuser:         cluster.Spec.PostgresSuperuser,
 			PostgresPasswordSecretRef: cluster.Spec.PostgresPasswordSecretRef,
 			PostgresInitSecretsRef:    cluster.Spec.PostgresInitSecretsRef,
