@@ -11,8 +11,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -92,7 +95,8 @@ func TestClusterDeletion(t *testing.T) {
 // TestClusterDeletionAfterSwitchingToExternalTopo verifies that retained PVCs
 // from a previously managed topology server are still cleaned up when the
 // cluster is later deleted. This covers the case where the TopoServer and its
-// StatefulSet no longer exist by the time cluster deletion starts.
+// StatefulSet were retired by a finished move to an external topology before
+// cluster deletion starts.
 func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 	t.Parallel()
 	ns := cluster.CreateNamespace(t)
@@ -121,23 +125,28 @@ func TestClusterDeletionAfterSwitchingToExternalTopo(t *testing.T) {
 		t.Fatal("expected at least one non-topo PVC to verify the Retain policy")
 	}
 
-	// Patch directly instead of using framework.PatchCluster (the external
-	// endpoint is intentionally unreachable).
-	if err := c.Patch(ctx, cr, client.RawPatch(types.MergePatchType, []byte(`{
+	// The managed TopoServer is retired only once the move has finished: every
+	// cell registered in the external topology, every pod restarted against
+	// it, and the external server shown to be a different etcd. So the
+	// external endpoint has to be a real, separate etcd.
+	externalEndpoint := createExternalEtcd(t, c, ns)
+	cluster.WaitForAllPodsReady(t, ns)
+
+	if err := c.Patch(ctx, cr, client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{
 		"spec": {
 			"globalTopoServer": {
 				"etcd": null,
 				"templateRef": null,
 				"external": {
-					"endpoints": ["http://external-etcd.invalid:2379"]
+					"endpoints": [%q]
 				}
 			}
 		}
-	}`))); err != nil {
+	}`, externalEndpoint)))); err != nil {
 		t.Fatalf("switch cluster to external topology: %v", err)
 	}
 
-	waitForObjectsDeleted(t, c, 3*time.Minute,
+	waitForObjectsDeleted(t, c, 10*time.Minute,
 		objectToDelete{
 			key:         client.ObjectKey{Namespace: ns, Name: topoStatefulSet.Name},
 			object:      &appsv1.StatefulSet{},
@@ -309,4 +318,73 @@ func waitForObjectsDeleted(
 		}
 		t.Fatalf("timed out waiting for deletion of %v: %v", pending, err)
 	}
+}
+
+// createExternalEtcd starts a single-member etcd in ns, outside anything the
+// operator manages, and returns its client endpoint. Its member name and peer
+// URL share nothing with the managed TopoServer's, so the operator's identity
+// check accepts it as a different etcd.
+func createExternalEtcd(t testing.TB, c client.Client, ns string) string {
+	t.Helper()
+	const name = "external-etcd"
+	labels := map[string]string{"app": name}
+	endpoint := fmt.Sprintf("http://%s.%s.svc:2379", name, ns)
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: corev1.ServiceSpec{
+			Selector: labels,
+			Ports:    []corev1.ServicePort{{Name: "client", Port: 2379}},
+		},
+	}
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: ptr.To[int32](1),
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "etcd",
+						Image: multigresv1alpha1.DefaultEtcdImage,
+						Command: []string{
+							"etcd",
+							"--name=" + name,
+							"--data-dir=/var/run/etcd",
+							"--listen-client-urls=http://0.0.0.0:2379",
+							"--advertise-client-urls=" + endpoint,
+							"--listen-peer-urls=http://127.0.0.1:2380",
+							"--initial-advertise-peer-urls=http://127.0.0.1:2380",
+							"--initial-cluster=" + name + "=http://127.0.0.1:2380",
+						},
+						Ports: []corev1.ContainerPort{{Name: "client", ContainerPort: 2379}},
+						ReadinessProbe: &corev1.Probe{
+							ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{
+									Path: "/health",
+									Port: intstr.FromInt32(2379),
+								},
+							},
+						},
+						Resources: framework.CIResources(),
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/var/run/etcd",
+						}},
+					}},
+					Volumes: []corev1.Volume{{
+						Name:         "data",
+						VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+					}},
+				},
+			},
+		},
+	}
+	for _, obj := range []client.Object{svc, deploy} {
+		if err := c.Create(context.Background(), obj); err != nil {
+			t.Fatalf("create external etcd %T: %v", obj, err)
+		}
+	}
+	return endpoint
 }
