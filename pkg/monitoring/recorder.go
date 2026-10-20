@@ -48,6 +48,30 @@ func SetPoolPodsDrifted(cluster, shard, pool, cell, namespace string, count int)
 	poolPodsDrifted.WithLabelValues(cluster, shard, pool, cell, namespace).Set(float64(count))
 }
 
+// PoolPodsStuck is the stuck-pod count for one pool/cell of a shard.
+type PoolPodsStuck struct {
+	Pool, Cell string
+	Count      int32
+}
+
+// ReplaceShardPoolPodsStuck publishes the stuck-pod gauge for every pool/cell
+// of a shard and drops series for pool/cell combinations no longer present.
+func ReplaceShardPoolPodsStuck(cluster, shard, namespace string, samples []PoolPodsStuck) {
+	ForgetShardPoolPodsStuck(shard, namespace)
+	for _, s := range samples {
+		poolPodsStuck.WithLabelValues(cluster, shard, s.Pool, s.Cell, namespace).
+			Set(float64(s.Count))
+	}
+}
+
+// ForgetShardPoolPodsStuck deletes every stuck-pod series of a shard.
+func ForgetShardPoolPodsStuck(shard, namespace string) {
+	poolPodsStuck.DeletePartialMatch(map[string]string{
+		"shard":     shard,
+		"namespace": namespace,
+	})
+}
+
 // SetTopoServerReplicas sets the desired and ready replica gauges for a TopoServer.
 func SetTopoServerReplicas(name, namespace string, desired, ready int32) {
 	toposerverReplicas.WithLabelValues(name, namespace, "desired").Set(float64(desired))
@@ -113,4 +137,5 @@ func ForgetShard(shard, namespace string) {
 	rollingUpdateInProgress.DeletePartialMatch(match)
 	shardPostureInconsistent.DeletePartialMatch(match)
 	shardHasPrimary.DeletePartialMatch(match)
+	poolPodsStuck.DeletePartialMatch(match)
 }

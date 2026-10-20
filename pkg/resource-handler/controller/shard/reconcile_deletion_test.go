@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -799,7 +800,14 @@ func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
 		}
 
 		reconcile(r, name)
-		if got := shardGaugeFamilies(t, name, "default"); len(got) != 6 {
+		if got := shardGaugeFamilies(
+			t,
+			name,
+			"default",
+		); !slices.Equal(
+			got,
+			wantShardGaugeFamilies,
+		) {
 			t.Errorf("series must survive while the shard still exists, got %v", got)
 		}
 	})

@@ -315,6 +315,7 @@ metrics:
 | `multigres_operator_cell_gateway_replicas` | Gauge | Gateway replicas by state (desired/ready) |
 | `multigres_operator_shard_pool_replicas` | Gauge | Pool replicas by state (desired/ready) |
 | `multigres_operator_pool_pods_drifted` | Gauge | Pods pending rolling update |
+| `multigres_operator_pool_pods_stuck` | Gauge | Not-Ready pool pods that a Ready node could run |
 | `multigres_operator_toposerver_replicas` | Gauge | TopoServer replicas by state |
 | `multigres_operator_webhook_request_total` | Counter | Webhook requests by operation and result |
 | `multigres_operator_webhook_request_duration_seconds` | Histogram | Webhook request latency |
@@ -338,6 +339,7 @@ token authentication.
 | `MultigresWebhookErrors` | warning | Webhook error rate > 0 for 5m |
 | `MultigresBackupStale` | warning | Backup age > 24 hours for 30m |
 | `MultigresRollingUpdateStuck` | warning | Rolling update in progress > 30m |
+| `MultigresPoolPodsStuck` | warning | Pool pods not Ready for 15m with a Ready node available |
 | `MultigresDrainTimeout` | warning | Drain timeout rate > 0 for 10m |
 | `MultigresReconcileSlow` | warning | p99 reconcile latency > 30s for 5m |
 | `MultigresControllerSaturated` | warning | Work queue depth > 50 for 10m |

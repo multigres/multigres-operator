@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
@@ -217,6 +218,10 @@ func (r *ShardReconciler) updatePoolsStatus(
 	allConfigCurrent := true
 	configApplyFailing := false
 
+	var stuckSamples []monitoring.PoolPodsStuck
+	var nodes []corev1.Node
+	nodesListed := false
+
 	for poolName, poolSpec := range shard.Spec.Pools {
 		var poolDesired, poolReady int32
 
@@ -238,6 +243,7 @@ func (r *ShardReconciler) updatePoolsStatus(
 			}
 
 			var cellReady int32
+			var livePods []corev1.Pod
 			for i := range podList.Items {
 				pod := &podList.Items[i]
 
@@ -258,6 +264,7 @@ func (r *ShardReconciler) updatePoolsStatus(
 				// reload-hash (applied in place via SIGHUP). Requiring both keeps
 				// status "in progress" through a reload, not just a rolling restart.
 				liveCount++
+				livePods = append(livePods, *pod)
 				podHasDesiredConfig := pod.Annotations[metadata.AnnotationPostgresConfigHash] == desiredConfigHash &&
 					pod.Annotations[metadata.AnnotationPostgresReloadHash] == desiredReloadHash
 				if !podHasDesiredConfig {
@@ -301,6 +308,22 @@ func (r *ShardReconciler) updatePoolsStatus(
 				)
 			}
 
+			// Nodes are listed lazily so a fully Ready shard never touches them.
+			if !nodesListed && len(livePods) > int(cellReady) {
+				nodesListed = true
+				nodeList := &corev1.NodeList{}
+				if err := r.List(ctx, nodeList); err != nil {
+					log.FromContext(ctx).Error(err, "Failed to list nodes for stuck pod detection")
+				} else {
+					nodes = nodeList.Items
+				}
+			}
+			stuckSamples = append(stuckSamples, monitoring.PoolPodsStuck{
+				Pool:  string(poolName),
+				Cell:  cellName,
+				Count: stuckPoolPods(livePods, nodes),
+			})
+
 			poolDesired += replicas
 			poolReady += cellReady
 		}
@@ -313,6 +336,8 @@ func (r *ShardReconciler) updatePoolsStatus(
 			poolDesired, poolReady,
 		)
 	}
+
+	monitoring.ReplaceShardPoolPodsStuck(clusterName, shard.Name, shard.Namespace, stuckSamples)
 
 	// Content-based drift: at least one live pod is missing a desired config hash.
 	// This is the "effective != desired" signal — it covers a spec edit, a
