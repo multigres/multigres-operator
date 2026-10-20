@@ -77,6 +77,11 @@ func TestGaugeLabels(t *testing.T) {
 			wantLabels: []string{"cluster", "shard", "namespace"},
 		},
 		{
+			name:       "poolPodsStuck",
+			collector:  poolPodsStuck,
+			wantLabels: []string{"cluster", "shard", "pool", "cell", "namespace"},
+		},
+		{
 			name:       "toposerverReplicas",
 			collector:  toposerverReplicas,
 			wantLabels: []string{"name", "namespace", "state"},

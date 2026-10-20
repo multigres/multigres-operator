@@ -107,6 +107,21 @@ spec:
               pods stuck in pending or crash-looping state.
             runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/MultigresRollingUpdateStuck.md"
 
+        - alert: MultigresPoolPodsStuck
+          expr: multigres_operator_pool_pods_stuck > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pool pods stuck for {{ $labels.shard }}/{{ $labels.pool }}"
+            description: >-
+              Pool {{ $labels.pool }} of shard {{ $labels.shard }} in cell
+              {{ $labels.cell }} (namespace {{ $labels.namespace }}) has pods
+              that are not Ready for more than 15 minutes while the cell has
+              Ready, schedulable nodes matching their node selector and
+              required node affinity.
+            runbook_url: "https://github.com/multigres/multigres-operator/blob/main/docs/monitoring/runbooks/MultigresPoolPodsStuck.md"
+
         - alert: MultigresDrainTimeout
           expr: rate(multigres_operator_drain_operations_total{result="timeout"}[5m]) > 0
           for: 10m

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 )
 
@@ -184,6 +185,41 @@ func TestSetPoolPodsDrifted(t *testing.T) {
 	val = gaugeValue(t, poolPodsDrifted, "cluster-1", "shard-1", "primary", "zone-a", "default")
 	if val != 0 {
 		t.Errorf("expected poolPodsDrifted gauge to be 0, got %f", val)
+	}
+}
+
+func TestReplaceShardPoolPodsStuck(t *testing.T) {
+	t.Cleanup(func() { poolPodsStuck.Reset() })
+
+	ReplaceShardPoolPodsStuck("c", "shard-1", "default", []PoolPodsStuck{
+		{Pool: "primary", Cell: "zone-a", Count: 2},
+		{Pool: "primary", Cell: "zone-b", Count: 1},
+	})
+	ReplaceShardPoolPodsStuck("c", "shard-2", "default", []PoolPodsStuck{
+		{Pool: "primary", Cell: "zone-a", Count: 5},
+	})
+
+	if v := gaugeValue(t, poolPodsStuck, "c", "shard-1", "primary", "zone-a", "default"); v != 2 {
+		t.Errorf("shard-1 zone-a = %v, want 2", v)
+	}
+
+	ReplaceShardPoolPodsStuck("c", "shard-1", "default", []PoolPodsStuck{
+		{Pool: "primary", Cell: "zone-a", Count: 0},
+	})
+
+	if v := gaugeValue(t, poolPodsStuck, "c", "shard-1", "primary", "zone-a", "default"); v != 0 {
+		t.Errorf("shard-1 zone-a = %v, want 0", v)
+	}
+	if n := testutil.CollectAndCount(poolPodsStuck); n != 2 {
+		t.Errorf("series count = %d, want 2 (zone-b series of shard-1 must be dropped)", n)
+	}
+	if v := gaugeValue(t, poolPodsStuck, "c", "shard-2", "primary", "zone-a", "default"); v != 5 {
+		t.Errorf("shard-2 must be untouched, got %v", v)
+	}
+
+	ForgetShardPoolPodsStuck("shard-2", "default")
+	if n := testutil.CollectAndCount(poolPodsStuck); n != 1 {
+		t.Errorf("series count after forget = %d, want 1", n)
 	}
 }
 
