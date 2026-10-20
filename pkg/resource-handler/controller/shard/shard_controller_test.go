@@ -3,6 +3,7 @@ package shard
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1187,6 +1188,18 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 	}
 }
 
+// wantShardGaugeFamilies lists, sorted by name, every per-shard gauge family
+// that setAllShardGauges populates.
+var wantShardGaugeFamilies = []string{
+	"multigres_operator_last_backup_age_seconds",
+	"multigres_operator_pool_pods_drifted",
+	"multigres_operator_pool_pods_stuck",
+	"multigres_operator_rolling_update_in_progress",
+	"multigres_operator_shard_has_primary",
+	"multigres_operator_shard_pool_replicas",
+	"multigres_operator_shard_posture_inconsistent",
+}
+
 // setAllShardGauges sets one series on each per-shard gauge.
 func setAllShardGauges(cluster, shard, namespace string) {
 	monitoring.SetShardPoolReplicas(cluster, shard, "primary", "zone-a", namespace, 3, 3)
@@ -1195,6 +1208,8 @@ func setAllShardGauges(cluster, shard, namespace string) {
 	monitoring.SetRollingUpdateInProgress(cluster, shard, "primary", "zone-a", namespace, true)
 	monitoring.SetShardPostureInconsistent(cluster, shard, namespace, true)
 	monitoring.SetShardHasPrimary(cluster, shard, namespace, true)
+	monitoring.ReplaceShardPoolPodsStuck(cluster, shard, namespace,
+		[]monitoring.PoolPodsStuck{{Pool: "primary", Cell: "zone-a", Count: 1}})
 }
 
 // shardGaugeFamilies returns the per-shard metric families that still have a
@@ -1259,8 +1274,15 @@ func TestShardReconciler_ReconcileNotFound(t *testing.T) {
 		if got := shardGaugeFamilies(t, "notfound-gone", "default"); len(got) != 0 {
 			t.Errorf("expected no series for the missing shard, still present in %v", got)
 		}
-		if got := shardGaugeFamilies(t, "notfound-kept", "default"); len(got) != 6 {
-			t.Errorf("expected 6 series kept for the other shard, got %v", got)
+		if got := shardGaugeFamilies(
+			t,
+			"notfound-kept",
+			"default",
+		); !slices.Equal(
+			got,
+			wantShardGaugeFamilies,
+		) {
+			t.Errorf("expected all series kept for the other shard, got %v", got)
 		}
 	})
 
@@ -1279,7 +1301,14 @@ func TestShardReconciler_ReconcileNotFound(t *testing.T) {
 		if !errors.Is(err, injected) {
 			t.Fatalf("expected injected error, got %v", err)
 		}
-		if got := shardGaugeFamilies(t, "geterr-shard", "default"); len(got) != 6 {
+		if got := shardGaugeFamilies(
+			t,
+			"geterr-shard",
+			"default",
+		); !slices.Equal(
+			got,
+			wantShardGaugeFamilies,
+		) {
 			t.Errorf("series must survive a transient Get error, got %v", got)
 		}
 	})

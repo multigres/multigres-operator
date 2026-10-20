@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -799,8 +800,11 @@ func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
 		}
 
 		reconcile(r, name)
-		if got := shardGaugeFamilies(t, name, "default"); len(got) != 6 {
-			t.Errorf("series must survive while the shard still exists, got %v", got)
+		wantKept := slices.DeleteFunc(slices.Clone(wantShardGaugeFamilies), func(f string) bool {
+			return f == "multigres_operator_pool_pods_stuck"
+		})
+		if got := shardGaugeFamilies(t, name, "default"); !slices.Equal(got, wantKept) {
+			t.Errorf("series other than pool_pods_stuck must survive, got %v", got)
 		}
 	})
 }

@@ -152,6 +152,7 @@ func (r *ShardReconciler) Reconcile(
 	// Finalizer gates deletion so PVCs can be detached + labelled orphan
 	// before Kubernetes cascade-GC fires.
 	if !shard.DeletionTimestamp.IsZero() {
+		monitoring.ForgetShardPoolPodsStuck(shard.Name, shard.Namespace)
 		return r.handleDeletion(ctx, shard)
 	}
 	if !slices.Contains(shard.Finalizers, shardFinalizer) {
@@ -167,6 +168,7 @@ func (r *ShardReconciler) Reconcile(
 	// spec. The shard controller drains all pods and sets ReadyForDeletion
 	// condition, at which point the TableGroup controller calls Delete.
 	if shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion] != "" {
+		monitoring.ForgetShardPoolPodsStuck(shard.Name, shard.Namespace)
 		return r.handlePendingDeletion(ctx, shard)
 	}
 
@@ -493,6 +495,10 @@ func (r *ShardReconciler) Reconcile(
 	dataPlaneCtx, dataPlaneCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dataPlaneCancel()
 	result, err = r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
+	if err == nil && !shard.Status.PoolsReady &&
+		(result.RequeueAfter == 0 || result.RequeueAfter > stuckPodsRefreshInterval) {
+		result.RequeueAfter = stuckPodsRefreshInterval
+	}
 	if err != nil || result.RequeueAfter > 0 {
 		return result, err
 	}

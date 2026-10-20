@@ -60,6 +60,14 @@ var (
 		[]string{"cluster", "shard", "pool", "cell", "namespace"},
 	)
 
+	poolPodsStuck = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "multigres_operator_pool_pods_stuck",
+			Help: "Number of pool pods in the cell that are not Ready while at least one Ready, schedulable node matches the pod's node selector and required node affinity.",
+		},
+		[]string{"cluster", "shard", "pool", "cell", "namespace"},
+	)
+
 	toposerverReplicas = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "multigres_operator_toposerver_replicas",
@@ -142,6 +150,7 @@ func init() {
 		cellGatewayReplicas,
 		shardPoolReplicas,
 		poolPodsDrifted,
+		poolPodsStuck,
 		toposerverReplicas,
 		webhookRequestTotal,
 		webhookRequestDuration,
@@ -164,6 +173,7 @@ func Collectors() []prometheus.Collector {
 		cellGatewayReplicas,
 		shardPoolReplicas,
 		poolPodsDrifted,
+		poolPodsStuck,
 		toposerverReplicas,
 		webhookRequestTotal,
 		webhookRequestDuration,

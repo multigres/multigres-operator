@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1968,6 +1969,19 @@ func waitForConfigMapContains(
 	t.Fatalf("timed out waiting for ConfigMap %s to contain %q", name, want)
 }
 
+// wantShardGaugeFamilies lists, sorted by name, the per-shard gauge families
+// of a live shard. The test sets six by hand and the running controller
+// publishes pool_pods_stuck.
+var wantShardGaugeFamilies = []string{
+	"multigres_operator_last_backup_age_seconds",
+	"multigres_operator_pool_pods_drifted",
+	"multigres_operator_pool_pods_stuck",
+	"multigres_operator_rolling_update_in_progress",
+	"multigres_operator_shard_has_primary",
+	"multigres_operator_shard_pool_replicas",
+	"multigres_operator_shard_posture_inconsistent",
+}
+
 // shardGaugeFamilies returns the per-shard metric families that still have a
 // series for the given shard.
 func shardGaugeFamilies(t testing.TB, shard, namespace string) []string {
@@ -2102,7 +2116,10 @@ func TestShardMetricsCleanupAfterDeletion(t *testing.T) {
 		monitoring.SetRollingUpdateInProgress(cluster, name, "primary", "zone1", namespace, true)
 		monitoring.SetShardPostureInconsistent(cluster, name, namespace, true)
 		monitoring.SetShardHasPrimary(cluster, name, namespace, true)
-		require.Len(t, shardGaugeFamilies(t, name, namespace), 6)
+		require.Eventually(t, func() bool {
+			return slices.Equal(shardGaugeFamilies(t, name, namespace), wantShardGaugeFamilies)
+		}, 30*time.Second, 200*time.Millisecond,
+			"shard %s did not reach every per-shard gauge family", name)
 	}
 
 	for _, name := range gone {
@@ -2126,7 +2143,7 @@ func TestShardMetricsCleanupAfterDeletion(t *testing.T) {
 	}
 
 	for _, name := range kept {
-		require.Len(t, shardGaugeFamilies(t, name, namespace), 6,
+		require.Equal(t, wantShardGaugeFamilies, shardGaugeFamilies(t, name, namespace),
 			"series of shard %s that was not deleted must remain", name)
 	}
 }

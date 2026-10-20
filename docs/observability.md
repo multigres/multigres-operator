@@ -24,6 +24,7 @@ The operator exposes two classes of metrics:
 | `multigres_operator_cell_gateway_replicas` | Gauge | `cell`, `namespace`, `state` | Gateway ready/desired replicas |
 | `multigres_operator_shard_pool_replicas` | Gauge | `cluster`, `shard`, `pool`, `cell`, `namespace`, `state` | Pool ready/desired replicas |
 | `multigres_operator_pool_pods_drifted` | Gauge | `cluster`, `shard`, `pool`, `cell`, `namespace` | Pods with spec-hash mismatch requiring rolling update |
+| `multigres_operator_pool_pods_stuck` | Gauge | `cluster`, `shard`, `pool`, `cell`, `namespace` | Pool pods not Ready while a Ready, schedulable node matches their node selector and required node affinity (0 while the zone is down). Keeps its last value if nodes cannot be listed; removed while the shard is deleting or draining |
 | `multigres_operator_toposerver_replicas` | Gauge | `name`, `namespace`, `state` | TopoServer ready/desired replicas |
 | `multigres_operator_webhook_request_total` | Counter | `operation`, `resource`, `result` | Webhook admission request count |
 | `multigres_operator_webhook_request_duration_seconds` | Histogram | `operation`, `resource` | Webhook latency |
@@ -50,6 +51,7 @@ kubectl apply -f config/monitoring/prometheus-rules.yaml
 | [`MultigresControllerSaturated`](monitoring/runbooks/MultigresControllerSaturated.md) | warning | Work queue depth >50 for >10m |
 | [`MultigresBackupStale`](monitoring/runbooks/MultigresBackupStale.md) | warning | Most recent backup older than 24 hours (30m) |
 | [`MultigresRollingUpdateStuck`](monitoring/runbooks/MultigresRollingUpdateStuck.md) | warning | Rolling update in progress for >30m |
+| [`MultigresPoolPodsStuck`](monitoring/runbooks/MultigresPoolPodsStuck.md) | warning | Pool pods not Ready for >15m although their zone has Ready nodes that could run them |
 | [`MultigresDrainTimeout`](monitoring/runbooks/MultigresDrainTimeout.md) | warning | Drain operations timing out (10m) |
 
 Each alert links to a dedicated runbook with investigation steps, PromQL queries, and remediation actions.
