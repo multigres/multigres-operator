@@ -17,12 +17,12 @@ External artifacts:
 
 | Path | Purpose |
 |:---|:---|
-| `config/monitoring/prometheus-rules.yaml` | PrometheusRule alerts (10 rules) |
+| `config/monitoring/prometheus-rules.yaml` | PrometheusRule alerts (11 rules) |
 | `config/monitoring/grafana-dashboard-operator.json` | Operator health dashboard |
 | `config/monitoring/grafana-dashboard-cluster.json` | Per-cluster topology dashboard |
 | `config/monitoring/grafana-dashboard-data-plane.json` | Data-plane operations dashboard |
 | `config/monitoring/kustomization.yaml` | Assembles dashboards into ConfigMap for Grafana sidecar |
-| `docs/monitoring/runbooks/*.md` | Alert runbooks (10 files) |
+| `docs/monitoring/runbooks/*.md` | Alert runbooks (11 files) |
 
 ---
 
@@ -218,12 +218,12 @@ This enables "click log → view trace" in Grafana when Loki and Tempo are conne
 
 ## Alerts & Runbooks
 
-The 10 PrometheusRule alerts in `config/monitoring/prometheus-rules.yaml` are grouped by signal type:
+The 11 PrometheusRule alerts in `config/monitoring/prometheus-rules.yaml` are grouped by signal type:
 
 | Category | Alerts |
 |:---|:---|
 | **Errors** | `MultigresClusterReconcileErrors`, `MultigresClusterDegraded`, `MultigresCellGatewayUnavailable`, `MultigresShardPoolDegraded`, `MultigresWebhookErrors` |
-| **Backup & Drain** | `MultigresBackupStale`, `MultigresRollingUpdateStuck`, `MultigresDrainTimeout` |
+| **Backup & Drain** | `MultigresBackupStale`, `MultigresRollingUpdateStuck`, `MultigresPoolPodsStuck`, `MultigresDrainTimeout` |
 | **Latency** | `MultigresReconcileSlow` |
 | **Saturation** | `MultigresControllerSaturated` |
 

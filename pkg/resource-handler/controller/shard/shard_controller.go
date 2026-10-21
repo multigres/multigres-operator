@@ -469,6 +469,10 @@ func (r *ShardReconciler) Reconcile(
 	dataPlaneCtx, dataPlaneCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dataPlaneCancel()
 	result, err = r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
+	if err == nil && !shard.Status.PoolsReady &&
+		(result.RequeueAfter == 0 || result.RequeueAfter > stuckPodsRefreshInterval) {
+		result.RequeueAfter = stuckPodsRefreshInterval
+	}
 	if err != nil || result.RequeueAfter > 0 {
 		return result, err
 	}
