@@ -8,76 +8,10 @@ import (
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/pb/clustermetadata"
-	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
-	"github.com/multigres/multigres-operator/pkg/topology"
-	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
-
-// RegisterCell registers the cell metadata in the global topology.
-func RegisterCell(
-	ctx context.Context,
-	store topoclient.Store,
-	recorder record.EventRecorder,
-	cell *multigresv1alpha1.Cell,
-	topoTLS bool,
-) error {
-	logger := log.FromContext(ctx)
-
-	cellName := string(cell.Spec.Name)
-	roots, err := topology.NewRoots(
-		cell.Annotations,
-		cell.Namespace,
-		cell.Labels[metadata.LabelMultigresCluster],
-		topoTLS,
-	)
-	if err != nil {
-		return fmt.Errorf("deriving topology roots for cell %q: %w", cellName, err)
-	}
-	cellRoot, err := roots.Cell(cellName)
-	if err != nil {
-		return fmt.Errorf("deriving topology root for cell %q: %w", cellName, err)
-	}
-
-	cellMetadata := cellMetadataFromTopoRefs(
-		cellName,
-		cell.Spec.TopoServer,
-		cell.Spec.GlobalTopoServer,
-		ManagedLocalTopoServerAddress(cell.Name, cell.Namespace),
-		cellRoot,
-	)
-	cellMetadata.Metadata = cell.Spec.Metadata
-
-	created, err := createOrUpdateCell(ctx, store, cellName, cellMetadata)
-	if err != nil {
-		recorder.Eventf(
-			cell,
-			"Warning",
-			"RegistrationFailed",
-			"Failed to register cell in topology: %v",
-			err,
-		)
-		return err
-	}
-
-	if !created {
-		logger.V(1).Info("Reconciled cell in topology", "cellName", cellName)
-		return nil
-	}
-
-	logger.Info("Cell metadata stored in topology", "cellName", cellName)
-	recorder.Eventf(
-		cell,
-		"Normal",
-		"CellRegistered",
-		"Registered cell '%s' in topology",
-		cellName,
-	)
-	return nil
-}
 
 func cellMetadataFromTopoRefs(
 	cellName string,
@@ -163,44 +97,4 @@ func ManagedLocalTopoServerName(cellResourceName string) string {
 // for a managed local TopoServer.
 func ManagedLocalTopoServerAddress(cellResourceName, namespace string) string {
 	return fmt.Sprintf("%s.%s.svc:2379", ManagedLocalTopoServerName(cellResourceName), namespace)
-}
-
-// UnregisterCell removes the cell metadata from the global topology.
-func UnregisterCell(
-	ctx context.Context,
-	store topoclient.Store,
-	recorder record.EventRecorder,
-	cell *multigresv1alpha1.Cell,
-) error {
-	logger := log.FromContext(ctx)
-
-	cellName := string(cell.Spec.Name)
-
-	if err := store.DeleteCell(ctx, cellName, false); err != nil {
-		var topoErr topoclient.TopoError
-		if errors.As(err, &topoErr) && topoErr.Code == topoclient.NoNode {
-			logger.V(1).Info("Cell does not exist in topology, skipping deletion")
-			return nil
-		}
-		if !IsTopoUnavailable(err) {
-			recorder.Eventf(
-				cell,
-				"Warning",
-				"UnregistrationFailed",
-				"Failed to remove cell from topology: %v",
-				err,
-			)
-		}
-		return fmt.Errorf("failed to delete cell from topology: %w", err)
-	}
-
-	logger.Info("Cell metadata removed from topology", "cellName", cellName)
-	recorder.Eventf(
-		cell,
-		"Normal",
-		"CellUnregistered",
-		"Removed cell '%s' from topology",
-		cellName,
-	)
-	return nil
 }

@@ -108,6 +108,32 @@ func RegisterDatabaseFromSpec(
 	return nil
 }
 
+// buildDurabilityPolicy constructs a fully populated DurabilityPolicy proto from
+// a policy name. Upstream multigres' consensus code routes on QuorumType, so
+// leaving it at the proto3 zero value (QUORUM_TYPE_UNKNOWN) would cause
+// "unsupported quorum type" failures in multiorch's analyzers. Falls back to
+// "AT_LEAST_2" when name is empty.
+func buildDurabilityPolicy(name string) (*clustermetadatapb.DurabilityPolicy, error) {
+	if name == "" {
+		name = "AT_LEAST_2"
+	}
+	policy := &clustermetadatapb.DurabilityPolicy{PolicyName: name}
+	switch name {
+	case "AT_LEAST_2":
+		policy.QuorumType = clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N
+		policy.RequiredCount = 2
+	case "MULTI_CELL_AT_LEAST_2":
+		policy.QuorumType = clustermetadatapb.QuorumType_QUORUM_TYPE_MULTI_CELL_AT_LEAST_N
+		policy.RequiredCount = 2
+	default:
+		return nil, fmt.Errorf(
+			"unsupported durability policy %q (supported: AT_LEAST_2, MULTI_CELL_AT_LEAST_2)",
+			name,
+		)
+	}
+	return policy, nil
+}
+
 // RegisterCellFromSpec registers a cell in the global topology using the
 // cluster spec. The cell record points clients at the cell-local topology
 // server when one is configured, and falls back to the global topology for

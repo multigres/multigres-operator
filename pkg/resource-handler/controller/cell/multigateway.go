@@ -41,7 +41,6 @@ const (
 	tlsMountPath  = "/etc/multigateway/tls"
 	tlsCertFile   = tlsMountPath + "/tls.crt"
 	tlsKeyFile    = tlsMountPath + "/tls.key"
-	tlsCAFile     = tlsMountPath + "/ca.crt"
 
 	// Internal TLS volume/mount constants for gRPC mTLS between components.
 	internalTLSVolumeName = tlsVolumeName + "-internal"

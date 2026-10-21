@@ -37,16 +37,6 @@ func NewStoreFromShard(
 	return newStore(ctx, c, shard.Namespace, shard.Spec.GlobalTopoServer)
 }
 
-// NewStoreFromCell creates a topoclient.Store using the GlobalTopoServer
-// configuration from a Cell resource.
-func NewStoreFromCell(
-	ctx context.Context,
-	c client.Reader,
-	cell *multigresv1alpha1.Cell,
-) (topoclient.Store, error) {
-	return newStore(ctx, c, cell.Namespace, cell.Spec.GlobalTopoServer)
-}
-
 // NewStoreFromRef creates a topoclient.Store using a GlobalTopoServerRef and the
 // namespace the referenced Secrets live in. This is used by the MultigresCluster
 // controller, which already computes the reference.

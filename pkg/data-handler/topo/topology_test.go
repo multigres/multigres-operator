@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -447,6 +448,96 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 				"expected database-level policy MULTI_CELL_AT_LEAST_2, got %s",
 				db.BootstrapDurabilityPolicy.GetPolicyName(),
 			)
+		}
+	})
+
+	// Upstream multiorch's consensus analyzers route on QuorumType, so the
+	// stored policy has to carry the quorum fields and not just the name.
+	t.Run("populates quorum type and required count for each policy name", func(t *testing.T) {
+		t.Parallel()
+
+		tests := map[string]struct {
+			policyName        string
+			wantPolicyName    string
+			wantQuorumType    clustermetadatapb.QuorumType
+			wantRequiredCount int32
+		}{
+			"defaults to AT_LEAST_2 when empty": {
+				policyName:        "",
+				wantPolicyName:    "AT_LEAST_2",
+				wantQuorumType:    clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N,
+				wantRequiredCount: 2,
+			},
+			"explicit AT_LEAST_2": {
+				policyName:        "AT_LEAST_2",
+				wantPolicyName:    "AT_LEAST_2",
+				wantQuorumType:    clustermetadatapb.QuorumType_QUORUM_TYPE_AT_LEAST_N,
+				wantRequiredCount: 2,
+			},
+			"MULTI_CELL_AT_LEAST_2": {
+				policyName:        "MULTI_CELL_AT_LEAST_2",
+				wantPolicyName:    "MULTI_CELL_AT_LEAST_2",
+				wantQuorumType:    clustermetadatapb.QuorumType_QUORUM_TYPE_MULTI_CELL_AT_LEAST_N,
+				wantRequiredCount: 2,
+			},
+		}
+
+		for name, tc := range tests {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				store := newMemoryStore(t, "cell1")
+				recorder := record.NewFakeRecorder(10)
+
+				err := topo.RegisterDatabaseFromSpec(
+					context.Background(), store, recorder, owner,
+					multigresv1alpha1.DatabaseConfig{Name: "quorumdb"},
+					[]string{"cell1"}, nil, tc.policyName,
+				)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				db, err := store.GetDatabase(context.Background(), "quorumdb")
+				if err != nil {
+					t.Fatalf("database not found: %v", err)
+				}
+				got := db.GetBootstrapDurabilityPolicy()
+				if got.GetPolicyName() != tc.wantPolicyName {
+					t.Errorf("PolicyName = %q, want %q", got.GetPolicyName(), tc.wantPolicyName)
+				}
+				if got.GetQuorumType() != tc.wantQuorumType {
+					t.Errorf("QuorumType = %s, want %s", got.GetQuorumType(), tc.wantQuorumType)
+				}
+				if got.GetRequiredCount() != tc.wantRequiredCount {
+					t.Errorf(
+						"RequiredCount = %d, want %d",
+						got.GetRequiredCount(), tc.wantRequiredCount,
+					)
+				}
+			})
+		}
+	})
+
+	t.Run("returns error for unsupported durability policy", func(t *testing.T) {
+		t.Parallel()
+		store := newMemoryStore(t, "cell1")
+		recorder := record.NewFakeRecorder(10)
+
+		err := topo.RegisterDatabaseFromSpec(
+			context.Background(), store, recorder, owner,
+			multigresv1alpha1.DatabaseConfig{Name: "baddb"},
+			[]string{"cell1"}, nil, "CUSTOM",
+		)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		for _, want := range []string{"CUSTOM", "AT_LEAST_2", "MULTI_CELL_AT_LEAST_2"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("expected error to mention %q, got %q", want, err.Error())
+			}
+		}
+		if _, err := store.GetDatabase(context.Background(), "baddb"); err == nil {
+			t.Error("expected no database to be registered on error")
 		}
 	})
 

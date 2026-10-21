@@ -5,25 +5,25 @@ package v1alpha1
 const (
 	// DefaultPostgresImage is the default container image for PostgreSQL instances.
 	// Uses the pgctld image which bundles PostgreSQL, pgctld, and pgbackrest.
-	DefaultPostgresImage = "ghcr.io/multigres/pgctld@sha256:fffc163e9506412bc71c621ca655394c73effd7d7436e0b48f97bc6f11088230"
+	DefaultPostgresImage = "ghcr.io/multigres/pgctld@sha256:fdcd0b8537ada86bdfa45cdac0cec672ec6f47219137bedfdd04765ac80f2b05"
 
 	// DefaultEtcdImage is the default container image for the managed Etcd cluster.
 	DefaultEtcdImage = "gcr.io/etcd-development/etcd:v3.6.7"
 
 	// DefaultMultiadminImage is the default container image for the Multiadmin component.
-	DefaultMultiadminImage = "ghcr.io/multigres/multigres@sha256:52774c654fedd20a1d28dcbd3428ad8891e036bcc556806dad2a6cf25c77e98e"
+	DefaultMultiadminImage = "ghcr.io/multigres/multigres@sha256:38762bffa0a816f6df99939c886596eb1c471825b861191002103b89cd08872b"
 
 	// DefaultMultiadminWebImage is the default container image for the MultiadminWeb component.
-	DefaultMultiadminWebImage = "ghcr.io/multigres/multiadmin-web@sha256:ab24f425d92343216c81da4a81bc482d372ec69d8f8a789b9ff10fda0365d1be"
+	DefaultMultiadminWebImage = "ghcr.io/multigres/multiadmin-web@sha256:29969ef1827895bf948cef653ac871f7280444a45260ac45cb486b6859f85da8"
 
 	// DefaultMultiorchImage is the default container image for the Multiorch component.
-	DefaultMultiorchImage = "ghcr.io/multigres/multigres@sha256:52774c654fedd20a1d28dcbd3428ad8891e036bcc556806dad2a6cf25c77e98e"
+	DefaultMultiorchImage = "ghcr.io/multigres/multigres@sha256:38762bffa0a816f6df99939c886596eb1c471825b861191002103b89cd08872b"
 
 	// DefaultMultipoolerImage is the default container image for the Multipooler component.
-	DefaultMultipoolerImage = "ghcr.io/multigres/multigres@sha256:52774c654fedd20a1d28dcbd3428ad8891e036bcc556806dad2a6cf25c77e98e"
+	DefaultMultipoolerImage = "ghcr.io/multigres/multigres@sha256:38762bffa0a816f6df99939c886596eb1c471825b861191002103b89cd08872b"
 
 	// DefaultMultigatewayImage is the default container image for the Multigateway component.
-	DefaultMultigatewayImage = "ghcr.io/multigres/multigres@sha256:52774c654fedd20a1d28dcbd3428ad8891e036bcc556806dad2a6cf25c77e98e"
+	DefaultMultigatewayImage = "ghcr.io/multigres/multigres@sha256:38762bffa0a816f6df99939c886596eb1c471825b861191002103b89cd08872b"
 
 	// DefaultPostgresExporterImage is the default container image for postgres_exporter sidecars.
 	DefaultPostgresExporterImage = "quay.io/prometheuscommunity/postgres-exporter:v0.20.1"

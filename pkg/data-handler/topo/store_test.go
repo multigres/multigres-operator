@@ -173,45 +173,6 @@ func TestIsTopoUnavailable(t *testing.T) {
 	}
 }
 
-func TestNewStoreFromCell(t *testing.T) {
-	cell := &multigresv1alpha1.Cell{
-		Spec: multigresv1alpha1.CellSpec{
-			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
-				Address:  "localhost:2379",
-				RootPath: "/test",
-			},
-		},
-	}
-
-	store, err := topo.NewStoreFromCell(context.Background(), topoTestClient(), cell)
-	if err != nil {
-		t.Fatalf("NewStoreFromCell() unexpected error: %v", err)
-	}
-	if store != nil {
-		_ = store.Close()
-	}
-}
-
-func TestNewStoreFromCell_InvalidImplementation(t *testing.T) {
-	cell := &multigresv1alpha1.Cell{
-		Spec: multigresv1alpha1.CellSpec{
-			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
-				Address:        "localhost:2379",
-				RootPath:       "/test",
-				Implementation: "invalid-implementation-that-does-not-exist",
-			},
-		},
-	}
-
-	store, err := topo.NewStoreFromCell(context.Background(), topoTestClient(), cell)
-	if err == nil {
-		if store != nil {
-			_ = store.Close()
-		}
-		t.Error("NewStoreFromCell() should error with invalid implementation")
-	}
-}
-
 func TestNewStoreFromRef(t *testing.T) {
 	ref := multigresv1alpha1.GlobalTopoServerRef{
 		Address:  "localhost:2379",

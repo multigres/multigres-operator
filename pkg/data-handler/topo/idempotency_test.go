@@ -16,7 +16,7 @@ import (
 // identical protobuf bytes still consumes a new etcd revision.
 func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"cell", "database", "shard-database"} {
+	for _, kind := range []string{"cell", "database"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			ctx := t.Context()
@@ -30,7 +30,6 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 				Type:       multigresv1alpha1.BackupTypeFilesystem,
 				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups"},
 			}
-			shard := newTestShard("shard")
 			register := func() error {
 				switch kind {
 				case "cell":
@@ -46,7 +45,7 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 							RootPath: "/global",
 						},
 					)
-				case "database":
+				default:
 					return topo.RegisterDatabaseFromSpec(
 						ctx,
 						store,
@@ -59,8 +58,6 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 						backup,
 						"",
 					)
-				default:
-					return topo.RegisterDatabase(ctx, store, recorder, shard)
 				}
 			}
 			file := path.Join(topoclient.DatabasesPath, "test-db", topoclient.DatabaseFile)
@@ -91,15 +88,10 @@ func TestRegistrationDoesNotRewriteUnchangedRecords(t *testing.T) {
 					t.Fatalf("unchanged registration rewrote record: %s -> %s", initial, got)
 				}
 			}
-			switch kind {
-			case "cell":
+			if kind == "cell" {
 				cell.Metadata = `{"region":"new"}`
-			case "database":
+			} else {
 				backup.Filesystem.Path = "/new-backups"
-			default:
-				shard.Spec.Pools["pool2"] = multigresv1alpha1.PoolSpec{
-					Cells: []multigresv1alpha1.CellName{"cell2"},
-				}
 			}
 			if err := register(); err != nil {
 				t.Fatal(err)
