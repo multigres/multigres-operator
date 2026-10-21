@@ -1,6 +1,6 @@
 module github.com/multigres/multigres-operator/tools/observer
 
-go 1.27.2
+go 1.27.3
 
 // Keep the observer compiled against the operator API in this repository.
 replace github.com/multigres/multigres-operator => ../..
