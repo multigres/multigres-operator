@@ -85,6 +85,14 @@ const (
 	// LabelMultigresPool identifies which pool a resource belongs to.
 	LabelMultigresPool = "multigres.com/pool"
 
+	// LabelMultigresGatewayRole marks a pod that serves a cell's gateway
+	// without being a multigateway pod. The cell's gateway Service selects on
+	// it in Lite mode.
+	LabelMultigresGatewayRole = "multigres.com/gateway-role"
+
+	// GatewayRoleLite is the LabelMultigresGatewayRole value on a Lite pod.
+	GatewayRoleLite = "lite"
+
 	// LabelMultigresZoneID identifies which zone ID a resource belongs to.
 	LabelMultigresZoneID = "multigres.com/zone-id"
 

@@ -1608,3 +1608,54 @@ func TestMergeShardConfig_PostgresConfig(t *testing.T) {
 		}
 	})
 }
+
+// TestResolveShard_LiteMode checks that a Lite shard resolves without a
+// multiorch spec and with one pooler in a single-cell pool, which otherwise
+// defaults to two.
+func TestResolveShard_LiteMode(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	r := NewResolver(fake.NewClientBuilder().WithScheme(scheme).Build(), "default")
+
+	shardCfg := &multigresv1alpha1.ShardConfig{
+		Name: "0-inf",
+		Spec: &multigresv1alpha1.ShardInlineSpec{
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"default": {Type: "readWrite"},
+			},
+		},
+	}
+
+	for name, tc := range map[string]struct {
+		mode             string
+		wantOrchReplicas *int32
+		wantPoolReplicas int32
+	}{
+		"Multigres": {wantOrchReplicas: ptr.To(int32(1)), wantPoolReplicas: 2},
+		"Lite":      {mode: multigresv1alpha1.ModeLite, wantPoolReplicas: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := r.ResolveShard(t.Context(), shardCfg.DeepCopy(), ResolveShardOptions{
+				AllCellNames:            []multigresv1alpha1.CellName{"zone-a"},
+				MaterializeCellDefaults: true,
+				Mode:                    tc.mode,
+			})
+			if err != nil {
+				t.Fatalf("ResolveShard() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.wantOrchReplicas, got.Multiorch.Replicas); diff != "" {
+				t.Errorf("multiorch replicas (-want +got):\n%s", diff)
+			}
+			if tc.mode == multigresv1alpha1.ModeLite && !isResourcesZero(got.Multiorch.Resources) {
+				t.Errorf("multiorch resources = %v, want unset", got.Multiorch.Resources)
+			}
+			pool := got.Pools["default"]
+			if pool.ReplicasPerCell == nil || *pool.ReplicasPerCell != tc.wantPoolReplicas {
+				t.Errorf("replicasPerCell = %v, want %d", pool.ReplicasPerCell, tc.wantPoolReplicas)
+			}
+		})
+	}
+}

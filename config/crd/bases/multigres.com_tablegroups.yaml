@@ -355,6 +355,11 @@ spec:
                     - error
                     type: string
                 type: object
+              mode:
+                description: Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode.
+                enum:
+                - lite
+                type: string
               observability:
                 description: |-
                   Observability configures OpenTelemetry for shard-level data-plane components.

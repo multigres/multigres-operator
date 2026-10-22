@@ -98,6 +98,11 @@ type TableGroupSpec struct {
 	// +optional
 	DurabilityPolicy string `json:"durabilityPolicy,omitempty"`
 
+	// Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode.
+	// +optional
+	// +kubebuilder:validation:Enum=lite
+	Mode string `json:"mode,omitempty"`
+
 	// PostgresSuperuser is the resolved Postgres superuser name.
 	// Inherited from MultigresCluster.Spec.PostgresSuperuser.
 	// +optional

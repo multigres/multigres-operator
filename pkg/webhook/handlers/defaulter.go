@@ -229,6 +229,7 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 						resolver.ResolveShardOptions{
 							AllCellNames:    allCellNames,
 							InheritedBackup: tgBackup,
+							Mode:            cluster.Spec.Mode,
 						},
 					)
 					if err != nil {

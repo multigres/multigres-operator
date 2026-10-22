@@ -11,6 +11,8 @@
 package cacheopts
 
 import (
+	"strings"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -48,8 +50,10 @@ import (
 
 // New returns the manager cache options, given the namespace the operator runs
 // in. Objects in that namespace are cached unfiltered; everywhere else the
-// high-volume kinds are restricted to objects this operator manages.
-func New(operatorNamespace string) cache.Options {
+// high-volume kinds are restricted to objects this operator manages. When an
+// explicit namespace allowlist is provided, all namespaced caches are restricted
+// to that allowlist plus the operator namespace.
+func New(operatorNamespace string, watchNamespaces ...string) cache.Options {
 	// 1. Create the Label Selector for "app.kubernetes.io/managed-by = multigres-operator"
 	labelReq, _ := labels.NewRequirement(
 		metadata.LabelAppManagedBy,
@@ -71,7 +75,22 @@ func New(operatorNamespace string) cache.Options {
 		cache.AllNamespaces: filteredConfig,
 	}
 
+	var namespaces map[string]cache.Config
+	if strings.TrimSpace(strings.Join(watchNamespaces, "")) != "" {
+		namespaces = map[string]cache.Config{operatorNamespace: unfilteredConfig}
+		for _, names := range watchNamespaces {
+			for _, namespace := range strings.Split(names, ",") {
+				if namespace = strings.TrimSpace(namespace); namespace != "" {
+					namespaces[namespace] = unfilteredConfig
+				}
+			}
+		}
+		// ByObject overrides DefaultNamespaces, so every override must be
+		// scoped too. Never retain AllNamespaces in an isolated manager.
+		hybrid = namespaces
+	}
 	return cache.Options{
+		DefaultNamespaces: namespaces,
 		ByObject: map[client.Object]cache.ByObject{
 			// SECRETS: the "memory bomb" fix. Unfiltered in the operator's own
 			// namespace so cert-manager Secrets, which carry no label of ours,

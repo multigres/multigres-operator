@@ -58,3 +58,14 @@ jobs:
     with:
       ref: ${{ github.event.pull_request.head.sha }}
       timeout-minutes: 30
+
+  minigres-e2e:
+    name: Minigres runtime qualification
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+      mode: dedicated
+      test-spec: minigres
+      timeout-minutes: 30

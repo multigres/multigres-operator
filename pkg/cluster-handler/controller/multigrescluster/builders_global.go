@@ -514,6 +514,11 @@ func BuildMultigatewayGlobalService(
 		metadata.LabelAppInstance:  cluster.Name,
 	}
 
+	if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+		delete(selector, metadata.LabelAppComponent)
+		selector[metadata.LabelMultigresGatewayRole] = metadata.GatewayRoleLite
+	}
+
 	svcType := corev1.ServiceTypeClusterIP
 	var annotations map[string]string
 	var externalIPs []string

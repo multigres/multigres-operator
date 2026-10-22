@@ -125,6 +125,13 @@ type CellSpec struct {
 	// +optional
 	Region Region `json:"region,omitempty"`
 
+	// Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode.
+	// The cell controller reads it to decide whether the cell runs a
+	// multigateway Deployment.
+	// +optional
+	// +kubebuilder:validation:Enum=lite
+	Mode string `json:"mode,omitempty"`
+
 	// Metadata is an opaque document describing this cell, copied verbatim into
 	// the cell's topology record. Set from the parent cluster's cells[].metadata.
 	// +optional

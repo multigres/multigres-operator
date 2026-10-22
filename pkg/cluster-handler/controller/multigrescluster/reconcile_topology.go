@@ -137,6 +137,11 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 
 	// Register all databases.
 	for _, dbConfig := range cluster.Spec.Databases {
+		// Lite's Shard owns this record because its resolved backup and pool
+		// cells may differ from the cluster-level defaults.
+		if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+			continue
+		}
 		dbBackup := multigresv1alpha1.MergeBackupConfig(dbConfig.Backup, cluster.Spec.Backup)
 		if err := topo.RegisterDatabaseFromSpec(
 			topoCtx, store, r.Recorder, cluster, dbConfig, allCellNames, dbBackup,

@@ -371,6 +371,38 @@ func BuildMultigatewayService(
 		metadata.AddRegionLabel(labels, cell.Spec.Region)
 	}
 
+	httpPort := corev1.ServicePort{
+		Name:       "http",
+		Port:       MultigatewayHTTPPort,
+		TargetPort: intstr.FromString("http"),
+		Protocol:   corev1.ProtocolTCP,
+	}
+	grpcPort := corev1.ServicePort{
+		Name:       "grpc",
+		Port:       MultigatewayGRPCPort,
+		TargetPort: intstr.FromString("grpc"),
+		Protocol:   corev1.ProtocolTCP,
+	}
+	postgresPort := corev1.ServicePort{
+		Name:       "postgres",
+		Port:       MultigatewayPostgresPort,
+		TargetPort: intstr.FromString("postgres"),
+		Protocol:   corev1.ProtocolTCP,
+	}
+	selector := metadata.GetSelectorLabels(labels)
+	ports := []corev1.ServicePort{httpPort, grpcPort, postgresPort}
+	if cell.Spec.Mode == multigresv1alpha1.ModeLite {
+		// The gateway runs inside the shard's Lite pod, which names its client
+		// port postgres too. Nothing outside that pod dials the gateway's gRPC
+		// port, so the Service does not expose it.
+		selector = map[string]string{
+			metadata.LabelMultigresCluster:     clusterName,
+			metadata.LabelMultigresCell:        string(cell.Spec.Name),
+			metadata.LabelMultigresGatewayRole: metadata.GatewayRoleLite,
+		}
+		ports = []corev1.ServicePort{httpPort, postgresPort}
+	}
+
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -379,27 +411,8 @@ func BuildMultigatewayService(
 		},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
-			Selector: metadata.GetSelectorLabels(labels),
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       MultigatewayHTTPPort,
-					TargetPort: intstr.FromString("http"),
-					Protocol:   corev1.ProtocolTCP,
-				},
-				{
-					Name:       "grpc",
-					Port:       MultigatewayGRPCPort,
-					TargetPort: intstr.FromString("grpc"),
-					Protocol:   corev1.ProtocolTCP,
-				},
-				{
-					Name:       "postgres",
-					Port:       MultigatewayPostgresPort,
-					TargetPort: intstr.FromString("postgres"),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
+			Selector: selector,
+			Ports:    ports,
 		},
 	}
 

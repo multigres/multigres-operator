@@ -134,6 +134,28 @@ func TestBuildCell(t *testing.T) {
 		}
 	})
 
+	t.Run("Propagates Mode", func(t *testing.T) {
+		liteCluster := cluster.DeepCopy()
+		liteCluster.Spec.Mode = multigresv1alpha1.ModeLite
+
+		got, err := BuildCell(
+			liteCluster,
+			cellCfg,
+			gatewaySpec,
+			noGatewayPlacement,
+			localTopoSpec,
+			globalTopoRef,
+			allCells,
+			scheme,
+		)
+		if err != nil {
+			t.Fatalf("BuildCell() error = %v", err)
+		}
+		if got.Spec.Mode != multigresv1alpha1.ModeLite {
+			t.Errorf("Mode = %q, want %q", got.Spec.Mode, multigresv1alpha1.ModeLite)
+		}
+	})
+
 	t.Run("ControllerRefError", func(t *testing.T) {
 		emptyScheme := runtime.NewScheme()
 		_, err := BuildCell(

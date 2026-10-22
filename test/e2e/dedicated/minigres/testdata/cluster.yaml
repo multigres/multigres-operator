@@ -1,0 +1,55 @@
+# Qualified upstream revision: 8f5c8896bb89f92c533633a0973aa92e3672060a.
+# E2E_* image overrides take precedence for nightly candidate qualification.
+apiVersion: multigres.com/v1alpha1
+kind: MultigresCluster
+metadata:
+  name: lite
+spec:
+  mode: lite
+  issuerName: topo-e2e-ca
+  internalTLS: {enabled: true}
+  postgresPasswordSecretRef: {name: multigres-admin-password, key: password}
+  images:
+    multipooler: ghcr.io/multigres/multigres@sha256:0af9dc880761ab9ccc3b213e49866536b68febbd76b18fe4bd87b555d98b2435
+    postgres: ghcr.io/multigres/pgctld@sha256:fe6c3b8ffd3b188b4314473157b5d34cb2d190503ffda498ef43513884a7537f
+    multiadmin: ghcr.io/multigres/multigres@sha256:0af9dc880761ab9ccc3b213e49866536b68febbd76b18fe4bd87b555d98b2435
+  globalTopoServer:
+    external:
+      endpoints: ["https://external-etcd:2379"]
+      caSecret: external-etcd-client
+      clientCertSecret: external-etcd-client
+  multiadmin:
+    spec: {replicas: 0}
+  multiadminWeb:
+    spec: {replicas: 0}
+  cells:
+  - name: z1
+    zoneId: us-central1-a
+  backup:
+    type: filesystem
+    filesystem:
+      path: /backups
+      storage: {size: 2Gi, accessModes: [ReadWriteOnce]}
+  databases:
+  - name: postgres
+    default: true
+    tablegroups:
+    - name: default
+      default: true
+      shards:
+      - name: 0-inf
+        spec:
+          pools:
+            main:
+              type: readWrite
+              cells: [z1]
+              replicasPerCell: 1
+              storage: {size: 2Gi, accessModes: [ReadWriteOnce]}
+              postgres:
+                resources:
+                  requests: {cpu: 100m, memory: 256Mi}
+                  limits: {memory: 512Mi}
+              multipooler:
+                resources:
+                  requests: {cpu: 100m, memory: 128Mi}
+                  limits: {memory: 512Mi}

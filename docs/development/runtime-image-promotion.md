@@ -31,6 +31,106 @@ The same Git commit updates these constants in `api/v1alpha1/image_defaults.go`:
 Etcd and Postgres exporter defaults are preserved. The PR describes the current
 main and proposed images and links both build and test evidence.
 
+## Lite / Minigres runtime requirements
+
+Lite clusters run `minigres` from `spec.images.multipooler`. Use a runtime built
+from `multigres/multigres` main at commit
+[`da2974e09ed14e86b9a254471b0c8d7df25e840a`](https://github.com/multigres/multigres/commit/da2974e09ed14e86b9a254471b0c8d7df25e840a)
+or a descendant containing both of these changes:
+
+- [#1559](https://github.com/multigres/multigres/pull/1559) packages
+  `/multigres/bin/minigres` in the runtime image (`3d7ea95`).
+- [#1554](https://github.com/multigres/multigres/pull/1554) removes remote-pooler
+  TLS flags and enables serving and restarting after bootstrap while etcd is
+  unavailable (`da2974e`).
+
+The earlier `3d7ea95` packaging baseline alone does not provide outage recovery.
+A source revision is a compatibility requirement, not evidence that an image has
+passed the operator canary. Select immutable `multigres` and `pgctld` image
+references from the same verified upstream build; use `spec.images.multipooler`
+and `spec.images.postgres` overrides for qualification until promoted defaults
+meet this baseline. Do not promote an untested digest or use a mutable `main`
+tag as a production pin. Compiled defaults still move only through the scheduled
+canary and promotion process above.
+
+Minigres's gateway reaches its pooler in memory. Lite must not pass
+`--multipooler-grpc-*`: newer runtimes reject those flags. Keep `--grpc-*` TLS
+on the external admin server for the operator's Status and ReloadConfig RPCs,
+and keep topology-client TLS when configured. Public PostgreSQL TLS remains
+unsupported by the operator's Lite pod configuration.
+
+Minigres persists `topo-database.pb` in `--pooler-dir`, which Lite mounts from
+its data PVC. When topology registration times out or is unavailable, the
+operator can recreate a missing or terminal pod using an existing bound,
+non-deleting data PVC. It retries registration and defers spec-driven replacement,
+filesystem-resize restarts and configuration reload RPCs until topology returns.
+The PVC's existence does not prove bootstrap: Minigres must validate its cached
+record, and a fresh database still needs etcd for its first bootstrap. An explicit
+missing-database response is not an outage fallback. Backups and admin operations
+that require topology can still fail during an outage.
+
+Lite requires exactly one cluster cell. Mode is immutable in both directions:
+converting between Lite and distributed mode requires a data-preserving migration
+that is not implemented. The resolved database/table-group/shard/pool/cell
+identity is also fixed. Switching templates is allowed only when that identity
+stays the same; resource, image and supported configuration changes remain valid.
+Admission checks template consumers, including inline shards that still inherit
+from the global or fallback shard template. Creating, updating or deleting such a
+template must preserve the single resolved pool and its identity. CRD/controller
+guards prevent a changed identity from provisioning a second static primary
+alongside existing data.
+
+Before qualifying a newer runtime for Lite, exercise these scenarios against the
+exact candidate image digests:
+
+1. Bootstrap a TLS-enabled Lite cluster and verify SQL reads/writes plus the
+   external admin Status and ReloadConfig RPCs.
+2. Stop access to etcd after bootstrap and verify SQL keeps serving.
+3. Restart the Minigres container, then separately delete/evict the Lite pod;
+   verify recovery, retained PVC identity and persisted SQL data while etcd is down.
+4. Restore etcd and verify topology registration and pending reconciliation resume.
+5. Verify a fresh deployment cannot bootstrap without etcd.
+
+Controller unit and envtest regressions exercise flags, outage handling and PVC
+retention, but do not run Minigres or establish runtime SQL compatibility. Keep
+that runtime qualification evidence separate from controller test results.
+
+The dedicated `minigres` e2e package automates these scenarios in its own Kind
+cluster with cert-manager, a persistent external etcd deployment, and a Lite
+cluster. It checks authenticated Status/ReloadConfig calls and rejection of
+plaintext, missing client certificates and incorrect server identities. After
+stopping etcd, it requires 45 consecutive SQL write/read iterations without
+retries, restarts the Minigres container, replaces the pod, and compares row
+checksums and PVC/PV identities. It also checks the cold-bootstrap gate and waits
+for both gateway and pooler records to advertise the replacement IP after etcd
+returns. SQL uses the gateway Service with `sslmode=disable`; public SQL TLS is
+not supported in Lite. RWO storage is explicit because Kind's local-path
+provisioner does not implement the default ReadWriteOncePod access mode.
+
+Every code PR runs this package with fixture images pinned to the qualified
+upstream revision `8f5c8896bb89f92c533633a0973aa92e3672060a`. The nightly canary
+runs both the shared suite and this dedicated package with its verified candidate
+digests through `E2E_*` overrides. Both must pass before promotion or a green
+compatibility report. The fixture pins do not change compiled runtime defaults.
+Manual canaries against older operator refs must include this test package.
+
+Run the same qualification locally with Docker, Kind and kubectl available:
+
+```sh
+make container pull-e2e-images kustomize
+OPERATOR_IMG="$(make -s print-img)" REPO_ROOT="$PWD" \
+  E2E_FAILURE_LOG_DIR=/tmp/minigres-e2e-logs \
+  go test -tags=e2e ./test/e2e/dedicated/minigres -v -count=1 -timeout=30m
+```
+
+Set `E2E_MULTIPOOLER_IMAGE` and `E2E_POSTGRES_IMAGE` to immutable candidate
+references to override the fixture pair. The framework prepares digest images
+inside Kind before workload startup. The test restores etcd on failure, collects
+namespace diagnostics, and destroys its dedicated cluster by default. Set
+`E2E_KEEP_CLUSTERS=on-failure` to retain it for investigation. CI uploads failure
+logs through the existing reusable e2e workflow; test output records the tested
+image references, recovery identities and final checksum.
+
 ## PR lifecycle and retries
 
 Promotion maintains one open PR from `chore/promote-runtime-images` to `main`.

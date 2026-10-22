@@ -51,6 +51,27 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
+	if oldCluster, ok := oldObj.(*multigresv1alpha1.MultigresCluster); ok {
+		if newCluster, ok := newObj.(*multigresv1alpha1.MultigresCluster); ok {
+			if oldCluster.Spec.Mode != newCluster.Spec.Mode {
+				return nil, fmt.Errorf(
+					"mode is immutable and can only be set when the cluster is created",
+				)
+			}
+			if oldCluster.Spec.Mode == multigresv1alpha1.ModeLite {
+				res := resolver.NewResolver(v.Client, newCluster.Namespace)
+				if err := validateLiteIdentityUpdate(
+					ctx,
+					res,
+					res,
+					oldCluster,
+					newCluster,
+				); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	warnings, err := v.validate(ctx, newObj)
 	if err != nil {
 		return warnings, err
@@ -371,7 +392,10 @@ func (v *TemplateValidator) validateWrite(ctx context.Context, obj runtime.Objec
 	if err := v.validateTemplateContent(obj); err != nil {
 		return err
 	}
-	return v.validateCellTemplateConsumers(ctx, obj)
+	if err := v.validateCellTemplateConsumers(ctx, obj); err != nil {
+		return err
+	}
+	return v.validateLiteShardTemplateConsumers(ctx, obj)
 }
 
 // validateTemplateContent validates what a template can guarantee on its own,
@@ -523,6 +547,14 @@ func (v *TemplateValidator) ValidateDelete(
 				templateName,
 				err,
 			)
+		}
+	}
+
+	if v.Kind == "ShardTemplate" && templateName == resolver.FallbackShardTemplate {
+		empty := &multigresv1alpha1.ShardTemplate{}
+		empty.Name, empty.Namespace = templateName, namespace
+		if err := v.validateLiteShardTemplateConsumers(ctx, empty); err != nil {
+			return nil, err
 		}
 	}
 

@@ -107,6 +107,19 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 
+	t.Run("Mode propagates from TableGroup to Shard", func(t *testing.T) {
+		liteTG := tg.DeepCopy()
+		liteTG.Spec.Mode = multigresv1alpha1.ModeLite
+
+		got, err := BuildShard(liteTG, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if got.Spec.Mode != multigresv1alpha1.ModeLite {
+			t.Errorf("Spec.Mode = %q, want %q", got.Spec.Mode, multigresv1alpha1.ModeLite)
+		}
+	})
+
 	t.Run("InternalTLS propagates from TableGroup to Shard", func(t *testing.T) {
 		tgWithInternalTLS := tg.DeepCopy()
 		tgWithInternalTLS.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{
