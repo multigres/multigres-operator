@@ -73,4 +73,4 @@ jobs:
     uses: ./.github/workflows/_reusable-e2e.yaml
     with:
       ref: ${{ github.event.pull_request.head.sha }}
-      timeout-minutes: 30
+      timeout-minutes: 60

@@ -66,7 +66,7 @@ function sameImages(a, b) {
 function pullRequestBody(previous, record) {
   const rows = Object.entries(COMPONENTS).map(([name, component]) =>
     `| ${name} | \`${previous[name]}\` | \`${record.images[component]}\` |`).join('\n');
-  return `Promote the runtime images verified by the scheduled compatibility canary.
+  return `Promote the runtime images verified by the compatibility canary.
 
 - Upstream revision: [${record.upstream_sha}](https://github.com/multigres/multigres/commit/${record.upstream_sha})
 - Tested operator revision: [${record.operator_sha}](https://github.com/multigres/multigres-operator/commit/${record.operator_sha})
@@ -85,7 +85,14 @@ The promotion e2e check builds this PR's committed defaults without image overri
 async function promote({ github, context, record }) {
   assert.equal(context.repo.owner, 'multigres');
   assert.equal(context.repo.repo, 'multigres-operator');
-  assert.equal(context.eventName, 'schedule');
+  const manual = context.eventName === 'workflow_dispatch';
+  assert.ok(context.eventName === 'schedule' || manual, 'Unsupported promotion event');
+  if (manual) {
+    const inputs = context.payload?.inputs;
+    assert.ok(inputs?.promote === true || inputs?.promote === 'true', 'Manual promotion must be explicitly requested');
+    assert.equal(inputs['operator-ref'], 'main');
+    assert.equal(String(inputs['nightly-run-id']), String(record.nightly_run.id), 'Manual promotion must identify its verified build');
+  }
   assert.equal(context.ref, 'refs/heads/main');
   validateRecord(record);
   assert.equal(record.operator_sha, context.sha);
@@ -201,7 +208,17 @@ async function promote({ github, context, record }) {
   } else if (pr.title !== fields.title || pr.body !== fields.body) {
     ({ data: pr } = await api.pulls.update({ ...fields, pull_number: pr.number }));
   }
-  assert.equal(pr.head.sha, head, 'Promotion PR head changed concurrently');
+  // GitHub's pull-request view can lag a successful Git ref update. Never
+  // checkpoint a stale view, but distinguish it from an actual concurrent push.
+  for (let attempt = 0; pr.head.sha !== head && attempt < 3; attempt++) {
+    const { data: current } = await api.git.getRef({ ...repo, ref: `heads/${BRANCH}` });
+    assert.equal(current.object.sha, head, 'Promotion branch changed concurrently');
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    ({ data: pr } = await api.pulls.get({ ...repo, pull_number: pr.number }));
+  }
+  assert.equal(pr.head.sha, head, 'Promotion PR head has not caught up; retry promotion');
+  const { data: current } = await api.git.getRef({ ...repo, ref: `heads/${BRANCH}` });
+  assert.equal(current.object.sha, head, 'Promotion branch changed concurrently');
   assert.equal(pr.state, 'open');
   return { changed: !unchanged, url: pr.html_url, head };
 }

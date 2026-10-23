@@ -156,3 +156,68 @@ test('report and promotion have separate permissions and only promotion writes h
   assert.ok(promotion.indexOf('Create or update promotion PR') < promotion.indexOf('Write promoted state'));
   assert.ok(!promotion.includes('continue-on-error'));
 });
+
+function manualBuild(overrides = {}) {
+  return {
+    id: 123, run_attempt: 2, head_sha: 'b'.repeat(40), status: 'completed',
+    conclusion: 'success', head_branch: 'main', event: 'workflow_dispatch',
+    path: '.github/workflows/nightly-build.yml',
+    repository: { full_name: 'multigres/multigres' },
+    head_repository: { full_name: 'multigres/multigres' }, ...overrides,
+  };
+}
+function manualEnv(overrides = {}) {
+  return {
+    INPUT_SHA: '', INPUT_NIGHTLY_RUN_ID: '123', INPUT_PROMOTE: 'true', INPUT_OPERATOR_REF: 'main',
+    GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'multigres/multigres-operator', GITHUB_SHA: 'a'.repeat(40),
+    NIGHTLY_JSON: JSON.stringify(manualBuild()), ...overrides,
+  };
+}
+test('manual promotion resolves a successful main build and freezes workflow main', (t) => {
+  const r = shell(t, step('Resolve upstream SHA'), manualEnv());
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.output, /nightly_run_id=123\nnightly_run_attempt=2\n/);
+  assert.ok(r.output.includes(`sha=${'b'.repeat(40)}\n`));
+  assert.ok(r.output.includes(`operator_sha=${'a'.repeat(40)}\n`));
+});
+for (const invalid of [
+  { status: 'in_progress' }, { conclusion: 'failure' }, { conclusion: 'cancelled' },
+  { id: 456 }, { head_branch: 'feature' }, { event: 'pull_request' },
+  { path: '.github/workflows/docker-build.yml' },
+  { repository: { full_name: 'fork/multigres' } },
+  { head_repository: { full_name: 'fork/multigres' } },
+]) {
+  test(`manual build rejects ${JSON.stringify(invalid)}`, (t) => {
+    const r = shell(t, step('Resolve upstream SHA'), manualEnv({ NIGHTLY_JSON: JSON.stringify(manualBuild(invalid)) }));
+    assert.notEqual(r.status, 0);
+    assert.equal(r.output, '');
+  });
+}
+for (const invalid of [
+  { INPUT_NIGHTLY_RUN_ID: '' }, { INPUT_NIGHTLY_RUN_ID: '../123' },
+  { INPUT_SHA: 'c'.repeat(40) }, { INPUT_OPERATOR_REF: 'feature' },
+  { GITHUB_REF: 'refs/heads/feature' }, { GITHUB_REPOSITORY: 'fork/operator' },
+]) {
+  test(`manual promotion rejects ${JSON.stringify(invalid)}`, (t) => {
+    assert.notEqual(shell(t, step('Resolve upstream SHA'), manualEnv(invalid)).status, 0);
+  });
+}
+test('a branch can diagnose an explicit build without enabling promotion', (t) => {
+  const r = shell(t, step('Resolve upstream SHA'), manualEnv({
+    INPUT_PROMOTE: 'false', GITHUB_REF: 'refs/heads/feature', INPUT_OPERATOR_REF: 'feature',
+    OPERATOR_JSON: JSON.stringify({ sha: 'c'.repeat(40) }),
+  }));
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.output.includes(`operator_sha=${'c'.repeat(40)}\n`));
+});
+test('manual promotion is opt-in, main-only and requires fresh successful verification and e2e', () => {
+  const promotion = workflow.split('\n  promote:\n')[1];
+  assert.match(workflow, /promote:\n[\s\S]*?default: false\n        type: boolean/);
+  assert.ok(promotion.includes("github.event_name == 'workflow_dispatch' && inputs.promote"));
+  assert.ok(promotion.includes("github.ref == 'refs/heads/main'"));
+  assert.ok(promotion.includes("needs.resolve.outputs.operator-ref == 'main'"));
+  for (const job of ['preflight', 'e2e']) assert.ok(promotion.includes(`needs.${job}.result == 'success'`));
+  assert.match(workflow.split('\n  e2e:\n')[1].split('\n  report:\n')[0], /timeout-minutes: 60/);
+  assert.match(fs.readFileSync('.github/workflows/pull-request.yaml', 'utf8').split('\n  promotion-e2e:\n')[1], /timeout-minutes: 60/);
+});

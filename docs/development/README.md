@@ -35,3 +35,5 @@ Internal documentation for contributors and operators. For user-facing documenta
 | Document | Description |
 |:---|:---|
 | [Upstream Test Patterns](upstream-test-patterns.md) | Research on upstream Multigres test patterns for informing E2E tests |
+
+| [Runtime Image Promotion](runtime-image-promotion.md) | Scheduled and explicit manual qualification, provenance, and promotion safeguards |
