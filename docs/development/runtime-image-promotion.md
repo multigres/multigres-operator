@@ -1,9 +1,10 @@
 # Runtime image promotion
 
 The nightly compatibility workflow promotes runtime defaults only after a
-scheduled canary on `multigres/multigres-operator`'s `main` branch passes. Proto
-dependency sync does not change these defaults. Manual canaries are diagnostic;
-they cannot publish a promotion PR or mark an upstream revision handled.
+scheduled canary on `multigres/multigres-operator`'s `main` branch passes both
+the vanilla and Supabase lanes. Proto dependency sync does not change these
+defaults. Manual canaries are diagnostic; they cannot publish a promotion PR or
+mark an upstream revision handled.
 
 ## Evidence and image mapping
 
@@ -12,13 +13,36 @@ freezes the operator commit being tested. Preflight resolves immutable image
 digests, checks for Linux amd64 and arm64 manifests, and verifies GitHub build
 attestations against the upstream source SHA, `refs/heads/main`, the nightly
 workflow identity, and the expected image repository. E2E then tests those exact
-digests against the frozen operator commit.
+digests against the frozen operator commit in both lanes. The Supabase lane
+replaces only Postgres/pgctld with the Supabase Postgres image; the operator and
+other nightly runtime images are identical across lanes. Each lane uses the
+existing reusable e2e workflow and has separate failure-log artifacts.
+
+Scheduled runs test the Supabase image named by the `SUPABASE_POSTGRES_IMAGE`
+repository variable. Set it to a publicly published Supabase Postgres image, as
+a fully qualified reference pinned by digest, because the reference appears in
+public issues and promotion PRs. The lane fails before e2e when the variable is
+unset or not pinned by digest. The e2e
+result decides compatibility; the image's bundled pgctld does not need to come
+from the same Multigres commit as the operator.
+
+Before e2e, the Supabase lane runs `pgbackrest version` in the Supabase image and
+in the nightly `multigres` image and fails if the output differs. pgctld and
+multipooler both run pgbackrest against the same backup repository, so the
+versions must match exactly.
+
+An on-demand run can supply `supabase-image` as a fully qualified reference
+pinned by digest, and `operator-ref` as a full operator commit. Manual runs
+remain diagnostic and cannot promote.
 
 After a successful canary, the promotion job commits
-`config/runtime-image-promotion.json` with schema version 1, `upstream_sha`,
+`config/runtime-image-promotion.json` with schema version 2, `upstream_sha`,
 `operator_sha`, `nightly_run` and `canary_run` (IDs, attempts, and URLs), and an
 `images` map containing the three fully qualified digest references. This file is
-created by the first successful promotion; it is not seeded with untested images.
+created from successful validation; it is not seeded with untested images.
+The record also contains `lanes` with both results and `supabase.image`, the
+Supabase image digest the lane tested. Version 1 records remain readable as
+history, but cannot authorize a new promotion.
 
 The same Git commit updates these constants in `api/v1alpha1/image_defaults.go`:
 
@@ -55,19 +79,39 @@ against the source revisions in the existing pinned image tags. It refuses to pu
 the upstream revision is stale/divergent, or an already recorded source revision
 has a different digest set. Newer green sets replace all images and evidence in
 one tree/ref update, retaining branch ancestry without a force push. Reprocessing
-an identical set leaves its commit and original evidence unchanged.
+an identical set leaves its commit and original evidence unchanged. A changed
+Supabase digest updates the evidence even when the three upstream image digests
+are unchanged; a pending PR's evidence is also refreshed when the tested
+operator revision changes. When main already carries the tested set, any open
+promotion PR is closed, because it is older or records other evidence, such as
+a different Supabase image.
 
 Compatibility reporting and promotion are sibling terminal jobs. Reporting has
-only `issues: write`; promotion has only `contents: write` and
-`pull-requests: write`. A green canary can close the compatibility incident even
-if promotion fails. Promotion errors fail the workflow without opening a
-compatibility incident.
+only `contents: read` and `issues: write`; promotion has only `contents: write`
+and `pull-requests: write`. A green canary can close the compatibility issues
+even if promotion fails. Promotion errors fail the workflow without opening a
+compatibility issue.
+
+Reporting keeps one open issue per kind of failure:
+
+- `upstream-compatibility` tracks failures in resolution, preflight, or the
+  vanilla lane. When the vanilla lane fails, only this issue is updated, and it
+  records the Supabase lane result.
+- `supabase-compatibility` tracks runs where the vanilla lane passes and the
+  Supabase lane fails. It lists the Supabase image and what changed since the
+  last promotion record (the Multigres range, the operator range, and whether
+  the Supabase image changed), so triage can see which side moved.
+
+Each issue is updated on consecutive failures and closed by the next scheduled
+run on main where its lane passes.
 
 Only successful PR publication (or verification that the same set is already
 published/merged) writes the `nightly-compatibility-promoted-<sha>` checkpoint.
 Resolution reads these checkpoints only from successful scheduled runs on main;
-older green-only artifacts do not count. A failed promotion remains eligible for
-the next scheduled run. A failed PR API call may leave the complete candidate
+older green-only artifacts do not count. Only upstream revisions older than the
+checkpoint are skipped. An identical upstream SHA is tested again because the
+Supabase image or operator revision can change independently. A failed promotion
+remains eligible for the next scheduled run. A failed PR API call may leave the complete candidate
 commit on the promotion branch; retry repairs PR publication before writing the
 checkpoint. No partially updated image set can become visible on the branch.
 

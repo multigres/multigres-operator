@@ -16,7 +16,7 @@ const COMPONENTS = {
 };
 
 function validateRecord(record) {
-  assert.equal(record.schema_version, 1);
+  assert.ok([1, 2].includes(record.schema_version), 'Unsupported promotion record version');
   for (const sha of [record.upstream_sha, record.operator_sha]) {
     assert.match(sha, /^[0-9a-f]{40}$/);
   }
@@ -29,6 +29,10 @@ function validateRecord(record) {
   assert.deepEqual(Object.keys(record.images).sort(), ['multiadmin-web', 'multigres', 'pgctld']);
   for (const [name, image] of Object.entries(record.images)) {
     assert.match(image, new RegExp(`^ghcr\\.io/multigres/${name}@sha256:[0-9a-f]{64}$`));
+  }
+  if (record.schema_version === 2) {
+    assert.deepEqual(record.lanes, { vanilla: 'success', supabase: 'success' });
+    assert.match(record.supabase.image, /^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::[0-9]+)?\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/);
   }
 }
 
@@ -63,6 +67,10 @@ function sameImages(a, b) {
   return Object.keys(a.images).every((name) => a.images[name] === b.images[name]);
 }
 
+function sameSupabase(a, b) {
+  return Boolean(a.supabase && b.supabase && a.supabase.image === b.supabase.image);
+}
+
 function pullRequestBody(previous, record) {
   const rows = Object.entries(COMPONENTS).map(([name, component]) =>
     `| ${name} | \`${previous[name]}\` | \`${record.images[component]}\` |`).join('\n');
@@ -76,7 +84,9 @@ function pullRequestBody(previous, record) {
 | --- | --- | --- |
 ${rows}
 
-All three digests passed source-revision and build-provenance checks and contain linux/amd64 and linux/arm64 images. The promotion record and six defaults are committed atomically. Etcd and Postgres exporter defaults are unchanged.
+Both vanilla and Supabase lanes passed against the tested operator revision and nightly Multigres images. The Supabase lane used \`${record.supabase.image}\`, and its pgbackrest version matches the multipooler image.
+
+All three upstream digests passed source-revision and build-provenance checks and contain linux/amd64 and linux/arm64 images. The promotion record and six defaults are committed atomically. Etcd and Postgres exporter defaults are unchanged.
 
 The promotion e2e check builds this PR's committed defaults without image overrides. Maintainer review and passing checks are required before merge.
 `;
@@ -88,6 +98,7 @@ async function promote({ github, context, record }) {
   assert.equal(context.eventName, 'schedule');
   assert.equal(context.ref, 'refs/heads/main');
   validateRecord(record);
+  assert.equal(record.schema_version, 2, 'Promotion requires successful results from both lanes');
   assert.equal(record.operator_sha, context.sha);
   assert.equal(String(record.canary_run.id), String(context.runId));
   assert.equal(String(record.canary_run.attempt), String(context.runAttempt));
@@ -151,13 +162,23 @@ async function promote({ github, context, record }) {
     if (relation === 'identical') assert.ok(sameImages(prior, record), 'Immutable image set changed for the same revision');
   }
 
-  if (main.record && sameImages(main.record, record)) {
-    return { changed: false, merged: true };
+  const openPRs = () => github.paginate(api.pulls.list, { ...repo, state: 'open', head: `${repo.owner}:${BRANCH}`, base: 'main', per_page: 100 });
+  if (main.record && sameImages(main.record, record) && sameSupabase(main.record, record)) {
+    // Main already carries the tested set. Any open promotion is older or
+    // carries other evidence, such as another Supabase image, so it must not
+    // stay mergeable.
+    const closed = [];
+    for (const pr of await openPRs()) {
+      await api.pulls.update({ ...repo, pull_number: pr.number, state: 'closed' });
+      closed.push(pr.number);
+    }
+    return { changed: false, merged: true, ...(closed.length ? { closed } : {}) };
   }
 
   let head = branch?.object.sha;
   let proposed = record;
-  const unchanged = pending?.record && sameImages(pending.record, record);
+  const unchanged = pending?.record && sameImages(pending.record, record) &&
+    sameSupabase(pending.record, record) && pending.record.operator_sha === record.operator_sha;
   if (unchanged) {
     // Keep the original evidence for this digest set, but still repair a missing
     // or failed PR update before the workflow may checkpoint the revision.
@@ -188,7 +209,7 @@ async function promote({ github, context, record }) {
     head = commit.sha;
   }
 
-  const prs = await github.paginate(api.pulls.list, { ...repo, state: 'open', head: `${repo.owner}:${BRANCH}`, base: 'main', per_page: 100 });
+  const prs = await openPRs();
   assert.ok(prs.length <= 1, 'Multiple open promotion PRs');
   const fields = {
     ...repo,
@@ -209,7 +230,9 @@ async function promote({ github, context, record }) {
 function recordFromEnv(env) {
   const run = (repo, id, attempt) => ({ id, attempt, url: `https://github.com/multigres/${repo}/actions/runs/${id}/attempts/${attempt}` });
   return {
-    schema_version: 1,
+    schema_version: 2,
+    lanes: { vanilla: env.VANILLA_RESULT, supabase: env.SUPABASE_RESULT },
+    supabase: { image: env.SUPABASE_IMAGE },
     upstream_sha: env.UPSTREAM_SHA,
     operator_sha: env.OPERATOR_SHA,
     nightly_run: run('multigres', env.NIGHTLY_RUN_ID, env.NIGHTLY_RUN_ATTEMPT),

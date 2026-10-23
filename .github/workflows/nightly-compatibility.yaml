@@ -3,7 +3,8 @@ name: Nightly upstream compatibility
 on:
 # Poll once after the upstream 05:00 UTC build. The run selects only a fully
 # successful nightly build; an in-progress build is never consumed. A SHA
-# is skipped only after its promotion PR was successfully created or updated.
+# older than the last promoted revision is skipped. The same SHA is retested
+# because the Supabase image or operator revision may have changed.
 # Manual runs remain diagnostic and never promote or checkpoint a revision.
   schedule:
     - cron: "0 9 * * *"
@@ -18,6 +19,11 @@ on:
         description: Operator ref to test (useful for intentionally testing an incompatible pair)
         required: false
         default: main
+        type: string
+      supabase-image:
+        description: Supabase Postgres image pinned by digest (empty uses the SUPABASE_POSTGRES_IMAGE repository variable)
+        required: false
+        default: ""
         type: string
 
 permissions: {}
@@ -167,10 +173,10 @@ jobs:
                 jq -r '.status'
             )"
             case "$relation" in
-              identical | behind)
+              behind)
                 should_run=false
                 ;;
-              ahead)
+              identical | ahead)
                 ;;
               *)
                 echo "::error::Upstream SHA diverges from the last green SHA"
@@ -180,11 +186,11 @@ jobs:
           fi
           echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
 
-      - name: Record skipped duplicate or stale request
+      - name: Record skipped stale request
         if: steps.gate.outputs.should_run == 'false'
         env:
           SHA: ${{ steps.resolve.outputs.sha }}
-        run: echo "Skipping $SHA because it is not newer than the last green SHA."
+        run: echo "Skipping $SHA because it is older than the last promoted SHA."
 
   preflight:
     name: Verify immutable nightly
@@ -288,6 +294,46 @@ jobs:
           verify_image "$PGCTLD_IMAGE"
           verify_image "$MULTIADMIN_WEB_IMAGE"
 
+  supabase:
+    name: Verify Supabase image
+    needs: [resolve, preflight]
+    if: needs.preflight.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - name: Select Supabase image
+        id: image
+        env:
+          INPUT_IMAGE: ${{ inputs.supabase-image }}
+          DEFAULT_IMAGE: ${{ vars.SUPABASE_POSTGRES_IMAGE }}
+        run: |
+          image="${INPUT_IMAGE:-$DEFAULT_IMAGE}"
+          [ -n "$image" ] ||
+            { echo "::error::Set the SUPABASE_POSTGRES_IMAGE repository variable to the Supabase Postgres image, pinned by digest"; exit 1; }
+          [[ "$image" =~ ^[a-z0-9-]+(\.[a-z0-9-]+)+(:[0-9]+)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] ||
+            { echo "::error::Expected a fully qualified Supabase image pinned by digest, got '$image'"; exit 1; }
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Compare pgbackrest versions
+        env:
+          SUPABASE_IMAGE: ${{ steps.image.outputs.image }}
+          MULTIPOOLER_IMAGE: ${{ needs.preflight.outputs.multigres-image }}
+        run: |
+          # pgctld in the Supabase image and multipooler both run pgbackrest
+          # against the same backup repository, so the versions must match.
+          supabase="$(docker run --rm --entrypoint pgbackrest "$SUPABASE_IMAGE" version)"
+          multipooler="$(docker run --rm --entrypoint pgbackrest "$MULTIPOOLER_IMAGE" version)"
+          for version in "$supabase" "$multipooler"; do
+            [[ "$version" =~ ^pgBackRest\ [0-9] ]] ||
+              { echo "::error::Unexpected pgbackrest version output '$version'"; exit 1; }
+          done
+          [ "$supabase" = "$multipooler" ] ||
+            { echo "::error::pgbackrest differs: Supabase image has '$supabase', multipooler image has '$multipooler'"; exit 1; }
+          echo "Both images run $supabase."
+
   e2e:
     name: Canary e2e
     needs: [resolve, preflight]
@@ -305,9 +351,27 @@ jobs:
       multipooler-image: ${{ needs.preflight.outputs.multigres-image }}
       multigateway-image: ${{ needs.preflight.outputs.multigres-image }}
 
+  e2e-supabase:
+    name: Supabase canary e2e
+    needs: [resolve, preflight, supabase]
+    if: needs.preflight.result == 'success' && needs.supabase.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      ref: ${{ needs.resolve.outputs.operator-sha }}
+      timeout-minutes: 30
+      postgres-image: ${{ needs.supabase.outputs.image }}
+      artifact-suffix: supabase
+      multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
+      multiadmin-web-image: ${{ needs.preflight.outputs.multiadmin-web-image }}
+      multiorch-image: ${{ needs.preflight.outputs.multigres-image }}
+      multipooler-image: ${{ needs.preflight.outputs.multigres-image }}
+      multigateway-image: ${{ needs.preflight.outputs.multigres-image }}
+
   report:
     name: Record compatibility result
-    needs: [resolve, preflight, e2e]
+    needs: [resolve, preflight, supabase, e2e, e2e-supabase]
     if: >-
       always() &&
       (needs.resolve.result != 'success' ||
@@ -315,172 +379,241 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      issues: write # Create or update the compatibility tracking issue.
+      contents: read # Read the last promotion record.
+      issues: write # Create or update the compatibility tracking issues.
     steps:
-      - name: Update tracking issue
+      - name: Update tracking issues
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          SUPABASE_RESULT: ${{ needs.supabase.result }}
+          SUPABASE_E2E_RESULT: ${{ needs.e2e-supabase.result }}
+          SUPABASE_IMAGE: ${{ needs.supabase.outputs.image }}
           EVENT_NAME: ${{ github.event_name }}
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short-sha }}
           LAST_GREEN_SHA: ${{ needs.resolve.outputs.last-green-sha }}
           OPERATOR_REF: ${{ needs.resolve.outputs.operator-ref }}
+          OPERATOR_SHA: ${{ needs.resolve.outputs.operator-sha }}
           IMAGE_TAG: nightly-sha-${{ needs.resolve.outputs.sha }}
         with:
           script: |
-            const marker = '<!-- nightly-compatibility-canary -->';
-            const label = 'upstream-compatibility';
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
             const runUrl =
               `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}` +
               `/actions/runs/${context.runId}`;
-            const succeeded =
-              process.env.RESOLVE_RESULT === 'success' &&
-              process.env.PREFLIGHT_RESULT === 'success' &&
-              process.env.E2E_RESULT === 'success';
+            const passed = (...names) => names.every((name) => process.env[name] === 'success');
+            const vanillaPassed = passed('RESOLVE_RESULT', 'PREFLIGHT_RESULT', 'E2E_RESULT');
+            const supabasePassed = passed('SUPABASE_RESULT', 'SUPABASE_E2E_RESULT');
             const canonicalRun =
               process.env.OPERATOR_REF === 'main' &&
               process.env.EVENT_NAME === 'schedule' &&
               context.ref === 'refs/heads/main' &&
               context.repo.owner === 'multigres' &&
               context.repo.repo === 'multigres-operator';
-            const failureStage =
-              process.env.RESOLVE_RESULT !== 'success' ? 'SHA resolution/validation' :
-              process.env.PREFLIGHT_RESULT !== 'success' ? 'nightly image preflight' :
-              'operator e2e';
             const upstreamSha = process.env.UPSTREAM_SHA || 'unknown';
             const shortSha = process.env.SHORT_SHA || 'unknown';
-
-            try {
-              await github.rest.issues.getLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: label,
-              });
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              await github.rest.issues.createLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: label,
-                color: 'd73a4a',
+            const operatorSha = process.env.OPERATOR_SHA || '';
+            const upstreamLink = process.env.UPSTREAM_SHA
+              ? `[multigres@${upstreamSha}](https://github.com/multigres/multigres/commit/${upstreamSha})`
+              : 'an unresolved upstream SHA';
+            const trackers = {
+              upstream: {
+                marker: '<!-- nightly-compatibility-canary -->',
+                label: 'upstream-compatibility',
                 description: 'Compatibility impact from an upstream Multigres change',
+              },
+              supabase: {
+                marker: '<!-- nightly-compatibility-supabase -->',
+                label: 'supabase-compatibility',
+                description: 'Nightly Multigres images fail with the Supabase Postgres image',
+              },
+            };
+
+            async function find(tracker) {
+              const issues = await github.paginate(github.rest.issues.listForRepo, {
+                ...repo,
+                state: 'open',
+                labels: tracker.label,
+                per_page: 100,
               });
+              return issues.find(
+                (issue) => !issue.pull_request && issue.body?.includes(tracker.marker),
+              );
             }
 
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: label,
-              per_page: 100,
-            });
-            const tracking = issues.find(
-              (issue) => !issue.pull_request && issue.body?.includes(marker),
-            );
-
-            if (succeeded) {
-              // Diagnostic skew runs must not advance or clear the canonical
-              // main-vs-nightly compatibility state.
+            // Diagnostic skew runs must not advance or clear the canonical
+            // main-vs-nightly compatibility state.
+            async function recover(tracker, message) {
               if (!canonicalRun) {
                 core.info(
-                  `Diagnostic ${process.env.EVENT_NAME} run passed; ` +
-                  'leaving the main canary state unchanged.',
+                  `Diagnostic ${process.env.EVENT_NAME} run; ` +
+                  `leaving the ${tracker.label} issue unchanged.`,
                 );
                 return;
               }
-              if (tracking) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: tracking.number,
-                  body:
-                    `✅ Compatibility recovered at ` +
-                    `[multigres@${upstreamSha}]` +
-                    `(https://github.com/multigres/multigres/commit/${upstreamSha}). ` +
-                    `[Canary run](${runUrl})`,
-                });
-                await github.rest.issues.update({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: tracking.number,
-                  state: 'closed',
-                  state_reason: 'completed',
-                });
-              }
-              return;
+              const tracking = await find(tracker);
+              if (!tracking) return;
+              await github.rest.issues.createComment({
+                ...repo,
+                issue_number: tracking.number,
+                body: `${message} [Canary run](${runUrl})`,
+              });
+              await github.rest.issues.update({
+                ...repo,
+                issue_number: tracking.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
             }
 
-            const range =
-              process.env.LAST_GREEN_SHA && process.env.UPSTREAM_SHA
-              ? `[${process.env.LAST_GREEN_SHA.slice(0, 7)}...${shortSha}]` +
-                `(https://github.com/multigres/multigres/compare/` +
-                `${process.env.LAST_GREEN_SHA}...${upstreamSha})`
-              : 'Unavailable (this is the first recorded canary result)';
-            const title =
-              `Nightly compatibility canary failing at multigres/${shortSha}`;
-            const body = `${marker}
-            ## Nightly compatibility failure
+            // One open issue per tracker, so one breakage produces one issue.
+            async function fail(tracker, { stage, title, body }) {
+              try {
+                await github.rest.issues.getLabel({ ...repo, name: tracker.label });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({
+                  ...repo,
+                  name: tracker.label,
+                  color: 'd73a4a',
+                  description: tracker.description,
+                });
+              }
+              const tracking = await find(tracker);
+              body = `${tracker.marker}\n${body}`;
+              if (tracking) {
+                await github.rest.issues.update({ ...repo, issue_number: tracking.number, title, body });
+                await github.rest.issues.createComment({
+                  ...repo,
+                  issue_number: tracking.number,
+                  body:
+                    `Still failing during ${stage} at \`${upstreamSha}\`. ` +
+                    `[Latest run](${runUrl})`,
+                });
+              } else {
+                await github.rest.issues.create({ ...repo, title, body, labels: [tracker.label] });
+              }
+            }
 
-            The nightly compatibility canary failed during **${failureStage}** for
-            ${process.env.UPSTREAM_SHA
-              ? `[multigres@${upstreamSha}](https://github.com/multigres/multigres/commit/${upstreamSha})`
-              : 'an unresolved upstream SHA'}.
+            if (supabasePassed) {
+              await recover(trackers.supabase, `✅ Supabase Postgres lane recovered at ${upstreamLink}.`);
+            }
+
+            if (!vanillaPassed) {
+              // A vanilla failure usually breaks the Supabase lane too, so it is
+              // reported once, on the upstream issue.
+              const stage =
+                process.env.RESOLVE_RESULT !== 'success' ? 'SHA resolution/validation' :
+                process.env.PREFLIGHT_RESULT !== 'success' ? 'nightly image preflight' :
+                'vanilla operator e2e';
+              const range =
+                process.env.LAST_GREEN_SHA && process.env.UPSTREAM_SHA
+                ? `[${process.env.LAST_GREEN_SHA.slice(0, 7)}...${shortSha}]` +
+                  `(https://github.com/multigres/multigres/compare/` +
+                  `${process.env.LAST_GREEN_SHA}...${upstreamSha})`
+                : 'Unavailable (this is the first recorded canary result)';
+              const supabaseLane = supabasePassed
+                ? 'passed'
+                : `did not pass (image check: ${process.env.SUPABASE_RESULT || 'missing'}, ` +
+                  `e2e: ${process.env.SUPABASE_E2E_RESULT || 'missing'})`;
+              await fail(trackers.upstream, {
+                stage,
+                title: `Nightly compatibility canary failing at multigres/${shortSha}`,
+                body: `## Nightly compatibility failure
+
+            The nightly compatibility canary failed during **${stage}** for
+            ${upstreamLink}.
 
             - **Upstream image tag:** \`${process.env.IMAGE_TAG}\`
             - **Operator ref:** \`${process.env.OPERATOR_REF}\`
             - **Range since last green:** ${range}
+            - **Supabase lane:** ${supabaseLane}
             - **Latest failed run:** [GitHub Actions](${runUrl})
 
             This issue is updated on consecutive nightly failures and closed by the
-            first green canary, so one compatibility breakage produces one issue.
-            `;
-
-            if (tracking) {
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: tracking.number,
-                title,
-                body,
+            first green vanilla lane, so one compatibility breakage produces one issue.
+            `,
               });
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: tracking.number,
-                body:
-                  `Still failing during ${failureStage} at \`${upstreamSha}\`. ` +
-                  `[Latest run](${runUrl})`,
-              });
-            } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title,
-                body,
-                labels: [label],
-              });
+              return;
             }
+
+            await recover(trackers.upstream, `✅ Compatibility recovered at ${upstreamLink}.`);
+            if (supabasePassed) return;
+
+            // Compare with the last promotion so triage can see whether Multigres,
+            // the operator, or the Supabase image changed.
+            let last = null;
+            try {
+              const { data } = await github.rest.repos.getContent({
+                ...repo,
+                path: 'config/runtime-image-promotion.json',
+                ref: operatorSha || 'main',
+              });
+              last = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            const compare = (name, base, head) => base && head
+              ? `[${base.slice(0, 7)}...${head.slice(0, 7)}]` +
+                `(https://github.com/multigres/${name}/compare/${base}...${head})`
+              : 'unavailable';
+            const image = process.env.SUPABASE_IMAGE;
+            const imageChange =
+              !last?.supabase?.image ? 'no earlier Supabase result recorded' :
+              !image ? 'not resolved in this run' :
+              last.supabase.image === image ? 'unchanged' :
+              `changed from \`${last.supabase.image}\``;
+            const stage = process.env.SUPABASE_RESULT !== 'success'
+              ? 'Supabase image verification'
+              : 'Supabase operator e2e';
+            await fail(trackers.supabase, {
+              stage,
+              title: `Supabase Postgres lane failing at multigres/${shortSha}`,
+              body: `## Supabase Postgres lane failure
+
+            The Supabase Postgres lane failed during **${stage}** for ${upstreamLink}.
+            The vanilla lane passed. Promotion is blocked until this lane passes.
+
+            - **Supabase image:** \`${image || 'unresolved'}\`
+            - **Operator commit:** \`${operatorSha || 'unknown'}\`
+            - **Changes since the last promotion:**
+              - Multigres: ${compare('multigres', last?.upstream_sha, process.env.UPSTREAM_SHA)}
+              - Operator: ${compare('multigres-operator', last?.operator_sha, operatorSha)}
+              - Supabase image: ${imageChange}
+            - **Latest failed run:** [GitHub Actions](${runUrl})
+
+            If only one of these changed, start there. Cluster logs from the e2e are in
+            the run's \`kind-logs-all-supabase\` artifact.
+
+            This issue is updated on consecutive failures and closed by the first green
+            Supabase lane on main.
+            `,
+            });
 
       - name: Fail when canary failed
         if: >-
           always() &&
           (needs.resolve.result != 'success' ||
            needs.preflight.result != 'success' ||
-           needs.e2e.result != 'success')
+           needs.e2e.result != 'success' ||
+           needs.supabase.result != 'success' ||
+           needs.e2e-supabase.result != 'success')
         env:
           RESOLVE_RESULT: ${{ needs.resolve.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          SUPABASE_RESULT: ${{ needs.supabase.result }}
+          SUPABASE_E2E_RESULT: ${{ needs.e2e-supabase.result }}
         run: |
-          echo "::error::Canary results: resolve=$RESOLVE_RESULT preflight=$PREFLIGHT_RESULT e2e=$E2E_RESULT"
+          echo "::error::Canary results: resolve=$RESOLVE_RESULT preflight=$PREFLIGHT_RESULT e2e=$E2E_RESULT supabase=$SUPABASE_RESULT supabase-e2e=$SUPABASE_E2E_RESULT"
           exit 1
 
   promote:
     name: Promote verified runtime defaults
-    needs: [resolve, preflight, e2e]
+    needs: [resolve, preflight, supabase, e2e, e2e-supabase]
     if: >-
       github.repository == 'multigres/multigres-operator' &&
       github.event_name == 'schedule' &&
@@ -488,7 +621,9 @@ jobs:
       needs.resolve.outputs.operator-ref == 'main' &&
       needs.resolve.outputs.should-run == 'true' &&
       needs.preflight.result == 'success' &&
-      needs.e2e.result == 'success'
+      needs.e2e.result == 'success' &&
+      needs.supabase.result == 'success' &&
+      needs.e2e-supabase.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -518,6 +653,9 @@ jobs:
         env:
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           OPERATOR_SHA: ${{ needs.resolve.outputs.operator-sha }}
+          SUPABASE_IMAGE: ${{ needs.supabase.outputs.image }}
+          VANILLA_RESULT: ${{ needs.e2e.result }}
+          SUPABASE_RESULT: ${{ needs.e2e-supabase.result }}
           NIGHTLY_RUN_ID: ${{ needs.resolve.outputs.nightly-run-id }}
           NIGHTLY_RUN_ATTEMPT: ${{ needs.resolve.outputs.nightly-run-attempt }}
           MULTIGRES_IMAGE: ${{ needs.preflight.outputs.multigres-image }}
