@@ -172,6 +172,36 @@ func TestGlobalTopoMove_DeadOldEtcd(t *testing.T) {
 	c.waitForManagedTopoRetired()
 }
 
+// TestGlobalTopoMove_LeaderOutsideCohort moves a cluster whose new leaders
+// each start outside their cohort and are admitted later, and requires the
+// move to finish and the managed TopoServer to be retired.
+//
+// The stranded drains of a move do not wait for each replacement to be
+// admitted, so multiorch can fail over to one that is still outside the
+// cohort. That leader is not data-plane ready until multiorch admits it, and
+// retirement waits for a Healthy cluster, so the move converges only through
+// that admission.
+func TestGlobalTopoMove_LeaderOutsideCohort(t *testing.T) {
+	c := newCase(t)
+	cluster := c.MinimalCluster("topo-leader")
+	c.WaitForClusterHealthy(cluster)
+
+	release, seen := poolers.AdmitLeadersLate(c.NS)
+	defer release()
+	external := c.externalTopoFor()
+	c.updateCluster(cluster, func(got *MultigresCluster) {
+		got.Spec.GlobalTopoServer = externalTopoSpec(external)
+	})
+	c.waitForPoolPodsOn(external)
+	c.waitForManagedTopoRetired()
+	c.WaitForClusterHealthy(cluster)
+	if !seen() {
+		t.Fatal(
+			"no leader was ever committed outside its cohort, so the move never passed through that state",
+		)
+	}
+}
+
 // TestGlobalTopoMove_RetainSetWithTheMove changes the global topology to
 // external and sets its pvcDeletionPolicy.whenDeleted to Retain in the same
 // update, over a cluster-wide Delete, and requires the etcd PVCs to survive

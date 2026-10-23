@@ -204,6 +204,11 @@ func poolerReadiness(
 			Message: "pooler is not eligible to participate in the shard cohort",
 		}
 	}
+	// This holds for the committed leader too. Multiorch admits a leader that a
+	// failover left outside the cohort, but until it does the shard is a member
+	// short, and the unready leader is what keeps the shard PDB from allowing a
+	// follower eviction the remaining cohort could not survive. The operator's own
+	// CheckDisruption counts cohort members; the Eviction API sees only the PDB.
 	if !committedCohortContains(resp, id) {
 		return posture, Readiness{
 			Reason:  "NotCohortMember",
