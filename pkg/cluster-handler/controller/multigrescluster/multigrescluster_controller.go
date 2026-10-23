@@ -3,6 +3,7 @@ package multigrescluster
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/images"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/resolver"
@@ -72,6 +74,14 @@ type MultigresClusterReconciler struct {
 		namespace string,
 		ref multigresv1alpha1.GlobalTopoServerRef,
 	) (topo.EtcdIdentity, error)
+
+	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
+	// docs/development/reconcile-gating.md. The zero value is safe.
+	Gate features.Gate
+
+	// DialContext carries the topology store's connections and the etcd
+	// identity read. Nil (direct dialing) outside laptop mode.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // Reconcile resolves templates, reconciles child resources (Cells, TableGroups, TopoServer),
@@ -117,6 +127,12 @@ func (r *MultigresClusterReconciler) Reconcile(
 		}
 		monitoring.RecordSpanError(span, err)
 		return ctrl.Result{}, fmt.Errorf("failed to get MultigresCluster: %w", err)
+	}
+
+	// Backstop for the event filter: a RequeueAfter scheduled before the label
+	// went on still reaches here.
+	if gated, err := r.Gate.Gated(ctx, r.Client, cluster); gated || err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Bridge the async webhook → reconcile trace gap.
@@ -588,9 +604,12 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.MultigresCluster{},
-			builder.WithPredicates(projectRefOrGenerationChangedPredicate()),
+			builder.WithPredicates(predicate.Or(
+				projectRefOrGenerationChangedPredicate(),
+				features.LabelsChanged(),
+			)),
 		).
 		Owns(&multigresv1alpha1.Cell{}).
 		Owns(&multigresv1alpha1.TableGroup{}).
@@ -609,7 +628,11 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Watches(
 			&multigresv1alpha1.ShardTemplate{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueRequestsFromTemplate),
-		).
+		)
+
+	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+		return &multigresv1alpha1.MultigresClusterList{}
+	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
 }

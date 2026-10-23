@@ -6,13 +6,16 @@ package toposerver_test
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -519,4 +522,114 @@ func tcpPort(t testing.TB, name string, port int32) corev1.ContainerPort {
 func tcpServicePort(t testing.TB, name string, port int32) corev1.ServicePort {
 	t.Helper()
 	return corev1.ServicePort{Name: name, Port: port, TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP}
+}
+
+// TestTopoServerReconcileGating exercises the reconcile-disabled label end to
+// end against envtest: the gate must stop reconciliation before any
+// spec-derived write and must not write to the object at all, and reconciliation
+// resumes once the label is removed. It also verifies the
+// requeue-storm guard: a namespace label unrelated to the flag must not
+// enqueue the object.
+//
+// TopoServer carries no finalizer of its own, so gating only suppresses
+// spec-derived reconciliation; deleting a gated TopoServer still proceeds via
+// owner-reference cascade GC exactly as it did before gating. This test does
+// not assert a "hang on deletion" property, because there is none to assert.
+func TestTopoServerReconcileGating(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(
+			filepath.Join("../../../../", "config", "crd", "bases"),
+		),
+	)
+	ctx := t.Context()
+	k8sClient := mgr.GetClient()
+
+	const (
+		nsName = "toposerver-gating-test"
+		tsName = "gated-toposerver"
+	)
+
+	require.NoError(t, k8sClient.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: nsName},
+	}))
+
+	inner := &toposervercontroller.TopoServerReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("toposerver-controller"),
+	}
+	counted := testutil.NewCountingReconciler(inner)
+	tsKey := types.NamespacedName{Namespace: nsName, Name: tsName}
+	require.NoError(t, inner.SetupWithManagerReconciler(mgr, counted, controller.Options{
+		SkipNameValidation: ptr.To(true),
+	}))
+
+	toposerver := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tsName,
+			Namespace: nsName,
+			Labels: map[string]string{
+				"multigres.com/cluster":   "test-cluster",
+				"multigres.com/reconcile": "disabled",
+			},
+		},
+		Spec: multigresv1alpha1.TopoServerSpec{Etcd: &multigresv1alpha1.EtcdSpec{}},
+	}
+	require.NoError(t, k8sClient.Create(ctx, toposerver))
+
+	// Gated: the controller must not write to the object and must not create any
+	// spec-derived resource. Because the event filter drops every event and the
+	// backstop returns at the gate, the headless/client Services, the
+	// StatefulSet, and the maintenance (resumeMaintenance/reconcileMaintenance)
+	// paths never run for this object. Liveness of the controller is shown by the
+	// resume half below.
+	testutil.RequireNoWrites(ctx, t, mgr.GetAPIReader(), toposerver, 2*time.Second)
+
+	var stsList appsv1.StatefulSetList
+	require.NoError(t, k8sClient.List(ctx, &stsList, client.InNamespace(nsName)))
+	require.Empty(t, stsList.Items, "gated TopoServer must not create a StatefulSet")
+
+	var svcList corev1.ServiceList
+	require.NoError(t, k8sClient.List(ctx, &svcList, client.InNamespace(nsName)))
+	require.Empty(t, svcList.Items, "gated TopoServer must not create any Service")
+
+	// Requeue-storm guard: an unrelated namespace label change must not enqueue
+	// the object (LabelsChanged compares only the reconcile label).
+	before := counted.CountFor(tsKey)
+	var ns corev1.Namespace
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: nsName}, &ns))
+	ns.Labels = map[string]string{"unrelated": "label"}
+	require.NoError(t, k8sClient.Update(ctx, &ns))
+	require.Never(
+		t,
+		func() bool { return counted.CountFor(tsKey) != before },
+		time.Second,
+		100*time.Millisecond,
+		"an unrelated namespace label change must not enqueue the gated TopoServer",
+	)
+
+	// Resume: removing the reconcile label re-enqueues via the label predicate and
+	// reconciliation proceeds past the gate.
+	var fresh multigresv1alpha1.TopoServer
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKeyFromObject(toposerver), &fresh))
+	delete(fresh.Labels, "multigres.com/reconcile")
+	require.NoError(t, k8sClient.Update(ctx, &fresh))
+	toposerver = &fresh
+
+	require.Eventually(t, func() bool {
+		return counted.CountFor(tsKey) > before
+	}, 10*time.Second, 100*time.Millisecond, "ungating should re-enqueue the TopoServer")
+
+	require.Eventually(t, func() bool {
+		var got appsv1.StatefulSet
+		return k8sClient.Get(ctx, client.ObjectKey{Namespace: nsName, Name: tsName}, &got) == nil
+	}, 30*time.Second, 200*time.Millisecond, "ungating should create the StatefulSet")
 }

@@ -4,6 +4,7 @@
 package tablegroup_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,9 +13,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+
+	"github.com/stretchr/testify/require"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
@@ -326,4 +330,149 @@ func tgOwnerRefs(t testing.TB, tgName string) []metav1.OwnerReference {
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
+}
+
+// updateTableGroup replaces the live TableGroup spec with the desired one,
+// retrying on resourceVersion conflicts with the controller's own writes.
+func updateTableGroup(
+	ctx context.Context,
+	k8sClient client.Client,
+	live *multigresv1alpha1.TableGroup,
+	desired *multigresv1alpha1.TableGroup,
+) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &multigresv1alpha1.TableGroup{}
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(live), latest); err != nil {
+			return err
+		}
+		latest.Spec = desired.Spec
+		return k8sClient.Update(ctx, latest)
+	})
+}
+
+// TestTableGroup_ReconcileGatingObjectLevel pins that the reconcile-disabled
+// label on the TableGroup itself (not its namespace) pauses and resumes
+// reconciliation. Resume is triggered by the label removal alone, with the
+// namespace and spec untouched, so it fails against a For() predicate missing
+// the features.LabelsChanged() arm: the metadata-only update would not enqueue.
+func TestTableGroup_ReconcileGatingObjectLevel(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(
+			filepath.Join("../../../../", "config", "crd", "bases"),
+		),
+	)
+	k8sClient := mgr.GetClient()
+	ctx := t.Context()
+
+	reconciler := &tablegroup.TableGroupReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("tablegroup-controller-objectlevel"),
+	}
+	counter := testutil.NewCountingReconciler(reconciler)
+	if err := reconciler.SetupWithManagerReconciler(mgr, counter, controller.Options{
+		SkipNameValidation: ptr.To(true),
+	}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	const (
+		nsName      = "default"
+		clusterName = "object-gated-cluster"
+		dbName      = "db1"
+		tgName      = "tg1"
+		tgObjName   = "tg-object-gated"
+	)
+
+	build := func(shards ...multigresv1alpha1.ShardResolvedSpec) *multigresv1alpha1.TableGroup {
+		tg := &multigresv1alpha1.TableGroup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      tgObjName,
+				Namespace: nsName,
+				Labels:    map[string]string{"multigres.com/cluster": clusterName},
+			},
+			Spec: multigresv1alpha1.TableGroupSpec{
+				DatabaseName:   dbName,
+				TableGroupName: tgName,
+				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+					Address:        "etcd:2379",
+					RootPath:       "/multigres/global",
+					Implementation: "etcd",
+				},
+				Images: multigresv1alpha1.ShardImages{
+					Multiorch:   "orch:latest",
+					Multipooler: "pooler:latest",
+					Postgres:    "postgres:15",
+				},
+				Shards: shards,
+			},
+		}
+		setTestPostgresPasswordSecretRef(tg)
+		return tg
+	}
+	shardSpec := func(name string) multigresv1alpha1.ShardResolvedSpec {
+		return multigresv1alpha1.ShardResolvedSpec{
+			Name: name,
+			Multiorch: multigresv1alpha1.MultiorchSpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+			},
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{},
+		}
+	}
+	shardName := func(name string) string {
+		return nameutil.JoinWithConstraints(
+			nameutil.DefaultConstraints, clusterName, dbName, tgName, name)
+	}
+
+	tg := build(shardSpec("s1"))
+	if err := k8sClient.Create(ctx, tg); err != nil {
+		t.Fatalf("Failed to create TableGroup, %v", err)
+	}
+	tgKey := client.ObjectKeyFromObject(tg)
+	waitForShardExists(t, ctx, k8sClient, shardName("s1"), nsName)
+
+	// 1. Gate the object itself. The namespace is untouched, so the pause
+	// transition must arrive through the For() predicate on the TableGroup.
+	counter.WaitQuiescent(t, tgKey)
+	testutil.PatchLabel(t, k8sClient, tg, "multigres.com/reconcile", "disabled")
+	testutil.WaitForCachedLabel(ctx, t, k8sClient, tg, "multigres.com/reconcile", "disabled")
+	counter.WaitQuiescent(t, tgKey)
+
+	// 2. A spec mutation while gated must not create the new child shard.
+	if err := updateTableGroup(
+		ctx,
+		k8sClient,
+		tg,
+		build(shardSpec("s1"), shardSpec("s2")),
+	); err != nil {
+		t.Fatalf("Failed to mutate gated TableGroup spec, %v", err)
+	}
+	require.Never(t, func() bool {
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: shardName("s2"), Namespace: nsName},
+			&multigresv1alpha1.Shard{})
+		return err == nil
+	}, 2*time.Second, 200*time.Millisecond,
+		"gated TableGroup reconciled its spec change into a second child Shard")
+	gatedNow := &multigresv1alpha1.TableGroup{}
+	require.NoError(t, mgr.GetAPIReader().Get(ctx, client.ObjectKeyFromObject(tg), gatedNow))
+	testutil.RequireNoWrites(ctx, t, mgr.GetAPIReader(), gatedNow, 2*time.Second)
+
+	// 3. Remove the object's own label - spec and namespace untouched.
+	counter.WaitQuiescent(t, tgKey)
+	before := counter.CountFor(tgKey)
+	testutil.PatchLabel(t, k8sClient, tg, "multigres.com/reconcile", "")
+
+	require.Eventually(t, func() bool {
+		return counter.CountFor(tgKey) > before
+	}, 10*time.Second, 100*time.Millisecond,
+		"removing the object's own label should re-enqueue the TableGroup")
+
+	waitForShardExists(t, ctx, k8sClient, shardName("s2"), nsName)
 }

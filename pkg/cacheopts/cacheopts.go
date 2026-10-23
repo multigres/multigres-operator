@@ -49,7 +49,11 @@ import (
 // New returns the manager cache options, given the namespace the operator runs
 // in. Objects in that namespace are cached unfiltered; everywhere else the
 // high-volume kinds are restricted to objects this operator manages.
-func New(operatorNamespace string) cache.Options {
+//
+// With laptopNamespace set the cache holds that one namespace and nothing else;
+// "Laptop-Mode Cache Scoping" in docs/development/caching-strategy.md has the
+// rules. The result is unchanged when laptopNamespace is empty.
+func New(operatorNamespace, laptopNamespace string) cache.Options {
 	// 1. Create the Label Selector for "app.kubernetes.io/managed-by = multigres-operator"
 	labelReq, _ := labels.NewRequirement(
 		metadata.LabelAppManagedBy,
@@ -70,8 +74,17 @@ func New(operatorNamespace string) cache.Options {
 		operatorNamespace:   unfilteredConfig,
 		cache.AllNamespaces: filteredConfig,
 	}
+	var defaultNamespaces map[string]cache.Config
+	if laptopNamespace != "" {
+		// Only the claimed namespace. The operator's own namespace holds its
+		// leader-election lease and webhook cert material, and laptop mode
+		// refuses both leader election and webhooks, so nothing reads it.
+		hybrid = map[string]cache.Config{laptopNamespace: filteredConfig}
+		defaultNamespaces = map[string]cache.Config{laptopNamespace: {}}
+	}
 
 	return cache.Options{
+		DefaultNamespaces: defaultNamespaces,
 		ByObject: map[client.Object]cache.ByObject{
 			// SECRETS: the "memory bomb" fix. Unfiltered in the operator's own
 			// namespace so cert-manager Secrets, which carry no label of ours,
@@ -82,7 +95,7 @@ func New(operatorNamespace string) cache.Options {
 			&corev1.Service{}:     {Namespaces: hybrid},
 			&corev1.Pod{}:         {Namespaces: hybrid},
 			// CONFIGMAPS are deliberately absent, so they fall back to
-			// unfiltered in all namespaces: users supply their own unlabelled
+			// DefaultNamespaces (unfiltered): users supply their own unlabelled
 			// ConfigMaps for postgresql.conf and the operator has to hash them.
 		},
 	}

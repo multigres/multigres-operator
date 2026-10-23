@@ -161,6 +161,12 @@ fmt: ## Run go fmt against code
 vet: ## Run go vet against code
 	go vet ./...
 
+.PHONY: check-kubedial
+check-kubedial: golangci-lint ## Run vet + lint with -tags kubedial (laptop-mode files)
+	go vet -tags kubedial ./...
+	$(GOLANGCI_LINT) run --build-tags kubedial ./...
+	go test -tags kubedial ./cmd/multigres-operator/...
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	$(GOLANGCI_LINT) run
@@ -221,7 +227,7 @@ pre-commit: fmt vet lint test ## Run full pre-commit checks (fmt, vet, lint, tes
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary with version metadata
 	@echo "==> Building operator binary (version: $(VERSION))"
-	go build -ldflags="$(LDFLAGS)" -o bin/multigres-operator cmd/multigres-operator/main.go
+	go build -ldflags="$(LDFLAGS)" -o bin/multigres-operator ./cmd/multigres-operator
 
 .PHONY: build-multigres-gc
 build-multigres-gc: fmt vet ## Build the multigres garbage-collector binary
@@ -230,7 +236,7 @@ build-multigres-gc: fmt vet ## Build the multigres garbage-collector binary
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/multigres-operator/main.go
+	go run -tags kubedial ./cmd/multigres-operator
 
 # Cross-platform builds are handled natively via --platform=$BUILDPLATFORM in the Dockerfile.
 # Use docker-buildx target or pass --platform to docker build for multi-arch images.

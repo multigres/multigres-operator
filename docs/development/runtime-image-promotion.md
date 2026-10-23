@@ -1,9 +1,10 @@
 # Runtime image promotion
 
 The nightly compatibility workflow promotes runtime defaults only after a
-scheduled canary on `multigres/multigres-operator`'s `main` branch passes. Proto
-dependency sync does not change these defaults. Manual canaries are diagnostic;
-they cannot publish a promotion PR or mark an upstream revision handled.
+canary on `multigres/multigres-operator`'s `main` branch passes. Proto dependency
+sync does not change these defaults. Manual canaries are diagnostic by default;
+explicit manual promotion requires a successful upstream build ID and fresh
+qualification on main.
 
 ## Evidence and image mapping
 
@@ -57,19 +58,55 @@ has a different digest set. Newer green sets replace all images and evidence in
 one tree/ref update, retaining branch ancestry without a force push. Reprocessing
 an identical set leaves its commit and original evidence unchanged.
 
-Compatibility reporting and promotion are sibling terminal jobs. Reporting has
-only `issues: write`; promotion has only `contents: write` and
+Compatibility reporting runs before promotion, so a recovered incident is closed
+before the revision can be checkpointed. This includes explicit manual promotion
+on main; diagnostic runs do not close incidents. Reporting has only `issues: write`;
+promotion has only `contents: write` and
 `pull-requests: write`. A green canary can close the compatibility incident even
 if promotion fails. Promotion errors fail the workflow without opening a
 compatibility incident.
 
 Only successful PR publication (or verification that the same set is already
 published/merged) writes the `nightly-compatibility-promoted-<sha>` checkpoint.
-Resolution reads these checkpoints only from successful scheduled runs on main;
+Resolution reads these checkpoints only from successful scheduled or manually
+promoted runs on main;
 older green-only artifacts do not count. A failed promotion remains eligible for
 the next scheduled run. A failed PR API call may leave the complete candidate
 commit on the promotion branch; retry repairs PR publication before writing the
 checkpoint. No partially updated image set can become visible on the branch.
+
+## Manual qualification and promotion
+
+Both full-suite qualification jobs have a 60-minute budget, including setup.
+Existing per-scenario deadlines are unchanged. A timeout is not a green canary.
+
+Run `Nightly upstream compatibility` from operator **main**, selecting a successful
+upstream `Nightly Build` run ID and explicitly enabling `promote`. For example,
+the build containing #1574 can be qualified and proposed with:
+
+```sh
+gh workflow run nightly-compatibility.yaml \
+  --repo multigres/multigres-operator --ref main \
+  -f nightly-run-id=39846754232 \
+  -f upstream-sha=1e0ec0d823f1c9da2a5f6514ef915695639aa944 \
+  -f operator-ref=main -F promote=true
+```
+
+The build may have been scheduled or manually dispatched, but must be a completed,
+successful upstream Nightly Build from main. An optional `upstream-sha` must match
+that build. The workflow reruns provenance, architecture and full e2e checks;
+it never treats an earlier diagnostic run as qualification. All normal promotion
+safeguards and the requirement for maintainer review remain in place.
+
+Leave `promote=false` to diagnose without updating the promotion PR. Explicit
+build IDs still receive build validation; SHA-only diagnostics remain supported.
+Diagnostic runs can test an operator branch and never write a promotion checkpoint.
+
+Rerunning the promotion PR's checks tests its existing pinned images, not newer
+upstream images. Advancing those pins requires the scheduled canary or explicit
+manual promotion. If operator main advances during qualification, rerun on current
+main. Delayed GitHub PR-head metadata is retried briefly; a concurrent branch
+update or persistent mismatch still fails without checkpointing.
 
 ## E2E image preparation
 

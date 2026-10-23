@@ -1,6 +1,6 @@
 # Containerfile for multigres-operator
 
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine3.23 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.23 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -39,7 +39,7 @@ RUN CGO_ENABLED=0 \
 	-X main.buildDate=${BUILD_DATE}" \
 	-trimpath -mod=readonly \
 	-a -o manager \
-	cmd/multigres-operator/main.go
+	./cmd/multigres-operator
 
 RUN CGO_ENABLED=0 \
 	GOOS=${TARGETOS:-linux} \

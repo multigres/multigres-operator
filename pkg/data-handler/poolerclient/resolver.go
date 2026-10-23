@@ -61,6 +61,9 @@ func Static(c rpcclient.MultipoolerClient) Resolver {
 type Options struct {
 	Capacity int
 	Insecure rpcclient.MultipoolerClient
+	// RPCOptions apply to every mTLS client the resolver creates, e.g. a
+	// context dialer in laptop mode.
+	RPCOptions []rpcclient.Option
 }
 
 // OperatorCertResolver caches one mTLS MultipoolerClient per cluster. The
@@ -126,6 +129,7 @@ func NewOperatorCertResolver(
 		return rpcclient.NewMultipoolerClient(
 			r.opts.Capacity,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)),
+			r.opts.RPCOptions...,
 		)
 	}
 	return r, nil

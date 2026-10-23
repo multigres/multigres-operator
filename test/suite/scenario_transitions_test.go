@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -63,15 +64,27 @@ func TestTransitions(t *testing.T) {
 // back, failing the test rather than returning an error: a write that does not
 // land is this file's own setup breaking, never an observation about the
 // operator.
+//
+// It retries on conflict because the cluster controller writes the
+// MultigresCluster's own metadata (the cleanup finalizer, the applied-images
+// annotation) with optimistic locking, so a reconcile landing between the Get
+// and the Update is ordinary rather than a failure. ctrltest has no
+// get-mutate-update helper, so this and the loop in
+// scenario_shard_lifecycle_test.go both hand-roll one; delete both once it
+// does.
 func (c *C) updateCluster(
 	cluster *MultigresCluster,
 	mutate func(*MultigresCluster),
 ) {
 	c.Helper()
-	got := &MultigresCluster{}
-	c.NoError(c.Get(client.ObjectKeyFromObject(cluster), got), "get cluster")
-	mutate(got)
-	c.NoError(c.Update(got), "update cluster")
+	c.NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		got := &MultigresCluster{}
+		if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
+			return err
+		}
+		mutate(got)
+		return c.Update(got)
+	}), "update cluster")
 }
 
 // pvcRequests reads every PVC in ns with the storage request it carries, for

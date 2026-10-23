@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"flag"
+	"net"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -54,6 +55,7 @@ import (
 	multigresclustercontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
 	tablegroupcontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/images"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	cellcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
@@ -99,6 +101,16 @@ func main() {
 	var webhookServiceName string
 
 	defaultNS := os.Getenv("POD_NAMESPACE")
+	defaultSA := os.Getenv("POD_SERVICE_ACCOUNT")
+	defaultedOutOfCluster := (defaultNS == "" || defaultSA == "") && outOfCluster()
+	if defaultedOutOfCluster {
+		if defaultNS == "" {
+			defaultNS = "default"
+		}
+		if defaultSA == "" {
+			defaultSA = "default"
+		}
+	}
 	if defaultNS == "" {
 		setupLog.Error(
 			errors.New("POD_NAMESPACE environment variable must be set"),
@@ -106,8 +118,6 @@ func main() {
 		)
 		os.Exit(1)
 	}
-
-	defaultSA := os.Getenv("POD_SERVICE_ACCOUNT")
 	if defaultSA == "" {
 		setupLog.Error(
 			errors.New("POD_SERVICE_ACCOUNT environment variable must be set"),
@@ -200,6 +210,28 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Laptop-mode hard-error guards. These run before the config is loaded and
+	// long before ctrl.NewManager, so a misconfigured run can never reach an API
+	// server. They sit after SetLogger so the reason is actually printed rather
+	// than dropped by the pre-configuration null logger. In a stock in-cluster
+	// deployed run they are a no-op: laptopNamespace() returns "" and
+	// outOfCluster() is false.
+	laptopNS := laptopNamespace()
+	if defaultedOutOfCluster {
+		setupLog.Info(
+			"running out-of-cluster; defaulting unset POD_NAMESPACE/POD_SERVICE_ACCOUNT",
+			"namespace", defaultNS, "serviceAccount", defaultSA,
+		)
+	}
+	if err := laptopModeStartupError(
+		laptopNS,
+		enableLeaderElection,
+		webhookEnabled,
+	); err != nil {
+		setupLog.Error(err, "invalid configuration")
+		os.Exit(1)
+	}
 
 	// The Go runtime derives GOMAXPROCS from the cgroup CPU quota on its own
 	// (go1.25+), but has no equivalent for memory: golang/go#75164 is still an
@@ -333,17 +365,43 @@ func main() {
 	config.QPS = 50
 	config.Burst = 100
 
+	// Both checks run before the manager starts a single watch, so a mislabelled
+	// namespace or a stray cluster-wide run is a startup failure rather than a
+	// fight over the same objects.
+	if laptopNS != "" || outOfCluster() {
+		bootstrap, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
+			setupLog.Error(err, "failed to create bootstrap client for the startup checks")
+			os.Exit(1)
+		}
+		if err := preflight(context.Background(), bootstrap, laptopNS, outOfCluster()); err != nil {
+			setupLog.Error(err, "refusing to start")
+			os.Exit(1)
+		}
+	}
+
+	// Only laptop mode gets a custom dialer: the deployed operator keeps
+	// clientv3's in-cluster DNS dialing, and a stock build never has laptopNS.
+	var laptopDial func(ctx context.Context, network, addr string) (net.Conn, error)
+	if laptopNS != "" {
+		laptopDial, err = laptopDialer(config)
+		if err != nil {
+			setupLog.Error(err, "failed to construct laptop-mode dialer")
+			os.Exit(1)
+		}
+	}
+
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		HealthProbeBindAddress: probeAddr,
 		PprofBindAddress:       pprofAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "multigres-operator.multigres.com",
+		LeaderElectionID:       leaderElectionID,
 		// RELEASE LEADER ON CANCEL: Enables faster failover during rolling upgrades
 		LeaderElectionReleaseOnCancel: true,
 
-		Cache: cacheopts.New(defaultNS),
+		Cache: cacheopts.New(defaultNS, laptopNS),
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
 			Port:    webhookPort,
 			CertDir: webhookCertDir,
@@ -410,17 +468,28 @@ func main() {
 		mgr.GetClient(),
 		webhookServiceNamespace,
 	)
+	// Laptop mode reaches multipooler pods only through the laptop dialer.
+	var rpcOpts []rpcclient.Option
+	if laptopDial != nil {
+		rpcOpts = append(rpcOpts, rpcclient.WithContextDialer(
+			func(ctx context.Context, addr string) (net.Conn, error) {
+				return laptopDial(ctx, "tcp", addr)
+			},
+		))
+	}
 	rpcClient := rpcclient.NewMultipoolerClient(
 		100,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		rpcOpts...,
 	)
 	defer rpcClient.Close()
 
 	poolerClients, err := poolerclient.NewOperatorCertResolver(
 		mgr.GetAPIReader(),
 		poolerclient.Options{
-			Capacity: 100,
-			Insecure: rpcClient,
+			Capacity:   100,
+			Insecure:   rpcClient,
+			RPCOptions: rpcOpts,
 		},
 	)
 	if err != nil {
@@ -429,6 +498,8 @@ func main() {
 	}
 	defer poolerClients.Close()
 
+	gate := features.NewGate(laptopNS)
+
 	if err = (&multigresclustercontroller.MultigresClusterReconciler{
 		Client:            mgr.GetClient(),
 		Scheme:            mgr.GetScheme(),
@@ -436,6 +507,8 @@ func main() {
 		APIReader:         mgr.GetAPIReader(),
 		Images:            imagesConfig,
 		PoolerClientCache: poolerClients,
+		Gate:              gate,
+		DialContext:       laptopDial,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MultigresCluster")
 		os.Exit(1)
@@ -445,6 +518,7 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
+		Gate:     gate,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TableGroup")
 		os.Exit(1)
@@ -454,15 +528,18 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("cell-controller"),
+		Gate:     gate,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Cell")
 		os.Exit(1)
 	}
 
 	if err = (&toposervercontroller.TopoServerReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("toposerver-controller"),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Recorder:    mgr.GetEventRecorderFor("toposerver-controller"),
+		Gate:        gate,
+		DialContext: laptopDial,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TopoServer")
 		os.Exit(1)
@@ -474,6 +551,8 @@ func main() {
 		Recorder:      mgr.GetEventRecorderFor("shard-controller"),
 		APIReader:     mgr.GetAPIReader(),
 		PoolerClients: poolerClients,
+		Gate:          gate,
+		DialContext:   laptopDial,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Shard")
 		os.Exit(1)
@@ -508,6 +587,33 @@ func main() {
 		setupLog.Error(err, "Problem running Multigres Operator")
 		os.Exit(1)
 	}
+}
+
+// laptopModeStartupError returns the first reason a startup is unsafe, or nil
+// when it is safe. It is deliberately pure so the guards can be table-tested
+// without a cluster; main converts a non-nil result into os.Exit(1) before the
+// manager is constructed.
+//
+// It guards only the flag combinations of the --namespace laptop mode. Every
+// check that depends on the cluster, which namespace the deployed operator
+// runs in included, is preflight's, after the config is loaded.
+func laptopModeStartupError(
+	laptopNS string,
+	leaderElection, webhooks bool,
+) error {
+	if laptopNS == "" {
+		return nil
+	}
+	if leaderElection {
+		return errors.New("--namespace cannot be combined with --leader-elect=true: " +
+			"it would steal the deployed operator's lease and shut it down")
+	}
+	if webhooks {
+		return errors.New("--namespace requires --webhook-enable=false: the internal " +
+			"cert rotator patches the shared MutatingWebhookConfiguration cluster-wide, " +
+			"in-cluster or not")
+	}
+	return nil
 }
 
 func certsExist(dir string) bool {

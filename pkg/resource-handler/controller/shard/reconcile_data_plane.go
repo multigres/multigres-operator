@@ -813,7 +813,7 @@ func (r *ShardReconciler) topoStore(
 	// Read the client credential with the uncached reader: the manager's cache
 	// only stores tenant-namespace Secrets carrying the operator's managed-by
 	// label, and a cert-manager or user-provided topology Secret does not.
-	return topo.NewStoreFromShard(ctx, r.APIReader, shard)
+	return topo.NewStoreFromShard(ctx, r.APIReader, shard, r.DialContext)
 }
 
 // reconcilePoolerPrune lists active pods for the shard and marks topology

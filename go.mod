@@ -1,11 +1,12 @@
 module github.com/multigres/multigres-operator
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0
-	github.com/multigres/multigres v0.0.0-20261016193550-5e608a7a5d96
+	github.com/multigres/kubedial v0.1.0
+	github.com/multigres/multigres v0.0.0-20261020212633-6fd434f73b20
 	github.com/multigres/testkit v0.4.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3

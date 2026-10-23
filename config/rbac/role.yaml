@@ -30,6 +30,14 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - nodes
   verbs:
   - list
@@ -87,6 +95,14 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - coordination.k8s.io
+  resourceNames:
+  - multigres-operator.multigres.com
+  resources:
+  - leases
+  verbs:
+  - list
 - apiGroups:
   - multigres.com
   resources:

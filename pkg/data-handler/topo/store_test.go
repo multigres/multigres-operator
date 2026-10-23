@@ -3,8 +3,11 @@ package topo_test
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	_ "github.com/multigres/multigres/go/common/topoclient/etcdtopo"
 	corev1 "k8s.io/api/core/v1"
@@ -43,7 +46,12 @@ func TestNewStoreFromShard(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			store, err := topo.NewStoreFromShard(context.Background(), topoTestClient(), tc.shard)
+			store, err := topo.NewStoreFromShard(
+				context.Background(),
+				topoTestClient(),
+				tc.shard,
+				nil,
+			)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("NewStoreFromShard() error = %v, wantErr %v", err, tc.wantErr)
 				return
@@ -66,7 +74,7 @@ func TestNewStoreFromShard_InvalidImplementation(t *testing.T) {
 		},
 	}
 
-	store, err := topo.NewStoreFromShard(context.Background(), topoTestClient(), shard)
+	store, err := topo.NewStoreFromShard(context.Background(), topoTestClient(), shard, nil)
 	if err == nil {
 		if store != nil {
 			_ = store.Close()
@@ -92,7 +100,7 @@ func TestNewStoreFromShard_MissingSecretIsLoud(t *testing.T) {
 		},
 	}
 
-	_, err := topo.NewStoreFromShard(context.Background(), topoTestClient(), shard)
+	_, err := topo.NewStoreFromShard(context.Background(), topoTestClient(), shard, nil)
 	if err == nil {
 		t.Fatal("expected an error for a missing client credential Secret")
 	}
@@ -119,7 +127,7 @@ func TestNewStoreFromRef_MissingKeyIsLoud(t *testing.T) {
 		ClientCertSecret: "topo-tls",
 	}
 
-	_, err := topo.NewStoreFromRef(context.Background(), topoTestClient(secret), "team-a", ref)
+	_, err := topo.NewStoreFromRef(context.Background(), topoTestClient(secret), "team-a", ref, nil)
 	if err == nil {
 		t.Fatal("expected an error for a Secret missing tls.key")
 	}
@@ -144,7 +152,13 @@ func TestNewStoreFromRef_WithClientCert(t *testing.T) {
 		ClientCertSecret: "topo-tls",
 	}
 
-	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(secret), "team-a", ref)
+	store, err := topo.NewStoreFromRef(
+		context.Background(),
+		topoTestClient(secret),
+		"team-a",
+		ref,
+		nil,
+	)
 	if err != nil {
 		t.Fatalf("NewStoreFromRef() unexpected error: %v", err)
 	}
@@ -179,7 +193,7 @@ func TestNewStoreFromRef(t *testing.T) {
 		RootPath: "/test",
 	}
 
-	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(), "team-a", ref)
+	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(), "team-a", ref, nil)
 	if err != nil {
 		t.Fatalf("NewStoreFromRef() unexpected error: %v", err)
 	}
@@ -195,11 +209,50 @@ func TestNewStoreFromRef_InvalidImplementation(t *testing.T) {
 		Implementation: "invalid-implementation-that-does-not-exist",
 	}
 
-	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(), "team-a", ref)
+	store, err := topo.NewStoreFromRef(context.Background(), topoTestClient(), "team-a", ref, nil)
 	if err == nil {
 		if store != nil {
 			_ = store.Close()
 		}
 		t.Error("NewStoreFromRef() should error with invalid implementation")
+	}
+}
+
+// In laptop mode the topology server is reachable only through the laptop
+// dialer, so the store must hand it the raw host:port, even for a host the
+// local resolver cannot resolve.
+func TestNewStoreFromRefDialsThroughTheGivenDialer(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		dials []string
+	)
+	dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+		mu.Lock()
+		dials = append(dials, addr)
+		mu.Unlock()
+		return nil, errors.New("recording dialer refuses every dial")
+	}
+	ref := multigresv1alpha1.GlobalTopoServerRef{
+		Address:  "etcd-0.example.internal:2379",
+		RootPath: "/test",
+	}
+	store, err := topo.NewStoreFromRef(t.Context(), topoTestClient(), "team-a", ref, dial)
+	if err != nil {
+		t.Fatalf("NewStoreFromRef() unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, err := store.GetCellNames(ctx); err == nil {
+		t.Fatal("want an error from a dialer that refuses every dial")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dials) == 0 {
+		t.Fatal("the dialer was never used")
+	}
+	if dials[0] != "etcd-0.example.internal:2379" {
+		t.Errorf("dialed %q, want the raw host:port etcd-0.example.internal:2379", dials[0])
 	}
 }

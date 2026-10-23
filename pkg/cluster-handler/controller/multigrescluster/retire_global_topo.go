@@ -558,7 +558,7 @@ func (r *MultigresClusterReconciler) etcdIdentity(
 	if reader == nil {
 		reader = r.Client
 	}
-	return topo.ReadEtcdIdentity(ctx, reader, namespace, ref)
+	return topo.ReadEtcdIdentity(ctx, reader, namespace, ref, r.DialContext)
 }
 
 // podReferences reports whether any container or init container of pod has

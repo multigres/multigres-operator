@@ -7,6 +7,7 @@ package topo
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -33,8 +34,9 @@ func NewStoreFromShard(
 	ctx context.Context,
 	c client.Reader,
 	shard *multigresv1alpha1.Shard,
+	dial func(ctx context.Context, network, addr string) (net.Conn, error),
 ) (topoclient.Store, error) {
-	return newStore(ctx, c, shard.Namespace, shard.Spec.GlobalTopoServer)
+	return newStore(ctx, c, shard.Namespace, shard.Spec.GlobalTopoServer, dial)
 }
 
 // NewStoreFromRef creates a topoclient.Store using a GlobalTopoServerRef and the
@@ -45,17 +47,20 @@ func NewStoreFromRef(
 	c client.Reader,
 	namespace string,
 	ref multigresv1alpha1.GlobalTopoServerRef,
+	dial func(ctx context.Context, network, addr string) (net.Conn, error),
 ) (topoclient.Store, error) {
-	return newStore(ctx, c, namespace, ref)
+	return newStore(ctx, c, namespace, ref, dial)
 }
 
 // newStore opens a topology store for the given reference, loading client TLS
-// material from the referenced Secrets when the reference carries it.
+// material from the referenced Secrets when the reference carries it. A non-nil
+// dial carries every topology connection (laptop mode); nil dials directly.
 func newStore(
 	ctx context.Context,
 	c client.Reader,
 	namespace string,
 	ref multigresv1alpha1.GlobalTopoServerRef,
+	dial func(ctx context.Context, network, addr string) (net.Conn, error),
 ) (topoclient.Store, error) {
 	implementation := ref.Implementation
 	if implementation == "" {
@@ -68,6 +73,11 @@ func newStore(
 		return nil, err
 	}
 	config.TLS = tlsOptions
+	if dial != nil {
+		config.ContextDialer = func(ctx context.Context, addr string) (net.Conn, error) {
+			return dial(ctx, "tcp", addr)
+		}
+	}
 
 	store, err := topoclient.OpenServer(
 		implementation, ref.RootPath, []string{ref.Address}, config,

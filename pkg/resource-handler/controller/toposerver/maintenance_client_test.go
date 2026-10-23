@@ -1,12 +1,14 @@
 package toposerver
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"testing"
 	"time"
 
@@ -16,6 +18,27 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestMaintenanceClientDialOptionsFollowDialContext(t *testing.T) {
+	withoutDialer := (&TopoServerReconciler{}).maintenanceClientConfig(t.Context(), "ep", nil)
+	if len(withoutDialer.DialOptions) != 0 {
+		t.Fatalf("nil DialContext: DialOptions = %d, want 0", len(withoutDialer.DialOptions))
+	}
+	if got := withoutDialer.Endpoints; len(got) != 1 || got[0] != "ep" {
+		t.Fatalf("Endpoints = %v, want [ep]", got)
+	}
+
+	withDialer := (&TopoServerReconciler{
+		DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, nil },
+	}).maintenanceClientConfig(
+		t.Context(),
+		"ep",
+		nil,
+	)
+	if len(withDialer.DialOptions) == 0 {
+		t.Fatal("set DialContext: DialOptions is empty, want the context dialer")
+	}
+}
 
 func TestMaintenanceTLSUsesUncachedCredentialAndFailsClosed(t *testing.T) {
 	ts := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
