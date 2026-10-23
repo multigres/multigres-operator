@@ -148,7 +148,7 @@ test('report and promotion have separate permissions and only promotion writes h
   const report = workflow.split('\n  report:\n')[1].split('\n  promote:\n')[0];
   const promotion = workflow.split('\n  promote:\n')[1];
   assert.match(report, /needs: \[resolve, preflight, e2e\]/);
-  assert.match(promotion, /needs: \[resolve, preflight, e2e\]/);
+  assert.match(promotion, /needs: \[resolve, preflight, e2e, report\]/);
   assert.match(report, /permissions:\n      issues: write[^\n]*\n    steps:/);
   assert.match(promotion, /permissions:\n      contents: write\n      pull-requests: write\n    steps:/);
   assert.ok(!report.includes('upload-artifact'));
@@ -220,4 +220,49 @@ test('manual promotion is opt-in, main-only and requires fresh successful verifi
   for (const job of ['preflight', 'e2e']) assert.ok(promotion.includes(`needs.${job}.result == 'success'`));
   assert.match(workflow.split('\n  e2e:\n')[1].split('\n  report:\n')[0], /timeout-minutes: 60/);
   assert.match(fs.readFileSync('.github/workflows/pull-request.yaml', 'utf8').split('\n  promotion-e2e:\n')[1], /timeout-minutes: 60/);
+});
+
+for (const scenario of [
+  { name: 'explicit manual promotion', promote: 'true', ref: 'refs/heads/main', operator: 'main', owner: 'multigres', closes: true },
+  { name: 'manual diagnostic on main', promote: 'false', ref: 'refs/heads/main', operator: 'main', owner: 'multigres', closes: false },
+  { name: 'branch workflow', promote: 'true', ref: 'refs/heads/feature', operator: 'main', owner: 'multigres', closes: false },
+  { name: 'operator skew diagnostic', promote: 'true', ref: 'refs/heads/main', operator: 'feature', owner: 'multigres', closes: false },
+  { name: 'fork workflow', promote: 'true', ref: 'refs/heads/main', operator: 'main', owner: 'fork', closes: false },
+]) {
+  test(`incident recovery from ${scenario.name}`, async (t) => {
+    const env = {
+      RESOLVE_RESULT: 'success', PREFLIGHT_RESULT: 'success', E2E_RESULT: 'success',
+      EVENT_NAME: 'workflow_dispatch', PROMOTE: scenario.promote, OPERATOR_REF: scenario.operator,
+      UPSTREAM_SHA: 'a'.repeat(40), GITHUB_SERVER_URL: 'https://github.com',
+    };
+    for (const [key, value] of Object.entries(env)) {
+      const previous = process.env[key];
+      process.env[key] = value;
+      t.after(() => { if (previous === undefined) delete process.env[key]; else process.env[key] = previous; });
+    }
+    const updates = [], comments = [];
+    const issues = {
+      getLabel: async () => {}, listForRepo: async () => {},
+      update: async args => updates.push(args), createComment: async args => comments.push(args),
+      create: async () => assert.fail('A successful run must not open an incident'),
+    };
+    const github = { rest: { issues }, paginate: async () => [{ number: 741, body: '<!-- nightly-compatibility-canary -->' }] };
+    const context = { repo: { owner: scenario.owner, repo: 'multigres-operator' }, ref: scenario.ref, runId: 123 };
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    await new AsyncFunction('github', 'context', 'core', step('Update tracking issue', 'script', 10))(github, context, { info() {} });
+    assert.equal(updates.length, scenario.closes ? 1 : 0);
+    assert.equal(comments.length, scenario.closes ? 1 : 0);
+    if (scenario.closes) {
+      assert.equal(updates[0].state, 'closed');
+      assert.equal(updates[0].issue_number, 741);
+      assert.ok(comments[0].body.includes('/actions/runs/123'));
+    }
+  });
+}
+test('promotion cannot checkpoint when incident reporting fails', () => {
+  const promotion = workflow.split('\n  promote:\n')[1];
+  assert.match(promotion, /needs: \[resolve, preflight, e2e, report\]/);
+  assert.ok(promotion.includes("needs.report.result == 'success'"));
+  const reportStep = workflow.split('      - name: Update tracking issue\n')[1].split('\n        with:')[0];
+  assert.ok(reportStep.includes('PROMOTE: ${{ inputs.promote }}'));
 });

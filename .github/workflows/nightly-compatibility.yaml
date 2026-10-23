@@ -363,6 +363,7 @@ jobs:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           EVENT_NAME: ${{ github.event_name }}
+          PROMOTE: ${{ inputs.promote }}
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short-sha }}
           LAST_GREEN_SHA: ${{ needs.resolve.outputs.last-green-sha }}
@@ -381,7 +382,8 @@ jobs:
               process.env.E2E_RESULT === 'success';
             const canonicalRun =
               process.env.OPERATOR_REF === 'main' &&
-              process.env.EVENT_NAME === 'schedule' &&
+              (process.env.EVENT_NAME === 'schedule' ||
+                (process.env.EVENT_NAME === 'workflow_dispatch' && process.env.PROMOTE === 'true')) &&
               context.ref === 'refs/heads/main' &&
               context.repo.owner === 'multigres' &&
               context.repo.repo === 'multigres-operator';
@@ -519,7 +521,7 @@ jobs:
 
   promote:
     name: Promote verified runtime defaults
-    needs: [resolve, preflight, e2e]
+    needs: [resolve, preflight, e2e, report]
     if: >-
       github.repository == 'multigres/multigres-operator' &&
       (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.promote)) &&
@@ -527,7 +529,8 @@ jobs:
       needs.resolve.outputs.operator-ref == 'main' &&
       needs.resolve.outputs.should-run == 'true' &&
       needs.preflight.result == 'success' &&
-      needs.e2e.result == 'success'
+      needs.e2e.result == 'success' &&
+      needs.report.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

@@ -58,8 +58,10 @@ has a different digest set. Newer green sets replace all images and evidence in
 one tree/ref update, retaining branch ancestry without a force push. Reprocessing
 an identical set leaves its commit and original evidence unchanged.
 
-Compatibility reporting and promotion are sibling terminal jobs. Reporting has
-only `issues: write`; promotion has only `contents: write` and
+Compatibility reporting runs before promotion, so a recovered incident is closed
+before the revision can be checkpointed. This includes explicit manual promotion
+on main; diagnostic runs do not close incidents. Reporting has only `issues: write`;
+promotion has only `contents: write` and
 `pull-requests: write`. A green canary can close the compatibility incident even
 if promotion fails. Promotion errors fail the workflow without opening a
 compatibility incident.
