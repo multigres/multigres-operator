@@ -1,0 +1,14 @@
+# Overlay: the extra RBAC a laptop-mode operator needs on top of the manager
+# role, granted to the multigres-operator:laptop group. Install it only on
+# development and staging clusters where laptop runs are expected; it is not
+# part of config/default or config/installer-rbac.
+# Usage: kustomize build config/laptop-rbac
+# See docs/development/reconcile-gating.md#rbac-for-a-laptop-run.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namePrefix: multigres-operator-
+
+resources:
+- clusterrole.yaml
+- clusterrolebinding.yaml
