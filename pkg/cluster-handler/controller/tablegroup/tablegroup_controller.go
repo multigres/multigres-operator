@@ -22,7 +22,9 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	"github.com/multigres/multigres-operator/pkg/util/status"
 )
 
 // TableGroupReconciler reconciles a TableGroup object.
@@ -181,8 +183,12 @@ func (r *TableGroupReconciler) handlePendingDeletion(
 		},
 		Status: tg.Status,
 	}
-	if err := r.Status().Patch(ctx, patchObj, client.Apply,
-		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+	if err := ownership.ApplyStatus(
+		ctx,
+		r.Client,
+		patchObj,
+		ownership.ManagerTableGroup,
+	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to set ReadyForDeletion on TableGroup: %w", err)
 	}
 
@@ -258,6 +264,11 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 			builder.WithPredicates(predicate.Or(
 				projectRefOrGenerationChangedPredicate(),
 				features.LabelsChanged(),
+				status.PhaseClearedPredicate(
+					func(o *multigresv1alpha1.TableGroup) multigresv1alpha1.Phase {
+						return o.Status.Phase
+					},
+				),
 			)),
 		).
 		Owns(&multigresv1alpha1.Shard{})

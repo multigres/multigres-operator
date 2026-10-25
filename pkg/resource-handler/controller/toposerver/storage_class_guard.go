@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 const (
@@ -160,8 +161,8 @@ func (r *TopoServerReconciler) validateEtcdStorageClassDependency(
 }
 
 // setStorageClassCondition patches the StorageClassValid condition using SSA.
-// Uses FieldOwner("multigres-operator-guard") to avoid ownership conflicts with
-// updateStatus which uses FieldOwner("multigres-operator").
+// Uses the ManagerTopoServerGuard field owner to avoid ownership conflicts with
+// updateStatus, which writes under ManagerTopoServer.
 
 // TODO: This stale-safe condition skip logic is mirrored in the Shard guard;
 // extract a shared helper to reduce duplication.
@@ -172,20 +173,29 @@ func (r *TopoServerReconciler) setStorageClassCondition(
 	reason string,
 	message string,
 ) error {
-	// Read the latest from the API server so the skip-if-unchanged check
-	// compares against the real persisted state, not a potentially stale
-	// in-memory copy.
+	// Read through the client's cache rather than use the in-memory copy,
+	// which a write earlier in this reconcile may have outdated. The cache can
+	// still lag: a stale read can repeat or skip one write until the next pass,
+	// and fails the tidy-up's test ops rather than misleading it.
 	latest := &multigresv1alpha1.TopoServer{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(toposerver), latest); err != nil {
 		return fmt.Errorf("failed to get TopoServer for StorageClass condition check: %w", err)
 	}
 
 	existing := meta.FindStatusCondition(latest.Status.Conditions, conditionStorageClassValid)
-	if existing != nil &&
+	unchanged := existing != nil &&
 		existing.Status == condStatus &&
 		existing.Reason == reason &&
 		existing.Message == message &&
-		existing.ObservedGeneration == latest.Generation {
+		existing.ObservedGeneration == latest.Generation
+	if ownership.SkipUnchanged(
+		ctx,
+		r.Client,
+		latest,
+		ownership.ManagerTopoServerGuard,
+		ownership.ConditionPath(conditionStorageClassValid),
+		unchanged,
+	) {
 		return nil
 	}
 
@@ -219,12 +229,11 @@ func (r *TopoServerReconciler) setStorageClassCondition(
 		},
 	}
 
-	if err := r.Status().Patch(
+	if err := ownership.ApplyStatus(
 		ctx,
+		r.Client,
 		patchObj,
-		client.Apply,
-		client.FieldOwner("multigres-operator-guard"),
-		client.ForceOwnership,
+		ownership.ManagerTopoServerGuard,
 	); err != nil {
 		return fmt.Errorf("failed to patch TopoServer StorageClass condition: %w", err)
 	}

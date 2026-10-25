@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -296,6 +297,8 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 // status, so orchReady and poolsReady are lost either way. The round-trip half
 // of this belongs to an apiserver, and lives in TestShardStatusQuiesces under
 // test/suite.
+const crdDir = "../../../../config/crd/bases"
+
 func TestSetStorageClassCondition_AppliesOnlyConditions(t *testing.T) {
 	t.Parallel()
 
@@ -396,10 +399,14 @@ func TestStorageClassCondition_IsStableAcrossReconciles(t *testing.T) {
 		},
 	}
 
+	// managedFields are returned, against the CRD schema, so the guard can see
+	// it owns its condition.
 	baseClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(shard).
 		WithStatusSubresource(&multigresv1alpha1.Shard{}).
+		WithReturnManagedFields().
+		WithTypeConverters(testutil.TypeConverters(t, crdDir)...).
 		Build()
 
 	patches := 0
@@ -475,23 +482,8 @@ type guardStatusApply struct {
 // It captures every guard-owned status apply's payload directly, identified
 // by the real client.SubResourcePatchOptions.FieldManager rather than by
 // payload shape, so the assertions hold regardless of how the guard's payload
-// happens to be built.
-//
-// It does not assert that the second reconcile makes zero guard applies, even
-// though on a real API server it would: the fake client's SSA implementation
-// (managedfields.DeducedTypeConverter, since the Shard CRD's structural schema
-// isn't available to it) treats the +listType=map Conditions slice as atomic,
-// so updateStatus's own apply - a different field owner, earlier in the same
-// Reconcile - replaces status.conditions wholesale and erases whatever the
-// guard wrote in the previous reconcile. That forces the guard to see no
-// existing condition and reapply every single call, on both fixed and broken
-// code, which is exactly why TestStorageClassCondition_IsStableAcrossReconciles
-// avoids driving Reconcile for its own assertion. What is real and worth
-// pinning here: each individual Reconcile call makes at most one guard apply
-// (a second writer within one pass would make two), and the verdict it writes
-// does not flap from one reconcile to the next. The true single-writer,
-// settles-for-real proof against a schema-aware apply is
-// TestShardStatusQuiesces under test/suite.
+// happens to be built. The fake applies against the CRD schema, so a settled
+// condition is skipped on the second pass exactly as on an apiserver.
 func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 	t.Parallel()
 
@@ -529,6 +521,8 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 		WithScheme(scheme).
 		WithObjects(shard, testPostgresPasswordSecretForShard(shard)).
 		WithStatusSubresource(&multigresv1alpha1.Shard{}).
+		WithReturnManagedFields().
+		WithTypeConverters(testutil.TypeConverters(t, crdDir)...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			SubResourcePatch: func(
 				ctx context.Context,
@@ -539,7 +533,7 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 				opts ...client.SubResourcePatchOption,
 			) error {
 				popts := (&client.SubResourcePatchOptions{}).ApplyOptions(opts)
-				if popts.FieldManager == "multigres-resource-handler-guard" {
+				if popts.FieldManager == ownership.ManagerShardGuard {
 					raw, err := json.Marshal(obj)
 					if err != nil {
 						t.Fatalf("marshal guard payload: %v", err)
@@ -608,41 +602,12 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 		t.Fatalf("unexpected first verdict: %+v", first.condition)
 	}
 
-	// The fake client's SSA status apply replaces the whole object rather than
-	// scoping to the applied fields, which drops Spec. Restore it exactly as the
-	// existing multi-reconcile loop in TestShardReconciler_Reconcile does, so the
-	// second reconcile sees the same spec as the first rather than erroring on a
-	// shard with no pools.
-	var stored multigresv1alpha1.Shard
-	if err := fakeClient.Get(t.Context(), req.NamespacedName, &stored); err != nil {
-		t.Fatalf("read shard before restoring spec: %v", err)
-	}
-	stored.Spec = shard.Spec
-	if err := fakeClient.Update(t.Context(), &stored); err != nil {
-		t.Fatalf("restore shard spec: %v", err)
-	}
-
 	if _, err := r.Reconcile(t.Context(), req); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
-	if len(guardApplies) != 2 {
-		t.Fatalf(
-			"second reconcile must make exactly one guard apply of its own (a second writer "+
-				"is back), got %d total",
-			len(guardApplies),
-		)
-	}
-	second := guardApplies[1]
-	assertOnlyOwnsConditions(t, second)
-
-	if second.condition.Status != first.condition.Status ||
-		second.condition.Reason != first.condition.Reason ||
-		second.condition.Message != first.condition.Message {
-		t.Fatalf(
-			"StorageClassValid verdict flapped between reconciles:\n  %+v\n  %+v",
-			first.condition,
-			second.condition,
-		)
+	if len(guardApplies) != 1 {
+		t.Fatalf("second reconcile rewrote a settled condition: %d guard applies total",
+			len(guardApplies))
 	}
 }
 
@@ -1025,6 +990,7 @@ func persistStorageClassCondition(
 	c client.Client,
 	key client.ObjectKey,
 	build func(generation int64) metav1.Condition,
+	owner string,
 ) {
 	t.Helper()
 
@@ -1033,7 +999,7 @@ func persistStorageClassCondition(
 		t.Fatalf("read shard: %v", err)
 	}
 	shard.Status.Conditions = []metav1.Condition{build(shard.Generation)}
-	if err := c.Status().Update(t.Context(), &shard); err != nil {
+	if err := c.Status().Update(t.Context(), &shard, client.FieldOwner(owner)); err != nil {
 		t.Fatalf("seed condition: %v", err)
 	}
 }
@@ -1043,6 +1009,9 @@ func persistStorageClassCondition(
 // widens the skip so it swallows a real change, and a case where several fields
 // differ at once cannot see that, so each case here differs from the persisted
 // condition in exactly one compared field.
+//
+// The last case differs in none of them but is owned by another manager, which
+// the guard must claim once rather than skip.
 //
 // Some of these field combinations are not reachable verdicts: no production
 // verdict pairs StorageClassFound with False. The unit under test is
@@ -1061,6 +1030,7 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 	cases := []struct {
 		name       string
 		persisted  func(generation int64) metav1.Condition
+		owner      string
 		wantPatch  bool
 		wantReason string
 	}{
@@ -1134,6 +1104,21 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 			},
 			wantPatch: false,
 		},
+		{
+			name: "nothing differs, owned by a legacy manager",
+			persisted: func(generation int64) metav1.Condition {
+				return metav1.Condition{
+					Type:               conditionStorageClassValid,
+					Status:             metav1.ConditionTrue,
+					Reason:             storageClassFoundReason,
+					Message:            foundMessage,
+					ObservedGeneration: generation,
+					LastTransitionTime: metav1.Now(),
+				}
+			},
+			owner:     ownership.LegacyResourceHandlerGuard,
+			wantPatch: true,
+		},
 	}
 
 	for _, tc := range cases {
@@ -1144,17 +1129,27 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 			_ = multigresv1alpha1.AddToScheme(scheme)
 			_ = storagev1.AddToScheme(scheme)
 
+			// A generation above 1, as a live object has, so the stale
+			// observedGeneration case persists a positive value.
 			shard := &multigresv1alpha1.Shard{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-shard", Namespace: "default", Generation: 2,
+				},
 			}
 			baseClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(shard).
 				WithStatusSubresource(&multigresv1alpha1.Shard{}).
+				WithReturnManagedFields().
+				WithTypeConverters(testutil.TypeConverters(t, crdDir)...).
 				Build()
 
+			owner := tc.owner
+			if owner == "" {
+				owner = ownership.ManagerShardGuard
+			}
 			key := client.ObjectKeyFromObject(shard)
-			persistStorageClassCondition(t, baseClient, key, tc.persisted)
+			persistStorageClassCondition(t, baseClient, key, tc.persisted, owner)
 
 			patches := 0
 			fakeClient := testutil.NewFakeClientWithFailures(
@@ -1285,7 +1280,7 @@ func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 			ObservedGeneration: generation,
 			LastTransitionTime: backdated,
 		}
-	})
+	}, ownership.ManagerShardGuard)
 
 	if err := baseClient.Create(t.Context(), &storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{Name: "appears-later"},
@@ -1357,7 +1352,7 @@ func TestStorageClassCondition_PreservesLastTransitionTimeWithoutATransition(t *
 			ObservedGeneration: generation,
 			LastTransitionTime: backdated,
 		}
-	})
+	}, ownership.ManagerShardGuard)
 
 	patches := 0
 	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{

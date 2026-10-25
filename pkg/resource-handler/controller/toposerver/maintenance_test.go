@@ -137,11 +137,11 @@ func maintenanceFixture(
 		t.Fatal(err)
 	}
 	r := &TopoServerReconciler{
-		Client:               c,
-		APIReader:            c,
-		Scheme:               scheme,
-		Recorder:             record.NewFakeRecorder(100),
-		newMaintenanceClient: func(context.Context, *multigresv1alpha1.TopoServer) (etcdMaintenanceClient, error) { return f, nil },
+		Client:                   c,
+		APIReader:                c,
+		Scheme:                   scheme,
+		Recorder:                 record.NewFakeRecorder(100),
+		MaintenanceClientFactory: func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error) { return f, nil },
 	}
 	return r, ts, f
 }

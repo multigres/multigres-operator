@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 // stepListChildShards reads the children once for the normal reconcile path.
@@ -64,7 +65,7 @@ func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResu
 			desired,
 			client.Apply,
 			client.ForceOwnership,
-			client.FieldOwner("multigres-operator"),
+			client.FieldOwner(ownership.ManagerChildWriter),
 		); err != nil {
 			return stepResult{}, newStepError(
 				fmt.Errorf("failed to apply shard: %w", err),

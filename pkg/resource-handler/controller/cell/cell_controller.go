@@ -25,6 +25,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
@@ -213,7 +214,7 @@ func (r *CellReconciler) reconcileMultigatewayDeployment(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply Multigateway Deployment: %w", err)
 	}
@@ -242,7 +243,7 @@ func (r *CellReconciler) reconcileMultigatewayService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply Multigateway Service: %w", err)
 	}
@@ -294,7 +295,7 @@ func (r *CellReconciler) reconcileLocalTopoServer(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply local TopoServer: %w", err)
 	}
@@ -472,8 +473,7 @@ func (r *CellReconciler) patchReadyForDeletionCondition(
 		},
 		Status: cell.Status,
 	}
-	if err := r.Status().Patch(ctx, patchObj, client.Apply,
-		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerCell); err != nil {
 		return fmt.Errorf("failed to patch ReadyForDeletion on Cell: %w", err)
 	}
 	return nil
@@ -512,8 +512,7 @@ func (r *CellReconciler) patchLocalTopoServerWaitingStatus(
 		},
 		Status: cell.Status,
 	}
-	if err := r.Status().Patch(ctx, patchObj, client.Apply,
-		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerCell); err != nil {
 		return fmt.Errorf("failed to patch local TopoServer waiting status on Cell: %w", err)
 	}
 	return nil
@@ -614,16 +613,9 @@ func (r *CellReconciler) patchWorkloadStatus(
 	// Note: We rely on Server-Side Apply (SSA) to handle idempotency.
 	// If the status hasn't changed, the API server will treat this Patch as a no-op,
 	// so we don't need a manual DeepEqual check here.
-	if err := r.Status().Patch(
-		ctx,
-		patchObj,
-		client.Apply,
-		client.FieldOwner("multigres-operator"),
-		client.ForceOwnership,
-	); err != nil {
+	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerCell); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
-
 	return nil
 }
 
@@ -713,6 +705,11 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 			builder.WithPredicates(predicate.Or(
 				projectRefOrGenerationChangedPredicate(),
 				features.LabelsChanged(),
+				status.PhaseClearedPredicate(
+					func(o *multigresv1alpha1.Cell) multigresv1alpha1.Phase {
+						return o.Status.Phase
+					},
+				),
 			)),
 		).
 		Owns(&multigresv1alpha1.TopoServer{}).

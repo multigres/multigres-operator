@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/postgresconfig"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -249,7 +250,7 @@ func (r *ShardReconciler) applyPostgresConfigMap(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply postgres config ConfigMap: %w", err)
 	}

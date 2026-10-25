@@ -34,6 +34,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	"github.com/multigres/multigres-operator/pkg/util/status"
 )
 
 // PoolerClientCache tracks which clusters may own cluster-scoped RPC clients
@@ -610,6 +611,11 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 			builder.WithPredicates(predicate.Or(
 				projectRefOrGenerationChangedPredicate(),
 				features.LabelsChanged(),
+				status.PhaseClearedPredicate(
+					func(o *multigresv1alpha1.MultigresCluster) multigresv1alpha1.Phase {
+						return o.Status.Phase
+					},
+				),
 			)),
 		).
 		Owns(&multigresv1alpha1.Cell{}).

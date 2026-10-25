@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 )
 
@@ -139,7 +140,7 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 				desired,
 				client.Apply,
 				client.ForceOwnership,
-				client.FieldOwner("multigres-operator"),
+				client.FieldOwner(ownership.ManagerChildWriter),
 			); err != nil {
 				return false, fmt.Errorf("failed to apply tablegroup '%s': %w", tgNameFull, err)
 			}

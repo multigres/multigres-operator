@@ -12,6 +12,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -56,7 +57,14 @@ func (r *ShardReconciler) reconcilePoolerReadiness(
 			conditionStatus = corev1.ConditionTrue
 		}
 		existing := findPoolerReadinessCondition(pod.Status.Conditions)
-		if conditionMatches(existing, conditionStatus, observation.Reason, observation.Message) {
+		if ownership.SkipUnchanged(
+			ctx,
+			r.Client,
+			pod,
+			ownership.ManagerShardReadiness,
+			poolerReadinessPath,
+			conditionMatches(existing, conditionStatus, observation.Reason, observation.Message),
+		) {
 			continue
 		}
 
@@ -91,19 +99,14 @@ func (r *ShardReconciler) reconcilePoolerReadiness(
 		// Pod whose status otherwise belongs to kubelet. Same reasoning as
 		// the storage-class guard.
 		//
-		// ForceOwnership is required, not optional, and must not be removed:
-		// the binary this replaces wrote this same field under this same
-		// manager name via client.MergeFrom, which the API server records as
-		// an Update-operation managedFields entry. SSA treats (manager,
-		// operation) as distinct owners, so the first Apply from this
-		// manager after an upgrade conflicts with its own leftover Update
-		// entry unless forced. Without ForceOwnership, every write that
-		// changes reason, message or status fails from that point on, and
-		// the readiness gate sticks at its pre-upgrade value.
+		// ApplyStatus forces ownership, so the apply takes the condition from
+		// a legacy entry (including an Update-operation entry left by a merge
+		// patch writer) instead of conflicting with it, and then tidies that
+		// entry away.
+		//
 		// No metadata.uid precondition: a stale observation could in principle
 		// land on a Pod recreated under the same name after this reconcile's
-		// List. Not a regression versus the prior MergeFrom patch, which had
-		// the same gap, so left as-is here.
+		// List. The next reconcile observes the new Pod and rewrites it.
 		apply := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": corev1.SchemeGroupVersion.String(),
 			"kind":       "Pod",
@@ -115,18 +118,19 @@ func (r *ShardReconciler) reconcilePoolerReadiness(
 				"conditions": []any{encoded},
 			},
 		}}
-		if err := r.Status().Patch(
+		if err := ownership.ApplyStatus(
 			ctx,
+			r.Client,
 			apply,
-			client.Apply,
-			client.FieldOwner("multigres-resource-handler-readiness"),
-			client.ForceOwnership,
+			ownership.ManagerShardReadiness,
 		); err != nil {
 			return fmt.Errorf("apply pooler readiness for pod %s: %w", pod.Name, err)
 		}
 	}
 	return nil
 }
+
+var poolerReadinessPath = ownership.ConditionPath(string(PoolerDataReadyCondition))
 
 func findPoolerReadinessCondition(conditions []corev1.PodCondition) *corev1.PodCondition {
 	for i := range conditions {

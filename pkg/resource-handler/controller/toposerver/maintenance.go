@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 	maintenanceHealthTimeout       = 15 * time.Second
 	maintenanceStablePeriod        = time.Minute
 	minimumReclaimBytes      int64 = 100 * 1024 * 1024
-	maintenanceFieldOwner          = "multigres-etcd-maintenance"
+	maintenanceFieldOwner          = ownership.ManagerEtcdMaintenance
 )
 
 func maintenanceEnabled(ts *multigresv1alpha1.TopoServer) bool {
@@ -32,6 +33,13 @@ func (r *TopoServerReconciler) maintenanceReader() client.Reader {
 		return r.APIReader
 	}
 	return r.Client
+}
+
+// MaintenanceEndpoints returns the member addresses the controller dials for
+// ts. The test suite builds its etcd simulator from this so the simulator
+// answers on exactly the strings the controller passes, and cannot drift.
+func MaintenanceEndpoints(ts *multigresv1alpha1.TopoServer) []string {
+	return maintenanceEndpoints(ts)
 }
 
 func maintenanceEndpoints(ts *multigresv1alpha1.TopoServer) []string {
@@ -61,7 +69,7 @@ func maintenanceEndpoints(ts *multigresv1alpha1.TopoServer) []string {
 // establish quorum health. Status also rejects members reporting etcd alarms.
 func healthyMembers(
 	ctx context.Context,
-	c etcdMaintenanceClient,
+	c EtcdMaintenanceClient,
 	endpoints []string,
 ) (map[string]*clientv3.StatusResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, maintenanceHealthTimeout)

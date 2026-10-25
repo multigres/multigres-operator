@@ -31,6 +31,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
@@ -824,7 +825,8 @@ func (w *capturingStatusWriter) Patch(
 }
 
 // TestUpdateStatus_FieldOwner verifies that the SSA status patch uses
-// "multigres-resource-handler" as the field owner, not "multigres-operator".
+// the Shard controller's status manager, not the child writer every child
+// object is applied under.
 func TestUpdateStatus_FieldOwner(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
@@ -866,12 +868,12 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 		t.Fatalf("updateStatus() unexpected error: %v", err)
 	}
 
-	// Verify the field owner is "multigres-resource-handler"
+	// Verify the field owner is the Shard status manager
 	foundFieldOwner := false
 	for _, opt := range capture.capturedOpts {
 		if fo, ok := opt.(client.FieldOwner); ok {
-			if string(fo) != "multigres-resource-handler" {
-				t.Errorf("field owner = %q, want %q", string(fo), "multigres-resource-handler")
+			if string(fo) != ownership.ManagerShard {
+				t.Errorf("field owner = %q, want %q", string(fo), ownership.ManagerShard)
 			}
 			foundFieldOwner = true
 		}

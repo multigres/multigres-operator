@@ -25,6 +25,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
@@ -48,8 +49,9 @@ type TopoServerReconciler struct {
 	// DialContext dials etcd member addresses. Nil (clientv3's default) outside
 	// laptop mode.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
-	// newMaintenanceClient supplies direct per-member clients; overridden in tests.
-	newMaintenanceClient func(context.Context, *multigresv1alpha1.TopoServer) (etcdMaintenanceClient, error)
+	// MaintenanceClientFactory, when set, replaces the real per-member etcd
+	// clients; the test suite injects a simulator here. Nil in production.
+	MaintenanceClientFactory func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error)
 }
 
 // Reconcile manages the etcd StatefulSet, headless service, and client service for a TopoServer.
@@ -263,7 +265,7 @@ func (r *TopoServerReconciler) reconcilePodDisruptionBudget(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply PodDisruptionBudget: %w", err)
 	}
@@ -297,7 +299,7 @@ func (r *TopoServerReconciler) reconcileStatefulSet(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply StatefulSet: %w", err)
 	}
@@ -331,7 +333,7 @@ func (r *TopoServerReconciler) reconcileHeadlessService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply headless Service: %w", err)
 	}
@@ -365,7 +367,7 @@ func (r *TopoServerReconciler) reconcileClientService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply client Service: %w", err)
 	}
@@ -484,16 +486,14 @@ func (r *TopoServerReconciler) updateStatus(
 	// Note: We rely on Server-Side Apply (SSA) to handle idempotency.
 	// If the status hasn't changed, the API server will treat this Patch as a no-op,
 	// so we don't need a manual DeepEqual check here.
-	if err := r.Status().Patch(
+	if err := ownership.ApplyStatus(
 		ctx,
+		r.Client,
 		patchObj,
-		client.Apply,
-		client.FieldOwner("multigres-operator"),
-		client.ForceOwnership,
+		ownership.ManagerTopoServer,
 	); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
-
 	return nil
 }
 
@@ -567,7 +567,15 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(
-			predicate.Or(predicate.GenerationChangedPredicate{}, features.LabelsChanged()),
+			predicate.Or(
+				predicate.GenerationChangedPredicate{},
+				features.LabelsChanged(),
+				status.PhaseClearedPredicate(
+					func(o *multigresv1alpha1.TopoServer) multigresv1alpha1.Phase {
+						return o.Status.Phase
+					},
+				),
+			),
 		)).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).

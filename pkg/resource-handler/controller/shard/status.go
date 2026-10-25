@@ -16,6 +16,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -176,16 +177,9 @@ func (r *ShardReconciler) patchStatus(
 	// Note: We rely on Server-Side Apply (SSA) to handle idempotency.
 	// If the status hasn't changed, the API server will treat this Patch as a no-op,
 	// so we don't need a manual DeepEqual check here.
-	if err := r.Status().Patch(
-		ctx,
-		patchObj,
-		client.Apply,
-		client.FieldOwner("multigres-resource-handler"),
-		client.ForceOwnership,
-	); err != nil {
+	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerShard); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
-
 	return nil
 }
 

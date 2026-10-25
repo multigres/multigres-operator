@@ -7,10 +7,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 // stepComputeStatus derives TableGroup status from desired children whose
@@ -136,12 +136,11 @@ func stepPatchStatus(ctx context.Context, rc *reconcileContext) (stepResult, err
 	}
 
 	// Server-Side Apply makes unchanged status patches no-ops.
-	if err := rc.r.Status().Patch(
+	if err := ownership.ApplyStatus(
 		ctx,
+		rc.r.Client,
 		patchObj,
-		client.Apply,
-		client.FieldOwner("multigres-operator"),
-		client.ForceOwnership,
+		ownership.ManagerTableGroup,
 	); err != nil {
 		return stepResult{}, newStepError(
 			fmt.Errorf("failed to patch status: %w", err),

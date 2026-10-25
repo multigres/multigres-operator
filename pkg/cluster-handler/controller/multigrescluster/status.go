@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 )
 
@@ -442,20 +443,8 @@ func (r *MultigresClusterReconciler) updateStatus(
 		)
 	}
 
-	// 1. Construct the Patch Object
-	patchObj := &multigresv1alpha1.MultigresCluster{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: multigresv1alpha1.GroupVersion.String(),
-			Kind:       "MultigresCluster",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cluster.Name,
-			Namespace: cluster.Namespace,
-		},
-		Status: cluster.Status,
-	}
+	patchObj := statusApplyObject(cluster)
 
-	// 2. Apply the Patch
 	if oldPhase != cluster.Status.Phase {
 		r.Recorder.Eventf(
 			cluster,
@@ -470,15 +459,28 @@ func (r *MultigresClusterReconciler) updateStatus(
 	// Note: We rely on Server-Side Apply (SSA) to handle idempotency.
 	// If the status hasn't changed, the API server will treat this Patch as a no-op,
 	// so we don't need a manual DeepEqual check here.
-	if err := r.Status().Patch(
-		ctx,
-		patchObj,
-		client.Apply,
-		client.FieldOwner("multigres-operator"),
-		client.ForceOwnership,
-	); err != nil {
+	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerCluster); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
-
 	return nil
+}
+
+// statusApplyObject is the status apply payload for cluster: its whole
+// in-memory status. Every status write of this controller sends the whole
+// status, because an apply is a complete statement of what the manager owns,
+// and a field it omits is pruned.
+func statusApplyObject(
+	cluster *multigresv1alpha1.MultigresCluster,
+) *multigresv1alpha1.MultigresCluster {
+	return &multigresv1alpha1.MultigresCluster{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: multigresv1alpha1.GroupVersion.String(),
+			Kind:       "MultigresCluster",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cluster.Name,
+			Namespace: cluster.Namespace,
+		},
+		Status: cluster.Status,
+	}
 }

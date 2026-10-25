@@ -21,6 +21,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
@@ -215,7 +216,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 				ctx,
 				shard,
 				client.MergeFrom(backupBase),
-				client.FieldOwner("multigres-resource-handler"),
+				client.FieldOwner(ownership.ManagerShard),
 			); patchErr != nil {
 				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
 			}
@@ -236,7 +237,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 				ctx,
 				shard,
 				client.MergeFrom(backupBase),
-				client.FieldOwner("multigres-resource-handler"),
+				client.FieldOwner(ownership.ManagerShard),
 			); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
@@ -340,7 +341,7 @@ func (r *ShardReconciler) reconcilePodRoles(
 			ctx,
 			shard,
 			client.MergeFrom(statusBase),
-			client.FieldOwner("multigres-resource-handler"),
+			client.FieldOwner(ownership.ManagerShard),
 		); err != nil {
 			logger.Error(err, "Failed to update shard pod roles")
 		}

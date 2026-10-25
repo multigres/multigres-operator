@@ -16,6 +16,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/cert"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -37,7 +38,7 @@ func (r *ShardReconciler) reconcilePgHbaConfigMap(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply pg_hba ConfigMap: %w", err)
 	}
@@ -64,7 +65,7 @@ func (r *ShardReconciler) reconcilePostgresExporterQueriesConfigMap(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply postgres_exporter queries ConfigMap: %w", err)
 	}
@@ -342,7 +343,7 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply shared backup PVC: %w", err)
 	}
@@ -398,7 +399,7 @@ func (r *ShardReconciler) reconcileShardPDB(
 			pdb,
 			client.Apply,
 			client.ForceOwnership,
-			client.FieldOwner("multigres-operator"),
+			client.FieldOwner(ownership.ManagerChildWriter),
 		); err != nil {
 			return fmt.Errorf("failed to apply shard PDB %s: %w", pdb.Name, err)
 		}
@@ -450,7 +451,7 @@ func (r *ShardReconciler) reconcilePoolHeadlessService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply pool headless Service: %w", err)
 	}

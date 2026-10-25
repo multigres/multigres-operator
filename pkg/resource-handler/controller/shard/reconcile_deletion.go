@@ -17,6 +17,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/drain"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -350,7 +351,7 @@ func (r *ShardReconciler) handlePendingDeletion(
 			ctx,
 			shard,
 			client.MergeFrom(statusBase),
-			client.FieldOwner("multigres-resource-handler"),
+			client.FieldOwner(ownership.ManagerShard),
 		); err != nil {
 			return ctrl.Result{}, fmt.Errorf("setting ReadyForDeletion condition: %w", err)
 		}

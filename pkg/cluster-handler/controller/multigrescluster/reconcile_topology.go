@@ -16,6 +16,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
@@ -224,7 +225,27 @@ func (r *MultigresClusterReconciler) markTopologyFailed(
 	})
 	cluster.Status.Phase = multigresv1alpha1.PhaseDegraded
 	cluster.Status.Message = cause.Error()
-	if err := r.Status().Update(ctx, cluster); err != nil {
+
+	// The same whole-status apply updateStatus makes, not a merge patch or an
+	// Update. An Update carries the snapshot's resourceVersion and can
+	// conflict with this controller's own earlier write, losing the failure on
+	// exactly the path that reports it. A merge patch sends the whole
+	// conditions list and is recorded as an Update-operation entry, so a stale
+	// condition it carries comes back owned by an entry no apply ever prunes.
+	//
+	// The apply needs no resourceVersion, but it is built from the cached
+	// snapshot and states the whole of what ManagerCluster owns, so it also
+	// prunes any field of this manager the snapshot lacks: a value a pass the
+	// cache has not caught up with wrote, such as initializedAt, is removed.
+	// The next healthy updateStatus stamps it again, with that pass's time.
+	// Anything stale this apply reasserts stays owned by this manager, so the
+	// next updateStatus apply corrects it.
+	if err := ownership.ApplyStatus(
+		ctx,
+		r.Client,
+		statusApplyObject(cluster),
+		ownership.ManagerCluster,
+	); err != nil {
 		logger.Error(err, "Failed to persist topology failure to status")
 	}
 }
