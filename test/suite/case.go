@@ -1,9 +1,13 @@
 package suite
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/multigres/testkit/ctrltest"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // C is this operator's test context: the generic harness handle from
@@ -17,6 +21,8 @@ import (
 // c.NoError and c.WaitForClusterHealthy read alike at the call site.
 type C struct {
 	*ctrltest.C
+	// legacy is the legacy-entry rule requireOwnership applies at cleanup.
+	legacy legacyRule
 }
 
 // newCase opens a test context on its own namespace.
@@ -27,7 +33,59 @@ type C struct {
 // rather than only the assertion message.
 func newCase(t *testing.T) *C {
 	t.Helper()
-	return &C{C: Suite.Case(t)}
+	// Registered before Suite.Case so it runs last (cleanups are LIFO), after
+	// testkit has closed the namespace's reconcile gate, so no controller
+	// recreates what it deletes.
+	var ns string
+	t.Cleanup(func() { deleteServices(t, ns) })
+	c := &C{C: Suite.Case(t)}
+	ns = c.NS
+	// Registered after Suite.Case so it runs first (cleanups are LIFO): before
+	// testkit closes the namespace's reconcile gate and deletes the namespace.
+	// It lives here rather than in testkit because every test in this package
+	// funnels through newCase, so no suite-wide hook is needed.
+	t.Cleanup(func() { c.requireOwnership(t) })
+	return c
+}
+
+// requireOwnership fails the test with every field-ownership violation in its
+// namespace. It runs even when the test already failed, since a violation is
+// evidence for that failure. A case that created no CR has nothing to check,
+// which is why this uses the lenient checkOwnership.
+func (c *C) requireOwnership(t *testing.T) {
+	t.Helper()
+	violations, _, err := checkOwnership(context.Background(), Suite.Client, c.NS, c.legacy)
+	if err != nil {
+		t.Errorf("status ownership check: %v", err)
+		return
+	}
+	if len(violations) > 0 {
+		t.Errorf("status ownership violations in %s:\n  %s", c.NS,
+			strings.Join(violations, "\n  "))
+	}
+}
+
+// seedsLegacy marks a case that writes legacy entries on purpose, so its
+// cleanup check allows the ones DropLegacy must keep. Every other case allows
+// none.
+func (c *C) seedsLegacy() {
+	c.legacy = keptLegacy
+}
+
+// deleteServices frees the cluster IPs a finished case holds. envtest runs no
+// namespace controller, so deleting a case's namespace never deletes the
+// Services in it, and every case shares one apiserver whose service range
+// (10.0.0.0/24 by default) the full package otherwise exhausts. testkit's
+// ctrltest offers no way to widen that range or to model namespace deletion;
+// this can go when it does either.
+func deleteServices(t *testing.T, ns string) {
+	if ns == "" {
+		return
+	}
+	err := Suite.Client.DeleteAllOf(context.Background(), &corev1.Service{}, client.InNamespace(ns))
+	if err != nil {
+		t.Errorf("delete Services in %s: %v", ns, err)
+	}
 }
 
 // newBareCase opens a test context with no namespace, for the tests in this

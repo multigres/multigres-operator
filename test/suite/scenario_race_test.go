@@ -2,14 +2,11 @@ package suite
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/structured-merge-diff/v6/fieldpath"
 
 	"github.com/multigres/testkit/ctrltest"
 )
@@ -58,85 +55,9 @@ func TestTwoControllersWriteOneShard(t *testing.T) {
 		}
 	})
 
-	// Runs before the no-op check below, which mutates the Shard: a manager
-	// entry left over from that mutation would be a false-positive third writer
-	// and would blur what this is actually about, which is the two production
-	// managers.
-	t.Run("field ownership on the Shard is disjoint", func(t *testing.T) {
-		c := c.Sub(t)
-		conflicts := c.fieldOwnershipConflicts(key)
-		c.Empty(conflicts,
-			"Shard %s has fields claimed by more than one field manager, "+
-				"the same shape of defect as the status hot loop:\n  %s",
-			key.Name, strings.Join(conflicts, "\n  "))
-	})
-
 	t.Run("tablegroup's patches to the Shard never change it", func(t *testing.T) {
 		c.Sub(t).requireTableGroupPatchesAreNoOps(key)
 	})
-}
-
-// fieldOwnershipConflicts returns every field path on the Shard that more
-// than one field manager claims, sorted. An empty result is the invariant, and
-// it is the check that generalises: it would have caught the status hot-loop
-// directly; the loop was two field managers each asserting a value for the
-// same field, ObservedGeneration or a phase, and the API server obliging both.
-// A dump of writes only shows that as churn; managedFields shows it as the
-// overlap it is.
-//
-// Field ownership is expressed by the API server as a Set per manager, encoded
-// in metadata.managedFields[].fieldsV1: this decodes each manager's Set with
-// the same library the server itself uses and collects every field path that
-// is a member of more than one.
-func (c *C) fieldOwnershipConflicts(key client.ObjectKey) []string {
-	c.Helper()
-
-	shard := &Shard{}
-	c.NoError(c.Get(key, shard), "get shard %s", key)
-
-	claimants := map[string][]string{}
-	for _, mf := range shard.ManagedFields {
-		if mf.FieldsV1 == nil {
-			continue
-		}
-		set := &fieldpath.Set{}
-		c.NoError(set.FromJSON(mf.FieldsV1.GetRawReader()),
-			"decode managedFields for manager %s", mf.Manager)
-		set.Iterate(func(p fieldpath.Path) {
-			path := p.String()
-			claimants[path] = append(claimants[path], mf.Manager)
-		})
-	}
-
-	// A Shard with no decodable managedFields claim at all would make the
-	// disjointness check below pass having compared nothing, which is the one
-	// way this assertion can go green without the invariant holding. Nothing in
-	// this function's own reasoning rules that out, so it is asserted here
-	// rather than inherited from the writer check above.
-	c.True(len(claimants) > 0,
-		"Shard %s yielded no decodable managedFields claims, so field ownership "+
-			"was not checked at all; %d managedFields entries were present",
-		key.Name, len(shard.ManagedFields))
-
-	var conflicts []string
-	for path, managers := range claimants {
-		distinct := map[string]bool{}
-		for _, m := range managers {
-			distinct[m] = true
-		}
-		if len(distinct) <= 1 {
-			continue
-		}
-		names := make([]string, 0, len(distinct))
-		for m := range distinct {
-			names = append(names, m)
-		}
-		sort.Strings(names)
-		conflicts = append(conflicts, fmt.Sprintf("%s claimed by %v", path, names))
-	}
-
-	sort.Strings(conflicts)
-	return conflicts
 }
 
 // requireTableGroupPatchesAreNoOps is assertion 2 from the brief, corrected to
