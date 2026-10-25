@@ -203,8 +203,8 @@ github.com/multigres/kubedial v0.1.0 h1:i6ySmhVj8ikgxlW2C0kVq2AU6esP71aRNxcF1KFn
 github.com/multigres/kubedial v0.1.0/go.mod h1:3xneBZgPfkJFB4van/McyiJTSreF+LZVSh7QCTaZAYQ=
 github.com/multigres/multigres v0.0.0-20261029124631-8f276d3d77eb h1:111zxwzCk7HVdY7MeE+QWxVEZ/QhY3QT9JOccMtuL3U=
 github.com/multigres/multigres v0.0.0-20261029124631-8f276d3d77eb/go.mod h1:JykIVgBbDwolqMlej0PbvthVJncmvj3AcKuMmJ8u5vo=
-github.com/multigres/testkit v0.4.0 h1:b7kvpMyJP2mq+74UaD9gsjH+Z15mXGdOVe1xc+IziSM=
-github.com/multigres/testkit v0.4.0/go.mod h1:YACYZJHohqf6nCVLSDnILUYz9xM4cp7oBTBR+4qbVJo=
+github.com/multigres/testkit v0.6.0 h1:kz/A5WA7JlBzIfxmU4ejfEW3B/uoI1uBR570C8k5bmA=
+github.com/multigres/testkit v0.6.0/go.mod h1:qQiTYkZR8XW6HkGJiv/fmLBbmEMwl58dhjacnmTzuc0=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/onsi/ginkgo/v2 v2.27.4 h1:fcEcQW/A++6aZAZQNUmNjvA9PSOzefMJBerHJ4t8v8Y=
