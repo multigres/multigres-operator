@@ -124,7 +124,6 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 				desired,
 				client.Apply,
 				client.ForceOwnership,
-				client.FieldOwner("multigres-operator"),
 			); err != nil {
 				return false, fmt.Errorf("failed to apply tablegroup '%s': %w", tgNameFull, err)
 			}

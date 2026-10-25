@@ -29,7 +29,6 @@ func (r *ShardReconciler) reconcileMultiorchDeployment(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply Multiorch Deployment: %w", err)
 	}
@@ -64,7 +63,6 @@ func (r *ShardReconciler) reconcileMultiorchService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply Multiorch Service: %w", err)
 	}

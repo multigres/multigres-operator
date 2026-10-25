@@ -22,6 +22,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -182,7 +183,7 @@ func (r *TableGroupReconciler) handlePendingDeletion(
 		Status: tg.Status,
 	}
 	if err := r.Status().Patch(ctx, patchObj, client.Apply,
-		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+		client.ForceOwnership); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to set ReadyForDeletion on TableGroup: %w", err)
 	}
 
@@ -246,6 +247,9 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	// Both SetupWithManager and test/suite go through here, so the owner cannot diverge.
+	r.Client = client.WithFieldOwner(r.Client, ownership.ManagerTableGroup)
+
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}
@@ -258,6 +262,7 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 			builder.WithPredicates(predicate.Or(
 				projectRefOrGenerationChangedPredicate(),
 				features.LabelsChanged(),
+				statusClearedPredicate(),
 			)),
 		).
 		Owns(&multigresv1alpha1.Shard{})
@@ -295,6 +300,34 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true
+		},
+	}
+}
+
+// statusClearedPredicate admits an update that empties the phase.
+//
+// The For() filter above drops status-only updates, so a status that is
+// wiped out of band (a restore, a manual edit of the subresource) would
+// otherwise never be rebuilt until an unrelated event arrived: a Healthy
+// object requeues nowhere, and its parent keeps reading the empty phase as
+// not Healthy. The reconcile it triggers rewrites the phase, so this cannot
+// loop on the controller's own writes. Only the phase is checked: a partial
+// wipe that leaves it set is not caught.
+func statusClearedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldObj, ok := e.ObjectOld.(*multigresv1alpha1.TableGroup)
+			if !ok {
+				return false
+			}
+			newObj, ok := e.ObjectNew.(*multigresv1alpha1.TableGroup)
+			if !ok {
+				return false
+			}
+			return oldObj.Status.Phase != "" && newObj.Status.Phase == ""
 		},
 	}
 }

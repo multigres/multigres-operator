@@ -17,7 +17,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
@@ -270,11 +269,7 @@ func TestHandleDeletionForgetsStrikes(t *testing.T) {
 	shard.DeletionTimestamp = &now
 
 	scheme := postureTestScheme(t)
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, shard)
 	r := &ShardReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -303,7 +298,7 @@ func TestHandleDeletionForgetsStrikes(t *testing.T) {
 // still have its strike entries dropped, as a backstop.
 func TestReconcileForgetsStrikesOnNotFound(t *testing.T) {
 	scheme := postureTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := newTestClient(t)
 	r := &ShardReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -341,11 +336,7 @@ func gateTestReconciler(
 	t.Helper()
 	scheme := postureTestScheme(t)
 	allObjects := append([]client.Object{shard}, objects...)
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(allObjects...).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}, &corev1.Pod{}).
-		Build()
+	c := newTestClient(t, allObjects...)
 	return &ShardReconciler{
 		Client:          c,
 		Scheme:          scheme,

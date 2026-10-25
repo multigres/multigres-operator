@@ -19,6 +19,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -40,9 +41,12 @@ func TestReconcileMultigatewayDeployment_InvalidScheme(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(invalidScheme).
-		Build()
+	// Built by hand: the scheme lacks Cell, so newTestClient's status
+	// subresource registration would panic in Build.
+	fakeClient := client.WithFieldOwner(
+		fake.NewClientBuilder().WithScheme(invalidScheme).Build(),
+		ownership.ManagerCell,
+	)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -70,9 +74,12 @@ func TestReconcileMultigatewayService_InvalidScheme(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(invalidScheme).
-		Build()
+	// Built by hand: the scheme lacks Cell, so newTestClient's status
+	// subresource registration would panic in Build.
+	fakeClient := client.WithFieldOwner(
+		fake.NewClientBuilder().WithScheme(invalidScheme).Build(),
+		ownership.ManagerCell,
+	)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -102,11 +109,7 @@ func TestUpdateStatus_MultigatewayDeploymentNotFound(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cell).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		Build()
+	fakeClient := newTestClientWith(t, []client.Object{cell}, withTestScheme(scheme))
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -142,19 +145,18 @@ func TestReconcileMultigatewayDeployment_PatchError(t *testing.T) {
 	}
 
 	// Create client with failure injection
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cell).
-		Build()
-
-	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
-		OnPatch: func(obj client.Object) error {
-			if strings.Contains(obj.GetName(), "multigateway") {
-				return testutil.ErrNetworkTimeout
-			}
-			return nil
-		},
-	})
+	fakeClient := newTestClientWith(t, []client.Object{cell},
+		withTestScheme(scheme),
+		withTestWrap(func(base client.WithWatch) client.Client {
+			return testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+				OnPatch: func(obj client.Object) error {
+					if strings.Contains(obj.GetName(), "multigateway") {
+						return testutil.ErrNetworkTimeout
+					}
+					return nil
+				},
+			})
+		}))
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -186,19 +188,18 @@ func TestReconcileMultigatewayService_PatchError(t *testing.T) {
 	}
 
 	// Create client with failure injection
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cell).
-		Build()
-
-	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
-		OnPatch: func(obj client.Object) error {
-			if strings.Contains(obj.GetName(), "multigateway") {
-				return testutil.ErrNetworkTimeout
-			}
-			return nil
-		},
-	})
+	fakeClient := newTestClientWith(t, []client.Object{cell},
+		withTestScheme(scheme),
+		withTestWrap(func(base client.WithWatch) client.Client {
+			return testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+				OnPatch: func(obj client.Object) error {
+					if strings.Contains(obj.GetName(), "multigateway") {
+						return testutil.ErrNetworkTimeout
+					}
+					return nil
+				},
+			})
+		}))
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -228,20 +229,18 @@ func TestUpdateStatus_GetError(t *testing.T) {
 		},
 	}
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cell).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		Build()
-
-	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
-		OnGet: func(key client.ObjectKey) error {
-			if strings.Contains(key.Name, "multigateway") {
-				return testutil.ErrNetworkTimeout
-			}
-			return nil
-		},
-	})
+	fakeClient := newTestClientWith(t, []client.Object{cell},
+		withTestScheme(scheme),
+		withTestWrap(func(base client.WithWatch) client.Client {
+			return testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
+				OnGet: func(key client.ObjectKey) error {
+					if strings.Contains(key.Name, "multigateway") {
+						return testutil.ErrNetworkTimeout
+					}
+					return nil
+				},
+			})
+		}))
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -333,7 +332,8 @@ func TestSetupWithManager(t *testing.T) {
 	t.Run("default options", func(t *testing.T) {
 		mgr := createMgr()
 		r := &CellReconciler{
-			Client:   mgr.GetClient(),
+			// The manager's client, not a fake: newTestClient does not apply.
+			Client:   client.WithFieldOwner(mgr.GetClient(), ownership.ManagerCell),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
@@ -345,7 +345,8 @@ func TestSetupWithManager(t *testing.T) {
 	t.Run("with options", func(t *testing.T) {
 		mgr := createMgr()
 		r := &CellReconciler{
-			Client:   mgr.GetClient(),
+			// The manager's client, not a fake: newTestClient does not apply.
+			Client:   client.WithFieldOwner(mgr.GetClient(), ownership.ManagerCell),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
@@ -407,11 +408,11 @@ func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cell, deploy, crashPod).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		Build()
+	fakeClient := newTestClientWith(
+		t,
+		[]client.Object{cell, deploy, crashPod},
+		withTestScheme(scheme),
+	)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,

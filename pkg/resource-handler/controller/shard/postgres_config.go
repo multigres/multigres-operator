@@ -249,7 +249,6 @@ func (r *ShardReconciler) applyPostgresConfigMap(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply postgres config ConfigMap: %w", err)
 	}

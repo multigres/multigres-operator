@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/postgresconfig"
@@ -117,7 +116,9 @@ func TestRenderEffectiveConfig(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	t.Run("no ref returns a stable hash", func(t *testing.T) {
-		r := &ShardReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+		r := &ShardReconciler{
+			Client: newTestClient(t),
+		}
 		shard := &multigresv1alpha1.Shard{ObjectMeta: metav1.ObjectMeta{Name: "s1"}}
 		rc := r.renderEffectiveConfig(context.Background(), shard)
 		if rc.err != nil {
@@ -129,7 +130,9 @@ func TestRenderEffectiveConfig(t *testing.T) {
 	})
 
 	t.Run("missing ref ConfigMap surfaces an error", func(t *testing.T) {
-		r := &ShardReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+		r := &ShardReconciler{
+			Client: newTestClient(t),
+		}
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -153,7 +156,9 @@ func TestRenderEffectiveConfig_ReloadMarker(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	render := func(cfg map[string]string) renderedConfig {
-		r := &ShardReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+		r := &ShardReconciler{
+			Client: newTestClient(t),
+		}
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "s1"},
 			Spec:       multigresv1alpha1.ShardSpec{PostgresConfig: cfg},
@@ -343,7 +348,7 @@ func TestReconcilePostgresConfig_RendersBaselineWithoutRef(t *testing.T) {
 		Spec:       multigresv1alpha1.ShardSpec{},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := newTestClient(t)
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	cfg := r.renderEffectiveConfig(context.Background(), shard)
@@ -392,7 +397,7 @@ func TestReconcilePostgresConfig_MergesRefContent(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(userCM).Build()
+	c := newTestClient(t, userCM)
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	cfg := r.renderEffectiveConfig(context.Background(), shard)
@@ -451,7 +456,7 @@ func TestReconcilePostgresConfig_InlineMapWins(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(userCM).Build()
+	c := newTestClient(t, userCM)
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	cfg := r.renderEffectiveConfig(context.Background(), shard)

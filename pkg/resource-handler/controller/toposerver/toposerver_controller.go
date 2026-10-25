@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -25,6 +26,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
@@ -48,8 +50,9 @@ type TopoServerReconciler struct {
 	// DialContext dials etcd member addresses. Nil (clientv3's default) outside
 	// laptop mode.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
-	// newMaintenanceClient supplies direct per-member clients; overridden in tests.
-	newMaintenanceClient func(context.Context, *multigresv1alpha1.TopoServer) (etcdMaintenanceClient, error)
+	// MaintenanceClientFactory, when set, replaces the real per-member etcd
+	// clients; the test suite injects a simulator here. Nil in production.
+	MaintenanceClientFactory func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error)
 }
 
 // Reconcile manages the etcd StatefulSet, headless service, and client service for a TopoServer.
@@ -263,7 +266,6 @@ func (r *TopoServerReconciler) reconcilePodDisruptionBudget(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply PodDisruptionBudget: %w", err)
 	}
@@ -297,7 +299,6 @@ func (r *TopoServerReconciler) reconcileStatefulSet(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply StatefulSet: %w", err)
 	}
@@ -331,7 +332,6 @@ func (r *TopoServerReconciler) reconcileHeadlessService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply headless Service: %w", err)
 	}
@@ -365,7 +365,6 @@ func (r *TopoServerReconciler) reconcileClientService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply client Service: %w", err)
 	}
@@ -488,12 +487,12 @@ func (r *TopoServerReconciler) updateStatus(
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-operator"),
 		client.ForceOwnership,
 	); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
 
+	ownership.TidyLegacy(ctx, r.Client, patchObj)
 	return nil
 }
 
@@ -555,6 +554,9 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	// Both SetupWithManager and test/suite go through here, so the owner cannot diverge.
+	r.Client = client.WithFieldOwner(r.Client, ownership.ManagerTopoServer)
+
 	if r.APIReader == nil {
 		r.APIReader = mgr.GetAPIReader()
 	}
@@ -567,7 +569,11 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(
-			predicate.Or(predicate.GenerationChangedPredicate{}, features.LabelsChanged()),
+			predicate.Or(
+				predicate.GenerationChangedPredicate{},
+				features.LabelsChanged(),
+				statusClearedPredicate(),
+			),
 		)).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
@@ -578,4 +584,32 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
+}
+
+// statusClearedPredicate admits an update that empties the phase.
+//
+// The For() filter above drops status-only updates, so a status that is
+// wiped out of band (a restore, a manual edit of the subresource) would
+// otherwise never be rebuilt until an unrelated event arrived: a Healthy
+// object requeues nowhere, and its parent keeps reading the empty phase as
+// not Healthy. The reconcile it triggers rewrites the phase, so this cannot
+// loop on the controller's own writes. Only the phase is checked: a partial
+// wipe that leaves it set is not caught.
+func statusClearedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldObj, ok := e.ObjectOld.(*multigresv1alpha1.TopoServer)
+			if !ok {
+				return false
+			}
+			newObj, ok := e.ObjectNew.(*multigresv1alpha1.TopoServer)
+			if !ok {
+				return false
+			}
+			return oldObj.Status.Phase != "" && newObj.Status.Phase == ""
+		},
+	}
 }

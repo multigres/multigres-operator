@@ -15,7 +15,6 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
@@ -657,15 +656,12 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				tc.existingObjects[i] = obj
 			}
 
-			// Create base fake client
-			baseClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(tc.existingObjects...).
-				WithStatusSubresource(&multigresv1alpha1.Cell{}).
-				Build()
-
 			// Wrap fake client with failures if needed
-			fakeClient := testutil.NewFakeClientWithFailures(baseClient, tc.failureConfig)
+			fakeClient := cell.NewTestClient(t, tc.existingObjects,
+				cell.WithTestScheme(scheme),
+				cell.WithTestWrap(func(base client.WithWatch) client.Client {
+					return testutil.NewFakeClientWithFailures(base, tc.failureConfig)
+				}))
 
 			reconciler := &cell.CellReconciler{
 				Client:   fakeClient,
@@ -727,9 +723,7 @@ func TestCellReconciler_ReconcileNotFound(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
+	fakeClient := cell.NewTestClient(t, nil, cell.WithTestScheme(scheme))
 
 	reconciler := &cell.CellReconciler{
 		Client:   fakeClient,

@@ -72,9 +72,9 @@ func TestReconcilePostgresPasswordSecret_ValidatesExternalRef(t *testing.T) {
 		Data: map[string][]byte{"current": []byte("secret-password")},
 	}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(externalSecret).Build()
+	kc := newTestClient(t, externalSecret)
 	reconciler := &ShardReconciler{
-		Client: client,
+		Client: kc,
 		Scheme: scheme,
 	}
 
@@ -261,9 +261,9 @@ func TestReconcilePostgresInitSecretsSecret(t *testing.T) {
 			if tc.secret != nil {
 				builder = builder.WithObjects(tc.secret)
 			}
-			client := builder.Build()
+			kc := builder.Build()
 			reconciler := &ShardReconciler{
-				Client: client,
+				Client: withShardOwner(kc),
 				Scheme: scheme,
 			}
 

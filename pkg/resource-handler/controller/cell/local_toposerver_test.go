@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -130,11 +129,7 @@ func TestCellReconcilerWaitsForManagedLocalTopoServer(t *testing.T) {
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell).
-		Build()
+	fakeClient := newTestClient(t, cell)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -175,11 +170,7 @@ func TestCellReconcilerSetsWaitingStatusForManagedLocalTopoServer(t *testing.T) 
 
 	scheme := cellTestScheme(t)
 	cell := managedLocalTopoCell("test-cell")
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell).
-		Build()
+	fakeClient := newTestClient(t, cell)
 	cell.Status.Phase = multigresv1alpha1.PhaseHealthy
 	cell.Status.ObservedGeneration = cell.Generation
 	meta.SetStatusCondition(&cell.Status.Conditions, metav1.Condition{
@@ -249,11 +240,7 @@ func TestCellReconcilerDeletesStaleManagedLocalTopoServer(t *testing.T) {
 		},
 	}
 	toposerver := controlledTopoServer(cell)
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell, toposerver).
-		Build()
+	fakeClient := newTestClient(t, cell, toposerver)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -290,11 +277,7 @@ func TestCellReconcilerIgnoresUnownedLocalTopoServerWhenNoManagedTopoDesired(t *
 	}
 	toposerver := controlledTopoServer(cell)
 	toposerver.OwnerReferences = nil
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell, toposerver).
-		Build()
+	fakeClient := newTestClient(t, cell, toposerver)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -324,11 +307,7 @@ func TestCellReconcilerRefusesManagedLocalTopoServerNameConflict(t *testing.T) {
 	cell := managedLocalTopoCell("test-cell")
 	toposerver := controlledTopoServer(cell)
 	toposerver.OwnerReferences = nil
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell, toposerver).
-		Build()
+	fakeClient := newTestClient(t, cell, toposerver)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -356,11 +335,7 @@ func TestCellReconcilerPendingDeletionWaitsForManagedLocalTopoServer(t *testing.
 		multigresv1alpha1.AnnotationPendingDeletion: "true",
 	}
 	toposerver := controlledTopoServer(cell)
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell, toposerver).
-		Build()
+	fakeClient := newTestClient(t, cell, toposerver)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -415,11 +390,7 @@ func TestCellReconcilerPendingDeletionDeletesObservedLocalTopoServerWhenSpecNoLo
 		},
 	}
 	toposerver := controlledTopoServer(cell)
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell, toposerver).
-		Build()
+	fakeClient := newTestClient(t, cell, toposerver)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -455,11 +426,7 @@ func TestCellReconcilerLocalTopoServerReadyRequiresObservedGeneration(t *testing
 	toposerver := controlledTopoServer(cell)
 	toposerver.Generation = 2
 	toposerver.Status.ObservedGeneration = 1
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell, toposerver).
-		Build()
+	fakeClient := newTestClient(t, cell, toposerver)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,
@@ -484,11 +451,7 @@ func TestCellReconcilerPendingDeletionReadyAfterManagedLocalTopoServerDeleted(t 
 	cell.Annotations = map[string]string{
 		multigresv1alpha1.AnnotationPendingDeletion: "true",
 	}
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Cell{}).
-		WithObjects(cell).
-		Build()
+	fakeClient := newTestClient(t, cell)
 
 	reconciler := &CellReconciler{
 		Client:   fakeClient,

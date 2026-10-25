@@ -16,7 +16,6 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
@@ -378,14 +377,9 @@ func TestTopoServerReconciler_Reconcile(t *testing.T) {
 			_ = storagev1.AddToScheme(scheme)
 
 			// Create base fake client
-			baseClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(tc.existingObjects...).
-				WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-				WithStatusSubresource(&appsv1.StatefulSet{}).
-				Build()
+			baseClient := newTestClient(t, scheme, tc.existingObjects...)
 
-			fakeClient := client.Client(baseClient)
+			fakeClient := baseClient
 			// Wrap with failure injection if configured
 			if tc.failureConfig != nil {
 				fakeClient = testutil.NewFakeClientWithFailures(baseClient, tc.failureConfig)
@@ -454,9 +448,7 @@ func TestTopoServerReconciler_ReconcileNotFound(t *testing.T) {
 	_ = policyv1.AddToScheme(scheme)
 	_ = storagev1.AddToScheme(scheme)
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
+	fakeClient := newTestClient(t, scheme)
 
 	reconciler := &TopoServerReconciler{
 		Client:   fakeClient,
@@ -518,11 +510,7 @@ func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
 			},
 		}
 
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(toposerver, sts).
-			WithStatusSubresource(toposerver, sts).
-			Build()
+		fakeClient := newTestClient(t, scheme, toposerver, sts)
 
 		r := &TopoServerReconciler{
 			Client:   fakeClient,
@@ -571,11 +559,7 @@ func TestTopoServerReconciler_UpdateStatus(t *testing.T) {
 				ObservedGeneration: 1, // trigger the 'else if'
 			},
 		}
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(toposerver, sts).
-			WithStatusSubresource(toposerver).
-			Build()
+		fakeClient := newTestClient(t, scheme, toposerver, sts)
 		r := &TopoServerReconciler{
 			Client:   fakeClient,
 			Scheme:   scheme,
@@ -635,11 +619,7 @@ func TestTopoServerReconciler_FieldOwnershipIsolation(t *testing.T) {
 			},
 		}
 
-		baseClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(ts, sts).
-			WithStatusSubresource(&multigresv1alpha1.TopoServer{}, sts).
-			Build()
+		baseClient := newTestClient(t, scheme, ts, sts)
 
 		// Intercept the status patch to inspect the patch object.
 		var capturedPatchObj client.Object
@@ -697,11 +677,7 @@ func TestTopoServerReconciler_FieldOwnershipIsolation(t *testing.T) {
 				VolumeBindingMode: ptr.To(storagev1.VolumeBindingWaitForFirstConsumer),
 			}
 
-			baseClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(ts, sc).
-				WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-				Build()
+			baseClient := newTestClient(t, scheme, ts, sc)
 
 			// Intercept the status patch to inspect the patch object.
 			var capturedPatchObj client.Object
@@ -782,7 +758,7 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 			},
 		}
 
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver).Build()
+		fakeClient := newTestClient(t, scheme, toposerver)
 		// Now delete it so DeletionTimestamp is set
 		if err := fakeClient.Delete(t.Context(), toposerver); err != nil {
 			t.Fatalf("failed to delete: %v", err)
@@ -849,12 +825,7 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 			})
 		}
 
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-			WithStatusSubresource(&appsv1.StatefulSet{}).
-			WithObjects(existing...).
-			Build()
+		fakeClient := newTestClient(t, scheme, existing...)
 		r := &TopoServerReconciler{
 			Client:   fakeClient,
 			Scheme:   scheme,
@@ -893,11 +864,7 @@ func TestTopoServerReconciler_StandaloneMocks(t *testing.T) {
 			Status:     appsv1.StatefulSetStatus{Replicas: 3, ReadyReplicas: 3},
 		}
 
-		baseClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(toposerver, sts).
-			WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-			Build()
+		baseClient := newTestClient(t, scheme, toposerver, sts)
 		fails := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 			OnList: func(list client.ObjectList) error { return testutil.ErrNetworkTimeout },
 		})

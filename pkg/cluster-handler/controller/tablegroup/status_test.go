@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
@@ -149,12 +148,7 @@ func TestStepComputeStatus(t *testing.T) {
 				},
 			}
 
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(tg).
-				WithStatusSubresource(&multigresv1alpha1.TableGroup{}).
-				Build()
-
+			c := newTestClient(t, tg)
 			reconciler := &TableGroupReconciler{
 				Client:   c,
 				Scheme:   scheme,

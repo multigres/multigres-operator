@@ -15,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
@@ -80,11 +79,7 @@ func TestHandleDeletion(t *testing.T) {
 		pod := makePod("pod-0", true, "")
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -119,11 +114,7 @@ func TestHandleDeletion(t *testing.T) {
 		pod := makePod("pod-unsched", false, "")
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -161,11 +152,7 @@ func TestHandleDeletion(t *testing.T) {
 		pod := makePod("pod-rfd", true, metadata.DrainStateReadyForDeletion)
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -201,11 +188,7 @@ func TestHandleDeletion(t *testing.T) {
 		pod.Annotations[metadata.AnnotationDrainRequestedAt] = time.Now().UTC().Format(time.RFC3339)
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -244,11 +227,7 @@ func TestHandleDeletion(t *testing.T) {
 			Format(time.RFC3339)
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -282,11 +261,7 @@ func TestHandleDeletion(t *testing.T) {
 
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -320,11 +295,7 @@ func TestHandleDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod, pvc).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod, pvc)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -392,11 +363,7 @@ func TestHandleDeletion(t *testing.T) {
 				},
 			}
 
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(shard, pvc, cluster).
-				WithStatusSubresource(&multigresv1alpha1.Shard{}).
-				Build()
+			c := newTestClient(t, shard, pvc, cluster)
 
 			r := &ShardReconciler{
 				Client:          c,
@@ -443,11 +410,7 @@ func TestHandleDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod, pvc).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod, pvc)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -510,11 +473,7 @@ func TestHandlePendingDeletion(t *testing.T) {
 		t.Parallel()
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -565,11 +524,7 @@ func TestHandlePendingDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -618,11 +573,7 @@ func TestHandlePendingDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, pod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -680,11 +631,7 @@ func TestHandlePendingDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, drainingPod, undrainedPod).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, drainingPod, undrainedPod)
 
 		r := &ShardReconciler{
 			Client:          c,
@@ -759,7 +706,7 @@ func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
 		t.Cleanup(func() { monitoring.ForgetShard(name, "default") })
 		setAllShardGauges("test-cluster", name, "default")
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(newShard(name)).Build()
+		c := newTestClient(t, newShard(name))
 		r := &ShardReconciler{
 			Client:          c,
 			Scheme:          scheme,
@@ -788,10 +735,7 @@ func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "pod-0", Namespace: "default", Labels: labels},
 		}
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(newShard(name), pod).
-			Build()
+		c := newTestClient(t, newShard(name), pod)
 		r := &ShardReconciler{
 			Client:          c,
 			Scheme:          scheme,

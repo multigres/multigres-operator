@@ -99,7 +99,7 @@ func TestUpdateStatus_PoolPodsStuckMetric(t *testing.T) {
 				WithStatusSubresource(&multigresv1alpha1.Shard{}).
 				Build()
 			reconciler := &ShardReconciler{
-				Client:    fakeClient,
+				Client:    withShardOwner(fakeClient),
 				Scheme:    scheme,
 				Recorder:  record.NewFakeRecorder(100),
 				APIReader: fakeClient,
@@ -216,7 +216,7 @@ func TestUpdateStatus_NodeListFailureKeepsPoolPodsStuck(t *testing.T) {
 				}).
 				Build()
 			reconciler := &ShardReconciler{
-				Client:    fakeClient,
+				Client:    withShardOwner(fakeClient),
 				Scheme:    scheme,
 				Recorder:  record.NewFakeRecorder(100),
 				APIReader: fakeClient,

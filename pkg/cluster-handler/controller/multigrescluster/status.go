@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 )
 
@@ -474,11 +475,11 @@ func (r *MultigresClusterReconciler) updateStatus(
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-operator"),
 		client.ForceOwnership,
 	); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
 
+	ownership.TidyLegacy(ctx, r.Client, patchObj)
 	return nil
 }

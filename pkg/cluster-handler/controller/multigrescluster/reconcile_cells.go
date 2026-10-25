@@ -78,7 +78,6 @@ func (r *MultigresClusterReconciler) reconcileCells(
 			desired,
 			client.Apply,
 			client.ForceOwnership,
-			client.FieldOwner("multigres-operator"),
 		); err != nil {
 			return false, fmt.Errorf("failed to apply cell '%s': %w", cellCfg.Name, err)
 		}

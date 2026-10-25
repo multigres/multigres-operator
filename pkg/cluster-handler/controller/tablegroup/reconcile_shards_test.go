@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -190,39 +189,31 @@ func TestShardStepsPrune(t *testing.T) {
 			var shardPatchCount atomic.Int64
 			var shardDeleteCount atomic.Int64
 
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(tc.child).
-				WithStatusSubresource(
-					&multigresv1alpha1.TableGroup{},
-					&multigresv1alpha1.Shard{},
-				).
-				WithInterceptorFuncs(interceptor.Funcs{
-					Patch: func(
-						ctx context.Context,
-						cli client.WithWatch,
-						obj client.Object,
-						patch client.Patch,
-						opts ...client.PatchOption,
-					) error {
-						if _, ok := obj.(*multigresv1alpha1.Shard); ok {
-							shardPatchCount.Add(1)
-						}
-						return cli.Patch(ctx, obj, patch, opts...)
-					},
-					Delete: func(
-						ctx context.Context,
-						cli client.WithWatch,
-						obj client.Object,
-						opts ...client.DeleteOption,
-					) error {
-						if _, ok := obj.(*multigresv1alpha1.Shard); ok {
-							shardDeleteCount.Add(1)
-						}
-						return cli.Delete(ctx, obj, opts...)
-					},
-				}).
-				Build()
+			c := newTestClientWith(t, interceptor.Funcs{
+				Patch: func(
+					ctx context.Context,
+					cli client.WithWatch,
+					obj client.Object,
+					patch client.Patch,
+					opts ...client.PatchOption,
+				) error {
+					if _, ok := obj.(*multigresv1alpha1.Shard); ok {
+						shardPatchCount.Add(1)
+					}
+					return cli.Patch(ctx, obj, patch, opts...)
+				},
+				Delete: func(
+					ctx context.Context,
+					cli client.WithWatch,
+					obj client.Object,
+					opts ...client.DeleteOption,
+				) error {
+					if _, ok := obj.(*multigresv1alpha1.Shard); ok {
+						shardDeleteCount.Add(1)
+					}
+					return cli.Delete(ctx, obj, opts...)
+				},
+			}, tc.child)
 
 			recorder := record.NewFakeRecorder(100)
 			reconciler := &TableGroupReconciler{

@@ -70,11 +70,18 @@ func litePVCLifecycleFixture(
 	return r, shard, pvc
 }
 
+// ownedBy wraps the fixture's raw client, left unwrapped so a test can layer
+// interceptors on it, with the Shard controller's field manager.
+func ownedBy(r *ShardReconciler) {
+	r.Client = withShardOwner(r.Client)
+}
+
 func TestLitePVCRetentionPolicyChanges(t *testing.T) {
 	for _, topology := range []string{"available", "unavailable"} {
 		for _, scope := range []string{"shard", "pool override"} {
 			t.Run(topology+"/"+scope, func(t *testing.T) {
 				r, shard, pvc := litePVCLifecycleFixture(t, topology == "unavailable")
+				ownedBy(r)
 				for _, policy := range []multigresv1alpha1.PVCRetentionPolicyType{multigresv1alpha1.RetainPVCRetentionPolicy, multigresv1alpha1.DeletePVCRetentionPolicy} {
 					if scope == "shard" {
 						shard.Spec.PVCDeletionPolicy.WhenDeleted = policy
@@ -180,7 +187,7 @@ func TestLiteReusesOrphanPVCBeforePodCreation(t *testing.T) {
 				require.NoError(t, r.Update(t.Context(), backup))
 				base := r.Client.(client.WithWatch)
 				podCreated := false
-				r.Client = interceptor.NewClient(base, interceptor.Funcs{
+				r.Client = withShardOwner(interceptor.NewClient(base, interceptor.Funcs{
 					Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 						if failPatch && obj.GetName() == pvc.Name {
 							return errors.New("PVC patch rejected")
@@ -200,7 +207,7 @@ func TestLiteReusesOrphanPVCBeforePodCreation(t *testing.T) {
 						}
 						return c.Create(ctx, obj, opts...)
 					},
-				})
+				}))
 				_, err = r.reconcileLite(
 					t.Context(),
 					shard,

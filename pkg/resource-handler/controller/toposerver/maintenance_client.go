@@ -16,7 +16,10 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
-type etcdMaintenanceClient interface {
+// EtcdMaintenanceClient is the seam the test suite injects an etcd simulator
+// through (TopoServerReconciler.MaintenanceClientFactory). Production never
+// sets that factory and gets real per-member clients.
+type EtcdMaintenanceClient interface {
 	Status(context.Context, string) (*clientv3.StatusResponse, error)
 	Members(context.Context) (*clientv3.MemberListResponse, error)
 	Health(context.Context, string) error
@@ -35,9 +38,9 @@ type memberClients struct {
 func (r *TopoServerReconciler) maintenanceClient(
 	ctx context.Context,
 	ts *multigresv1alpha1.TopoServer,
-) (etcdMaintenanceClient, error) {
-	if r.newMaintenanceClient != nil {
-		return r.newMaintenanceClient(ctx, ts)
+) (EtcdMaintenanceClient, error) {
+	if r.MaintenanceClientFactory != nil {
+		return r.MaintenanceClientFactory(ctx, ts)
 	}
 	tlsConfig, err := r.maintenanceTLSConfig(ctx, ts)
 	if err != nil {

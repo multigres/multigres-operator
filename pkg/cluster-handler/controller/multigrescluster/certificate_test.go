@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -407,7 +406,7 @@ func TestReconcileCertificate(t *testing.T) {
 	}
 
 	t.Run("creates only internal Certificates when internal TLS is enabled", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -432,7 +431,7 @@ func TestReconcileCertificate(t *testing.T) {
 	})
 
 	t.Run("CertCommonName alone creates only the public Certificate", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -461,7 +460,7 @@ func TestReconcileCertificate(t *testing.T) {
 	t.Run(
 		"disabled internal TLS creates no Certificates without a public name",
 		func(t *testing.T) {
-			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			fc := newTestClient(t)
 			r := &MultigresClusterReconciler{
 				Client:   fc,
 				Scheme:   scheme,
@@ -482,7 +481,7 @@ func TestReconcileCertificate(t *testing.T) {
 		},
 	)
 	t.Run("creates internal and public Certificates when both are enabled", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -513,7 +512,7 @@ func TestReconcileCertificate(t *testing.T) {
 	t.Run(
 		"disabling internal TLS deletes internal Certificates but keeps public",
 		func(t *testing.T) {
-			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			fc := newTestClient(t)
 			r := &MultigresClusterReconciler{
 				Client:   fc,
 				Scheme:   scheme,
@@ -550,7 +549,7 @@ func TestReconcileCertificate(t *testing.T) {
 	)
 
 	t.Run("idempotent on repeated calls", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -578,21 +577,18 @@ func TestReconcileCertificate(t *testing.T) {
 
 	t.Run("no Patch when nothing changed", func(t *testing.T) {
 		var patchCount int
-		fc := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithInterceptorFuncs(interceptor.Funcs{
-				Patch: func(
-					ctx context.Context,
-					cli client.WithWatch,
-					obj client.Object,
-					patch client.Patch,
-					opts ...client.PatchOption,
-				) error {
-					patchCount++
-					return cli.Patch(ctx, obj, patch, opts...)
-				},
-			}).
-			Build()
+		fc := newTestClientWith(t, interceptor.Funcs{
+			Patch: func(
+				ctx context.Context,
+				cli client.WithWatch,
+				obj client.Object,
+				patch client.Patch,
+				opts ...client.PatchOption,
+			) error {
+				patchCount++
+				return cli.Patch(ctx, obj, patch, opts...)
+			},
+		})
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -633,7 +629,7 @@ func TestReconcileCertificate(t *testing.T) {
 	})
 
 	t.Run("CN change updates Certificate", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -683,7 +679,7 @@ func TestReconcileCertificate(t *testing.T) {
 	})
 
 	t.Run("CN unset cleans up Certificate", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -734,7 +730,7 @@ func TestReconcileCertificate(t *testing.T) {
 	t.Run(
 		"cleanup ignores certs not owned by this cluster",
 		func(t *testing.T) {
-			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			fc := newTestClient(t)
 			r := &MultigresClusterReconciler{
 				Client:   fc,
 				Scheme:   scheme,
@@ -789,23 +785,20 @@ func TestReconcileCertificate(t *testing.T) {
 			oldSecretName := oldCertificateName
 			deleteFailure := errors.New("injected Secret deletion failure")
 			failSecretDelete := false
-			fc := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithInterceptorFuncs(interceptor.Funcs{
-					Delete: func(
-						ctx context.Context,
-						cli client.WithWatch,
-						obj client.Object,
-						opts ...client.DeleteOption,
-					) error {
-						if obj.GetName() == oldSecretName && failSecretDelete {
-							failSecretDelete = false
-							return deleteFailure
-						}
-						return cli.Delete(ctx, obj, opts...)
-					},
-				}).
-				Build()
+			fc := newTestClientWith(t, interceptor.Funcs{
+				Delete: func(
+					ctx context.Context,
+					cli client.WithWatch,
+					obj client.Object,
+					opts ...client.DeleteOption,
+				) error {
+					if obj.GetName() == oldSecretName && failSecretDelete {
+						failSecretDelete = false
+						return deleteFailure
+					}
+					return cli.Delete(ctx, obj, opts...)
+				},
+			})
 			r := &MultigresClusterReconciler{
 				Client:   fc,
 				Scheme:   scheme,
@@ -883,7 +876,7 @@ func TestReconcileCertificate(t *testing.T) {
 	)
 
 	t.Run("CN change keeps the shared external Secret", func(t *testing.T) {
-		fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+		fc := newTestClient(t)
 		r := &MultigresClusterReconciler{
 			Client:   fc,
 			Scheme:   scheme,
@@ -932,7 +925,7 @@ func TestReconcileCertificate(t *testing.T) {
 	t.Run(
 		"reports a collision for a Certificate with matching spec but no ownerRef",
 		func(t *testing.T) {
-			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			fc := newTestClient(t)
 			r := &MultigresClusterReconciler{
 				Client:   fc,
 				Scheme:   scheme,
@@ -992,7 +985,7 @@ func TestReconcileCertificate(t *testing.T) {
 			// eliminates that. This test verifies two clusters in the
 			// same namespace each own their own Certificate with no
 			// interference.
-			fc := fake.NewClientBuilder().WithScheme(scheme).Build()
+			fc := newTestClient(t)
 
 			clusterA := &multigresv1alpha1.MultigresCluster{
 				TypeMeta: metav1.TypeMeta{

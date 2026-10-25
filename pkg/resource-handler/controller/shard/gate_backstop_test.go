@@ -23,7 +23,10 @@ func TestReconcile_GatedBackstopWritesNothing(t *testing.T) {
 	testutil.RequireGatedReconcileIsNoop(t, scheme, &multigresv1alpha1.Shard{},
 		func(c client.Client, gate features.Gate) reconcile.Reconciler {
 			return &ShardReconciler{
-				Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10), Gate: gate,
+				Client:   withShardOwner(c),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+				Gate:     gate,
 			}
 		})
 }

@@ -1091,7 +1091,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 			}
 
 			reconciler := &ShardReconciler{
-				Client:          fakeClient,
+				Client:          withShardOwner(fakeClient),
 				Scheme:          scheme,
 				Recorder:        record.NewFakeRecorder(1000),
 				CreateTopoStore: newMemoryTopoFactory(),
@@ -1245,7 +1245,7 @@ func TestShardReconciler_ReconcileNotFound(t *testing.T) {
 
 	newReconciler := func(c client.Client) *ShardReconciler {
 		return &ShardReconciler{
-			Client:          c,
+			Client:          withShardOwner(c),
 			Scheme:          scheme,
 			Recorder:        record.NewFakeRecorder(10),
 			CreateTopoStore: newMemoryTopoFactory(),
@@ -1379,11 +1379,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			},
 		}
 
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod, mo).
-			WithStatusSubresource(shard, pod, mo).
-			Build()
+		fakeClient := newTestClient(t, shard, pod, mo)
 
 		r := &ShardReconciler{
 			Client:   fakeClient,
@@ -1495,11 +1491,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 			objects = append(objects, p)
 		}
 
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(objects...).
-			WithStatusSubresource(objects...).
-			Build()
+		fakeClient := newTestClient(t, objects...)
 
 		r := &ShardReconciler{
 			Client:   fakeClient,
@@ -1602,11 +1594,7 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 		}
 		objects = append(objects, mo2)
 
-		fakeClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(objects...).
-			WithStatusSubresource(objects...).
-			Build()
+		fakeClient := newTestClient(t, objects...)
 
 		r := &ShardReconciler{
 			Client:   fakeClient,
@@ -1731,8 +1719,12 @@ func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 		BuildPoolPodName(shardObj, "primary", "zone1", 2): "REPLICA",
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shardObj).Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	c := newTestClient(t, shardObj)
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 	poolSpec := shardObj.Spec.Pools["primary"]
 
 	// Create 3 pods, simulating a scale-down from 3 to 2.
@@ -1887,9 +1879,13 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			objects = append(objects, p.DeepCopy())
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+		c := newTestClient(t, objects...)
 		rec := record.NewFakeRecorder(10)
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: rec}
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: rec,
+		}
 
 		existingPods := make(map[string]*corev1.Pod, len(pods))
 		for _, p := range pods {
@@ -1958,8 +1954,12 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			objects = append(objects, p.DeepCopy())
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, objects...)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		existingPods := make(map[string]*corev1.Pod, len(pods))
@@ -2017,8 +2017,12 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 		for _, pod := range pods {
 			objects = append(objects, pod.DeepCopy())
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, objects...)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		existingPods := make(map[string]*corev1.Pod, len(pods))
 		for _, pod := range pods {
 			existingPods[pod.Name] = pod
@@ -2068,8 +2072,12 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			objects = append(objects, p.DeepCopy())
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, objects...)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		shard.Spec.Pools = map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 			multigresv1alpha1.PoolName(poolName): {ReplicasPerCell: ptr.To(int32(2))},
 		}
@@ -2147,8 +2155,12 @@ func TestRollingUpdateOrder(t *testing.T) {
 		BuildPoolPodName(shardObj, "primary", "zone1", 2): "REPLICA",
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shardObj).Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	c := newTestClient(t, shardObj)
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 	poolSpec := shardObj.Spec.Pools["primary"]
 
 	// Create 3 pods, all with old spec hash
@@ -2311,8 +2323,12 @@ func TestRollingUpdateWaitsForSiblingCell(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shardObj).Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	c := newTestClient(t, shardObj)
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	for _, pod := range []*corev1.Pod{zone1Pod, zone2Pod} {
 		if err := c.Create(context.Background(), pod); err != nil {

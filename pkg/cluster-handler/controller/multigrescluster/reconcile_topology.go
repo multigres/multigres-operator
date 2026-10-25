@@ -214,6 +214,8 @@ func (r *MultigresClusterReconciler) markTopologyFailed(
 	cause error,
 	logger interface{ Error(error, string, ...any) },
 ) {
+	base := cluster.DeepCopy()
+
 	meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 		Type:               conditionTopologyReady,
 		Status:             metav1.ConditionFalse,
@@ -224,7 +226,16 @@ func (r *MultigresClusterReconciler) markTopologyFailed(
 	})
 	cluster.Status.Phase = multigresv1alpha1.PhaseDegraded
 	cluster.Status.Message = cause.Error()
-	if err := r.Status().Update(ctx, cluster); err != nil {
+
+	// A merge patch rather than an Update: Update sends the whole object with
+	// the resourceVersion of a possibly stale in-memory copy, so it can 409
+	// against a status write this controller made earlier in the same pass and
+	// the failure never reaches the status, on the path that fires exactly when
+	// topology is unreachable. A merge patch carries no resourceVersion and
+	// touches only the fields set above. Not a server-side apply, which would
+	// delete every other status field this manager owns. The field owner is the
+	// controller's own, from the client SetupWithManagerReconciler installs.
+	if err := r.Status().Patch(ctx, cluster, client.MergeFrom(base)); err != nil {
 		logger.Error(err, "Failed to persist topology failure to status")
 	}
 }

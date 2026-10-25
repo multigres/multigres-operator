@@ -16,7 +16,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
@@ -181,7 +180,7 @@ func (f *retireFixture) retire(
 		f.stored(stored)
 		objs[slices.Index(objs, client.Object(f.cluster))] = stored
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	c := newTestClient(t, objs...)
 	recorder := record.NewFakeRecorder(10)
 	r := &MultigresClusterReconciler{
 		Client:   c,
@@ -660,7 +659,7 @@ func TestReconcileGlobalTopoServer_LeavesARetiringTopoServerAlone(t *testing.T) 
 		WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
 	}
 	scheme := setupScheme()
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(f.objs...).Build()
+	c := newTestClient(t, f.objs...)
 	r := &MultigresClusterReconciler{
 		Client:   c,
 		Scheme:   scheme,

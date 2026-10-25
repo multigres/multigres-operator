@@ -64,7 +64,6 @@ func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResu
 			desired,
 			client.Apply,
 			client.ForceOwnership,
-			client.FieldOwner("multigres-operator"),
 		); err != nil {
 			return stepResult{}, newStepError(
 				fmt.Errorf("failed to apply shard: %w", err),

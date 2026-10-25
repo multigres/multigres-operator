@@ -7,7 +7,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
@@ -44,11 +43,7 @@ func TestReconcilePoolerReadiness(t *testing.T) {
 		}},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&corev1.Pod{}).
-		WithObjects(pod).
-		Build()
+	c := newTestClient(t, pod)
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	if err := r.reconcilePoolerReadiness(t.Context(), shard, map[string]posture.Readiness{

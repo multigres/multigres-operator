@@ -20,7 +20,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
@@ -100,11 +99,7 @@ func postureTestReconciler(
 	t.Helper()
 	scheme := postureTestScheme(t)
 	allObjects := append([]client.Object{shard}, objects...)
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(allObjects...).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, allObjects...)
 	return &ShardReconciler{
 		Client:          c,
 		Scheme:          scheme,

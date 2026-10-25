@@ -25,6 +25,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
@@ -213,7 +214,6 @@ func (r *CellReconciler) reconcileMultigatewayDeployment(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply Multigateway Deployment: %w", err)
 	}
@@ -242,7 +242,6 @@ func (r *CellReconciler) reconcileMultigatewayService(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply Multigateway Service: %w", err)
 	}
@@ -294,7 +293,6 @@ func (r *CellReconciler) reconcileLocalTopoServer(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply local TopoServer: %w", err)
 	}
@@ -473,7 +471,7 @@ func (r *CellReconciler) patchReadyForDeletionCondition(
 		Status: cell.Status,
 	}
 	if err := r.Status().Patch(ctx, patchObj, client.Apply,
-		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+		client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to patch ReadyForDeletion on Cell: %w", err)
 	}
 	return nil
@@ -513,7 +511,7 @@ func (r *CellReconciler) patchLocalTopoServerWaitingStatus(
 		Status: cell.Status,
 	}
 	if err := r.Status().Patch(ctx, patchObj, client.Apply,
-		client.FieldOwner("multigres-operator"), client.ForceOwnership); err != nil {
+		client.ForceOwnership); err != nil {
 		return fmt.Errorf("failed to patch local TopoServer waiting status on Cell: %w", err)
 	}
 	return nil
@@ -618,12 +616,12 @@ func (r *CellReconciler) patchWorkloadStatus(
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-operator"),
 		client.ForceOwnership,
 	); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
 
+	ownership.TidyLegacy(ctx, r.Client, patchObj)
 	return nil
 }
 
@@ -701,6 +699,9 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	// Both SetupWithManager and test/suite go through here, so the owner cannot diverge.
+	r.Client = client.WithFieldOwner(r.Client, ownership.ManagerCell)
+
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}
@@ -713,6 +714,7 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 			builder.WithPredicates(predicate.Or(
 				projectRefOrGenerationChangedPredicate(),
 				features.LabelsChanged(),
+				statusClearedPredicate(),
 			)),
 		).
 		Owns(&multigresv1alpha1.TopoServer{}).
@@ -754,6 +756,34 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true
+		},
+	}
+}
+
+// statusClearedPredicate admits an update that empties the phase.
+//
+// The For() filter above drops status-only updates, so a status that is
+// wiped out of band (a restore, a manual edit of the subresource) would
+// otherwise never be rebuilt until an unrelated event arrived: a Healthy
+// object requeues nowhere, and its parent keeps reading the empty phase as
+// not Healthy. The reconcile it triggers rewrites the phase, so this cannot
+// loop on the controller's own writes. Only the phase is checked: a partial
+// wipe that leaves it set is not caught.
+func statusClearedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldObj, ok := e.ObjectOld.(*multigresv1alpha1.Cell)
+			if !ok {
+				return false
+			}
+			newObj, ok := e.ObjectNew.(*multigresv1alpha1.Cell)
+			if !ok {
+				return false
+			}
+			return oldObj.Status.Phase != "" && newObj.Status.Phase == ""
 		},
 	}
 }

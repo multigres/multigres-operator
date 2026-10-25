@@ -16,7 +16,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestMaintenanceClientDialOptionsFollowDialContext(t *testing.T) {
@@ -91,8 +90,8 @@ func TestMaintenanceTLSUsesUncachedCredentialAndFailsClosed(t *testing.T) {
 			s := secret.DeepCopy()
 			test.change(s)
 			r := &TopoServerReconciler{
-				Client:    fake.NewClientBuilder().WithScheme(certScheme()).Build(),
-				APIReader: fake.NewClientBuilder().WithScheme(certScheme()).WithObjects(s).Build(),
+				Client:    newTestClient(t, certScheme()),
+				APIReader: newFakeBase(t, certScheme(), s),
 			}
 			cfg, err := r.maintenanceTLSConfig(t.Context(), ts)
 			if (err != nil) != test.wantErr {

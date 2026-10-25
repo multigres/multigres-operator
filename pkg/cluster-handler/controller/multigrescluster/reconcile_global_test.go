@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -144,9 +145,14 @@ func TestRetireManagedGlobalTopo_Scope(t *testing.T) {
 	// cluster carries that generation and status too, since retirement re-reads
 	// it before deleting.
 	markMoveFinished(cluster)
-	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(cluster, globalTopo, localTopo, wrongOwnerGlobalTopo, wrongComponentOwnedByCluster).
-		Build()
+	c := newTestClient(
+		t,
+		cluster,
+		globalTopo,
+		localTopo,
+		wrongOwnerGlobalTopo,
+		wrongComponentOwnedByCluster,
+	)
 	r := &MultigresClusterReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -207,7 +213,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -234,7 +240,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -261,7 +267,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -288,11 +294,11 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				return errors.New("patch error")
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -315,11 +321,11 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			// Multiadmin is created by default unless disabled, so it should try to patch.
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				return errors.New("patch error")
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -342,11 +348,11 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			// MultiadminWeb also defaults to enabled if image is present (which defaults handles)
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				return errors.New("patch error")
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -373,7 +379,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		// Use empty scheme for Reconciler
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -397,7 +403,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			// Multiadmin default enabled
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		// Use empty scheme for Reconciler
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -421,7 +427,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			// MultiadminWeb default enabled
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		// Use empty scheme for Reconciler
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -452,10 +458,12 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		// Build uses r.Scheme.
 		// Patch uses r.Client which uses client scheme.
 		// If we want Patch to fail due to missing kind, client scheme must miss it.
+		// Explicit wrap: newTestClient registers every type, which would defeat the
+		// narrowed scheme above.
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(cluster).Build()
 
 		r := &MultigresClusterReconciler{
-			Client:   c,
+			Client:   client.WithFieldOwner(c, ownership.ManagerCluster),
 			Scheme:   s,
 			Recorder: record.NewFakeRecorder(10),
 		}
@@ -475,14 +483,14 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				if _, ok := obj.(*corev1.Service); ok {
 					return errors.New("service patch error")
 				}
 				return cli.Patch(ctx, obj, patch, opts...)
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -509,9 +517,11 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		_ = appsv1.AddToScheme(s)
 		_ = multigresv1alpha1.AddToScheme(s)
 
+		// Explicit wrap: newTestClient registers every type, which would defeat the
+		// narrowed scheme above.
 		c := fake.NewClientBuilder().WithScheme(s).WithObjects(cluster).Build()
 		r := &MultigresClusterReconciler{
-			Client:   c,
+			Client:   client.WithFieldOwner(c, ownership.ManagerCluster),
 			Scheme:   s,
 			Recorder: record.NewFakeRecorder(10),
 		}
@@ -531,14 +541,14 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				if _, ok := obj.(*corev1.Service); ok {
 					return errors.New("service patch error")
 				}
 				return cli.Patch(ctx, obj, patch, opts...)
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -563,7 +573,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 		}
 
 		patchCount := 0
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				if _, ok := obj.(*corev1.Service); ok {
 					patchCount++
@@ -574,7 +584,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 				}
 				return cli.Patch(ctx, obj, patch, opts...)
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -598,7 +608,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				if svc, ok := obj.(*corev1.Service); ok &&
 					svc.Name == "test-multigateway-replica" {
@@ -606,7 +616,7 @@ func TestReconcileGlobal_ErrorPaths(t *testing.T) {
 				}
 				return cli.Patch(ctx, obj, patch, opts...)
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -1084,10 +1094,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 
 		// Setup client
-		clientBuilder := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
-		c := clientBuilder.Build()
+		c := newTestClient(t)
 
 		// Manually create template to ensure it exists
 		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
@@ -1128,10 +1135,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 
 		// Setup client
-		clientBuilder := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
-		c := clientBuilder.Build()
+		c := newTestClient(t)
 
 		// Manually create template to ensure it exists
 		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
@@ -1164,10 +1168,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 		}
 
 		// Setup client
-		clientBuilder := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
-		c := clientBuilder.Build()
+		c := newTestClient(t)
 
 		// Manually create template to ensure it exists
 		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
@@ -1198,10 +1199,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 			return nil, errors.New("mocked builder error")
 		}
 
-		clientBuilder := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
-		c := clientBuilder.Build()
+		c := newTestClient(t)
 
 		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
 			t.Fatalf("Failed to create CoreTemplate: %v", err)
@@ -1231,10 +1229,7 @@ func TestReconcile_Global_BuilderErrors(t *testing.T) {
 			return nil, errors.New("mocked builder error")
 		}
 
-		clientBuilder := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{})
-		c := clientBuilder.Build()
+		c := newTestClient(t)
 
 		if err := c.Create(t.Context(), coreTpl.DeepCopy()); err != nil {
 			t.Fatalf("Failed to create CoreTemplate: %v", err)
@@ -1285,10 +1280,13 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 		// bug (>=v0.25.0) where its default multi-converter chain returns
 		// mismatched schemas for server-side-apply patches of built-in types
 		// like NetworkPolicy.
+		// Explicit wrap: newTestClient has no type-converter option, and the fake
+		// client's default converter chain is the bug described above. A testkit
+		// fake builder that applies the deduced converter would remove this.
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
 			WithTypeConverters(managedfields.NewDeducedTypeConverter()).Build()
 		r := &MultigresClusterReconciler{
-			Client:   c,
+			Client:   client.WithFieldOwner(c, ownership.ManagerCluster),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(10),
 		}
@@ -1305,10 +1303,13 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 
 	t.Run("Disabled deletes previously created policies", func(t *testing.T) {
 		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true})
+		// Explicit wrap: newTestClient has no type-converter option, and the fake
+		// client's default converter chain is the bug described above. A testkit
+		// fake builder that applies the deduced converter would remove this.
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
 			WithTypeConverters(managedfields.NewDeducedTypeConverter()).Build()
 		r := &MultigresClusterReconciler{
-			Client:   c,
+			Client:   client.WithFieldOwner(c, ownership.ManagerCluster),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(10),
 		}
@@ -1331,7 +1332,7 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 
 	t.Run("Disabled with nothing to delete is a no-op", func(t *testing.T) {
 		cluster := newCluster(nil)
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -1345,15 +1346,14 @@ func TestReconcileAdminNetworkPolicies(t *testing.T) {
 
 	t.Run("Apply error is propagated", func(t *testing.T) {
 		cluster := newCluster(&multigresv1alpha1.NetworkPolicyConfig{Enabled: true})
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
-			WithInterceptorFuncs(interceptor.Funcs{
-				Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-					if _, ok := obj.(*networkingv1.NetworkPolicy); ok {
-						return errors.New("patch failed")
-					}
-					return cl.Patch(ctx, obj, patch, opts...)
-				},
-			}).Build()
+		c := newTestClientWith(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if _, ok := obj.(*networkingv1.NetworkPolicy); ok {
+					return errors.New("patch failed")
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,

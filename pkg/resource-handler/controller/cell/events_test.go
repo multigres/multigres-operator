@@ -44,7 +44,7 @@ func TestCellEventsOnlyOnChanges(t *testing.T) {
 				Build()
 			cl := testutil.NewFakeClientWithFailures(base, nil)
 			recorder := record.NewFakeRecorder(100)
-			r := &CellReconciler{Client: cl, Scheme: scheme, Recorder: recorder}
+			r := &CellReconciler{Client: withCellOwner(cl), Scheme: scheme, Recorder: recorder}
 			reconcile := func() []string {
 				t.Helper()
 				if _, err := r.Reconcile(
