@@ -75,15 +75,16 @@ If the status patch matches the existing state, the API Server will treat it as 
 ```go
 // SSA Pattern: blindly patch the status.
 // The API Server calculates the diff. If no change, it returns 200 OK with no-op.
-if err := r.Status().Patch(
+// ApplyStatus is client.Apply with client.ForceOwnership under the given
+// manager, followed by the legacy status entry tidy-up.
+if err := ownership.ApplyStatus(
     ctx,
+    r.Client,
     &multigresv1alpha1.MultigresCluster{
         ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
         Status:     newStatus,
     },
-    client.Apply,
-    client.FieldOwner("multigres-operator"),
-    client.ForceOwnership,
+    ownership.ManagerCluster,
 ); err != nil {
     return err
 }
@@ -101,4 +102,4 @@ if !reflect.DeepEqual(cluster.Status, newStatus) {
 **Decision:** We prefer the cleaner code of SSA and rely on the API Server's optimized diffing engine until proven otherwise.
 
 > [!NOTE]
-> The shard controller's `updateStatus` in `status.go` uses `FieldOwner("multigres-resource-handler")` instead of `"multigres-operator"` to avoid SSA field ownership conflicts with the cluster-handler, which also patches Shard status fields. All other SSA operations across both handlers use `"multigres-operator"`.
+> Every status write and child-object apply names its field owner per call, from the constants in `pkg/ownership`. Status writes use the controller's own status manager; child objects use `ownership.ManagerChildWriter`. Finalizers, `Create` calls and metadata merge patches carry no owner and are attributed to the binary's name. Which manager owns which status field, why child writes share one name, and how the suite enforces it, is in [Status Ownership](status-ownership.md).

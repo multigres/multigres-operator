@@ -16,6 +16,7 @@ Internal documentation for contributors and operators. For user-facing documenta
 | Document | Description |
 |:---|:---|
 | [Controller Patterns](controller-patterns.md) | Performance tuning (QPS, workers), event filtering (GenerationChangedPredicate), SSA idempotency |
+| [Status Ownership](status-ownership.md) | One field manager per status field, the `pkg/ownership` table, field classes, suite enforcement, legacy manager cleanup |
 | [Phase Lifecycle](phase-lifecycle.md) | Phase values, computation per resource, crash-loop detection, periodic re-reconciliation |
 | [Caching Strategy](caching-strategy.md) | Informer filtering, secret access patterns (Option A/B/C), IRSA |
 | [Reconcile Gating & Laptop Mode](reconcile-gating.md) | `multigres.com/reconcile=disabled` gating, the `--namespace` claim, hard-error guards, laptop-mode runbook |
