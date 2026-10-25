@@ -1,6 +1,8 @@
 package suite
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/multigres/testkit/ctrltest"
@@ -27,7 +29,30 @@ type C struct {
 // rather than only the assertion message.
 func newCase(t *testing.T) *C {
 	t.Helper()
-	return &C{C: Suite.Case(t)}
+	c := &C{C: Suite.Case(t)}
+	// Registered after Suite.Case so it runs first (cleanups are LIFO): before
+	// testkit closes the namespace's reconcile gate and deletes the namespace.
+	// It lives here rather than in testkit because every test in this package
+	// funnels through newCase, so no suite-wide hook is needed.
+	t.Cleanup(func() { c.requireOwnership(t) })
+	return c
+}
+
+// requireOwnership fails the test with every field-ownership violation in its
+// namespace. It runs even when the test already failed, since a violation is
+// evidence for that failure. A case that created no CR has nothing to check,
+// which is why this uses the lenient checkOwnership.
+func (c *C) requireOwnership(t *testing.T) {
+	t.Helper()
+	violations, _, err := checkOwnership(context.Background(), Suite.Client, c.NS)
+	if err != nil {
+		t.Errorf("status ownership check: %v", err)
+		return
+	}
+	if len(violations) > 0 {
+		t.Errorf("status ownership violations in %s:\n  %s", c.NS,
+			strings.Join(violations, "\n  "))
+	}
 }
 
 // newBareCase opens a test context with no namespace, for the tests in this

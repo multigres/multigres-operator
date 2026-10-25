@@ -6,9 +6,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	toposervercontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/toposerver"
 )
 
 // The name of a Secret object, not a credential. gosec matches on the string
@@ -110,4 +113,93 @@ func (c *C) WaitForClusterHealthy(cluster *MultigresCluster) {
 		}
 		return nil
 	})
+}
+
+// etcdMembers is the replica count of the fixture's managed global TopoServer,
+// which sets no replicas and so takes the controller's default.
+const etcdMembers = int(toposervercontroller.DefaultReplicas)
+
+// globalTopoName is the managed global TopoServer of a cluster, which
+// BuildGlobalTopoServer names after the cluster.
+func globalTopoName(cluster *MultigresCluster) string {
+	return cluster.Name + "-global-topo"
+}
+
+// enableEtcdDefragmentation turns on spec.etcd.maintenance defragmentation for
+// the cluster's managed global TopoServer. It is separate from MinimalCluster
+// so every other scenario keeps maintenance off.
+//
+// Enabling it as a spec edit on a running cluster is also what wakes the
+// TopoServer: its controller reschedules itself an hour out while the etcd
+// pods are younger than the stable period, and only a spec change (or a wiped
+// status) reaches it sooner.
+func (c *C) enableEtcdDefragmentation(cluster *MultigresCluster) {
+	c.Helper()
+	c.updateCluster(cluster, func(got *MultigresCluster) {
+		got.Spec.GlobalTopoServer = &multigresv1alpha1.GlobalTopoServerSpec{
+			Etcd: &multigresv1alpha1.EtcdSpec{
+				Maintenance: &multigresv1alpha1.EtcdMaintenanceConfig{
+					DefragmentationEnabled: ptr.To(true),
+				},
+			},
+		}
+	})
+}
+
+// ageEtcdPods backdates the Ready condition of every etcd pod of the named
+// TopoServer by an hour, so they satisfy the controller's one-minute stable
+// period without the test sleeping through it. The data plane sim already
+// builds the StatefulSet status, the controller-revision-hash labels and the
+// owner references maintenance requires; what it lacks is a clock, so it can
+// only stamp Ready as of now.
+//
+// Testkit gap: a pod-age knob on the data plane sim (settle pods as Ready at
+// a given time) would delete this helper.
+func (c *C) ageEtcdPods(topoServer string) {
+	c.Helper()
+	for i := range etcdMembers {
+		key := client.ObjectKey{Namespace: c.NS, Name: fmt.Sprintf("%s-%d", topoServer, i)}
+		c.Eventually(30*time.Second, "etcd pod "+key.Name+" to be Ready", func() error {
+			pod := &corev1.Pod{}
+			if err := c.Get(key, pod); err != nil {
+				return err
+			}
+			for j := range pod.Status.Conditions {
+				cond := &pod.Status.Conditions[j]
+				if cond.Type != corev1.PodReady || cond.Status != corev1.ConditionTrue {
+					continue
+				}
+				cond.LastTransitionTime = metav1.NewTime(time.Now().Add(-time.Hour))
+				return c.Client().Status().Update(c.Context(), pod)
+			}
+			return fmt.Errorf("pod %s is not Ready", key.Name)
+		})
+	}
+}
+
+// updateCluster applies mutate to a fresh read of the cluster and writes it
+// back, failing the test rather than returning an error: a write that does not
+// land is this file's own setup breaking, never an observation about the
+// operator.
+//
+// It retries on conflict because the cluster controller writes the
+// MultigresCluster's own metadata (the cleanup finalizer, the applied-images
+// annotation) with optimistic locking, so a reconcile landing between the Get
+// and the Update is ordinary rather than a failure. ctrltest has no
+// get-mutate-update helper, so this and the loop in
+// scenario_shard_lifecycle_test.go both hand-roll one; delete both once it
+// does.
+func (c *C) updateCluster(
+	cluster *MultigresCluster,
+	mutate func(*MultigresCluster),
+) {
+	c.Helper()
+	c.NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		got := &MultigresCluster{}
+		if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
+			return err
+		}
+		mutate(got)
+		return c.Update(got)
+	}), "update cluster")
 }
