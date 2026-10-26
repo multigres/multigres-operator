@@ -1,9 +1,21 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multigres-admin-password
+  namespace: default
+type: Opaque
+stringData:
+  password: postgres
+---
 apiVersion: multigres.com/v1alpha1
 kind: MultigresCluster
 metadata:
   name: multiadmin-web
   namespace: default
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   pvcDeletionPolicy:
     whenDeleted: Delete
     whenScaled: Delete
@@ -24,6 +36,7 @@ spec:
     multigateway: "debug"
   cells:
     - name: "us-east-1"
+      zoneId: "us-central1-a"
       spec:
         multigateway:
           replicas: 1
