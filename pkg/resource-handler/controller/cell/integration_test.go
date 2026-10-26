@@ -14,13 +14,17 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
+	"github.com/stretchr/testify/require"
+
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/features"
 	cellcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -722,6 +726,122 @@ func TestCellReconciliation(t *testing.T) {
 	}
 }
 
+// TestCellReconcileGatingNamespaceLabelStormGuard pins that the namespace watch
+// only enqueues the Cell for reconcile-label changes, not for unrelated namespace
+// label churn. It substitutes a counting reconciler via
+// SetupWithManagerReconciler so the enqueue path can be observed directly.
+func TestCellReconcileGatingNamespaceLabelStormGuard(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(
+			filepath.Join("../../../../", "config", "crd", "bases"),
+		),
+	)
+	c := mgr.GetClient()
+
+	const nsName = "gating-storm"
+	if err := c.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: nsName},
+	}); err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+
+	reconciler := &cellcontroller.CellReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("cell-controller-storm"),
+	}
+	counter := testutil.NewCountingReconciler(reconciler)
+	if err := reconciler.SetupWithManagerReconciler(mgr, counter, controller.Options{
+		SkipNameValidation: ptr.To(true),
+	}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	cell := &multigresv1alpha1.Cell{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "storm-cell",
+			Namespace: nsName,
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.CellSpec{
+			Name:   "zone1",
+			ZoneID: "usw1-az1",
+			Images: multigresv1alpha1.CellImages{
+				Multigateway: "ghcr.io/multigres/multigres:main",
+			},
+			Multigateway: multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas: ptr.To(int32(1)),
+				},
+			},
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:        "global-topo:2379",
+				RootPath:       "/multigres/global",
+				Implementation: "etcd",
+			},
+		},
+	}
+	if err := c.Create(ctx, cell); err != nil {
+		t.Fatalf("Failed to create Cell: %v", err)
+	}
+
+	key := types.NamespacedName{Namespace: nsName, Name: cell.Name}
+	if err := wait.PollUntilContextTimeout(
+		ctx,
+		100*time.Millisecond,
+		30*time.Second,
+		true,
+		func(context.Context) (bool, error) { return counter.CountFor(key) >= 1, nil },
+	); err != nil {
+		t.Fatalf("Cell was never reconciled: %v", err)
+	}
+	counter.WaitQuiescent(t, key)
+
+	// An unrelated namespace label edit must not enqueue the Cell.
+	before := counter.CountFor(key)
+	ns := &corev1.Namespace{}
+	if err := c.Get(ctx, client.ObjectKey{Name: nsName}, ns); err != nil {
+		t.Fatalf("Failed to re-read namespace: %v", err)
+	}
+	if ns.Labels == nil {
+		ns.Labels = map[string]string{}
+	}
+	ns.Labels["unrelated"] = "churn"
+	if err := c.Update(ctx, ns); err != nil {
+		t.Fatalf("Failed to edit unrelated namespace label: %v", err)
+	}
+	time.Sleep(time.Second)
+	if got := counter.CountFor(key); got != before {
+		t.Fatalf("unrelated namespace label edit enqueued reconciles: %d -> %d", before, got)
+	}
+
+	// A reconcile-label change on the namespace must enqueue the Cell.
+	if err := c.Get(ctx, client.ObjectKey{Name: nsName}, ns); err != nil {
+		t.Fatalf("Failed to re-read namespace: %v", err)
+	}
+	ns.Labels[features.ReconcileLabel] = "disabled"
+	if err := c.Update(ctx, ns); err != nil {
+		t.Fatalf("Failed to gate namespace: %v", err)
+	}
+	if err := wait.PollUntilContextTimeout(
+		ctx,
+		100*time.Millisecond,
+		10*time.Second,
+		true,
+		func(context.Context) (bool, error) { return counter.CountFor(key) > before, nil },
+	); err != nil {
+		t.Fatalf("reconcile-label change on namespace did not enqueue the Cell: %v", err)
+	}
+}
+
 // Test helpers
 
 func markManagedLocalTopoServerHealthy(
@@ -796,4 +916,140 @@ func tcpPort(t testing.TB, name string, port int32) corev1.ContainerPort {
 func tcpServicePort(t testing.TB, name string, port int32) corev1.ServicePort {
 	t.Helper()
 	return corev1.ServicePort{Name: name, Port: port, TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP}
+}
+
+// TestCellReconcileGatingObjectLevel pins that the reconcile-disabled label on
+// the Cell itself (not its namespace) pauses and resumes reconciliation. The
+// resume half is driven by the label removal alone - the namespace and the spec
+// are never touched again - so it fails against a For() predicate that omits
+// features.LabelsChanged(): the metadata-only update would never enqueue.
+func TestCellReconcileGatingObjectLevel(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(
+			filepath.Join("../../../../", "config", "crd", "bases"),
+		),
+	)
+	c := mgr.GetClient()
+
+	const nsName = "gating-objectlevel"
+	if err := c.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: nsName},
+	}); err != nil {
+		t.Fatalf("Failed to create namespace: %v", err)
+	}
+
+	reconciler := &cellcontroller.CellReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("cell-controller-objectlevel"),
+	}
+	counter := testutil.NewCountingReconciler(reconciler)
+	if err := reconciler.SetupWithManagerReconciler(mgr, counter, controller.Options{
+		SkipNameValidation: ptr.To(true),
+	}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	cell := &multigresv1alpha1.Cell{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "object-level-cell",
+			Namespace: nsName,
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+		Spec: multigresv1alpha1.CellSpec{
+			Name:   "zone1",
+			ZoneID: "usw1-az1",
+			Images: multigresv1alpha1.CellImages{
+				Multigateway: "ghcr.io/multigres/multigres:main",
+			},
+			Multigateway: multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas: ptr.To(int32(1)),
+				},
+			},
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:        "global-topo:2379",
+				RootPath:       "/multigres/global",
+				Implementation: "etcd",
+			},
+			TopoServer: &multigresv1alpha1.LocalTopoServerSpec{
+				Etcd: &multigresv1alpha1.EtcdSpec{},
+			},
+		},
+	}
+	if err := c.Create(ctx, cell); err != nil {
+		t.Fatalf("Failed to create Cell: %v", err)
+	}
+
+	key := types.NamespacedName{Namespace: nsName, Name: cell.Name}
+	markManagedLocalTopoServerHealthy(t, ctx, c, cell)
+
+	// 1. Reconciled normally: the Multigateway Deployment exists with 1 replica.
+	deployKey := client.ObjectKey{
+		Namespace: nsName,
+		Name:      cellcontroller.BuildMultigatewayDeploymentName(cell),
+	}
+	deploymentReplicas := func() (int32, bool) {
+		d := &appsv1.Deployment{}
+		if err := c.Get(ctx, deployKey, d); err != nil {
+			return 0, false
+		}
+		return ptr.Deref(d.Spec.Replicas, 0), true
+	}
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 30*time.Second, true,
+		func(context.Context) (bool, error) {
+			replicas, ok := deploymentReplicas()
+			return ok && replicas == 1, nil
+		}); err != nil {
+		t.Fatalf("Multigateway Deployment never reached 1 replica: %v", err)
+	}
+
+	// 2. Gate the object itself. The namespace is untouched.
+	counter.WaitQuiescent(t, key)
+	testutil.PatchLabel(t, c, cell, "multigres.com/reconcile", "disabled")
+	counter.WaitQuiescent(t, key)
+
+	// 3. A spec mutation while gated must not reach the Deployment, and the
+	// Cell must get no write from the operator after it.
+	require.NoError(t, c.Get(ctx, key, cell))
+	cell.Spec.Multigateway.Replicas = ptr.To(int32(2))
+	require.NoError(t, c.Update(ctx, cell))
+
+	require.Never(t, func() bool {
+		replicas, ok := deploymentReplicas()
+		return ok && replicas != 1
+	}, 2*time.Second, 200*time.Millisecond,
+		"gated Cell reconciled its spec change into the Multigateway Deployment")
+	testutil.RequireNoWrites(ctx, t, mgr.GetAPIReader(), cell, time.Second)
+
+	// 4. Remove the object's own label - spec and namespace untouched.
+	counter.WaitQuiescent(t, key)
+	before := counter.CountFor(key)
+	testutil.PatchLabel(t, c, cell, "multigres.com/reconcile", "")
+
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 10*time.Second, true,
+		func(context.Context) (bool, error) {
+			return counter.CountFor(key) > before, nil
+		}); err != nil {
+		t.Fatalf("removing the object's own label did not re-enqueue the Cell: %v", err)
+	}
+
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 30*time.Second, true,
+		func(context.Context) (bool, error) {
+			replicas, ok := deploymentReplicas()
+			return ok && replicas == 2, nil
+		}); err != nil {
+		t.Fatalf(
+			"removing the object's own label did not converge the pending spec change: %v",
+			err,
+		)
+	}
 }

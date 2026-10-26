@@ -84,6 +84,7 @@ function fixture({ mainRecord, pendingRecord, existingPR = false } = {}) {
     },
     pulls: {
       list: async () => {},
+      get: method('getPR', () => pr),
       create: method('createPR', (args) => {
         pr = { ...args, number: 17, state: 'open', html_url: 'https://github.com/multigres/multigres-operator/pull/17', head: { sha: branch } };
         return pr;
@@ -240,4 +241,61 @@ test('first promotion rejects a nightly older than the existing source-pinned de
     ? Promise.resolve({ data: { status: 'behind' } }) : compare(args);
   await assert.rejects(promote(f), /older than the initial runtime defaults/);
   assert.ok(!f.calls.some((call) => /^(create|update)/.test(call.name)));
+});
+
+function enableManual(f) {
+  f.context.eventName = 'workflow_dispatch';
+  f.context.payload = { inputs: { promote: 'true', 'operator-ref': 'main', 'nightly-run-id': '100' } };
+  return f;
+}
+test('explicit main-only manual promotion publishes the verified set with its evidence', async () => {
+  const f = enableManual(fixture());
+  assert.equal((await promote(f)).changed, true);
+  validateDefaults(f.branchFiles[DEFAULTS], JSON.parse(f.branchFiles[RECORD]));
+});
+for (const [name, change] of [
+  ['no opt-in', f => { f.context.payload.inputs.promote = 'false'; }],
+  ['different build', f => { f.context.payload.inputs['nightly-run-id'] = '999'; }],
+  ['different operator', f => { f.context.payload.inputs['operator-ref'] = 'feature'; }],
+  ['branch dispatch', f => { f.context.ref = 'refs/heads/feature'; }],
+  ['stale main', f => { f.setMain(sha('c')); }],
+]) {
+  test(`manual promotion rejects ${name} before writing`, async () => {
+    const f = enableManual(fixture());
+    change(f);
+    await assert.rejects(promote(f));
+    assert.ok(!f.calls.some(call => /^(create|update)/.test(call.name)));
+  });
+}
+
+test('waits for stale PR metadata after a successful branch update', async () => {
+  const f = fixture({ pendingRecord: record('1'), existingPR: true });
+  const update = f.github.rest.pulls.update;
+  f.github.rest.pulls.update = async args => {
+    const result = await update(args);
+    return { data: { ...result.data, head: { sha: sha('b') } } };
+  };
+  const result = await promote(f);
+  assert.equal(result.head, f.branch);
+  assert.equal(f.calls.filter(call => call.name === 'getPR').length, 1);
+});
+test('a concurrent branch update is rejected even when PR metadata matches', async () => {
+  const f = fixture();
+  const create = f.github.rest.pulls.create;
+  f.github.rest.pulls.create = async args => {
+    const result = structuredClone(await create(args));
+    await f.github.rest.git.updateRef({ ref: `heads/${BRANCH}`, sha: 'other-commit', force: false });
+    return result;
+  };
+  await assert.rejects(promote(f), /Promotion branch changed concurrently/);
+});
+test('persistently stale PR metadata fails without checkpointing', async () => {
+  const f = fixture({ pendingRecord: record('1'), existingPR: true });
+  const update = f.github.rest.pulls.update;
+  f.github.rest.pulls.update = async args => {
+    const result = await update(args);
+    return { data: { ...result.data, head: { sha: sha('b') } } };
+  };
+  f.github.rest.pulls.get = async () => ({ data: { head: { sha: sha('b') } } });
+  await assert.rejects(promote(f), /has not caught up/);
 });

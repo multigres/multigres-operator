@@ -9,13 +9,17 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/multigres/multigres/go/common/rpcclient"
+	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	multipoolermanagerdatapb "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -921,5 +925,50 @@ func TestBuildTLSConfigVerifiesExactClusterIdentity(t *testing.T) {
 				t.Errorf("Verify() error = %v, want success %v", err, tt.wantOK)
 			}
 		})
+	}
+}
+
+// In laptop mode the mTLS clients the resolver creates must reach poolers only
+// through the laptop dialer: RPCOptions has to reach every one of them.
+func TestResolverClientsUseRPCOptions(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		dials []string
+	)
+	dial := func(_ context.Context, addr string) (net.Conn, error) {
+		mu.Lock()
+		dials = append(dials, addr)
+		mu.Unlock()
+		return nil, errors.New("recording dialer refuses every dial")
+	}
+	reader := fake.NewClientBuilder().WithScheme(testScheme(t)).Build()
+	r, err := NewOperatorCertResolver(reader, Options{
+		Capacity:   1,
+		Insecure:   rpcclient.NewFakeClient(),
+		RPCOptions: []rpcclient.Option{rpcclient.WithContextDialer(dial)},
+	})
+	if err != nil {
+		t.Fatalf("NewOperatorCertResolver() error = %v", err)
+	}
+	t.Cleanup(r.Close)
+
+	c := r.newClient(&tls.Config{MinVersion: tls.VersionTLS12})
+	t.Cleanup(c.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	pooler := &clustermetadatapb.Multipooler{
+		Hostname: "pooler-0.example.internal",
+		PortMap:  map[string]int32{"grpc": 15200},
+	}
+	if _, err := c.Status(ctx, pooler, &multipoolermanagerdatapb.StatusRequest{}); err == nil {
+		t.Fatal("want an error from a dialer that refuses every dial")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dials) == 0 {
+		t.Fatal("the dialer was never used")
+	}
+	if dials[0] != "pooler-0.example.internal:15200" {
+		t.Errorf("dialed %q, want pooler-0.example.internal:15200", dials[0])
 	}
 }

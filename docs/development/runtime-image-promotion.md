@@ -1,9 +1,10 @@
 # Runtime image promotion
 
 The nightly compatibility workflow promotes runtime defaults only after a
-scheduled canary on `multigres/multigres-operator`'s `main` branch passes. Proto
-dependency sync does not change these defaults. Manual canaries are diagnostic;
-they cannot publish a promotion PR or mark an upstream revision handled.
+canary on `multigres/multigres-operator`'s `main` branch passes. Proto dependency
+sync does not change these defaults. Manual canaries are diagnostic by default;
+explicit manual promotion requires a successful upstream build ID and fresh
+qualification on main.
 
 ## Evidence and image mapping
 
@@ -50,7 +51,7 @@ passed the operator canary. Select immutable `multigres` and `pgctld` image
 references from the same verified upstream build; use `spec.images.multipooler`
 and `spec.images.postgres` overrides for qualification until promoted defaults
 meet this baseline. Do not promote an untested digest or use a mutable `main`
-tag as a production pin. Compiled defaults still move only through the scheduled
+tag as a production pin. Compiled defaults still move only through the verified
 canary and promotion process above.
 
 Minigres's gateway reaches its pooler in memory. Lite must not pass
@@ -80,6 +81,47 @@ template must preserve the single resolved pool and its identity. CRD/controller
 guards prevent a changed identity from provisioning a second static primary
 alongside existing data.
 
+### Upstream compatibility review — 2026-10-26
+
+Operator main now promotes runtime revision
+[`d063d0b437dac1fb935e0476c142f1a42a2af9f1`](https://github.com/multigres/multigres/commit/d063d0b437dac1fb935e0476c142f1a42a2af9f1).
+Changes since the earlier Lite qualification at `8f5c8896` include:
+
+- Sagar's [#1573](https://github.com/multigres/multigres/pull/1573) adds a shared
+  Minigres config file, with `multigateway.*` and `multipooler.*` keys. Existing
+  CLI flags and `MT_*` names are unchanged, so the operator's flag-based pod
+  configuration remains compatible. A mounted Minigres config file would be a
+  separate operator feature; the PostgreSQL ConfigMap is not this config file.
+- Haritabh's [#1549](https://github.com/multigres/multigres/pull/1549) makes query
+  stream reuse unconditional and removes `--query-stream-reuse`. The operator
+  does not emit this flag. Keep gateway and pooler runtimes from the same build;
+  Lite embeds both in one Minigres process.
+- Manan's [#1575](https://github.com/multigres/multigres/pull/1575) allows
+  non-default tablegroups and canonical keyrange shard names in multipooler.
+  This does not establish Minigres gateway routing for arbitrary shards. Lite
+  qualification continues to use the catalog pair `default/0-inf`; the change
+  does not justify relaxing Lite's one-database/tablegroup/shard identity guards.
+- [#1568](https://github.com/multigres/multigres/pull/1568) terminates sessions
+  when pinned state is lost, [#1583](https://github.com/multigres/multigres/pull/1583)
+  stops statement replay after a connection error, and
+  [#1588](https://github.com/multigres/multigres/pull/1588) fixes IPv6 dialing.
+  These arrive through the promoted runtime; they need no new operator flags or
+  protobuf calls. The operator's Go dependency can remain at `6fd434f73b20`.
+
+Sagar's [#1584](https://github.com/multigres/multigres/pull/1584) is still open as
+of this review. It publishes static leadership in topology, routes normal
+multiadmin backup operations to that primary, and removes backup lease dependence
+on etcd for static leaders. The promoted runtime does **not** include it. A backup
+volume/configuration and passing SQL outage tests do not qualify normal Lite
+backup/list/verify/expire or backup recovery. Once it merges, qualify a matching
+Minigres/pgctld/multiadmin image set with backup, list, verify and destructive
+restore coverage before claiming support. Preserve per-instance topology roots
+and backup-location isolation; that is an assumption of the upstream change.
+Topology-record recreation [#1561](https://github.com/multigres/multigres/pull/1561)
+also remains open and is not included in the qualified runtime.
+
+### Runtime qualification
+
 Before qualifying a newer runtime for Lite, exercise these scenarios against the
 exact candidate image digests:
 
@@ -108,11 +150,24 @@ not supported in Lite. RWO storage is explicit because Kind's local-path
 provisioner does not implement the default ReadWriteOncePod access mode.
 
 Every code PR runs this package with fixture images pinned to the qualified
-upstream revision `8f5c8896bb89f92c533633a0973aa92e3672060a`. The nightly canary
+upstream revision `d063d0b437dac1fb935e0476c142f1a42a2af9f1`. The nightly canary
 runs both the shared suite and this dedicated package with its verified candidate
 digests through `E2E_*` overrides. Both must pass before promotion or a green
 compatibility report. The fixture pins do not change compiled runtime defaults.
 Manual canaries against older operator refs must include this test package.
+
+On 2026-10-26 the merged Lite branch was qualified locally against this promoted
+image pair on linux/arm64, in a disposable single-node Kind cluster with local
+ReadWriteOnce storage. The full package passed in 407.886 seconds (246.89 seconds
+for the runtime scenario): admin and topology mTLS, 45 uninterrupted outage
+write/read iterations, Minigres container restart, complete pod replacement with
+the original PVC/PV, blocked cold bootstrap, and restored topology registration
+and Healthy status all passed. All 49 final rows survived, with fingerprint
+`49:4969bfd9794e22638e7acdbbb0e00f70`. The cluster was removed afterward. The operator
+and GC binaries were cross-built with `CGO_ENABLED=0` and packaged in the standard
+distroless runtime. This run does not qualify amd64, multi-node CSI,
+ReadWriteOncePod fencing, public SQL TLS, or the pending upstream backup feature.
+Compiled defaults and promotion evidence are inherited unchanged from main.
 
 Run the same qualification locally with Docker, Kind and kubectl available:
 
@@ -157,19 +212,55 @@ has a different digest set. Newer green sets replace all images and evidence in
 one tree/ref update, retaining branch ancestry without a force push. Reprocessing
 an identical set leaves its commit and original evidence unchanged.
 
-Compatibility reporting and promotion are sibling terminal jobs. Reporting has
-only `issues: write`; promotion has only `contents: write` and
+Compatibility reporting runs before promotion, so a recovered incident is closed
+before the revision can be checkpointed. This includes explicit manual promotion
+on main; diagnostic runs do not close incidents. Reporting has only `issues: write`;
+promotion has only `contents: write` and
 `pull-requests: write`. A green canary can close the compatibility incident even
 if promotion fails. Promotion errors fail the workflow without opening a
 compatibility incident.
 
 Only successful PR publication (or verification that the same set is already
 published/merged) writes the `nightly-compatibility-promoted-<sha>` checkpoint.
-Resolution reads these checkpoints only from successful scheduled runs on main;
+Resolution reads these checkpoints only from successful scheduled or manually
+promoted runs on main;
 older green-only artifacts do not count. A failed promotion remains eligible for
 the next scheduled run. A failed PR API call may leave the complete candidate
 commit on the promotion branch; retry repairs PR publication before writing the
 checkpoint. No partially updated image set can become visible on the branch.
+
+## Manual qualification and promotion
+
+Both full-suite qualification jobs have a 60-minute budget, including setup.
+Existing per-scenario deadlines are unchanged. A timeout is not a green canary.
+
+Run `Nightly upstream compatibility` from operator **main**, selecting a successful
+upstream `Nightly Build` run ID and explicitly enabling `promote`. For example,
+the build containing #1574 can be qualified and proposed with:
+
+```sh
+gh workflow run nightly-compatibility.yaml \
+  --repo multigres/multigres-operator --ref main \
+  -f nightly-run-id=39846754232 \
+  -f upstream-sha=1e0ec0d823f1c9da2a5f6514ef915695639aa944 \
+  -f operator-ref=main -F promote=true
+```
+
+The build may have been scheduled or manually dispatched, but must be a completed,
+successful upstream Nightly Build from main. An optional `upstream-sha` must match
+that build. The workflow reruns provenance, architecture and full e2e checks;
+it never treats an earlier diagnostic run as qualification. All normal promotion
+safeguards and the requirement for maintainer review remain in place.
+
+Leave `promote=false` to diagnose without updating the promotion PR. Explicit
+build IDs still receive build validation; SHA-only diagnostics remain supported.
+Diagnostic runs can test an operator branch and never write a promotion checkpoint.
+
+Rerunning the promotion PR's checks tests its existing pinned images, not newer
+upstream images. Advancing those pins requires the scheduled canary or explicit
+manual promotion. If operator main advances during qualification, rerun on current
+main. Delayed GitHub PR-head metadata is retried briefly; a concurrent branch
+update or persistent mismatch still fails without checkpointing.
 
 ## E2E image preparation
 

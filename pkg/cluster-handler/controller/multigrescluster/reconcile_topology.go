@@ -322,7 +322,7 @@ func (r *MultigresClusterReconciler) openTopoStore(
 	// Read the client credential with the uncached reader: the manager's cache
 	// only stores tenant-namespace Secrets carrying the operator's managed-by
 	// label, and a cert-manager or user-provided topology Secret does not.
-	return topo.NewStoreFromRef(ctx, r.APIReader, namespace, ref)
+	return topo.NewStoreFromRef(ctx, r.APIReader, namespace, ref, r.DialContext)
 }
 
 // isPruningEnabled returns true if topology pruning is enabled for the cluster.

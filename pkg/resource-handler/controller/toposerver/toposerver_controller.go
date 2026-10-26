@@ -3,6 +3,7 @@ package toposerver
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -40,6 +42,12 @@ type TopoServerReconciler struct {
 	APIReader client.Reader
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
+	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
+	// docs/development/reconcile-gating.md. The zero value is safe.
+	Gate features.Gate
+	// DialContext dials etcd member addresses. Nil (clientv3's default) outside
+	// laptop mode.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 	// newMaintenanceClient supplies direct per-member clients; overridden in tests.
 	newMaintenanceClient func(context.Context, *multigresv1alpha1.TopoServer) (etcdMaintenanceClient, error)
 }
@@ -73,6 +81,12 @@ func (r *TopoServerReconciler) Reconcile(
 		}
 		monitoring.RecordSpanError(span, err)
 		logger.Error(err, "Failed to get TopoServer")
+		return ctrl.Result{}, err
+	}
+
+	// Backstop for the event filter: a RequeueAfter scheduled before the label
+	// went on still reaches here.
+	if gated, err := r.Gate.Gated(ctx, r.Client, toposerver); gated || err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -551,13 +565,17 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.TopoServer{}, builder.WithPredicates(
-			predicate.GenerationChangedPredicate{},
+			predicate.Or(predicate.GenerationChangedPredicate{}, features.LabelsChanged()),
 		)).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
-		Owns(&policyv1.PodDisruptionBudget{}).
+		Owns(&policyv1.PodDisruptionBudget{})
+
+	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+		return &multigresv1alpha1.TopoServerList{}
+	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
 }

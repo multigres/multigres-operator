@@ -42,6 +42,8 @@ import (
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,resourceNames=multigres-operator-validating-webhook-configuration,verbs=get;update;patch
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=storageclasses,verbs=list;watch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=list;watch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,resourceNames=multigres-operator.multigres.com,verbs=list
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 

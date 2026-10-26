@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,6 +83,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	baseTG, tgName, namespace, clusterName, dbName, tgLabelName := setupFixtures(t)
 
@@ -826,6 +828,7 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	const (
 		tgName      = "default-tablegroup"
@@ -983,6 +986,7 @@ func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	baseTG, tgName, namespace, clusterName, dbName, tgLabelName := setupFixtures(t)
 	errSimulated := errors.New("simulated error for testing")
@@ -1327,6 +1331,7 @@ func TestTableGroupReconciler_Reconcile_BuildFailure(t *testing.T) {
 	t.Parallel()
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 	baseTG, _, _, _, _, _ := setupFixtures(t)
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(baseTG).Build()
@@ -1383,6 +1388,7 @@ func TestTableGroupReconciler_ReadsChildShardsOnce(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	baseTG, tgName, namespace, clusterName, dbName, tgLabelName := setupFixtures(t)
 
@@ -1514,6 +1520,7 @@ func TestTableGroupReconciler_PendingDeletionUpgradeCompatibility(t *testing.T) 
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	baseTG, tgName, namespace, clusterName, dbName, tgLabelName := setupFixtures(t)
 
@@ -1716,6 +1723,7 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	baseTG, tgName, namespace, clusterName, dbName, tgLabelName := setupFixtures(t)
 
@@ -1854,6 +1862,7 @@ func TestTableGroupReconciler_SteadyStateDoesNotFlap(t *testing.T) {
 
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	baseTG, tgName, namespace, clusterName, dbName, tgLabelName := setupFixtures(t)
 

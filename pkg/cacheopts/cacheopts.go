@@ -50,10 +50,13 @@ import (
 
 // New returns the manager cache options, given the namespace the operator runs
 // in. Objects in that namespace are cached unfiltered; everywhere else the
-// high-volume kinds are restricted to objects this operator manages. When an
-// explicit namespace allowlist is provided, all namespaced caches are restricted
-// to that allowlist plus the operator namespace.
-func New(operatorNamespace string, watchNamespaces ...string) cache.Options {
+// high-volume kinds are restricted to objects this operator manages.
+//
+// With laptopNamespace set the cache holds that one namespace and nothing else;
+// "Laptop-Mode Cache Scoping" in docs/development/caching-strategy.md has the
+// rules. Laptop mode takes precedence over a watch allowlist. Otherwise an explicit
+// watch allowlist scopes every namespaced cache to it plus the operator namespace.
+func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) cache.Options {
 	// 1. Create the Label Selector for "app.kubernetes.io/managed-by = multigres-operator"
 	labelReq, _ := labels.NewRequirement(
 		metadata.LabelAppManagedBy,
@@ -74,23 +77,29 @@ func New(operatorNamespace string, watchNamespaces ...string) cache.Options {
 		operatorNamespace:   unfilteredConfig,
 		cache.AllNamespaces: filteredConfig,
 	}
-
-	var namespaces map[string]cache.Config
+	var defaultNamespaces map[string]cache.Config
 	if strings.TrimSpace(strings.Join(watchNamespaces, "")) != "" {
-		namespaces = map[string]cache.Config{operatorNamespace: unfilteredConfig}
+		defaultNamespaces = map[string]cache.Config{operatorNamespace: unfilteredConfig}
 		for _, names := range watchNamespaces {
 			for _, namespace := range strings.Split(names, ",") {
 				if namespace = strings.TrimSpace(namespace); namespace != "" {
-					namespaces[namespace] = unfilteredConfig
+					defaultNamespaces[namespace] = unfilteredConfig
 				}
 			}
 		}
-		// ByObject overrides DefaultNamespaces, so every override must be
-		// scoped too. Never retain AllNamespaces in an isolated manager.
-		hybrid = namespaces
+		// ByObject overrides DefaultNamespaces, so every override must be scoped too.
+		hybrid = defaultNamespaces
 	}
+	if laptopNamespace != "" {
+		// Only the claimed namespace. The operator's own namespace holds its
+		// leader-election lease and webhook cert material, and laptop mode
+		// refuses both leader election and webhooks, so nothing reads it.
+		hybrid = map[string]cache.Config{laptopNamespace: filteredConfig}
+		defaultNamespaces = map[string]cache.Config{laptopNamespace: {}}
+	}
+
 	return cache.Options{
-		DefaultNamespaces: namespaces,
+		DefaultNamespaces: defaultNamespaces,
 		ByObject: map[client.Object]cache.ByObject{
 			// SECRETS: the "memory bomb" fix. Unfiltered in the operator's own
 			// namespace so cert-manager Secrets, which carry no label of ours,
@@ -101,7 +110,7 @@ func New(operatorNamespace string, watchNamespaces ...string) cache.Options {
 			&corev1.Service{}:     {Namespaces: hybrid},
 			&corev1.Pod{}:         {Namespaces: hybrid},
 			// CONFIGMAPS are deliberately absent, so they fall back to
-			// unfiltered in all namespaces: users supply their own unlabelled
+			// DefaultNamespaces (unfiltered): users supply their own unlabelled
 			// ConfigMaps for postgresql.conf and the operator has to hash them.
 		},
 	}

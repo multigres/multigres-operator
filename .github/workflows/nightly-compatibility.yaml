@@ -4,7 +4,7 @@ on:
 # Poll once after the upstream 05:00 UTC build. The run selects only a fully
 # successful nightly build; an in-progress build is never consumed. A SHA
 # is skipped only after its promotion PR was successfully created or updated.
-# Manual runs remain diagnostic and never promote or checkpoint a revision.
+# Manual promotion requires an explicit successful build and a fresh green canary on main.
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:
@@ -14,6 +14,16 @@ on:
         required: false
         default: ""
         type: string
+      nightly-run-id:
+        description: Successful upstream Nightly Build run ID (required for manual promotion)
+        required: false
+        default: ""
+        type: string
+      promote:
+        description: Update the promotion PR after verification and full e2e (main only)
+        required: false
+        default: false
+        type: boolean
       operator-ref:
         description: Operator ref to test (useful for intentionally testing an incompatible pair)
         required: false
@@ -63,7 +73,7 @@ jobs:
               },
             );
             const canonicalRuns = runs
-              .filter((run) => run.event === 'schedule' && run.head_branch === 'main' &&
+              .filter((run) => ['schedule', 'workflow_dispatch'].includes(run.event) && run.head_branch === 'main' &&
                 run.repository.full_name === 'multigres/multigres-operator')
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             for (const run of canonicalRuns) {
@@ -90,12 +100,41 @@ jobs:
         env:
           INPUT_SHA: ${{ inputs.upstream-sha }}
           INPUT_OPERATOR_REF: ${{ inputs.operator-ref }}
+          INPUT_NIGHTLY_RUN_ID: ${{ inputs.nightly-run-id }}
+          INPUT_PROMOTE: ${{ inputs.promote }}
         run: |
           sha="$INPUT_SHA"
-          # Resolve one completed scheduled build, keeping its identity alongside
-          # the source SHA. Manual SHA overrides still cannot enter promotion.
+          operator_ref="${INPUT_OPERATOR_REF:-main}"
+          if [ "${INPUT_PROMOTE:-false}" = "true" ]; then
+            [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] &&
+              [ "$GITHUB_REPOSITORY" = "multigres/multigres-operator" ] &&
+              [ "$GITHUB_REF" = "refs/heads/main" ] &&
+              [ "$operator_ref" = "main" ] &&
+              [ -n "${INPUT_NIGHTLY_RUN_ID:-}" ] ||
+              { echo "::error::Manual promotion requires main and an explicit successful nightly run ID"; exit 1; }
+          fi
           nightly='{}'
-          if [ -z "$sha" ]; then
+          if [ -n "${INPUT_NIGHTLY_RUN_ID:-}" ]; then
+            [[ "$INPUT_NIGHTLY_RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+              { echo "::error::Invalid nightly run ID"; exit 1; }
+            nightly="$(
+              curl --fail --retry 3 --silent --show-error \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/multigres/multigres/actions/runs/$INPUT_NIGHTLY_RUN_ID" |
+                jq -ec --arg id "$INPUT_NIGHTLY_RUN_ID" '
+                  select((.id | tostring) == $id and .status == "completed" and
+                    .conclusion == "success" and .head_branch == "main" and
+                    (.event == "schedule" or .event == "workflow_dispatch") and
+                    .path == ".github/workflows/nightly-build.yml" and
+                    .repository.full_name == "multigres/multigres" and
+                    .head_repository.full_name == "multigres/multigres")'
+            )"
+            build_sha="$(jq -er '.head_sha' <<< "$nightly")"
+            [ -z "$sha" ] || [ "$sha" = "$build_sha" ] ||
+              { echo "::error::Requested SHA does not match the nightly build"; exit 1; }
+            sha="$build_sha"
+          elif [ -z "$sha" ]; then
             nightly="$(
               curl --fail --retry 3 --silent --show-error \
                 -H "Accept: application/vnd.github+json" \
@@ -113,7 +152,7 @@ jobs:
           [[ "$operator_ref" =~ ^[A-Za-z0-9._/@+-]+$ ]] ||
             { echo "::error::Invalid operator ref '$operator_ref'"; exit 1; }
 
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "${INPUT_PROMOTE:-false}" = "true" ]; then
             operator_sha="$GITHUB_SHA"
           else
             operator_sha="$(
@@ -307,7 +346,7 @@ jobs:
     uses: ./.github/workflows/_reusable-e2e.yaml
     with:
       ref: ${{ needs.resolve.outputs.operator-sha }}
-      timeout-minutes: 30
+      timeout-minutes: 60
       mode: ${{ matrix.mode }}
       test-spec: ${{ matrix.test-spec }}
       postgres-image: ${{ needs.preflight.outputs.pgctld-image }}
@@ -336,6 +375,7 @@ jobs:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
           EVENT_NAME: ${{ github.event_name }}
+          PROMOTE: ${{ inputs.promote }}
           UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short-sha }}
           LAST_GREEN_SHA: ${{ needs.resolve.outputs.last-green-sha }}
@@ -354,7 +394,8 @@ jobs:
               process.env.E2E_RESULT === 'success';
             const canonicalRun =
               process.env.OPERATOR_REF === 'main' &&
-              process.env.EVENT_NAME === 'schedule' &&
+              (process.env.EVENT_NAME === 'schedule' ||
+                (process.env.EVENT_NAME === 'workflow_dispatch' && process.env.PROMOTE === 'true')) &&
               context.ref === 'refs/heads/main' &&
               context.repo.owner === 'multigres' &&
               context.repo.repo === 'multigres-operator';
@@ -492,15 +533,16 @@ jobs:
 
   promote:
     name: Promote verified runtime defaults
-    needs: [resolve, preflight, e2e]
+    needs: [resolve, preflight, e2e, report]
     if: >-
       github.repository == 'multigres/multigres-operator' &&
-      github.event_name == 'schedule' &&
+      (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.promote)) &&
       github.ref == 'refs/heads/main' &&
       needs.resolve.outputs.operator-ref == 'main' &&
       needs.resolve.outputs.should-run == 'true' &&
       needs.preflight.result == 'success' &&
-      needs.e2e.result == 'success'
+      needs.e2e.result == 'success' &&
+      needs.report.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

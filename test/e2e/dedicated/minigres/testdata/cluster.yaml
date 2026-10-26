@@ -1,4 +1,4 @@
-# Qualified upstream revision: 8f5c8896bb89f92c533633a0973aa92e3672060a.
+# Qualified upstream revision: d063d0b437dac1fb935e0476c142f1a42a2af9f1.
 # E2E_* image overrides take precedence for nightly candidate qualification.
 apiVersion: multigres.com/v1alpha1
 kind: MultigresCluster
@@ -10,9 +10,9 @@ spec:
   internalTLS: {enabled: true}
   postgresPasswordSecretRef: {name: multigres-admin-password, key: password}
   images:
-    multipooler: ghcr.io/multigres/multigres@sha256:0af9dc880761ab9ccc3b213e49866536b68febbd76b18fe4bd87b555d98b2435
-    postgres: ghcr.io/multigres/pgctld@sha256:fe6c3b8ffd3b188b4314473157b5d34cb2d190503ffda498ef43513884a7537f
-    multiadmin: ghcr.io/multigres/multigres@sha256:0af9dc880761ab9ccc3b213e49866536b68febbd76b18fe4bd87b555d98b2435
+    multipooler: ghcr.io/multigres/multigres@sha256:dfb55d04c2837fb926cedd496f51bb6b79408ad077e05de6c3c1591ab7c819dc
+    postgres: ghcr.io/multigres/pgctld@sha256:0d575779d24c1f840123658c8c78bdd1e33e511b1e4fedd4fd4ba76fe2f4e5fc
+    multiadmin: ghcr.io/multigres/multigres@sha256:dfb55d04c2837fb926cedd496f51bb6b79408ad077e05de6c3c1591ab7c819dc
   globalTopoServer:
     external:
       endpoints: ["https://external-etcd:2379"]

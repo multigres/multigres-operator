@@ -6,10 +6,12 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -75,11 +77,13 @@ func (id EtcdIdentity) Implausible() string {
 // ReadEtcdIdentity reads ref's etcd identity using the same client TLS material
 // NewStoreFromRef would. MemberList is linearizable (clientv3's default), so a
 // partitioned minority member errors rather than answering from a stale view.
+// A non-nil dial carries the connection (laptop mode); nil dials directly.
 func ReadEtcdIdentity(
 	ctx context.Context,
 	c client.Reader,
 	namespace string,
 	ref multigresv1alpha1.GlobalTopoServerRef,
+	dial func(ctx context.Context, network, addr string) (net.Conn, error),
 ) (EtcdIdentity, error) {
 	if ref.Implementation != "" && ref.Implementation != "etcd" {
 		return EtcdIdentity{}, fmt.Errorf(
@@ -98,12 +102,22 @@ func ReadEtcdIdentity(
 
 	ctx, cancel := context.WithTimeout(ctx, etcdIdentityTimeout)
 	defer cancel()
-	cli, err := clientv3.New(clientv3.Config{
+	cfg := clientv3.Config{
 		Endpoints:   []string{ref.Address},
 		TLS:         tlsConfig,
 		DialTimeout: etcdIdentityTimeout,
 		Context:     ctx,
-	})
+	}
+	if dial != nil {
+		// clientv3 resolves endpoints itself and appends DialOptions last, so
+		// dial receives the raw host:port of every member connection.
+		cfg.DialOptions = []grpc.DialOption{
+			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+				return dial(ctx, "tcp", addr)
+			}),
+		}
+	}
+	cli, err := clientv3.New(cfg)
 	if err != nil {
 		return EtcdIdentity{}, fmt.Errorf("connecting to %s: %w", ref.Address, err)
 	}

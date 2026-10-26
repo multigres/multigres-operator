@@ -5,9 +5,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -43,14 +45,7 @@ func (r *TopoServerReconciler) maintenanceClient(
 	}
 	result := &memberClients{clients: make(map[string]*clientv3.Client)}
 	for _, endpoint := range maintenanceEndpoints(ts) {
-		c, err := clientv3.New(
-			clientv3.Config{
-				Endpoints:   []string{endpoint},
-				TLS:         tlsConfig,
-				DialTimeout: 5 * time.Second,
-				Context:     ctx,
-			},
-		)
+		c, err := clientv3.New(r.maintenanceClientConfig(ctx, endpoint, tlsConfig))
 		if err != nil {
 			result.Close()
 			return nil, err
@@ -61,6 +56,31 @@ func (r *TopoServerReconciler) maintenanceClient(
 		}
 	}
 	return result, nil
+}
+
+// maintenanceClientConfig builds the clientv3.Config for a single etcd member.
+func (r *TopoServerReconciler) maintenanceClientConfig(
+	ctx context.Context,
+	endpoint string,
+	tlsConfig *tls.Config,
+) clientv3.Config {
+	cfg := clientv3.Config{
+		Endpoints:   []string{endpoint},
+		TLS:         tlsConfig,
+		DialTimeout: 5 * time.Second,
+		Context:     ctx,
+	}
+	if r.DialContext == nil {
+		return cfg
+	}
+	// clientv3 (v3.7) sets no dialer of its own and appends Config.DialOptions
+	// last, so this one carries every member connection.
+	cfg.DialOptions = []grpc.DialOption{
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			return r.DialContext(ctx, "tcp", addr)
+		}),
+	}
+	return cfg
 }
 
 func (c *memberClients) Status(

@@ -199,8 +199,10 @@ github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJ
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFdJifH4BDsTlE89Zl93FEloxaWZfGcifgq8=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
-github.com/multigres/multigres v0.0.0-20261016193550-5e608a7a5d96 h1:tLALEEYJfzg+2OYelNcbDepEsMv4thG7DlryRE116DE=
-github.com/multigres/multigres v0.0.0-20261016193550-5e608a7a5d96/go.mod h1:JykIVgBbDwolqMlej0PbvthVJncmvj3AcKuMmJ8u5vo=
+github.com/multigres/kubedial v0.1.0 h1:i6ySmhVj8ikgxlW2C0kVq2AU6esP71aRNxcF1KFnGB0=
+github.com/multigres/kubedial v0.1.0/go.mod h1:3xneBZgPfkJFB4van/McyiJTSreF+LZVSh7QCTaZAYQ=
+github.com/multigres/multigres v0.0.0-20261020212633-6fd434f73b20 h1:32A/sLxkY7++K3yNABifkaVd9NGoeq9kZ8z45b6QMXU=
+github.com/multigres/multigres v0.0.0-20261020212633-6fd434f73b20/go.mod h1:JykIVgBbDwolqMlej0PbvthVJncmvj3AcKuMmJ8u5vo=
 github.com/multigres/testkit v0.4.0 h1:b7kvpMyJP2mq+74UaD9gsjH+Z15mXGdOVe1xc+IziSM=
 github.com/multigres/testkit v0.4.0/go.mod h1:YACYZJHohqf6nCVLSDnILUYz9xM4cp7oBTBR+4qbVJo=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=

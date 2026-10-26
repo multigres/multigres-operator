@@ -2130,3 +2130,239 @@ func TestShardMetricsCleanupAfterDeletion(t *testing.T) {
 			"series of shard %s that was not deleted must remain", name)
 	}
 }
+
+// gatingTestShard builds a Shard that reconciles far enough under envtest to
+// create its child resources (through the postgres-config ConfigMap) without a
+// data-plane stub. Its cluster label must be unique per shard so their child
+// resources never collide in the shared namespace.
+func gatingTestShard(name, clusterName string) *multigresv1alpha1.Shard {
+	return &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": clusterName},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "testdb",
+			TableGroupName: "default",
+			ShardName:      "0",
+			LogLevels: multigresv1alpha1.ComponentLogLevels{
+				Pgctld:       "info",
+				Multipooler:  "info",
+				Multiorch:    "info",
+				Multiadmin:   "info",
+				Multigateway: "info",
+			},
+			Multiorch: multigresv1alpha1.MultiorchSpec{
+				Cells: []multigresv1alpha1.CellName{"zone1"},
+			},
+			Images: multigresv1alpha1.ShardImages{
+				Multiorch:   "ghcr.io/multigres/multigres:main",
+				Multipooler: "ghcr.io/multigres/multigres:main",
+				Postgres:    "postgres:17",
+			},
+			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
+				Address:        "global-topo:2379",
+				RootPath:       "/multigres/global",
+				Implementation: "etcd",
+			},
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"primary": {
+					Cells:           []multigresv1alpha1.CellName{"zone1"},
+					Type:            "readWrite",
+					ReplicasPerCell: ptr.To(int32(1)),
+					Storage:         multigresv1alpha1.StorageSpec{Size: "1Gi"},
+				},
+			},
+		},
+	}
+}
+
+// TestReconcileGatingObjectLevel proves the gate is resolved per object, not
+// per namespace: two Shards share one un-gated namespace, one is paused by its
+// own label while its sibling reconciles normally, and removing that one label
+// resumes the gated Shard. The resume half is deliberately driven by the label
+// removal alone, with no spec edit, so it fails against a For() predicate that
+// admits only generation/deletion-timestamp changes. Shard's For() carries no
+// predicate today, which is why this passes for free; it is asserted explicitly
+// so a future predicate addition cannot silently regress it.
+func TestReconcileGatingObjectLevel(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
+	)
+	inner := &shardcontroller.ShardReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("shard-controller"),
+	}
+	counter := testutil.NewCountingReconciler(inner)
+	if err := inner.SetupWithManagerReconciler(mgr, counter, controller.Options{
+		SkipNameValidation: ptr.To(true),
+	}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	ctx := t.Context()
+	k8sClient := mgr.GetClient()
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, "default")
+
+	gated := gatingTestShard("gated-shard", "cluster-gated")
+	sibling := gatingTestShard("sibling-shard", "cluster-sibling")
+	setTestPostgresPasswordSecretRef(gated)
+	setTestPostgresPasswordSecretRef(sibling)
+	require.NoError(t, k8sClient.Create(ctx, gated))
+	require.NoError(t, k8sClient.Create(ctx, sibling))
+
+	go markPoolPodsReady(ctx, k8sClient, "cluster-gated")
+	go markPoolPodsReady(ctx, k8sClient, "cluster-sibling")
+
+	configFor := func(shardName string) string {
+		cm := &corev1.ConfigMap{}
+		if err := k8sClient.Get(
+			ctx,
+			types.NamespacedName{
+				Name:      shardcontroller.PostgresConfigMapName(shardName),
+				Namespace: "default",
+			},
+			cm,
+		); err != nil {
+			return ""
+		}
+		return cm.Data[shardcontroller.PostgresConfigMapKey]
+	}
+
+	// Both shards must reach the point where they have rendered their postgres
+	// config before gating, so a later absence of change is meaningful.
+	for _, s := range []*multigresv1alpha1.Shard{gated, sibling} {
+		require.Eventually(t, func() bool { return configFor(s.Name) != "" },
+			30*time.Second, 200*time.Millisecond, "shard %s never rendered its config", s.Name)
+	}
+
+	// Gate only the one Shard, by its own label.
+	gatedKey := types.NamespacedName{Name: gated.Name, Namespace: "default"}
+	require.NoError(t, k8sClient.Get(ctx, gatedKey, gated))
+	testutil.PatchLabel(t, k8sClient, gated, "multigres.com/reconcile", "disabled")
+	testutil.WaitForCachedLabel(ctx, t, k8sClient, gated, "multigres.com/reconcile", "disabled")
+
+	// Requeue-storm guard: an unrelated namespace-label change must not enqueue
+	// the gated Shard. A gated Shard gets no writes, so ResourceVersion stability
+	// would pass even with the guard removed; instead count reconcile
+	// invocations around the edit and require the count not to move. Quiesce
+	// first, which also lets any reconcile that was in flight when the label
+	// landed finish, so the count is settled before the snapshot.
+	counter.WaitQuiescent(t, gatedKey)
+	before := counter.CountFor(gatedKey)
+	ns := &corev1.Namespace{}
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: "default"}, ns))
+	nsBase := ns.DeepCopy()
+	if ns.Labels == nil {
+		ns.Labels = map[string]string{}
+	}
+	ns.Labels["unrelated.churn"] = "1"
+	require.NoError(t, k8sClient.Patch(ctx, ns, client.MergeFrom(nsBase)))
+	time.Sleep(1500 * time.Millisecond)
+	require.Equal(t, before, counter.CountFor(gatedKey),
+		"unrelated namespace churn enqueued the gated shard")
+
+	// Mutate both specs: the gated Shard's change must not land, the sibling's must.
+	setInlineConfig(t, ctx, k8sClient, gated.Name, "work_mem", "gatedtoken")
+	setInlineConfig(t, ctx, k8sClient, sibling.Name, "work_mem", "siblingtoken")
+	require.Eventually(t, func() bool {
+		return strings.Contains(configFor(sibling.Name), "work_mem = 'siblingtoken'")
+	}, 30*time.Second, 200*time.Millisecond, "sibling did not converge")
+
+	// The gated Shard gets no write from the operator: its resourceVersion stays
+	// where the test's own spec edit left it.
+	gatedNow := &multigresv1alpha1.Shard{}
+	require.NoError(t, mgr.GetAPIReader().Get(ctx, gatedKey, gatedNow))
+	testutil.RequireNoWrites(ctx, t, mgr.GetAPIReader(), gatedNow, 2*time.Second)
+	require.NotContains(t, configFor(gated.Name), "gatedtoken",
+		"gated shard reconciled its spec change while paused")
+
+	// Resume by removing only the label; the pending spec change then lands.
+	require.NoError(t, k8sClient.Get(ctx, gatedKey, gated))
+	testutil.PatchLabel(t, k8sClient, gated, "multigres.com/reconcile", "")
+	require.Eventually(t, func() bool {
+		return strings.Contains(configFor(gated.Name), "work_mem = 'gatedtoken'")
+	}, 30*time.Second, 200*time.Millisecond,
+		"removing the label did not resume the gated shard without a spec edit")
+}
+
+// TestReconcileGatingBlocksDeletion proves the gate covers deletion: a
+// namespace-level gate holds the Shard's finalizer in place after the Shard is
+// deleted, and removing the namespace label lets the same deleted Shard drain
+// and disappear without any further edit to it. The release arrives through the
+// Namespace watch, so this also exercises the namespace watch.
+func TestReconcileGatingBlocksDeletion(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
+	)
+	if err := (&shardcontroller.ShardReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("shard-controller"),
+	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}); err != nil {
+		t.Fatalf("Failed to create controller, %v", err)
+	}
+
+	ctx := t.Context()
+	k8sClient := mgr.GetClient()
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, "default")
+
+	shard := gatingTestShard("delete-gated-shard", "cluster-delete-gated")
+	setTestPostgresPasswordSecretRef(shard)
+	require.NoError(t, k8sClient.Create(ctx, shard))
+	key := types.NamespacedName{Name: shard.Name, Namespace: "default"}
+
+	// The finalizer must be in place before gating, or deletion would not hang.
+	require.Eventually(t, func() bool {
+		s := &multigresv1alpha1.Shard{}
+		if err := k8sClient.Get(ctx, key, s); err != nil {
+			return false
+		}
+		return len(s.Finalizers) > 0
+	}, 30*time.Second, 100*time.Millisecond, "shard never received its finalizer")
+
+	// Gate the whole namespace.
+	ns := &corev1.Namespace{}
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: "default"}, ns))
+	testutil.PatchLabel(t, k8sClient, ns, "multigres.com/reconcile", "disabled")
+	testutil.WaitForCachedLabel(ctx, t, k8sClient, ns, "multigres.com/reconcile", "disabled")
+
+	require.NoError(t, k8sClient.Delete(ctx, shard))
+
+	// While gated, deletion hangs: the Shard survives with its finalizer.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s := &multigresv1alpha1.Shard{}
+		err := k8sClient.Get(ctx, key, s)
+		require.NoError(t, err, "gated shard was deleted despite the finalizer")
+		require.NotEmpty(t, s.Finalizers, "gated shard lost its finalizer")
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Un-gate the namespace; the deleted Shard must drain and vanish without
+	// anything else touching it.
+	require.NoError(t, k8sClient.Get(ctx, client.ObjectKey{Name: "default"}, ns))
+	testutil.PatchLabel(t, k8sClient, ns, "multigres.com/reconcile", "")
+	require.Eventually(t, func() bool {
+		s := &multigresv1alpha1.Shard{}
+		return client.IgnoreNotFound(k8sClient.Get(ctx, key, s)) == nil
+	}, 30*time.Second, 200*time.Millisecond, "un-gating did not release the deleted shard")
+}

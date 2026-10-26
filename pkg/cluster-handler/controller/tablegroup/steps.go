@@ -104,6 +104,19 @@ func stepFetchTableGroup(ctx context.Context, rc *reconcileContext) (stepResult,
 	return continueStep(), nil
 }
 
+// stepGuardReconcile is the gate backstop as a pipeline step: a gated
+// TableGroup stops here with no write and no requeue.
+func stepGuardReconcile(ctx context.Context, rc *reconcileContext) (stepResult, error) {
+	gated, err := rc.r.Gate.Gated(ctx, rc.r.Client, rc.tg)
+	if err != nil {
+		return stepResult{}, err
+	}
+	if gated {
+		return doneStep(ctrl.Result{}), nil
+	}
+	return continueStep(), nil
+}
+
 func stepHandlePendingDeletion(ctx context.Context, rc *reconcileContext) (stepResult, error) {
 	if rc.tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
 		return continueStep(), nil

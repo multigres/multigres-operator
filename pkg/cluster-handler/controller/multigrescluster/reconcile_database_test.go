@@ -189,7 +189,15 @@ func TestReconcile_Databases(t *testing.T) {
 			},
 			existingObjects: []client.Object{coreTpl, cellTpl},
 			failureConfig: &testutil.FailureConfig{
-				OnGet: testutil.FailOnKeyName("default", errSimulated),
+				// The gating namespace read is cluster-scoped (empty
+				// key.Namespace); only fail the namespaced "default"
+				// template lookup.
+				OnGet: func(key client.ObjectKey) error {
+					if key.Name == "default" && key.Namespace != "" {
+						return errSimulated
+					}
+					return nil
+				},
 			},
 			wantErrMsg: "failed to resolve shard",
 		},

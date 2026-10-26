@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -29,6 +30,10 @@ type TableGroupReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
+	// docs/development/reconcile-gating.md. The zero value is safe.
+	Gate features.Gate
 }
 
 // Reconcile reads the state of the TableGroup and ensures its child Shards are in the desired state.
@@ -62,12 +67,13 @@ func (r *TableGroupReconciler) Reconcile(
 		start: start,
 	}
 
-	// The order preserves the controller lifecycle: fetch the parent, handle
-	// parent deletion before normal work, read the child snapshot once, apply the
-	// desired children, retire orphans through their drain handshake, then publish
-	// parent status from the observed child state.
+	// The order preserves the controller lifecycle: fetch the parent, stop early if
+	// reconcile gating applies, handle parent deletion before normal work, read the
+	// child snapshot once, apply the desired children, retire orphans through their
+	// drain handshake, then publish parent status from the observed child state.
 	rawSteps := []step{
 		stepFetchTableGroup,
+		stepGuardReconcile,
 		stepHandlePendingDeletion,
 		stepShortCircuitDeletion,
 		stepListChildShards,
@@ -247,11 +253,18 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.TableGroup{},
-			builder.WithPredicates(projectRefOrGenerationChangedPredicate()),
+			builder.WithPredicates(predicate.Or(
+				projectRefOrGenerationChangedPredicate(),
+				features.LabelsChanged(),
+			)),
 		).
-		Owns(&multigresv1alpha1.Shard{}).
+		Owns(&multigresv1alpha1.Shard{})
+
+	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+		return &multigresv1alpha1.TableGroupList{}
+	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
 }

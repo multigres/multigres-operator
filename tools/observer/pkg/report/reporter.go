@@ -55,13 +55,6 @@ func (r *Reporter) Report(f Finding) {
 	}
 }
 
-// Summary returns an aggregated summary of the current cycle's findings and resets the buffer.
-// ErrorsByCheck maps each check name to whether it had any error or fatal findings.
-func (r *Reporter) Summary() (Summary, map[string]bool) {
-	_, s, healthy := r.collectFindings()
-	return s, healthy
-}
-
 // SummaryWithFindings returns the findings slice alongside the summary, then resets the buffer.
 func (r *Reporter) SummaryWithFindings() ([]Finding, Summary, map[string]bool) {
 	return r.collectFindings()

@@ -31,5 +31,5 @@ dev:
 pipelines:
   dev:
     run: |-
-      GOOS=linux GOARCH=arm64 go build -o bin/manager cmd/multigres-operator/main.go
+      GOOS=linux GOARCH=arm64 go build -o bin/manager ./cmd/multigres-operator
       start_dev multigres-operator

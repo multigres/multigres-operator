@@ -76,6 +76,31 @@ Since ConfigMaps are generally lower volume and lower security risk than Secrets
 | **Pod** | Operator NS | **NONE (All)** | Self-discovery. |
 | **ConfigMap** | All Namespaces | **NONE (All)** | User Configs (postgresql.conf). |
 
+### Laptop-Mode Cache Scoping
+
+The cache options builder is `cacheopts.New(operatorNamespace, laptopNamespace string, watchNamespaces ...string)`.
+With an empty `laptopNamespace` and no watch allowlist, the configuration above is
+returned unchanged. `--watch-namespace` accepts a comma-separated allowlist and
+scopes both `DefaultNamespaces` and every `ByObject` override to those namespaces
+plus the operator namespace. These explicit namespaces are unfiltered.
+Laptop mode takes precedence over that allowlist and never expands its watch scope.
+When `laptopNamespace` is set (laptop mode, `--namespace`), the cache holds that one namespace
+and nothing else. Laptop mode is only permitted against a namespace already
+labelled `multigres.com/reconcile=disabled`, so this matches what the process is
+allowed to reconcile:
+
+- The per-type `ByObject` map becomes a single entry for the claimed namespace,
+  with the `managed-by` filter. The operator's own namespace is left out: it
+  holds the leader-election lease and webhook cert material, and laptop mode
+  refuses both leader election and webhooks, so nothing reads it.
+- `DefaultNamespaces` is set to the same single namespace. This matters because
+  ConfigMaps are deliberately absent from `ByObject`: they fall back to the
+  default, so **setting only the per-type map would leave ConfigMaps cached
+  cluster-wide**. The two settings have to move together.
+
+See [Reconcile Gating and Laptop Mode](reconcile-gating.md) for the full laptop
+mode behaviour.
+
 ## Developer Guide: Reading Secrets
 
 Because Secrets are filtered globally, you cannot simply `r.Get()` an arbitrary user secret (e.g. `spec.passwordSecretRef`) unless it is labeled. There are three patterns for accessing Secrets, each suited to a different scenario.

@@ -5,21 +5,27 @@ package multigrescluster_test
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/stretchr/testify/require"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -45,6 +51,21 @@ func canonicalGlobalRoot(clusterName string) string {
 // setupIntegration bootstraps the test environment, controller, and default templates.
 // It returns a ready-to-use K8s Client and a ResourceWatcher.
 func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
+	t.Helper()
+	k8sClient, watcher, _ := setupIntegrationCore(t, nil, nil)
+	return k8sClient, watcher
+}
+
+// setupIntegrationCore is setupIntegration with two hooks the gating tests need:
+// wrap sits on the reconcile boundary (to count reconciles) and mutate edits the
+// reconciler before it starts. The receiver is the same reconciler either way,
+// so the watch configuration is identical to production. It also returns the
+// manager's uncached reader, for asserting on resourceVersions.
+func setupIntegrationCore(
+	t *testing.T,
+	wrap func(reconcile.Reconciler) reconcile.Reconciler,
+	mutate func(*multigrescluster.MultigresClusterReconciler),
+) (client.Client, *testutil.ResourceWatcher, client.Reader) {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -92,8 +113,15 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 			return store, nil
 		},
 	}
+	if mutate != nil {
+		mutate(reconciler)
+	}
 
-	if err := reconciler.SetupWithManager(mgr, controller.Options{
+	var rec reconcile.Reconciler = reconciler
+	if wrap != nil {
+		rec = wrap(reconciler)
+	}
+	if err := reconciler.SetupWithManagerReconciler(mgr, rec, controller.Options{
 		SkipNameValidation: ptr.To(true),
 	}); err != nil {
 		t.Fatalf("Failed to create controller: %v", err)
@@ -130,7 +158,7 @@ func setupIntegration(t *testing.T) (client.Client, *testutil.ResourceWatcher) {
 		}
 	}
 
-	return k8sClient, watcher
+	return k8sClient, watcher, mgr.GetAPIReader()
 }
 
 func setTestPostgresPasswordSecretRef(cluster *multigresv1alpha1.MultigresCluster) {
@@ -1384,4 +1412,434 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 
 		})
 	}
+}
+
+// ============================================================================
+// Reconcile Gating (namespace label) Tests
+// ============================================================================
+
+// poolReplicas returns the configured ReplicasPerCell for the named pool in a
+// single-shard TableGroup. ok is false when the shard or pool is absent, so it
+// is safe to call from an Eventually condition (no t.Fatal off the test
+// goroutine).
+func poolReplicas(
+	tg *multigresv1alpha1.TableGroup,
+	pool multigresv1alpha1.PoolName,
+) (replicas int32, ok bool) {
+	if len(tg.Spec.Shards) == 0 {
+		return 0, false
+	}
+	p, found := tg.Spec.Shards[0].Pools[pool]
+	if !found {
+		return 0, false
+	}
+	return ptr.Deref(p.ReplicasPerCell, 0), true
+}
+
+// TestMultigresCluster_ReconcileGating exercises the namespace-label reconcile
+// gate end to end: gating pauses child reconciliation, the pause transition
+// gets no write at all, deletion of a gated
+// cluster hangs on its finalizer, removing the label resumes reconciliation
+// through the namespace watch without re-touching the cluster spec, and
+// un-gating a gated delete releases the finalizer so the object disappears.
+func TestMultigresCluster_ReconcileGating(t *testing.T) {
+	const (
+		clusterName = "gated-cluster"
+		gatingLabel = "multigres.com/reconcile"
+	)
+
+	var counter *testutil.CountingReconciler
+	k8sClient, _, apiReader := setupIntegrationCore(
+		t,
+		func(inner reconcile.Reconciler) reconcile.Reconciler {
+			counter = testutil.NewCountingReconciler(inner)
+			return counter
+		},
+		nil,
+	)
+
+	ctx := t.Context()
+	clusterKey := client.ObjectKey{Name: clusterName, Namespace: testNamespace}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: testNamespace},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			TemplateDefaults: multigresv1alpha1.TemplateDefaults{
+				CoreTemplate:  "default",
+				CellTemplate:  "default",
+				ShardTemplate: "default",
+			},
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{TemplateRef: "default"},
+			Multiadmin:       &multigresv1alpha1.MultiadminConfig{TemplateRef: "default"},
+			Cells:            []multigresv1alpha1.CellConfig{{Name: "zone-a", ZoneID: "use1-az1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name:    "postgres",
+				Default: true,
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name:    "default",
+					Default: true,
+					Shards: []multigresv1alpha1.ShardConfig{{
+						Name: "0-inf",
+						Spec: &multigresv1alpha1.ShardInlineSpec{
+							Multiorch: multigresv1alpha1.MultiorchSpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(1)),
+								},
+							},
+							Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+								"primary": {
+									ReplicasPerCell: ptr.To(int32(3)),
+									Type:            "readWrite",
+									Cells:           []multigresv1alpha1.CellName{"zone-a"},
+								},
+							},
+						},
+					}},
+				}},
+			}},
+		},
+	}
+	setTestPostgresPasswordSecretRef(cluster)
+	require.NoError(t, k8sClient.Create(ctx, cluster))
+
+	// 1. The cluster reconciles normally; children appear.
+	var tgName string
+	require.Eventually(t, func() bool {
+		tgs := &multigresv1alpha1.TableGroupList{}
+		if err := k8sClient.List(ctx, tgs,
+			client.InNamespace(testNamespace),
+			client.MatchingLabels{metadata.LabelMultigresCluster: clusterName},
+		); err != nil {
+			return false
+		}
+		if len(tgs.Items) != 1 {
+			return false
+		}
+		replicas, ok := poolReplicas(&tgs.Items[0], "primary")
+		if !ok || replicas != 3 {
+			return false
+		}
+		tgName = tgs.Items[0].Name
+		return true
+	}, testTimeout, 100*time.Millisecond, "initial TableGroup did not converge")
+
+	tgKey := client.ObjectKey{Name: tgName, Namespace: testNamespace}
+
+	// 2. Gate the namespace. The namespace watch enqueues the cluster and the
+	// backstop must return without a write. Let any in-flight pass finish first.
+	counter.WaitQuiescent(t, clusterKey)
+	testutil.PatchLabel(t, k8sClient, ns, gatingLabel, "disabled")
+	testutil.WaitForCachedLabel(
+		ctx, t, k8sClient, ns, gatingLabel, "disabled",
+	)
+	counter.WaitQuiescent(t, clusterKey)
+
+	// 3. A spec mutation while gated must not reach the child TableGroup, and
+	// the cluster itself gets no write from the operator.
+	var beforeTG multigresv1alpha1.TableGroup
+	require.NoError(t, k8sClient.Get(ctx, tgKey, &beforeTG))
+
+	require.NoError(t, k8sClient.Get(ctx, clusterKey, cluster))
+	pool := cluster.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["primary"]
+	pool.ReplicasPerCell = ptr.To(int32(5))
+	cluster.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["primary"] = pool
+	require.NoError(t, k8sClient.Update(ctx, cluster))
+
+	require.Never(t, func() bool {
+		var tg multigresv1alpha1.TableGroup
+		if err := k8sClient.Get(ctx, tgKey, &tg); err != nil {
+			return false
+		}
+		replicas, ok := poolReplicas(&tg, "primary")
+		return !ok || replicas != 3 || tg.ResourceVersion != beforeTG.ResourceVersion
+	}, 1500*time.Millisecond, 100*time.Millisecond, "gated cluster mutated a child")
+	var gatedNow multigresv1alpha1.MultigresCluster
+	require.NoError(t, apiReader.Get(ctx, clusterKey, &gatedNow))
+	testutil.RequireNoWrites(ctx, t, apiReader, &gatedNow, 2*time.Second)
+
+	// 4. Requeue-storm guard: an unrelated namespace label edit must enqueue no
+	// reconcile at all.
+	counter.WaitQuiescent(t, clusterKey)
+	before := counter.CountFor(clusterKey)
+	testutil.PatchLabel(t, k8sClient, ns, "example.com/unrelated", "x")
+	require.Never(t, func() bool {
+		return counter.CountFor(clusterKey) != before
+	}, 1500*time.Millisecond, 100*time.Millisecond,
+		"unrelated namespace label edit enqueued a reconcile")
+
+	// 5. Watch-driven resume: removing the label must converge the pending spec
+	// change without re-touching the cluster spec.
+	testutil.PatchLabel(t, k8sClient, ns, gatingLabel, "")
+	require.Eventually(t, func() bool {
+		var tg multigresv1alpha1.TableGroup
+		if err := k8sClient.Get(ctx, tgKey, &tg); err != nil {
+			return false
+		}
+		replicas, ok := poolReplicas(&tg, "primary")
+		return ok && replicas == 5
+	}, testTimeout, 100*time.Millisecond, "watch-driven resume did not converge")
+
+	// 6. A gated cluster must not be torn down: deletion hangs on the finalizer.
+	testutil.PatchLabel(t, k8sClient, ns, gatingLabel, "disabled")
+	testutil.WaitForCachedLabel(
+		ctx, t, k8sClient, ns, gatingLabel, "disabled",
+	)
+
+	require.NoError(t, k8sClient.Delete(ctx, cluster))
+	require.Never(t, func() bool {
+		var c multigresv1alpha1.MultigresCluster
+		err := k8sClient.Get(ctx, clusterKey, &c)
+		return apierrors.IsNotFound(err)
+	}, 2*time.Second, 100*time.Millisecond,
+		"gated cluster was deleted despite the gate")
+
+	var gated multigresv1alpha1.MultigresCluster
+	require.NoError(t, k8sClient.Get(ctx, clusterKey, &gated))
+	require.Contains(t, gated.Finalizers, multigresv1alpha1.FinalizerClusterCleanup)
+
+	// 7. Un-gate and confirm the finalizer is actually released: the hang in
+	// step 6 must be the gate and nothing else, so removing the label resumes
+	// deletion and the object disappears. No assertion is made about children
+	// (Cells/TableGroups) "surviving" the gated delete: envtest runs no
+	// garbage-collection controller, so owner-reference cascade deletion never
+	// fires here whether or not the cluster is gated, which would make that
+	// assertion vacuous. The meaningful, observable signal is the released
+	// finalizer.
+	testutil.PatchLabel(t, k8sClient, ns, gatingLabel, "")
+	require.Eventually(t, func() bool {
+		var c multigresv1alpha1.MultigresCluster
+		return apierrors.IsNotFound(k8sClient.Get(ctx, clusterKey, &c))
+	}, testTimeout, 100*time.Millisecond,
+		"un-gated cluster deletion never completed: finalizer was not released")
+}
+
+// TestMultigresCluster_LaptopModeRefusesUnclaimedNamespace pins that a laptop
+// process refuses any MultigresCluster in a namespace it did not claim, even
+// though that namespace carries no multigres.com/reconcile=disabled label: no
+// finalizer, no child, no write. The branch lives in the shared Gate, wired
+// identically into all five controllers, so this one envtest covers them all.
+func TestMultigresCluster_LaptopModeRefusesUnclaimedNamespace(t *testing.T) {
+	const clusterName = "unclaimed-cluster"
+
+	k8sClient, _, apiReader := setupIntegrationCore(t, nil,
+		func(r *multigrescluster.MultigresClusterReconciler) {
+			r.Gate = features.NewGate("some-other-claimed-ns")
+		})
+
+	ctx := t.Context()
+	clusterKey := client.ObjectKey{Name: clusterName, Namespace: testNamespace}
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: testNamespace},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			TemplateDefaults: multigresv1alpha1.TemplateDefaults{
+				CoreTemplate:  "default",
+				CellTemplate:  "default",
+				ShardTemplate: "default",
+			},
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{TemplateRef: "default"},
+			Multiadmin:       &multigresv1alpha1.MultiadminConfig{TemplateRef: "default"},
+			Cells:            []multigresv1alpha1.CellConfig{{Name: "zone-a", ZoneID: "use1-az1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name:    "postgres",
+				Default: true,
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name:    "default",
+					Default: true,
+					Shards: []multigresv1alpha1.ShardConfig{{
+						Name: "0-inf",
+						Spec: &multigresv1alpha1.ShardInlineSpec{
+							Multiorch: multigresv1alpha1.MultiorchSpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(1)),
+								},
+							},
+							Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+								"primary": {
+									ReplicasPerCell: ptr.To(int32(3)),
+									Type:            "readWrite",
+									Cells:           []multigresv1alpha1.CellName{"zone-a"},
+								},
+							},
+						},
+					}},
+				}},
+			}},
+		},
+	}
+	setTestPostgresPasswordSecretRef(cluster)
+	require.NoError(t, k8sClient.Create(ctx, cluster))
+
+	// Nothing may touch it: no write, no finalizer, no child.
+	require.Never(t, func() bool {
+		var c multigresv1alpha1.MultigresCluster
+		if err := k8sClient.Get(ctx, clusterKey, &c); err != nil {
+			return false
+		}
+		if slices.Contains(c.Finalizers, multigresv1alpha1.FinalizerClusterCleanup) {
+			return true
+		}
+		tgs := &multigresv1alpha1.TableGroupList{}
+		if err := k8sClient.List(ctx, tgs,
+			client.InNamespace(testNamespace),
+			client.MatchingLabels{metadata.LabelMultigresCluster: clusterName},
+		); err != nil {
+			return false
+		}
+		return len(tgs.Items) != 0
+	}, 3*time.Second, 100*time.Millisecond,
+		"laptop mode reconciled a MultigresCluster in an unclaimed namespace")
+	testutil.RequireNoWrites(ctx, t, apiReader, cluster, 2*time.Second)
+
+	// Delete must not be blocked: no finalizer was ever added, so the object
+	// vanishes immediately rather than hanging for a cleanup that never comes.
+	require.NoError(t, k8sClient.Delete(ctx, cluster))
+	require.Eventually(t, func() bool {
+		var c multigresv1alpha1.MultigresCluster
+		return apierrors.IsNotFound(k8sClient.Get(ctx, clusterKey, &c))
+	}, 5*time.Second, 100*time.Millisecond,
+		"unclaimed cluster lingered, implying a finalizer was added")
+}
+
+// TestMultigresCluster_ReconcileGatingObjectLevel pins that the reconcile-disabled
+// label, set on the MultigresCluster object itself rather than its namespace,
+// pauses and resumes reconciliation. The resume half is driven by the label
+// removal alone - the namespace and the spec are never touched again - so it
+// fails against a For() predicate that omits features.LabelsChanged():
+// projectRefOrGenerationChangedPredicate ignores metadata-only updates, so
+// without that arm the removal event never reaches Reconcile.
+func TestMultigresCluster_ReconcileGatingObjectLevel(t *testing.T) {
+	const (
+		clusterName = "object-gated-cluster"
+		gatingLabel = "multigres.com/reconcile"
+	)
+
+	var counter *testutil.CountingReconciler
+	k8sClient, _, apiReader := setupIntegrationCore(
+		t,
+		func(inner reconcile.Reconciler) reconcile.Reconciler {
+			counter = testutil.NewCountingReconciler(inner)
+			return counter
+		},
+		nil,
+	)
+
+	ctx := t.Context()
+	clusterKey := client.ObjectKey{Name: clusterName, Namespace: testNamespace}
+
+	cluster := &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: testNamespace},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			TemplateDefaults: multigresv1alpha1.TemplateDefaults{
+				CoreTemplate:  "default",
+				CellTemplate:  "default",
+				ShardTemplate: "default",
+			},
+			GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{TemplateRef: "default"},
+			Multiadmin:       &multigresv1alpha1.MultiadminConfig{TemplateRef: "default"},
+			Cells:            []multigresv1alpha1.CellConfig{{Name: "zone-a", ZoneID: "use1-az1"}},
+			Databases: []multigresv1alpha1.DatabaseConfig{{
+				Name:    "postgres",
+				Default: true,
+				TableGroups: []multigresv1alpha1.TableGroupConfig{{
+					Name:    "default",
+					Default: true,
+					Shards: []multigresv1alpha1.ShardConfig{{
+						Name: "0-inf",
+						Spec: &multigresv1alpha1.ShardInlineSpec{
+							Multiorch: multigresv1alpha1.MultiorchSpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{
+									Replicas: ptr.To(int32(1)),
+								},
+							},
+							Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+								"primary": {
+									ReplicasPerCell: ptr.To(int32(3)),
+									Type:            "readWrite",
+									Cells:           []multigresv1alpha1.CellName{"zone-a"},
+								},
+							},
+						},
+					}},
+				}},
+			}},
+		},
+	}
+	setTestPostgresPasswordSecretRef(cluster)
+	require.NoError(t, k8sClient.Create(ctx, cluster))
+
+	// 1. Reconcile normally so a child exists whose spec we can compare.
+	var tgName string
+	require.Eventually(t, func() bool {
+		tgs := &multigresv1alpha1.TableGroupList{}
+		if err := k8sClient.List(ctx, tgs,
+			client.InNamespace(testNamespace),
+			client.MatchingLabels{metadata.LabelMultigresCluster: clusterName},
+		); err != nil {
+			return false
+		}
+		if len(tgs.Items) != 1 {
+			return false
+		}
+		replicas, ok := poolReplicas(&tgs.Items[0], "primary")
+		if !ok || replicas != 3 {
+			return false
+		}
+		tgName = tgs.Items[0].Name
+		return true
+	}, testTimeout, 100*time.Millisecond, "initial TableGroup did not converge")
+
+	tgKey := client.ObjectKey{Name: tgName, Namespace: testNamespace}
+
+	// 2. Gate the object itself. The namespace is left untouched, so the pause
+	// transition must arrive through the For() predicate on the cluster object.
+	time.Sleep(time.Second)
+	testutil.PatchLabel(t, k8sClient, cluster, gatingLabel, "disabled")
+	testutil.WaitForCachedLabel(ctx, t, k8sClient, cluster, gatingLabel, "disabled")
+	time.Sleep(time.Second)
+
+	// 3. A spec mutation while gated must not reach the child, and the cluster
+	// gets no write from the operator.
+	var beforeTG multigresv1alpha1.TableGroup
+	require.NoError(t, k8sClient.Get(ctx, tgKey, &beforeTG))
+
+	require.NoError(t, k8sClient.Get(ctx, clusterKey, cluster))
+	pool := cluster.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["primary"]
+	pool.ReplicasPerCell = ptr.To(int32(5))
+	cluster.Spec.Databases[0].TableGroups[0].Shards[0].Spec.Pools["primary"] = pool
+	require.NoError(t, k8sClient.Update(ctx, cluster))
+
+	require.Never(t, func() bool {
+		var tg multigresv1alpha1.TableGroup
+		if err := k8sClient.Get(ctx, tgKey, &tg); err != nil {
+			return false
+		}
+		replicas, ok := poolReplicas(&tg, "primary")
+		return !ok || replicas != 3 || tg.ResourceVersion != beforeTG.ResourceVersion
+	}, 1500*time.Millisecond, 100*time.Millisecond, "gated cluster mutated a child")
+	var gatedNow multigresv1alpha1.MultigresCluster
+	require.NoError(t, apiReader.Get(ctx, clusterKey, &gatedNow))
+	testutil.RequireNoWrites(ctx, t, apiReader, &gatedNow, 2*time.Second)
+
+	// 4. Remove the object's own label - spec and namespace untouched. Only the
+	// LabelsChanged arm of the For() predicate can deliver this event.
+	time.Sleep(time.Second)
+	before := counter.CountFor(clusterKey)
+	testutil.PatchLabel(t, k8sClient, cluster, gatingLabel, "")
+
+	require.Eventually(t, func() bool {
+		return counter.CountFor(clusterKey) > before
+	}, 10*time.Second, 100*time.Millisecond,
+		"removing the object's own label should re-enqueue the MultigresCluster")
+
+	require.Eventually(t, func() bool {
+		var tg multigresv1alpha1.TableGroup
+		if err := k8sClient.Get(ctx, tgKey, &tg); err != nil {
+			return false
+		}
+		replicas, ok := poolReplicas(&tg, "primary")
+		return ok && replicas == 5
+	}, testTimeout, 100*time.Millisecond,
+		"removing the object's own label did not converge the pending spec change")
 }

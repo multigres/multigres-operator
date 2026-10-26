@@ -665,7 +665,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				},
 			},
 			wantWarnings: []string{
-				"replicasPerCell=1 across 1 cell(s) (1 total)",
+				"shard 's0' has 1 total pooler(s) across 1 cell(s)",
 				"durability policy \"AT_LEAST_2\" requires at least 2 total poolers",
 			},
 		},
@@ -853,7 +853,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 					}},
 				},
 			},
-			wantWarnings: []string{"has replicasPerCell=1 across 1 cell(s) (1 total)"},
+			wantWarnings: []string{"shard 's0' has 1 total pooler(s) across 1 cell(s)"},
 		},
 		"Durability Warning: MULTI_CELL_AT_LEAST_2 pool in one cell": {
 			cluster: &multigresv1alpha1.MultigresCluster{

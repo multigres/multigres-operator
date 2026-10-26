@@ -94,7 +94,7 @@ func Boot() (*ctrltest.Suite, func() error, error) {
 		SimGarbageCollection: true,
 		Managers: []ctrltest.ManagerOptions{{
 			Name:              "multigres-operator",
-			CacheOptions:      cacheopts.New(OperatorNamespace),
+			CacheOptions:      cacheopts.New(OperatorNamespace, ""),
 			OperatorNamespace: OperatorNamespace,
 			// Matches main.go: the operator raises these to avoid client-side
 			// throttling once several controllers are reconciling at once.

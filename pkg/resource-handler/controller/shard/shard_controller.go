@@ -3,6 +3,7 @@ package shard
 import (
 	"context"
 	"fmt"
+	"net"
 	"slices"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
@@ -86,6 +88,14 @@ type ShardReconciler struct {
 	// deterministically.
 	Clock func() time.Time
 
+	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
+	// docs/development/reconcile-gating.md. The zero value is safe.
+	Gate features.Gate
+
+	// DialContext carries the topology store's connections. Nil (direct
+	// dialing) outside laptop mode.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+
 	postureStrikesMu sync.Mutex
 	postureStrikes   map[string]int
 
@@ -130,6 +140,12 @@ func (r *ShardReconciler) Reconcile(
 		}
 		monitoring.RecordSpanError(span, err)
 		logger.Error(err, "Failed to get Shard")
+		return ctrl.Result{}, err
+	}
+
+	// Backstop for the event filter: a RequeueAfter scheduled before the label
+	// went on still reaches here.
+	if gated, err := r.Gate.Gated(ctx, r.Client, shard); gated || err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -717,7 +733,7 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.Shard{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Pod{}).
@@ -729,7 +745,11 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueFromPostgresConfigMap),
-		).
+		)
+
+	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+		return &multigresv1alpha1.ShardList{}
+	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
 }

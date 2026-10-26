@@ -1,11 +1,14 @@
 package topo_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,7 +93,7 @@ func TestReadEtcdIdentity(t *testing.T) {
 		var last error
 		for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
 			id, err := topo.ReadEtcdIdentity(t.Context(), nil, "default",
-				multigresv1alpha1.GlobalTopoServerRef{Address: address})
+				multigresv1alpha1.GlobalTopoServerRef{Address: address}, nil)
 			if err == nil {
 				return id
 			}
@@ -136,9 +139,42 @@ func TestReadEtcdIdentity(t *testing.T) {
 			multigresv1alpha1.GlobalTopoServerRef{
 				Address:        fmt.Sprintf("http://127.0.0.1:%d", a),
 				Implementation: "memory",
-			})
+			}, nil)
 		if err == nil {
 			t.Error("want an error for a memory topology")
 		}
 	})
+}
+
+// In laptop mode the etcd behind a topology reference is reachable only through
+// the laptop dialer, so the identity read must hand it the raw host:port, even
+// for a host the local resolver cannot resolve.
+func TestReadEtcdIdentityDialsThroughTheGivenDialer(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		dials []string
+	)
+	dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+		mu.Lock()
+		dials = append(dials, addr)
+		mu.Unlock()
+		return nil, errors.New("recording dialer refuses every dial")
+	}
+	// The refused dial is retried until the context ends; one second is plenty
+	// to observe the first attempt.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	_, err := topo.ReadEtcdIdentity(ctx, nil, "default",
+		multigresv1alpha1.GlobalTopoServerRef{Address: "http://etcd-0.example.internal:2379"}, dial)
+	if err == nil {
+		t.Fatal("want an error from a dialer that refuses every dial")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dials) == 0 {
+		t.Fatal("the dialer was never used")
+	}
+	if dials[0] != "etcd-0.example.internal:2379" {
+		t.Errorf("dialed %q, want the raw host:port etcd-0.example.internal:2379", dials[0])
+	}
 }

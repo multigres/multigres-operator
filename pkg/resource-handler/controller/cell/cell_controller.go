@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -44,6 +45,10 @@ type CellReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
+	// docs/development/reconcile-gating.md. The zero value is safe.
+	Gate features.Gate
 }
 
 // Reconcile manages the Multigateway deployment and per-cell services for a Cell.
@@ -75,6 +80,12 @@ func (r *CellReconciler) Reconcile(
 		}
 		monitoring.RecordSpanError(span, err)
 		logger.Error(err, "Failed to get Cell")
+		return ctrl.Result{}, err
+	}
+
+	// Backstop for the event filter: a RequeueAfter scheduled before the label
+	// went on still reaches here.
+	if gated, err := r.Gate.Gated(ctx, r.Client, cell); gated || err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -707,13 +718,20 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.Cell{},
-			builder.WithPredicates(projectRefOrGenerationChangedPredicate()),
+			builder.WithPredicates(predicate.Or(
+				projectRefOrGenerationChangedPredicate(),
+				features.LabelsChanged(),
+			)),
 		).
 		Owns(&multigresv1alpha1.TopoServer{}).
 		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
+		Owns(&corev1.Service{})
+
+	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+		return &multigresv1alpha1.CellList{}
+	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
 }

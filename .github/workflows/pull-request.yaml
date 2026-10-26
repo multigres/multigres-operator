@@ -23,6 +23,22 @@ jobs:
   build:
     name: Build
     uses: ./.github/workflows/_reusable-build-changed.yaml
+  build-tags:
+    name: Build tags (kubedial)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ./go.mod
+      # check-kubedial depends on the golangci-lint Make target, which installs
+      # the Makefile-pinned GOLANGCI_LINT_VERSION itself, so this job can't
+      # drift from make lint the way a separate install step could.
+      - run: make check-kubedial
   manifests:
     name: Manifests
     uses: ./.github/workflows/_reusable-manifests.yaml
@@ -57,7 +73,7 @@ jobs:
     uses: ./.github/workflows/_reusable-e2e.yaml
     with:
       ref: ${{ github.event.pull_request.head.sha }}
-      timeout-minutes: 30
+      timeout-minutes: 60
 
   minigres-e2e:
     name: Minigres runtime qualification
@@ -68,4 +84,4 @@ jobs:
       ref: ${{ github.event.pull_request.head.sha }}
       mode: dedicated
       test-spec: minigres
-      timeout-minutes: 30
+      timeout-minutes: 60
