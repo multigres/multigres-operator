@@ -464,48 +464,47 @@ func (r *Resolver) ValidateClusterLogic(
 				// ------------------------------------------------------------------
 				// 3. Durability achievability warnings
 				// ------------------------------------------------------------------
-				for poolName, pool := range pools {
-					durabilityPolicy := effectiveDatabaseDurabilityPolicy(db, cluster)
-					if durabilityPolicy == "" {
-						durabilityPolicy = DefaultDurabilityPolicy
-					}
+				durabilityPolicy := effectiveDatabaseDurabilityPolicy(db, cluster)
+				if durabilityPolicy == "" {
+					durabilityPolicy = DefaultDurabilityPolicy
+				}
+				// Multigres forms a cohort across the shard, regardless of pool names.
+				// These pools already include resolved templates, overrides, and defaults.
+				totalReplicas := 0
+				shardCells := make(map[multigresv1alpha1.CellName]struct{})
+				for _, pool := range pools {
 					replicas := DefaultPoolReplicasPerCell
 					if pool.ReplicasPerCell != nil {
 						replicas = *pool.ReplicasPerCell
 					}
-					cellCount := len(pool.Cells)
-					if cellCount == 0 {
-						cellCount = len(cellNames)
+					totalReplicas += int(replicas) * len(pool.Cells)
+					for _, cell := range pool.Cells {
+						shardCells[cell] = struct{}{}
 					}
-					totalReplicas := int(replicas) * cellCount
+				}
+				cellCount := len(shardCells)
 
-					switch durabilityPolicy {
-					case "MULTI_CELL_AT_LEAST_2":
-						if cellCount >= 2 {
-							continue
-						}
+				switch durabilityPolicy {
+				case "MULTI_CELL_AT_LEAST_2":
+					if cellCount < 2 {
 						warnings = append(warnings, fmt.Sprintf(
-							"pool '%s' in shard '%s' spans %d cell(s); "+
+							"shard '%s' spans %d cell(s); "+
 								"durability policy %q requires at least %d distinct cells.",
-							poolName,
 							shard.Name,
 							cellCount,
 							durabilityPolicy,
 							2,
 						))
+					}
 
-					default:
-						if totalReplicas >= 2 {
-							continue
-						}
+				default:
+					if totalReplicas < 2 {
 						warnings = append(warnings, fmt.Sprintf(
-							"pool '%s' in shard '%s' has replicasPerCell=%d across %d cell(s) (%d total); "+
+							"shard '%s' has %d total pooler(s) across %d cell(s); "+
 								"durability policy %q requires at least %d total poolers.",
-							poolName,
 							shard.Name,
-							replicas,
-							cellCount,
 							totalReplicas,
+							cellCount,
 							durabilityPolicy,
 							2,
 						))
