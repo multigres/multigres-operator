@@ -56,6 +56,9 @@ const (
 	PortPostgres         = 5432
 )
 
+// PortMultigatewayReplicaPG is the PG wire port of the multigateway replica-read service.
+const PortMultigatewayReplicaPG = 5433
+
 // PostgreSQL NAMEDATALEN limit for application_name.
 const PGNameDataLen = 63
 

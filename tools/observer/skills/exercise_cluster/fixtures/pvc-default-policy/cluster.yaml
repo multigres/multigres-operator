@@ -1,9 +1,21 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: multigres-admin-password
+  namespace: default
+type: Opaque
+stringData:
+  password: postgres
+---
 apiVersion: multigres.com/v1alpha1
 kind: MultigresCluster
 metadata:
   name: pvc-default-policy
   namespace: default
 spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
   # No pvcDeletionPolicy set — verifies new default: whenDeleted=Retain, whenScaled=Delete
   logLevels:
     pgctld: "debug"
@@ -12,7 +24,8 @@ spec:
     multiadmin: "debug"
     multigateway: "debug"
   cells:
-    - name: "us-east-1"
+    - name: "us-central1-a"
+      zoneId: "us-central1-a"
       spec:
         multigateway:
           replicas: 1
@@ -30,7 +43,7 @@ spec:
                 pools:
                   main-rw:
                     type: readWrite
-                    cells: ["us-east-1"]
+                    cells: ["us-central1-a"]
                     replicasPerCell: 4
                     storage:
                       size: "5Gi"

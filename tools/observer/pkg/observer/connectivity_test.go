@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/tools/observer/pkg/common"
 )
 
 func TestFetchShardPassword(t *testing.T) {
@@ -111,5 +112,49 @@ func testUnstructuredShard(name, namespace, secretName, secretKey string) runtim
 				},
 			},
 		},
+	}
+}
+
+func TestMultigatewayPGPort(t *testing.T) {
+	svcWithPorts := func(ports ...int32) *corev1.Service {
+		svc := &corev1.Service{}
+		for _, p := range ports {
+			svc.Spec.Ports = append(svc.Spec.Ports, corev1.ServicePort{Port: p})
+		}
+		return svc
+	}
+
+	tests := map[string]struct {
+		svc  *corev1.Service
+		want int
+	}{
+		"primary service exposes 5432": {
+			svc:  svcWithPorts(5432),
+			want: common.PortMultigatewayPG,
+		},
+		"per-cell service exposes 5432 with HTTP and gRPC": {
+			svc:  svcWithPorts(15100, 15170, 5432),
+			want: common.PortMultigatewayPG,
+		},
+		"replica service exposes only 5433": {
+			svc:  svcWithPorts(5433),
+			want: common.PortMultigatewayReplicaPG,
+		},
+		"service exposes both ports": {
+			svc:  svcWithPorts(5432, 5433),
+			want: common.PortMultigatewayPG,
+		},
+		"service exposes neither port": {
+			svc:  svcWithPorts(15100),
+			want: common.PortMultigatewayPG,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := multigatewayPGPort(tc.svc); got != tc.want {
+				t.Errorf("multigatewayPGPort() = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }

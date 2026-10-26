@@ -74,7 +74,7 @@ Scenarios for testing `postgresConfigRef` — ConfigMap-based postgresql.conf ov
 7. **Verify the actual PostgreSQL runtime settings changed** (this is the critical end-to-end check):
    ```bash
    POD=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{.items[0].metadata.name}')
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- psql -h 127.0.0.1 -p 5432 -U postgres -tAc "SHOW shared_buffers"
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c 'PGPASSWORD=$(cat "$POSTGRES_PASSWORD_FILE") psql -h 127.0.0.1 -p 5432 -U postgres -tAc "SHOW shared_buffers"'
    # Expected: 512MB (NOT the original 256MB)
    ```
    Also verify the on-disk `postgresql.conf` has the updated overrides appended:
@@ -162,11 +162,7 @@ Wait for rolling update and verify stability.
 
 **How to execute:**
 1. Deploy the `postgres-config-ref` fixture and wait for stability.
-2. Get the postgres password from the shard's password Secret:
-   ```bash
-   SECRET=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get secrets -n default -o name | grep postgres-password)
-   PGPASS=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get $SECRET -n default -o jsonpath='{.data.password}' | base64 -d)
-   ```
+2. No password lookup is needed. The `postgres` container mounts the password Secret (`spec.postgresPasswordSecretRef`) and sets `POSTGRES_PASSWORD_FILE` to the file path. The `psql` commands below read this file.
 3. Verify the mounted extra-conf file matches the ConfigMap content:
    ```bash
    POD=$(KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl get pods -n default -l app.kubernetes.io/component=shard-pool -o jsonpath='{.items[0].metadata.name}')
@@ -180,11 +176,11 @@ Wait for rolling update and verify stability.
    ```
 5. Check PostgreSQL runtime settings (requires TCP + password):
    ```bash
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c "PGPASSWORD='$PGPASS' psql -h 127.0.0.1 -p 5432 -U postgres -tAc 'SHOW shared_buffers'"
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c "PGPASSWORD=\$(cat \$POSTGRES_PASSWORD_FILE) psql -h 127.0.0.1 -p 5432 -U postgres -tAc 'SHOW shared_buffers'"
    # Expected: 256MB
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c "PGPASSWORD='$PGPASS' psql -h 127.0.0.1 -p 5432 -U postgres -tAc 'SHOW work_mem'"
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c "PGPASSWORD=\$(cat \$POSTGRES_PASSWORD_FILE) psql -h 127.0.0.1 -p 5432 -U postgres -tAc 'SHOW work_mem'"
    # Expected: 16MB
-   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c "PGPASSWORD='$PGPASS' psql -h 127.0.0.1 -p 5432 -U postgres -tAc 'SHOW max_connections'"
+   KUBECONFIG=$(pwd)/kubeconfig.yaml kubectl exec -n default $POD -c postgres -- sh -c "PGPASSWORD=\$(cat \$POSTGRES_PASSWORD_FILE) psql -h 127.0.0.1 -p 5432 -U postgres -tAc 'SHOW max_connections'"
    # Expected: 50
    ```
 

@@ -21,10 +21,11 @@ KUBECONFIG=kubeconfig.yaml kubectl get pods -l app.kubernetes.io/component=shard
 # Cross-reference CRD podRoles with actual SQL state
 # (catches stale podRoles where CRD says REPLICA but pod is actually PRIMARY)
 KUBECONFIG=kubeconfig.yaml kubectl get shard -A -o json | jq '[.items[] | {name: .metadata.name, podRoles: .status.podRoles}]'
+# psql over TCP needs the password; read it from the file mounted in the pod
 for pod in $(KUBECONFIG=kubeconfig.yaml kubectl get pods -l app.kubernetes.io/component=shard-pool -o name); do
   echo -n "$pod: "
-  KUBECONFIG=kubeconfig.yaml kubectl exec $pod -c postgres -- psql -h 127.0.0.1 -p 5432 -U postgres -tAc \
-    "SELECT CASE WHEN pg_is_in_recovery() THEN 'REPLICA' ELSE 'PRIMARY' END"
+  KUBECONFIG=kubeconfig.yaml kubectl exec $pod -c postgres -- sh -c 'PGPASSWORD=$(cat "$POSTGRES_PASSWORD_FILE") psql -h 127.0.0.1 -p 5432 -U postgres -tAc \
+    "SELECT CASE WHEN pg_is_in_recovery() THEN '"'"'REPLICA'"'"' ELSE '"'"'PRIMARY'"'"' END"'
 done
 
 # Check finding history for patterns

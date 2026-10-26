@@ -128,10 +128,10 @@ Note persistent warnings (replication lag, WAL replay paused).
 # Exactly 1 PRIMARY per pool per cell in CRD
 kubectl get shard -n <ns> -o json | jq '[.items[].status.podRoles | to_entries[] | select(.value == "PRIMARY")] | length'
 
-# Cross-reference with actual PG state
+# Cross-reference with actual PG state (psql over TCP needs the password; read it from the mounted file)
 for pod in $(kubectl get pods -n <ns> -l app.kubernetes.io/component=shard-pool -o name); do
   echo -n "$pod: "
-  kubectl exec -n <ns> $pod -c postgres -- psql -h 127.0.0.1 -p 5432 -U postgres -tAc "SELECT CASE WHEN pg_is_in_recovery() THEN 'REPLICA' ELSE 'PRIMARY' END"
+  kubectl exec -n <ns> $pod -c postgres -- sh -c 'PGPASSWORD=$(cat "$POSTGRES_PASSWORD_FILE") psql -h 127.0.0.1 -p 5432 -U postgres -tAc "SELECT CASE WHEN pg_is_in_recovery() THEN '"'"'REPLICA'"'"' ELSE '"'"'PRIMARY'"'"' END"'
 done
 ```
 CRD PRIMARY must match SQL `pg_is_in_recovery() = false`. Mismatch → trigger reconcile, report as "error".
