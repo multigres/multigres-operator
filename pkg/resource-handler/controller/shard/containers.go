@@ -724,6 +724,12 @@ func buildLiteContainer(
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 	}
 
+	if shard.Spec.CertCommonName != "" {
+		args = append(args,
+			"--pg-tls-cert-file", litePublicTLSCertFile,
+			"--pg-tls-key-file", litePublicTLSKeyFile,
+		)
+	}
 	if shard.Spec.Backup != nil {
 		args = append(args,
 			"--pgbackrest-cert-file="+PgBackRestCertMountPath+"/pgbackrest.crt",
@@ -825,6 +831,13 @@ func buildLiteContainer(
 			MountPath: SocketDirMountPath,
 		},
 		postgresPasswordVolumeMount(),
+	}
+	if shard.Spec.CertCommonName != "" {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      litePublicTLSVolumeName,
+			MountPath: litePublicTLSMountPath,
+			ReadOnly:  true,
+		})
 	}
 	if shard.Spec.Backup != nil {
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{

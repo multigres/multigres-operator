@@ -64,6 +64,7 @@ func BuildShard(
 				shardSpec.PVCDeletionPolicy,
 				tg.Spec.PVCDeletionPolicy,
 			),
+			CertCommonName:            tg.Spec.CertCommonName,
 			InternalTLS:               tg.Spec.InternalTLS,
 			Observability:             tg.Spec.Observability,
 			LogLevels:                 tg.Spec.LogLevels,

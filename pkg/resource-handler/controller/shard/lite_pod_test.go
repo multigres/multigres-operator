@@ -2,9 +2,11 @@ package shard
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
@@ -312,6 +314,168 @@ func TestLitePodPriorityPolicyTriggersDrift(t *testing.T) {
 	} {
 		if after.Annotations[key] != want {
 			t.Errorf("annotation %s = %q, want %q", key, after.Annotations[key], want)
+		}
+	}
+}
+
+func TestBuildLitePod_PublicTLS(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		publicTLS   bool
+		internalTLS bool
+	}{
+		{name: "no TLS"},
+		{name: "public TLS", publicTLS: true},
+		{name: "internal TLS", internalTLS: true},
+		{name: "public and internal TLS", publicTLS: true, internalTLS: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shard := newTestLiteShard()
+			if tc.publicTLS {
+				shard.Spec.CertCommonName = "db.example.com"
+			}
+			shard.Spec.InternalTLS = &multigresv1alpha1.InternalTLSConfig{
+				Enabled: ptr.To(tc.internalTLS),
+			}
+			pod, err := BuildLitePod(shard, "main", "z1", newTestPoolSpec(), testScheme())
+			require.NoError(t, err)
+
+			volumes := make(map[string]corev1.Volume)
+			for _, volume := range pod.Spec.Volumes {
+				require.NotContains(t, volumes, volume.Name, "duplicate volume name")
+				volumes[volume.Name] = volume
+			}
+			publicVolume, hasPublicVolume := volumes["public-tls-certs"]
+			require.Equal(t, tc.publicTLS, hasPublicVolume)
+			_, hasInternalVolume := volumes[ShardTLSVolumeName]
+			require.Equal(t, tc.internalTLS, hasInternalVolume)
+			if tc.publicTLS {
+				require.NotNil(t, publicVolume.Secret)
+				require.Equal(t, multigresv1alpha1.CertSecretName, publicVolume.Secret.SecretName)
+				require.Equal(t, ptr.To(int32(0o444)), publicVolume.Secret.DefaultMode)
+			}
+
+			for _, container := range append(slices.Clone(pod.Spec.Containers), pod.Spec.InitContainers...) {
+				wantPublicTLS := tc.publicTLS && container.Name == "minigres"
+				mountIndex := slices.IndexFunc(
+					container.VolumeMounts,
+					func(m corev1.VolumeMount) bool {
+						return m.Name == "public-tls-certs"
+					},
+				)
+				require.Equal(t, wantPublicTLS, mountIndex >= 0, "container %s", container.Name)
+				if wantPublicTLS {
+					require.Equal(t, corev1.VolumeMount{
+						Name:      "public-tls-certs",
+						MountPath: "/etc/multigateway/tls",
+						ReadOnly:  true,
+					}, container.VolumeMounts[mountIndex])
+					for flag, path := range map[string]string{
+						"--pg-tls-cert-file": "/etc/multigateway/tls/tls.crt",
+						"--pg-tls-key-file":  "/etc/multigateway/tls/tls.key",
+					} {
+						index := slices.Index(container.Args, flag)
+						require.GreaterOrEqual(t, index, 0, "missing %s", flag)
+						require.Less(t, index+1, len(container.Args))
+						require.Equal(t, path, container.Args[index+1])
+					}
+				} else {
+					for _, arg := range container.Args {
+						require.False(
+							t,
+							strings.HasPrefix(arg, "--pg-tls-"),
+							"unexpected flag %s",
+							arg,
+						)
+					}
+				}
+			}
+			if tc.internalTLS {
+				minigres := pod.Spec.Containers[0]
+				require.Contains(t, minigres.VolumeMounts, shardTLSVolumeMount())
+				require.Contains(t, minigres.Args, "--grpc-cert")
+				require.Contains(t, minigres.Args, ShardTLSCertFile)
+			}
+		})
+	}
+}
+
+func TestPublicTLSChangesOnlyLitePod(t *testing.T) {
+	for _, mode := range []string{multigresv1alpha1.ModeLite, ""} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			shard := newTestShard()
+			shard.Spec.Mode = mode
+			buildPod := func() *corev1.Pod {
+				if mode == multigresv1alpha1.ModeLite {
+					pod, err := BuildLitePod(shard, "main", "z1", newTestPoolSpec(), testScheme())
+					require.NoError(t, err)
+					return pod
+				}
+				pod, err := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
+				require.NoError(t, err)
+				return pod
+			}
+			before := buildPod()
+			shard.Spec.CertCommonName = "db.example.com"
+			after := buildPod()
+			if mode == multigresv1alpha1.ModeLite {
+				require.NotEqual(t, before.Annotations[metadata.AnnotationSpecHash],
+					after.Annotations[metadata.AnnotationSpecHash])
+				require.Equal(
+					t,
+					ComputeSpecHash(after),
+					after.Annotations[metadata.AnnotationSpecHash],
+				)
+				require.Equal(t, after, buildPod(), "unchanged settings must keep the pod stable")
+			} else {
+				require.Equal(t, before, after, "public TLS must not change HA pool pods")
+			}
+			shard.Spec.CertCommonName = ""
+			require.Equal(t, before, buildPod())
+		})
+	}
+}
+
+func TestBuildLitePod_WithoutPublicTLSRetainsPreChangeSpecHash(t *testing.T) {
+	// These hashes were captured from 74f2e3db before applying Lite public TLS
+	// support, including its image defaults and internal mTLS flags. Keep them
+	// fixed: changing them can hide an unintended pod restart.
+	for _, tc := range []struct {
+		name        string
+		internalTLS *multigresv1alpha1.InternalTLSConfig
+		wantHashes  [2]string
+	}{
+		{name: "internal TLS unset", wantHashes: [2]string{"44ae2567", "0d774fb9"}},
+		{
+			name:        "internal TLS disabled",
+			internalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(false)},
+			wantHashes:  [2]string{"44ae2567", "0d774fb9"},
+		},
+		{
+			name:        "internal TLS enabled",
+			internalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
+			wantHashes:  [2]string{"19997ed5", "593f9023"},
+		},
+	} {
+		for i, variant := range []string{"plain", "backup and topology TLS"} {
+			t.Run(tc.name+"/"+variant, func(t *testing.T) {
+				shard := newTestLiteShard()
+				shard.Spec.InternalTLS = tc.internalTLS
+				pool := newTestPoolSpec()
+				if i == 1 {
+					shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+						Type: multigresv1alpha1.BackupTypeFilesystem,
+					}
+					shard.Spec.GlobalTopoServer.ClientCertSecret = "topo-client"
+					shard.Spec.GlobalTopoServer.CASecret = "topo-ca"
+					pool.FSGroup = ptr.To(int64(999))
+				}
+				require.Empty(t, shard.Spec.CertCommonName)
+				pod, err := BuildLitePod(shard, "main", "z1", pool, testScheme())
+				require.NoError(t, err)
+				require.Equal(t, tc.wantHashes[i], pod.Annotations[metadata.AnnotationSpecHash])
+				require.Equal(t, tc.wantHashes[i], ComputeSpecHash(pod))
+			})
 		}
 	}
 }

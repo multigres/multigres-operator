@@ -11,7 +11,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
-func TestLiteRejectsPublicTLSOnCreateAndUpdate(t *testing.T) {
+func TestPublicTLSAcceptedOnCreateAndUpdate(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(&storagev1.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "standard",
@@ -61,11 +61,7 @@ func TestLiteRejectsPublicTLSOnCreateAndUpdate(t *testing.T) {
 					old.Spec.CertCommonName = ""
 					_, err = validator.ValidateUpdate(t.Context(), old, cluster)
 				}
-				if mode == multigresv1alpha1.ModeLite {
-					require.ErrorContains(t, err, "lite mode does not support certCommonName")
-				} else {
-					require.NoError(t, err)
-				}
+				require.NoError(t, err)
 			})
 		}
 	}

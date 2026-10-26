@@ -63,6 +63,22 @@ func TestBuildTableGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("Propagates CertCommonName", func(t *testing.T) {
+		for _, commonName := range []string{"", "db.example.com"} {
+			c := cluster.DeepCopy()
+			c.Spec.Mode = multigresv1alpha1.ModeLite
+			c.Spec.CertCommonName = commonName
+			tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-tls"}
+			got, err := BuildTableGroup(c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+			if err != nil {
+				t.Fatalf("BuildTableGroup() error = %v", err)
+			}
+			if got.Spec.CertCommonName != commonName {
+				t.Errorf("CertCommonName = %q, want %q", got.Spec.CertCommonName, commonName)
+			}
+		}
+	})
+
 	t.Run("Propagates Mode", func(t *testing.T) {
 		c := cluster.DeepCopy()
 		c.Spec.Mode = multigresv1alpha1.ModeLite

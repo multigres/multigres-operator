@@ -174,6 +174,11 @@ type ShardSpec struct {
 	// +optional
 	PVCDeletionPolicy *PVCDeletionPolicy `json:"pvcDeletionPolicy,omitempty"`
 
+	// CertCommonName is the DNS name for the public PostgreSQL TLS certificate.
+	// Inherited from MultigresCluster.Spec.CertCommonName.
+	// +optional
+	CertCommonName string `json:"certCommonName,omitempty"`
+
 	// InternalTLS is the resolved internal component mTLS configuration.
 	// Inherited from MultigresCluster.Spec.InternalTLS by the resolver.
 	// +optional

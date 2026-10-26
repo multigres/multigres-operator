@@ -13,6 +13,14 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
+const (
+	// Public PostgreSQL TLS uses a separate volume from shard-side mTLS.
+	litePublicTLSVolumeName = "public-tls-certs"
+	litePublicTLSMountPath  = "/etc/multigateway/tls"
+	litePublicTLSCertFile   = litePublicTLSMountPath + "/tls.crt"
+	litePublicTLSKeyFile    = litePublicTLSMountPath + "/tls.key"
+)
+
 // BuildLitePod creates the only pod of a Lite shard. It carries the same
 // pgctld sidecar, exporter, volumes and metadata as the first pod BuildPoolPod
 // builds for the pool, with three differences: the main container runs
@@ -40,6 +48,17 @@ func BuildLitePod(
 
 	dataPVCName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
 	volumes := buildPoolVolumes(shard, cellName)
+	if shard.Spec.CertCommonName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: litePublicTLSVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  multigresv1alpha1.CertSecretName,
+					DefaultMode: ptr.To(int32(0o444)),
+				},
+			},
+		})
+	}
 	volumes = append([]corev1.Volume{{
 		Name: DataVolumeName,
 		VolumeSource: corev1.VolumeSource{

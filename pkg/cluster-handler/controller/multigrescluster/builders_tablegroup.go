@@ -67,6 +67,7 @@ func BuildTableGroup(
 				tgCfg.Backup,
 				multigresv1alpha1.MergeBackupConfig(dbCfg.Backup, cluster.Spec.Backup),
 			),
+			CertCommonName:     cluster.Spec.CertCommonName,
 			InternalTLS:        cluster.Spec.InternalTLS,
 			Observability:      cluster.Spec.Observability,
 			LogLevels:          cluster.Spec.LogLevels,
