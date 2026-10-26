@@ -56,8 +56,8 @@ func (o *Observer) probeMultigatewayServices(ctx context.Context) {
 		svc := &svcs.Items[i]
 		addr := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
 
-		// TCP probe on PG port.
-		o.probeTCP(addr, common.PortMultigatewayPG, "multigateway-pg", svc.Name)
+		// TCP probe on the PG port that this service exposes.
+		o.probeTCP(addr, multigatewayPGPort(svc), "multigateway-pg", svc.Name)
 
 		// HTTP health probes — only on services that expose the HTTP port.
 		// The global gateway service only exposes 5432, not 15100.
@@ -752,7 +752,7 @@ func (o *Observer) probeMultigatewaySQLServices(ctx context.Context) {
 		svc := &svcs.Items[i]
 		addr := fmt.Sprintf("%s.%s.svc", svc.Name, svc.Namespace)
 		password := o.fetchGatewayPassword(ctx, svc)
-		o.probeSQL(ctx, addr, common.PortMultigatewayPG, svc.Name, password)
+		o.probeSQL(ctx, addr, multigatewayPGPort(svc), svc.Name, password)
 	}
 }
 
@@ -1069,4 +1069,15 @@ func serviceHasPort(svc *corev1.Service, port int) bool {
 		}
 	}
 	return false
+}
+
+// multigatewayPGPort returns the PG wire port that a multigateway service
+// exposes. The primary services expose 5432. The replica-read service exposes
+// only 5433. If the service exposes neither, it returns 5432.
+func multigatewayPGPort(svc *corev1.Service) int {
+	if !serviceHasPort(svc, common.PortMultigatewayPG) &&
+		serviceHasPort(svc, common.PortMultigatewayReplicaPG) {
+		return common.PortMultigatewayReplicaPG
+	}
+	return common.PortMultigatewayPG
 }

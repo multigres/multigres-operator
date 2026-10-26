@@ -78,6 +78,7 @@ The observer probes these ports on their respective services:
 | 15100 | Multigateway HTTP | HTTP | `PortMultigatewayHTTP` |
 | 15170 | Multigateway gRPC | gRPC | `PortMultigatewayGRPC` |
 | 5432 | Multigateway PostgreSQL | PG wire | `PortMultigatewayPG` |
+| 5433 | Multigateway PostgreSQL (replica-read service) | PG wire | `PortMultigatewayReplicaPG` |
 | 15200 | Multipooler HTTP | HTTP | `PortMultipoolerHTTP` |
 | 15270 | Multipooler gRPC | gRPC | `PortMultipoolerGRPC` |
 | 15300 | Multiorch HTTP | HTTP | `PortMultiorchHTTP` |
