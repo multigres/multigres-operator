@@ -26,7 +26,7 @@ spec:
     multiadmin: "debug"
     multigateway: "debug"
   cells:
-    - name: "us-east-1"
+    - name: "us-central1-a"
       zoneId: "us-central1-a"
       spec:
         multigateway:
@@ -46,7 +46,7 @@ spec:
                 pools:
                   main-rw:
                     type: readWrite
-                    cells: ["us-east-1"]
+                    cells: ["us-central1-a"]
                     replicasPerCell: 3
                     storage:
                       size: "5Gi"

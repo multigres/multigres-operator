@@ -35,7 +35,7 @@ spec:
     multiadmin: "debug"
     multigateway: "debug"
   cells:
-    - name: "us-east-1"
+    - name: "us-central1-a"
       zoneId: "us-central1-a"
       overrides:
         multigateway:
@@ -55,7 +55,7 @@ spec:
                     from: "override"
                 pools:
                   read-write:
-                    cells: ["us-east-1"]
+                    cells: ["us-central1-a"]
                     replicasPerCell: 4
                     storage:
                       size: "6Gi"

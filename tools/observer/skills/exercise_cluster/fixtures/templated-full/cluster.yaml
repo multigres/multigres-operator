@@ -30,7 +30,7 @@ spec:
     multiadmin: "debug"
     multigateway: "debug"
   cells:
-    - name: "us-east-1"
+    - name: "us-central1-a"
       zoneId: "us-central1-a"
   databases:
     - name: "postgres"
@@ -43,4 +43,4 @@ spec:
               overrides:
                 pools:
                   read-write:
-                    cells: ["us-east-1"]
+                    cells: ["us-central1-a"]
