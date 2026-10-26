@@ -113,10 +113,10 @@ of this review. It publishes static leadership in topology, routes normal
 multiadmin backup operations to that primary, and removes backup lease dependence
 on etcd for static leaders. The promoted runtime does **not** include it. A backup
 volume/configuration and passing SQL outage tests do not qualify normal Lite
-backup/list/verify/expire or backup recovery. Once it merges, qualify a matching
-Minigres/pgctld/multiadmin image set with backup, list, verify and destructive
-restore coverage before claiming support. Preserve per-instance topology roots
-and backup-location isolation; that is an assumption of the upstream change.
+backup/list/verify/expire or backup recovery. The local candidate procedure below
+includes that work before merge and tests a matching Minigres/pgctld/multiadmin image set. Promotion still requires the
+verified upstream build and canary process above. Preserve per-instance topology
+roots and backup-location isolation; that is an assumption of the upstream change.
 Topology-record recreation [#1561](https://github.com/multigres/multigres/pull/1561)
 also remains open and is not included in the qualified runtime.
 
@@ -185,6 +185,93 @@ namespace diagnostics, and destroys its dedicated cluster by default. Set
 `E2E_KEEP_CLUSTERS=on-failure` to retain it for investigation. CI uploads failure
 logs through the existing reusable e2e workflow; test output records the tested
 image references, recovery identities and final checksum.
+
+## Local candidate including Sagar's backup work
+
+The `e2e,minigres_candidate` build tags add `TestMinigresBackupAndRestore`.
+It requires explicit matching Minigres/multiadmin and pgctld overrides. The
+normal `e2e` build continues to qualify the promoted runtime. The candidate
+covers normal backups without `ForcePrimary`, listing, verification, expiration,
+job lookup after multiadmin replacement, and recovery after erasing only the
+test instance's PGDATA. It compares restored SQL contents and PVC identities,
+then checks that new writes succeed. A second Lite instance shares etcd but has
+a distinct topology root and backup PVC.
+
+The source candidate is main `d063d0b437dac1fb935e0476c142f1a42a2af9f1` plus
+Sagar's #1584 at `bc0a87704cd944ec515a065d19d56c84c3e8de9a`. Main already
+contains his config-file change (#1573). One additional local patch,
+`test/e2e/dedicated/minigres/testdata/backup-shard-selection.patch`, restricts
+multiadmin backup selection to the requested shard. Without it, a request for
+an absent shard can operate on another shard's repository. The patch includes
+regressions for static, forced-static, consensus-primary and replica selection;
+the operator test also rejects listing an unknown shard.
+
+Build this source in a separate checkout, leaving the applied changes uncommitted:
+
+```sh
+operator_root="$PWD"
+candidate_dir="$(mktemp -d /tmp/minigres-backup-candidate.XXXXXX)"
+git clone https://github.com/multigres/multigres.git "$candidate_dir/source"
+cd "$candidate_dir/source"
+base=d063d0b437dac1fb935e0476c142f1a42a2af9f1
+backup_pr=bc0a87704cd944ec515a065d19d56c84c3e8de9a
+git fetch origin "$base" "$backup_pr"
+git checkout --detach "$base"
+git diff e0706cfb517dc91c299aec2fa44b943ff74c770e "$backup_pr" > "$candidate_dir/sagar.patch"
+git apply "$candidate_dir/sagar.patch"
+git apply "$operator_root/test/e2e/dedicated/minigres/testdata/backup-shard-selection.patch"
+go test -short ./go/services/multiadmin ./go/cmd/minigres ./go/tools/viperutil/... \
+  ./go/services/multipooler/internal/manager ./go/services/multipooler/internal/manager/backup -count=1
+mkdir "$candidate_dir/images"
+# Match the architecture of the local Kind nodes; use amd64 on x86 hosts.
+for binary in minigres multiadmin pgctld; do
+  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+    -o "$candidate_dir/images/$binary" "./go/cmd/$binary"
+done
+cat > "$candidate_dir/images/Dockerfile" <<'DOCKERFILE'
+FROM ghcr.io/multigres/multigres@sha256:dfb55d04c2837fb926cedd496f51bb6b79408ad077e05de6c3c1591ab7c819dc
+COPY minigres multiadmin /multigres/bin/
+DOCKERFILE
+cat > "$candidate_dir/images/Dockerfile.pgctld" <<'DOCKERFILE'
+FROM ghcr.io/multigres/pgctld@sha256:0d575779d24c1f840123658c8c78bdd1e33e511b1e4fedd4fd4ba76fe2f4e5fc
+COPY pgctld /usr/local/bin/pgctld
+DOCKERFILE
+docker build -t local/multigres:pr723-sagar "$candidate_dir/images"
+docker build -t local/pgctld:pr723-sagar \
+  -f "$candidate_dir/images/Dockerfile.pgctld" "$candidate_dir/images"
+cd "$operator_root"
+make container pull-e2e-images kustomize
+OPERATOR_IMG="$(make -s print-img)" REPO_ROOT="$PWD" \
+  E2E_MULTIPOOLER_IMAGE=local/multigres:pr723-sagar \
+  E2E_MULTIADMIN_IMAGE=local/multigres:pr723-sagar \
+  E2E_POSTGRES_IMAGE=local/pgctld:pr723-sagar \
+  E2E_FAILURE_LOG_DIR=/tmp/minigres-backup-candidate-logs \
+  go test -tags=e2e,minigres_candidate ./test/e2e/dedicated/minigres -v -count=1 -timeout=30m
+```
+
+These local images replace only the three binaries exercised by this Lite
+qualification and preserve the baseline's Postgres/pgBackRest dependencies.
+They are not a release image set for distributed clusters. The destructive
+restore helper is restricted to `e2e-minigres`, a generated test namespace and
+the verified data PVC; it stops reconciliation and never mounts the backup PVC.
+The candidate test uses topology while running multiadmin operations; it does
+not claim that multiadmin works during an etcd outage.
+
+Local linux/arm64 qualification on 2026-10-26 passed the complete candidate
+package in 474.264 seconds: backup/restore in 173.39 seconds and TLS/outage
+recovery in 226.85 seconds. Restore recovered all three expected rows with
+fingerprint `3:9f3ef9dea5d7279dc77d54a6e7dffff1` and accepted a new write. The
+outage scenario retained all 49 rows and the original PVC/PV. The dedicated Kind
+cluster was removed afterward. Targeted upstream multiadmin, Minigres/config,
+manager and backup-engine unit tests passed; operator candidate-test lint
+reported zero issues. The tested local image indexes were:
+
+- Minigres/multiadmin: `sha256:cf9c83d8efa91fdf5fb304efb4a795c137c2c430e872dcae2dfb2bc2b2e14967`.
+- pgctld: `sha256:bc87a507085770715bcbd77123296cd4e418514ffca2ebcb39c3100b8a44689b`.
+
+This evidence covers the local arm64 candidate, not amd64 or a published runtime
+promotion. The compiled defaults and promotion record still describe main's
+runtime without #1584.
 
 ## PR lifecycle and retries
 

@@ -317,7 +317,7 @@ func waitPod(t *testing.T, ns, name string, previous types.UID) *corev1.Pod {
 		}
 		for i := range pods.Items {
 			p := &pods.Items[i]
-			if p.UID != previous && ready(p) {
+			if p.UID != previous && ready(p) && hasContainer(p, "minigres") {
 				found = p
 				return true, nil
 			}
@@ -577,4 +577,32 @@ func topologyRegistered(ns, ip string) (bool, error) {
 		}
 	}
 	return gateway && pooler, nil
+}
+
+func hasContainer(p *corev1.Pod, name string) bool {
+	for _, c := range p.Spec.Containers {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func applyManifest(t *testing.T, ns, manifest string) {
+	t.Helper()
+	// #nosec G204 -- Fixed executable and the dedicated test cluster's kubeconfig.
+	cmd := exec.CommandContext(
+		t.Context(),
+		"kubectl",
+		"--kubeconfig",
+		cluster.Kubeconfig,
+		"-n",
+		ns,
+		"apply",
+		"-f",
+		"-",
+	)
+	cmd.Stdin = strings.NewReader(manifest)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "%s", out)
 }
