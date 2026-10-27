@@ -2,9 +2,9 @@
 #
 # These extend the exporter's default collectors with instance-level metrics
 # commonly needed by monitoring dashboards: database disk size, WAL disk size,
-# physical replication lag, total backends, per-role connection breakdown, and
-# the configured max_connections cap. Metric names are chosen to not collide
-# with the default collectors.
+# physical replication lag, total backends, per-role connection breakdown, the
+# configured max_connections cap, and the standby-checked settings. Metric names
+# are chosen to not collide with the default collectors.
 
 # Emitted as pg_database_size_mb.
 pg_database:
@@ -102,3 +102,32 @@ max_connections:
     - connection_count:
         usage: "GAUGE"
         description: "Maximum allowed connections"
+
+# Emitted as standby_checked_settings_running{name=...} and
+# standby_checked_settings_pending{name=...}. A standby won't start, or pauses
+# replay, if any of these is lower than on its primary.
+standby_checked_settings:
+  master: true
+  cache_seconds: 60
+  query: |
+    SELECT s.name,
+           s.setting::float AS running,
+           COALESCE((SELECT f.setting
+                     FROM pg_file_settings f
+                     WHERE f.name = s.name
+                       AND (f.error IS NULL OR f.error = 'setting could not be applied')
+                     ORDER BY f.seqno DESC
+                     LIMIT 1), s.boot_val)::float AS pending
+    FROM pg_settings s
+    WHERE s.name IN ('max_connections', 'max_worker_processes', 'max_wal_senders',
+                     'max_prepared_transactions', 'max_locks_per_transaction')
+  metrics:
+    - name:
+        usage: "LABEL"
+        description: "Setting name"
+    - running:
+        usage: "GAUGE"
+        description: "Value Postgres is running with"
+    - pending:
+        usage: "GAUGE"
+        description: "Value in the config files, applied at the next restart"
