@@ -1827,3 +1827,214 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 		})
 	}
 }
+
+// TestResolver_ValidateClusterLogic_LiteMode covers the shape a Lite cluster
+// must have to be admitted, with one rejected case per rule.
+func TestResolver_ValidateClusterLogic_LiteMode(t *testing.T) {
+	t.Parallel()
+	scheme := setupScheme()
+
+	defaultSC := &storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "standard",
+			Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"},
+		},
+		Provisioner: "k8s.io/fake",
+	}
+	twoReplicaTpl := &multigresv1alpha1.ShardTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "two-replicas", Namespace: "default"},
+		Spec: multigresv1alpha1.ShardTemplateSpec{
+			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"default": {Type: "readWrite", ReplicasPerCell: ptr.To(int32(2))},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(defaultSC, twoReplicaTpl).
+		Build()
+
+	liteCluster := func(mutate func(*multigresv1alpha1.MultigresClusterSpec)) *multigresv1alpha1.MultigresCluster {
+		c := &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "lite", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Mode:  multigresv1alpha1.ModeLite,
+				Cells: []multigresv1alpha1.CellConfig{{Name: "zone-a"}},
+				Databases: []multigresv1alpha1.DatabaseConfig{{
+					Name:    "postgres",
+					Default: true,
+					TableGroups: []multigresv1alpha1.TableGroupConfig{{
+						Name:    "default",
+						Default: true,
+						Shards: []multigresv1alpha1.ShardConfig{{
+							Name: "0-inf",
+							Spec: &multigresv1alpha1.ShardInlineSpec{
+								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+									"default": {Type: "readWrite"},
+								},
+							},
+						}},
+					}},
+				}},
+			},
+		}
+		if mutate != nil {
+			mutate(&c.Spec)
+		}
+		return c
+	}
+	shardOf := func(s *multigresv1alpha1.MultigresClusterSpec) *multigresv1alpha1.ShardConfig {
+		return &s.Databases[0].TableGroups[0].Shards[0]
+	}
+	defaultPool := func(s *multigresv1alpha1.MultigresClusterSpec) multigresv1alpha1.PoolSpec {
+		return shardOf(s).Spec.Pools["default"]
+	}
+
+	const poolerWarning = "requires at least 2 total poolers"
+
+	tests := map[string]struct {
+		cluster       *multigresv1alpha1.MultigresCluster
+		wantErr       string
+		wantWarning   string
+		wantNoWarning string
+	}{
+		"Valid": {
+			cluster:       liteCluster(nil),
+			wantNoWarning: poolerWarning,
+		},
+		"Valid with explicit single replica and AT_LEAST_2": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.DurabilityPolicy = "AT_LEAST_2"
+				s.Databases[0].DurabilityPolicy = "AT_LEAST_2"
+				p := defaultPool(s)
+				p.ReplicasPerCell = ptr.To(int32(1))
+				p.Cells = []multigresv1alpha1.CellName{"zone-a"}
+				shardOf(s).Spec.Pools["default"] = p
+				s.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(0))},
+					},
+				}
+				shardOf(s).Spec.Multiorch.Replicas = ptr.To(int32(0))
+			}),
+			wantNoWarning: poolerWarning,
+		},
+		"Multigres mode keeps the pooler warning": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.Mode = ""
+				p := defaultPool(s)
+				p.ReplicasPerCell = ptr.To(int32(1))
+				shardOf(s).Spec.Pools["default"] = p
+			}),
+			wantWarning: poolerWarning,
+		},
+		"Two databases": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.Databases = append(s.Databases, multigresv1alpha1.DatabaseConfig{Name: "other"})
+			}),
+			wantErr: "lite mode requires exactly one database, found 2",
+		},
+		"Two table groups": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.Databases[0].TableGroups = append(
+					s.Databases[0].TableGroups,
+					multigresv1alpha1.TableGroupConfig{Name: "orders"},
+				)
+			}),
+			wantErr: "lite mode requires exactly one table group in database 'postgres', found 2",
+		},
+		"Two shards": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				tg := &s.Databases[0].TableGroups[0]
+				tg.Shards = append(tg.Shards, multigresv1alpha1.ShardConfig{Name: "1-inf"})
+			}),
+			wantErr: "lite mode requires exactly one shard in table group 'default', found 2",
+		},
+		"Two pools": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				shardOf(s).Spec.Pools["second"] = multigresv1alpha1.PoolSpec{Type: "readWrite"}
+			}),
+			wantErr: "lite mode requires exactly one pool in shard '0-inf', found 2",
+		},
+		"Two replicas per cell": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				p := defaultPool(s)
+				p.ReplicasPerCell = ptr.To(int32(2))
+				shardOf(s).Spec.Pools["default"] = p
+			}),
+			wantErr: "lite mode requires replicasPerCell unset or 1 in pool 'default', found 2",
+		},
+		"Two replicas per cell from a shard template": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				shardOf(s).Spec = nil
+				shardOf(s).ShardTemplate = "two-replicas"
+			}),
+			wantErr: "lite mode requires replicasPerCell unset or 1 in pool 'default', found 2",
+		},
+		"Two pool cells": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.Cells = append(s.Cells, multigresv1alpha1.CellConfig{Name: "zone-b"})
+			}),
+			wantErr: "lite mode requires exactly one cluster cell, found 2",
+		},
+		"Gateway replicas": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))},
+					},
+				}
+			}),
+			wantErr: "lite mode requires multigateway replicas unset or 0 in cell 'zone-a', found 1",
+		},
+		"Multiorch replicas": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				shardOf(s).Spec.Multiorch.Replicas = ptr.To(int32(1))
+			}),
+			wantErr: "lite mode requires multiorch replicas unset or 0 in shard '0-inf', found 1",
+		},
+		"Cluster durability policy": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.DurabilityPolicy = "MULTI_CELL_AT_LEAST_2"
+			}),
+			wantErr: `lite mode requires durabilityPolicy unset or "AT_LEAST_2", found "MULTI_CELL_AT_LEAST_2"`,
+		},
+		"Database durability policy": {
+			cluster: liteCluster(func(s *multigresv1alpha1.MultigresClusterSpec) {
+				s.Databases[0].DurabilityPolicy = "MULTI_CELL_AT_LEAST_2"
+			}),
+			wantErr: `lite mode requires durabilityPolicy unset or "AT_LEAST_2" in database 'postgres', found "MULTI_CELL_AT_LEAST_2"`,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := NewResolver(fakeClient, "default")
+			warnings, err := r.ValidateClusterLogic(t.Context(), tc.cluster)
+
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Expected nil error, got %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Expected error containing %q, got %v", tc.wantErr, err)
+			}
+
+			hasWarning := func(want string) bool {
+				for _, got := range warnings {
+					if strings.Contains(got, want) {
+						return true
+					}
+				}
+				return false
+			}
+			if tc.wantWarning != "" && !hasWarning(tc.wantWarning) {
+				t.Errorf("Expected warning containing %q, got %v", tc.wantWarning, warnings)
+			}
+			if tc.wantNoWarning != "" && hasWarning(tc.wantNoWarning) {
+				t.Errorf("Expected no warning containing %q, got %v", tc.wantNoWarning, warnings)
+			}
+		})
+	}
+}

@@ -32,6 +32,280 @@ The same Git commit updates these constants in `api/v1alpha1/image_defaults.go`:
 Etcd and Postgres exporter defaults are preserved. The PR describes the current
 main and proposed images and links both build and test evidence.
 
+## Lite / Minigres runtime requirements
+
+Lite clusters run `minigres` from `spec.images.multipooler`. Use a runtime built
+from `multigres/multigres` main at commit
+[`da2974e09ed14e86b9a254471b0c8d7df25e840a`](https://github.com/multigres/multigres/commit/da2974e09ed14e86b9a254471b0c8d7df25e840a)
+or a descendant containing both of these changes:
+
+- [#1559](https://github.com/multigres/multigres/pull/1559) packages
+  `/multigres/bin/minigres` in the runtime image (`3d7ea95`).
+- [#1554](https://github.com/multigres/multigres/pull/1554) removes remote-pooler
+  TLS flags and enables serving and restarting after bootstrap while etcd is
+  unavailable (`da2974e`).
+
+The earlier `3d7ea95` packaging baseline alone does not provide outage recovery.
+A source revision is a compatibility requirement, not evidence that an image has
+passed the operator canary. Select immutable `multigres` and `pgctld` image
+references from the same verified upstream build; use `spec.images.multipooler`
+and `spec.images.postgres` overrides for qualification until promoted defaults
+meet this baseline. Do not promote an untested digest or use a mutable `main`
+tag as a production pin. Compiled defaults still move only through the verified
+canary and promotion process above.
+
+Minigres's gateway reaches its pooler in memory. Lite must not pass
+`--multipooler-grpc-*`: newer runtimes reject those flags. Keep `--grpc-*` TLS
+on the external admin server for the operator's Status and ReloadConfig RPCs,
+and keep topology-client TLS when configured. Setting `spec.certCommonName`
+enables public PostgreSQL TLS on Lite: the operator issues the certificate,
+mounts `generated-certs` read-only as `public-tls-certs`, and passes Minigres
+the `--pg-tls-cert-file` and `--pg-tls-key-file` flags. The public certificate
+volume is separate from internal mTLS.
+
+Lite passes `--postgres-unrecoverable-timeout=0` so PostgreSQL keeps retrying
+failed starts after a repair, such as freeing or expanding storage. Lite has no
+replacement primary to take over from a quarantined node. This flag intentionally
+changes existing Lite pod hashes and causes one restart; HA keeps its default.
+
+Minigres persists `topo-database.pb` in `--pooler-dir`, which Lite mounts from
+its data PVC. When topology registration times out or is unavailable, the
+operator can recreate a missing or terminal pod using an existing bound,
+non-deleting data PVC. It retries registration and defers spec-driven replacement,
+filesystem-resize restarts and configuration reload RPCs until topology returns.
+The PVC's existence does not prove bootstrap: Minigres must validate its cached
+record, and a fresh database still needs etcd for its first bootstrap. An explicit
+missing-database response is not an outage fallback. Backups and admin operations
+that require topology can still fail during an outage.
+
+Lite requires exactly one cluster cell. Mode is immutable in both directions:
+converting between Lite and distributed mode requires a data-preserving migration
+that is not implemented. The resolved database/table-group/shard/pool/cell
+identity is also fixed. Switching templates is allowed only when that identity
+stays the same; resource, image and supported configuration changes remain valid.
+Admission checks template consumers, including inline shards that still inherit
+from the global or fallback shard template. Creating, updating or deleting such a
+template must preserve the single resolved pool and its identity. CRD/controller
+guards prevent a changed identity from provisioning a second static primary
+alongside existing data.
+
+### Upstream compatibility review — 2026-10-26
+
+Operator main now promotes runtime revision
+[`d063d0b437dac1fb935e0476c142f1a42a2af9f1`](https://github.com/multigres/multigres/commit/d063d0b437dac1fb935e0476c142f1a42a2af9f1).
+Changes since the earlier Lite qualification at `8f5c8896` include:
+
+- Sagar's [#1573](https://github.com/multigres/multigres/pull/1573) adds a shared
+  Minigres config file, with `multigateway.*` and `multipooler.*` keys. Existing
+  CLI flags and `MT_*` names are unchanged, so the operator's flag-based pod
+  configuration remains compatible. A mounted Minigres config file would be a
+  separate operator feature; the PostgreSQL ConfigMap is not this config file.
+- Haritabh's [#1549](https://github.com/multigres/multigres/pull/1549) makes query
+  stream reuse unconditional and removes `--query-stream-reuse`. The operator
+  does not emit this flag. Keep gateway and pooler runtimes from the same build;
+  Lite embeds both in one Minigres process.
+- Manan's [#1575](https://github.com/multigres/multigres/pull/1575) allows
+  non-default tablegroups and canonical keyrange shard names in multipooler.
+  This does not establish Minigres gateway routing for arbitrary shards. Lite
+  qualification continues to use the catalog pair `default/0-inf`; the change
+  does not justify relaxing Lite's one-database/tablegroup/shard identity guards.
+- [#1568](https://github.com/multigres/multigres/pull/1568) terminates sessions
+  when pinned state is lost, [#1583](https://github.com/multigres/multigres/pull/1583)
+  stops statement replay after a connection error, and
+  [#1588](https://github.com/multigres/multigres/pull/1588) fixes IPv6 dialing.
+  These arrive through the promoted runtime; they need no new operator flags or
+  protobuf calls. The operator's Go dependency can remain at `6fd434f73b20`.
+
+Sagar's [#1584](https://github.com/multigres/multigres/pull/1584) is still open as
+of this review. It publishes static leadership in topology, routes normal
+multiadmin backup operations to that primary, and removes backup lease dependence
+on etcd for static leaders. The promoted runtime does **not** include it. A backup
+volume/configuration and passing SQL outage tests do not qualify normal Lite
+backup/list/verify/expire or backup recovery. The local candidate procedure below
+includes that work before merge and tests a matching Minigres/pgctld/multiadmin image set. Promotion still requires the
+verified upstream build and canary process above. Preserve per-instance topology
+roots and backup-location isolation; that is an assumption of the upstream change.
+Topology-record recreation [#1561](https://github.com/multigres/multigres/pull/1561)
+also remains open and is not included in the qualified runtime.
+
+### Runtime qualification
+
+Before qualifying a newer runtime for Lite, exercise these scenarios against the
+exact candidate image digests:
+
+1. Bootstrap a TLS-enabled Lite cluster and verify SQL reads/writes plus the
+   external admin Status and ReloadConfig RPCs.
+2. Stop access to etcd after bootstrap and verify SQL keeps serving.
+3. Restart the Minigres container, then separately delete/evict the Lite pod;
+   verify recovery, retained PVC identity and persisted SQL data while etcd is down.
+4. Restore etcd and verify topology registration and pending reconciliation resume.
+5. Verify a fresh deployment cannot bootstrap without etcd.
+6. Connect through the gateway Service with `sslmode=verify-full`, verify SQL
+   writes/reads, reject an untrusted CA and an incorrect hostname, and reconnect
+   after pod replacement with internal mTLS enabled.
+
+Controller unit and envtest regressions exercise flags, outage handling and PVC
+retention, but do not run Minigres or establish runtime SQL compatibility. Keep
+that runtime qualification evidence separate from controller test results.
+
+The dedicated `minigres` e2e package automates these scenarios in its own Kind
+cluster with cert-manager, a persistent external etcd deployment, and a Lite
+cluster. It checks authenticated Status/ReloadConfig calls and rejection of
+plaintext, missing client certificates and incorrect server identities. After
+stopping etcd, it requires 45 consecutive SQL write/read iterations without
+retries, restarts the Minigres container, replaces the pod, and compares row
+checksums and PVC/PV identities. It also checks the cold-bootstrap gate and waits
+for both gateway and pooler records to advertise the replacement IP after etcd
+returns. That outage scenario uses the gateway Service with `sslmode=disable`.
+A separate `TestMinigresPublicTLS` scenario sets `certCommonName`, lets the
+operator and cert-manager issue the certificate, and runs an independent psql
+client through the gateway Service with `sslmode=verify-full`. It checks the
+negotiated TLS connection, writes/reads, wrong-hostname and untrusted-CA
+rejection, and verified SQL after pod replacement. Admin mTLS remains enabled
+and is checked before and after replacement. RWO storage is explicit because
+Kind's local-path provisioner does not implement the default ReadWriteOncePod
+access mode.
+
+`TestMinigresRetriesPostgresAfterProlongedFailure` injects a PostgreSQL startup
+fault for six minutes, then removes it and verifies automatic SQL recovery with
+retained data and no pod or Minigres container replacement. It tests the failed-start
+timeout without filling the Kind host's disk; CSI capacity expansion is not covered.
+
+Every code PR runs this package with fixture images pinned to the qualified
+upstream revision `d063d0b437dac1fb935e0476c142f1a42a2af9f1`. The nightly canary
+runs both the shared suite and this dedicated package with its verified candidate
+digests through `E2E_*` overrides. Both must pass before promotion or a green
+compatibility report. The fixture pins do not change compiled runtime defaults.
+Manual canaries against older operator refs must include this test package.
+
+On 2026-10-26 the merged Lite branch was qualified locally against this promoted
+image pair on linux/arm64, in a disposable single-node Kind cluster with local
+ReadWriteOnce storage. The full package passed in 407.886 seconds (246.89 seconds
+for the runtime scenario): admin and topology mTLS, 45 uninterrupted outage
+write/read iterations, Minigres container restart, complete pod replacement with
+the original PVC/PV, blocked cold bootstrap, and restored topology registration
+and Healthy status all passed. All 49 final rows survived, with fingerprint
+`49:4969bfd9794e22638e7acdbbb0e00f70`. The cluster was removed afterward. The operator
+and GC binaries were cross-built with `CGO_ENABLED=0` and packaged in the standard
+distroless runtime. That 2026-10-26 run does not qualify amd64, multi-node CSI,
+ReadWriteOncePod fencing, public SQL TLS, or the pending upstream backup feature.
+Compiled defaults and promotion evidence are inherited unchanged from main.
+
+On 2026-10-28, the regular Minigres package passed again on local linux/arm64
+with the same promoted fixture images in 446.047 seconds. The outage/recovery
+scenario passed in 258.21 seconds. `TestMinigresPublicTLS` passed in 69.09 seconds:
+an independent psql client negotiated TLS 1.3 through the gateway Service with
+`sslmode=verify-full`, wrote and read rows, rejected the wrong hostname and an
+untrusted CA, and reconnected after pod replacement with the original PVC and
+persisted row. Admin mTLS passed before and after replacement. This qualifies
+public SQL TLS for those fixture images on single-node Kind with RWO storage;
+it does not extend the platform/storage coverage or qualify public SQL TLS for
+the opt-in backup candidate. The disposable cluster was removed after the run.
+
+Run the same qualification locally with Docker, Kind and kubectl available:
+
+```sh
+make container pull-e2e-images kustomize
+OPERATOR_IMG="$(make -s print-img)" REPO_ROOT="$PWD" \
+  E2E_FAILURE_LOG_DIR=/tmp/minigres-e2e-logs \
+  go test -tags=e2e ./test/e2e/dedicated/minigres -v -count=1 -timeout=30m
+```
+
+Set `E2E_MULTIPOOLER_IMAGE` and `E2E_POSTGRES_IMAGE` to immutable candidate
+references to override the fixture pair. The framework prepares digest images
+inside Kind before workload startup. The test restores etcd on failure, collects
+namespace diagnostics, and destroys its dedicated cluster by default. Set
+`E2E_KEEP_CLUSTERS=on-failure` to retain it for investigation. CI uploads failure
+logs through the existing reusable e2e workflow; test output records the tested
+image references, recovery identities and final checksum.
+
+## Local candidate including Sagar's backup work
+
+The `e2e,minigres_candidate` build tags add `TestMinigresBackupAndRestore`.
+It requires explicit matching Minigres/multiadmin and pgctld overrides. The
+normal `e2e` build continues to qualify the promoted runtime. The candidate
+covers normal backups without `ForcePrimary`, listing, verification, expiration,
+job lookup after multiadmin replacement, and recovery after erasing only the
+test instance's PGDATA. It compares restored SQL contents and PVC identities,
+then checks that new writes succeed. A second Lite instance shares etcd but has
+a distinct topology root and backup PVC.
+
+The source candidate is main `d063d0b437dac1fb935e0476c142f1a42a2af9f1` plus
+Sagar's #1584 at `bc0a87704cd944ec515a065d19d56c84c3e8de9a`. Main already
+contains his config-file change (#1573). One additional local patch,
+`test/e2e/dedicated/minigres/testdata/backup-shard-selection.patch`, restricts
+multiadmin backup selection to the requested shard. Without it, a request for
+an absent shard can operate on another shard's repository. The patch includes
+regressions for static, forced-static, consensus-primary and replica selection;
+the operator test also rejects listing an unknown shard.
+
+Build this source in a separate checkout, leaving the applied changes uncommitted:
+
+```sh
+operator_root="$PWD"
+candidate_dir="$(mktemp -d /tmp/minigres-backup-candidate.XXXXXX)"
+git clone https://github.com/multigres/multigres.git "$candidate_dir/source"
+cd "$candidate_dir/source"
+base=d063d0b437dac1fb935e0476c142f1a42a2af9f1
+backup_pr=bc0a87704cd944ec515a065d19d56c84c3e8de9a
+git fetch origin "$base" "$backup_pr"
+git checkout --detach "$base"
+git diff e0706cfb517dc91c299aec2fa44b943ff74c770e "$backup_pr" > "$candidate_dir/sagar.patch"
+git apply "$candidate_dir/sagar.patch"
+git apply "$operator_root/test/e2e/dedicated/minigres/testdata/backup-shard-selection.patch"
+go test -short ./go/services/multiadmin ./go/cmd/minigres ./go/tools/viperutil/... \
+  ./go/services/multipooler/internal/manager ./go/services/multipooler/internal/manager/backup -count=1
+mkdir "$candidate_dir/images"
+# Match the architecture of the local Kind nodes; use amd64 on x86 hosts.
+for binary in minigres multiadmin pgctld; do
+  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+    -o "$candidate_dir/images/$binary" "./go/cmd/$binary"
+done
+cat > "$candidate_dir/images/Dockerfile" <<'DOCKERFILE'
+FROM ghcr.io/multigres/multigres@sha256:dfb55d04c2837fb926cedd496f51bb6b79408ad077e05de6c3c1591ab7c819dc
+COPY minigres multiadmin /multigres/bin/
+DOCKERFILE
+cat > "$candidate_dir/images/Dockerfile.pgctld" <<'DOCKERFILE'
+FROM ghcr.io/multigres/pgctld@sha256:0d575779d24c1f840123658c8c78bdd1e33e511b1e4fedd4fd4ba76fe2f4e5fc
+COPY pgctld /usr/local/bin/pgctld
+DOCKERFILE
+docker build -t local/multigres:pr723-sagar "$candidate_dir/images"
+docker build -t local/pgctld:pr723-sagar \
+  -f "$candidate_dir/images/Dockerfile.pgctld" "$candidate_dir/images"
+cd "$operator_root"
+make container pull-e2e-images kustomize
+OPERATOR_IMG="$(make -s print-img)" REPO_ROOT="$PWD" \
+  E2E_MULTIPOOLER_IMAGE=local/multigres:pr723-sagar \
+  E2E_MULTIADMIN_IMAGE=local/multigres:pr723-sagar \
+  E2E_POSTGRES_IMAGE=local/pgctld:pr723-sagar \
+  E2E_FAILURE_LOG_DIR=/tmp/minigres-backup-candidate-logs \
+  go test -tags=e2e,minigres_candidate ./test/e2e/dedicated/minigres -v -count=1 -timeout=30m
+```
+
+These local images replace only the three binaries exercised by this Lite
+qualification and preserve the baseline's Postgres/pgBackRest dependencies.
+They are not a release image set for distributed clusters. The destructive
+restore helper is restricted to `e2e-minigres`, a generated test namespace and
+the verified data PVC; it stops reconciliation and never mounts the backup PVC.
+The candidate test uses topology while running multiadmin operations; it does
+not claim that multiadmin works during an etcd outage.
+
+Local linux/arm64 qualification on 2026-10-26 passed the complete candidate
+package in 474.264 seconds: backup/restore in 173.39 seconds and TLS/outage
+recovery in 226.85 seconds. Restore recovered all three expected rows with
+fingerprint `3:9f3ef9dea5d7279dc77d54a6e7dffff1` and accepted a new write. The
+outage scenario retained all 49 rows and the original PVC/PV. The dedicated Kind
+cluster was removed afterward. Targeted upstream multiadmin, Minigres/config,
+manager and backup-engine unit tests passed; operator candidate-test lint
+reported zero issues. The tested local image indexes were:
+
+- Minigres/multiadmin: `sha256:cf9c83d8efa91fdf5fb304efb4a795c137c2c430e872dcae2dfb2bc2b2e14967`.
+- pgctld: `sha256:bc87a507085770715bcbd77123296cd4e418514ffca2ebcb39c3100b8a44689b`.
+
+This evidence covers the local arm64 candidate, not amd64 or a published runtime
+promotion. The compiled defaults and promotion record still describe main's
+runtime without #1584.
+
 ## PR lifecycle and retries
 
 Promotion maintains one open PR from `chore/promote-runtime-images` to `main`.

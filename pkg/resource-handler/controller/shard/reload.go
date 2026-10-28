@@ -130,7 +130,16 @@ func (r *ShardReconciler) reconcileReloadState(
 
 		var pooler *topoclient.MultipoolerInfo
 		for _, p := range poolers {
-			if topo.PodMatchesPooler(pod.Name, p) {
+			matches := topo.PodMatchesPooler(pod.Name, p)
+			if shard.Spec.Mode == multigresv1alpha1.ModeLite {
+				// Lite advertises a pod IP and a hashed service ID, not the
+				// pod's DNS name. Require the current IP to exclude an old
+				// registration while a replacement is bootstrapping.
+				matches = p.Id != nil && p.Id.Name == BuildPoolServiceID(pod.Name) &&
+					p.Id.Cell == cellName && pod.Status.PodIP != "" &&
+					p.GetHostname() == pod.Status.PodIP
+			}
+			if matches {
 				pooler = p
 				break
 			}

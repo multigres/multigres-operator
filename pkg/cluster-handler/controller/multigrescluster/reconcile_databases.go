@@ -71,6 +71,7 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 						AllCellNames:            allCellNames,
 						InheritedBackup:         tgBackup,
 						MaterializeCellDefaults: true,
+						Mode:                    cluster.Spec.Mode,
 					},
 				)
 				if err != nil {

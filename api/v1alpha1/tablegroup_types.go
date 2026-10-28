@@ -64,6 +64,11 @@ type TableGroupSpec struct {
 	// +optional
 	PVCDeletionPolicy *PVCDeletionPolicy `json:"pvcDeletionPolicy,omitempty"`
 
+	// CertCommonName is the DNS name for the public PostgreSQL TLS certificate.
+	// Inherited from MultigresCluster.Spec.CertCommonName.
+	// +optional
+	CertCommonName string `json:"certCommonName,omitempty"`
+
 	// InternalTLS is the resolved internal component mTLS configuration.
 	// Inherited from MultigresCluster.Spec.InternalTLS.
 	// +optional
@@ -97,6 +102,11 @@ type TableGroupSpec struct {
 	// Inherited from MultigresCluster → Database.
 	// +optional
 	DurabilityPolicy string `json:"durabilityPolicy,omitempty"`
+
+	// Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode.
+	// +optional
+	// +kubebuilder:validation:Enum=lite
+	Mode string `json:"mode,omitempty"`
 
 	// PostgresSuperuser is the resolved Postgres superuser name.
 	// Inherited from MultigresCluster.Spec.PostgresSuperuser.

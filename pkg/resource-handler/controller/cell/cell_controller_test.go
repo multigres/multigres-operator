@@ -4,8 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -18,6 +20,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	"github.com/multigres/multigres-operator/pkg/testutil"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
 
@@ -118,6 +121,58 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 						*mgDeploy.Spec.Replicas,
 						wantReplicas,
 					)
+				}
+			},
+		},
+		"lite cell runs no gateway Deployment and selects the Lite pod": {
+			cell: &multigresv1alpha1.Cell{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "lite-cell",
+					Namespace: "default",
+					Labels:    map[string]string{"multigres.com/cluster": "lite-cluster"},
+				},
+				Spec: multigresv1alpha1.CellSpec{
+					Name: "zone1",
+					Mode: multigresv1alpha1.ModeLite,
+				},
+			},
+			existingObjects: []client.Object{},
+			wantRequeue:     false,
+			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
+				hashedName := buildHashedName("lite-cluster", "zone1")
+
+				err := c.Get(t.Context(),
+					types.NamespacedName{Name: hashedName, Namespace: "default"},
+					&appsv1.Deployment{})
+				if !apierrors.IsNotFound(err) {
+					t.Errorf("Multigateway Deployment should not exist, got err %v", err)
+				}
+
+				svc := &corev1.Service{}
+				if err := c.Get(t.Context(),
+					types.NamespacedName{Name: hashedName, Namespace: "default"},
+					svc); err != nil {
+					t.Fatalf("Multigateway Service should exist under its usual name: %v", err)
+				}
+				wantSelector := map[string]string{
+					metadata.LabelMultigresCluster:     "lite-cluster",
+					metadata.LabelMultigresCell:        "zone1",
+					metadata.LabelMultigresGatewayRole: metadata.GatewayRoleLite,
+				}
+				if diff := cmp.Diff(wantSelector, svc.Spec.Selector); diff != "" {
+					t.Errorf("Service selector mismatch (-want +got):\n%s", diff)
+				}
+				var ports []string
+				for _, p := range svc.Spec.Ports {
+					ports = append(ports, p.Name)
+					if p.Name == "postgres" &&
+						(p.Port != 5432 || p.TargetPort.StrVal != "postgres") {
+						t.Errorf("postgres port = %d -> %v, want 5432 -> postgres",
+							p.Port, p.TargetPort)
+					}
+				}
+				if diff := cmp.Diff([]string{"http", "postgres"}, ports); diff != "" {
+					t.Errorf("Service ports mismatch (-want +got):\n%s", diff)
 				}
 			},
 		},

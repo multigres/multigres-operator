@@ -78,9 +78,11 @@ type ShardReconciler struct {
 	// cache's label filter. External Secrets (e.g., cert-manager) lack this
 	// label, so we need APIReader to validate user-provided pgBackRest TLS Secrets
 	// and external postgres password Secrets.
-	APIReader       client.Reader
-	PoolerClients   poolerclient.Resolver
-	CreateTopoStore func(*multigresv1alpha1.Shard) (topoclient.Store, error)
+	APIReader client.Reader
+	// LitePodPriorityClassName applies only to single-pod Lite shards.
+	LitePodPriorityClassName string
+	PoolerClients            poolerclient.Resolver
+	CreateTopoStore          func(*multigresv1alpha1.Shard) (topoclient.Store, error)
 	// Clock overrides time.Now for recordNotConverged's elapsed-time math.
 	// Nil in production; tests inject it to drive the readiness backoff
 	// deterministically.
@@ -324,6 +326,12 @@ func (r *ShardReconciler) Reconcile(
 			storageClassDependencyRequeue,
 		)
 		return ctrl.Result{RequeueAfter: storageClassDependencyRequeue}, nil
+	}
+
+	// A Lite shard skips everything below: multiorch, the PDB, pool rollouts
+	// and the data-plane phase.
+	if shard.Spec.Mode == multigresv1alpha1.ModeLite {
+		return r.reconcileLite(ctx, shard, renderedCfg, storageClasses)
 	}
 
 	// Reconcile Multiorch - one Deployment and Service per cell

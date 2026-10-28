@@ -321,6 +321,11 @@ func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 		return fmt.Errorf("failed to apply global multigateway service: %w", err)
 	}
 
+	// Lite has no replica listener. Admission permits Lite only at creation.
+	if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+		return nil
+	}
+
 	// 4. Reconcile global replica-read multigateway Service
 	desiredReplicaGwSvc, err := buildMultigatewayGlobalReplicaService(cluster, r.Scheme)
 	if err != nil {

@@ -17,6 +17,9 @@ type ResolveShardOptions struct {
 	AllCellNames            []multigresv1alpha1.CellName
 	InheritedBackup         *multigresv1alpha1.BackupConfig
 	MaterializeCellDefaults bool
+	// Mode is the owning cluster's spec.mode. Lite mode runs no multiorch and
+	// one pooler, so the multiorch and pooler-count defaults are not applied.
+	Mode string
 }
 
 // ResolvedShard is the fully merged and defaulted configuration for a single
@@ -55,8 +58,12 @@ func (r *Resolver) ResolveShard(
 		opts.InheritedBackup,
 	)
 
+	lite := opts.Mode == multigresv1alpha1.ModeLite
+
 	// 3. Apply Deep Defaults (Level 4)
-	defaultStatelessSpec(&res.Multiorch.StatelessSpec, DefaultResourcesOrch(), 1)
+	if !lite {
+		defaultStatelessSpec(&res.Multiorch.StatelessSpec, DefaultResourcesOrch(), 1)
+	}
 
 	if res.Backup == nil {
 		res.Backup = &multigresv1alpha1.BackupConfig{
@@ -98,8 +105,9 @@ func (r *Resolver) ResolveShard(
 		// Default replicasPerCell so the pool has at least 2 total poolers,
 		// the minimum the default AT_LEAST_2 durability policy needs to elect
 		// a primary. A multi-cell pool reaches 2 total at 1 per cell; a
-		// single-cell pool needs 2.
-		if p.ReplicasPerCell == nil {
+		// single-cell pool needs 2. Lite mode runs one static-leader pooler,
+		// which does not need a second one.
+		if p.ReplicasPerCell == nil && !lite {
 			effectiveCells := len(p.Cells)
 			if effectiveCells == 0 {
 				effectiveCells = len(opts.AllCellNames)

@@ -11,6 +11,8 @@
 package cacheopts
 
 import (
+	"strings"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -52,8 +54,9 @@ import (
 //
 // With laptopNamespace set the cache holds that one namespace and nothing else;
 // "Laptop-Mode Cache Scoping" in docs/development/caching-strategy.md has the
-// rules. The result is unchanged when laptopNamespace is empty.
-func New(operatorNamespace, laptopNamespace string) cache.Options {
+// rules. Laptop mode takes precedence over a watch allowlist. Otherwise an explicit
+// watch allowlist scopes every namespaced cache to it plus the operator namespace.
+func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) cache.Options {
 	// 1. Create the Label Selector for "app.kubernetes.io/managed-by = multigres-operator"
 	labelReq, _ := labels.NewRequirement(
 		metadata.LabelAppManagedBy,
@@ -75,6 +78,18 @@ func New(operatorNamespace, laptopNamespace string) cache.Options {
 		cache.AllNamespaces: filteredConfig,
 	}
 	var defaultNamespaces map[string]cache.Config
+	if strings.TrimSpace(strings.Join(watchNamespaces, "")) != "" {
+		defaultNamespaces = map[string]cache.Config{operatorNamespace: unfilteredConfig}
+		for _, names := range watchNamespaces {
+			for _, namespace := range strings.Split(names, ",") {
+				if namespace = strings.TrimSpace(namespace); namespace != "" {
+					defaultNamespaces[namespace] = unfilteredConfig
+				}
+			}
+		}
+		// ByObject overrides DefaultNamespaces, so every override must be scoped too.
+		hybrid = defaultNamespaces
+	}
 	if laptopNamespace != "" {
 		// Only the claimed namespace. The operator's own namespace holds its
 		// leader-election lease and webhook cert material, and laptop mode
