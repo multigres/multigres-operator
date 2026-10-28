@@ -43,6 +43,7 @@ func TestBuildLiteContainer_Args(t *testing.T) {
 		"--shard=0-inf",
 		"--service-id=p-test",
 		"--pgctld-addr=localhost:15470",
+		"--postgres-unrecoverable-timeout=0",
 		"--log-level=info",
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 	}
@@ -436,10 +437,11 @@ func TestPublicTLSChangesOnlyLitePod(t *testing.T) {
 	}
 }
 
-func TestBuildLitePod_WithoutPublicTLSRetainsPreChangeSpecHash(t *testing.T) {
+func TestBuildLitePod_WithoutPublicTLSOnlyChangesRecoveryPolicy(t *testing.T) {
 	// These hashes were captured from 74f2e3db before applying Lite public TLS
 	// support, including its image defaults and internal mTLS flags. Keep them
-	// fixed: changing them can hide an unintended pod restart.
+	// fixed. The recovery timeout override intentionally changes every Lite pod;
+	// remove only that flag to prove public TLS still introduces no other changes.
 	for _, tc := range []struct {
 		name        string
 		internalTLS *multigresv1alpha1.InternalTLSConfig
@@ -475,9 +477,46 @@ func TestBuildLitePod_WithoutPublicTLSRetainsPreChangeSpecHash(t *testing.T) {
 				require.Empty(t, shard.Spec.CertCommonName)
 				pod, err := BuildLitePod(shard, "main", "z1", pool, testScheme())
 				require.NoError(t, err)
-				require.Equal(t, tc.wantHashes[i], pod.Annotations[metadata.AnnotationSpecHash])
+				require.Equal(t, ComputeSpecHash(pod), pod.Annotations[metadata.AnnotationSpecHash])
+				require.NotEqual(t, tc.wantHashes[i], ComputeSpecHash(pod))
+				args := pod.Spec.Containers[0].Args
+				require.Contains(t, args, "--postgres-unrecoverable-timeout=0")
+				pod.Spec.Containers[0].Args = slices.DeleteFunc(args, func(arg string) bool {
+					return arg == "--postgres-unrecoverable-timeout=0"
+				})
 				require.Equal(t, tc.wantHashes[i], ComputeSpecHash(pod))
 			})
 		}
+	}
+}
+
+func TestPostgresQuarantineDisabledOnlyInLite(t *testing.T) {
+	for _, mode := range []string{multigresv1alpha1.ModeLite, ""} {
+		t.Run(string(mode), func(t *testing.T) {
+			shard := newTestLiteShard()
+			shard.Spec.Mode = mode
+			var pod *corev1.Pod
+			var err error
+			if mode == multigresv1alpha1.ModeLite {
+				pod, err = BuildLitePod(shard, "main", "z1", newTestPoolSpec(), testScheme())
+			} else {
+				pod, err = BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
+			}
+			require.NoError(t, err)
+			found := 0
+			for _, container := range pod.Spec.Containers {
+				for _, arg := range container.Args {
+					if strings.HasPrefix(arg, "--postgres-unrecoverable-timeout") {
+						require.Equal(t, "--postgres-unrecoverable-timeout=0", arg)
+						found++
+					}
+				}
+			}
+			if mode == multigresv1alpha1.ModeLite {
+				require.Equal(t, 1, found)
+			} else {
+				require.Zero(t, found)
+			}
+		})
 	}
 }

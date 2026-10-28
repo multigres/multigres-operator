@@ -719,6 +719,8 @@ func buildLiteContainer(
 		"--shard=" + string(shard.Spec.ShardName),
 		"--service-id=" + serviceID,
 		"--pgctld-addr=localhost:15470",
+		// Lite has no replacement primary; keep retrying after recoverable failures.
+		"--postgres-unrecoverable-timeout=0",
 		"--log-level=" + string(shard.Spec.LogLevels.Multipooler),
 		// See buildMultipoolerContainer.
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",

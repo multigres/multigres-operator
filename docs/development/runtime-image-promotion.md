@@ -63,6 +63,11 @@ mounts `generated-certs` read-only as `public-tls-certs`, and passes Minigres
 the `--pg-tls-cert-file` and `--pg-tls-key-file` flags. The public certificate
 volume is separate from internal mTLS.
 
+Lite passes `--postgres-unrecoverable-timeout=0` so PostgreSQL keeps retrying
+failed starts after a repair, such as freeing or expanding storage. Lite has no
+replacement primary to take over from a quarantined node. This flag intentionally
+changes existing Lite pod hashes and causes one restart; HA keeps its default.
+
 Minigres persists `topo-database.pb` in `--pooler-dir`, which Lite mounts from
 its data PVC. When topology registration times out or is unavailable, the
 operator can recreate a missing or terminal pod using an existing bound,
@@ -160,6 +165,11 @@ rejection, and verified SQL after pod replacement. Admin mTLS remains enabled
 and is checked before and after replacement. RWO storage is explicit because
 Kind's local-path provisioner does not implement the default ReadWriteOncePod
 access mode.
+
+`TestMinigresRetriesPostgresAfterProlongedFailure` injects a PostgreSQL startup
+fault for six minutes, then removes it and verifies automatic SQL recovery with
+retained data and no pod or Minigres container replacement. It tests the failed-start
+timeout without filling the Kind host's disk; CSI capacity expansion is not covered.
 
 Every code PR runs this package with fixture images pinned to the qualified
 upstream revision `d063d0b437dac1fb935e0476c142f1a42a2af9f1`. The nightly canary
