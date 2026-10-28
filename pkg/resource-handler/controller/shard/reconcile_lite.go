@@ -20,6 +20,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 const (
@@ -101,6 +102,20 @@ func (r *ShardReconciler) reconcileLite(
 		return ctrl.Result{}, err
 	}
 
+	// Reclaim active storage and apply retention changes even when topology is
+	// unavailable. Both normal reconciliation and outage recovery may reuse it.
+	if err := r.reconcileLitePVCMetadata(ctx, shard, poolName, cellName); err != nil {
+		monitoring.RecordSpanError(span, err)
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"FailedApply",
+			"Failed to reconcile PVC metadata: %v",
+			err,
+		)
+		return ctrl.Result{}, err
+	}
+
 	// The pooler reads its backup location from the database record when it
 	// bootstraps, so the record is registered before the pod is created.
 	registered, err := r.registerLiteDatabase(ctx, shard)
@@ -141,6 +156,30 @@ func (r *ShardReconciler) reconcileLite(
 		return ctrl.Result{RequeueAfter: litePrimaryRequeue}, nil
 	}
 	return ctrl.Result{RequeueAfter: pvcWait}, nil
+}
+
+// reconcileLitePVCMetadata removes the GC marker from the data PVC before
+// restoring ownership, since reconcilePVCOwnerRefs deliberately skips orphans.
+func (r *ShardReconciler) reconcileLitePVCMetadata(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	poolName, cellName string,
+) error {
+	pvc := &corev1.PersistentVolumeClaim{}
+	key := client.ObjectKey{
+		Namespace: shard.Namespace,
+		Name:      BuildPoolDataPVCName(shard, poolName, cellName, 0),
+	}
+	if err := r.Get(ctx, key, pvc); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("read Lite data PVC metadata: %w", err)
+		}
+	} else if pvc.DeletionTimestamp.IsZero() {
+		if err := pvcutil.ClearOrphan(ctx, log.FromContext(ctx), r.Client, pvc); err != nil {
+			return fmt.Errorf("clear orphan label on Lite data PVC %s: %w", pvc.Name, err)
+		}
+	}
+	return r.reconcilePVCOwnerRefs(ctx, shard)
 }
 
 // litePool returns the pool and cell of a Lite shard. Admission allows exactly
