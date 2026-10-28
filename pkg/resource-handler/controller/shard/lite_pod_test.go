@@ -460,6 +460,8 @@ func TestBuildLitePod_WithoutPublicTLSRetainsPreChangeSpecHash(t *testing.T) {
 		for i, variant := range []string{"plain", "backup and topology TLS"} {
 			t.Run(tc.name+"/"+variant, func(t *testing.T) {
 				shard := newTestLiteShard()
+				// Pin the baseline image so runtime promotions do not change this fixture.
+				shard.Spec.Images.Postgres = "ghcr.io/multigres/pgctld@sha256:0d575779d24c1f840123658c8c78bdd1e33e511b1e4fedd4fd4ba76fe2f4e5fc"
 				shard.Spec.InternalTLS = tc.internalTLS
 				pool := newTestPoolSpec()
 				if i == 1 {

@@ -42,42 +42,13 @@ var etcdManifest string
 const fingerprintQuery = `SELECT count(*)::text || ':' || md5(string_agg(id::text || ':' || payload, ',' ORDER BY id)) FROM minigres_e2e`
 
 // TestMinigresRuntime qualifies real Minigres, Postgres and etcd processes.
-// Admin and topology connections use mTLS. Lite's SQL listener does not yet
-// support TLS; every SQL call explicitly connects through its gateway Service.
+// Admin and topology connections use mTLS. This outage scenario uses plaintext
+// SQL through the gateway Service; TestMinigresPublicTLS qualifies public SQL TLS.
 func TestMinigresRuntime(t *testing.T) {
-	cluster.EnsureTopoTLSIssuer(t)
-	ns := cluster.CreateNamespace(t)
+	cr, pod := startLiteRuntime(t, "")
+	ns := cr.Namespace
 	c, err := cluster.CRClient()
 	require.NoError(t, err)
-	cr := framework.MustLoadCluster("test/e2e/dedicated/minigres/testdata/cluster.yaml", ns)
-	cr.Spec.GlobalTopoServer.External.Endpoints = []multigresv1alpha1.EndpointUrl{
-		multigresv1alpha1.EndpointUrl("https://external-etcd." + ns + ".svc:2379"),
-	}
-	// The fixture pins a known compatible runtime, while the nightly canary's
-	// E2E_* overrides (applied by the loader) qualify the actual candidate.
-	require.NoError(t, framework.LoadImages(t.Context(), cluster.Name, []string{
-		string(cr.Spec.Images.Multipooler), string(cr.Spec.Images.Postgres),
-	}))
-	t.Logf(
-		"runtime images: minigres=%s postgres=%s",
-		cr.Spec.Images.Multipooler,
-		cr.Spec.Images.Postgres,
-	)
-	// #nosec G204 -- Fixed kubectl executable and this disposable Kind cluster's kubeconfig.
-	apply := exec.CommandContext(
-		t.Context(),
-		"kubectl",
-		"--kubeconfig",
-		cluster.Kubeconfig,
-		"apply",
-		"-f",
-		"-",
-	)
-	apply.Stdin = strings.NewReader(strings.ReplaceAll(etcdManifest, "NAMESPACE", ns))
-	out, err := apply.CombinedOutput()
-	require.NoError(t, err, "%s", out)
-	require.NoError(t, c.Create(t.Context(), cr))
-	pod := waitPod(t, ns, "lite", "")
 	sqlEventually(
 		t,
 		ns,
@@ -149,7 +120,7 @@ func TestMinigresRuntime(t *testing.T) {
 	require.Equal(t, cluster.Name+"-control-plane", pod.Spec.NodeName)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	// #nosec G204 -- Kind node name is asserted above; container ID comes from its pod status.
-	out, err = exec.CommandContext(ctx, "docker", "exec", pod.Spec.NodeName,
+	out, err := exec.CommandContext(ctx, "docker", "exec", pod.Spec.NodeName,
 		"crictl", "stop", "--timeout", "1", containerID).CombinedOutput()
 	cancel()
 	require.NoError(t, err, "%s", out)
@@ -605,4 +576,34 @@ func applyManifest(t *testing.T, ns, manifest string) {
 	cmd.Stdin = strings.NewReader(manifest)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
+}
+
+// startLiteRuntime provisions real Minigres and PostgreSQL with admin and topology mTLS.
+func startLiteRuntime(
+	t *testing.T,
+	commonName string,
+) (*multigresv1alpha1.MultigresCluster, *corev1.Pod) {
+	t.Helper()
+	cluster.EnsureTopoTLSIssuer(t)
+	ns := cluster.CreateNamespace(t)
+	c, err := cluster.CRClient()
+	require.NoError(t, err)
+	cr := framework.MustLoadCluster("test/e2e/dedicated/minigres/testdata/cluster.yaml", ns)
+	cr.Spec.CertCommonName = commonName
+	cr.Spec.GlobalTopoServer.External.Endpoints = []multigresv1alpha1.EndpointUrl{
+		multigresv1alpha1.EndpointUrl("https://external-etcd." + ns + ".svc:2379"),
+	}
+	// The fixture pins a known compatible runtime, while the nightly canary's
+	// E2E_* overrides (applied by the loader) qualify the actual candidate.
+	require.NoError(t, framework.LoadImages(t.Context(), cluster.Name, []string{
+		string(cr.Spec.Images.Multipooler), string(cr.Spec.Images.Postgres),
+	}))
+	t.Logf(
+		"runtime images: minigres=%s postgres=%s",
+		cr.Spec.Images.Multipooler,
+		cr.Spec.Images.Postgres,
+	)
+	applyManifest(t, ns, strings.ReplaceAll(etcdManifest, "NAMESPACE", ns))
+	require.NoError(t, c.Create(t.Context(), cr))
+	return cr, waitPod(t, ns, "lite", "")
 }

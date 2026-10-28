@@ -57,8 +57,11 @@ canary and promotion process above.
 Minigres's gateway reaches its pooler in memory. Lite must not pass
 `--multipooler-grpc-*`: newer runtimes reject those flags. Keep `--grpc-*` TLS
 on the external admin server for the operator's Status and ReloadConfig RPCs,
-and keep topology-client TLS when configured. Public PostgreSQL TLS remains
-unsupported by the operator's Lite pod configuration.
+and keep topology-client TLS when configured. Setting `spec.certCommonName`
+enables public PostgreSQL TLS on Lite: the operator issues the certificate,
+mounts `generated-certs` read-only as `public-tls-certs`, and passes Minigres
+the `--pg-tls-cert-file` and `--pg-tls-key-file` flags. The public certificate
+volume is separate from internal mTLS.
 
 Minigres persists `topo-database.pb` in `--pooler-dir`, which Lite mounts from
 its data PVC. When topology registration times out or is unavailable, the
@@ -132,6 +135,9 @@ exact candidate image digests:
    verify recovery, retained PVC identity and persisted SQL data while etcd is down.
 4. Restore etcd and verify topology registration and pending reconciliation resume.
 5. Verify a fresh deployment cannot bootstrap without etcd.
+6. Connect through the gateway Service with `sslmode=verify-full`, verify SQL
+   writes/reads, reject an untrusted CA and an incorrect hostname, and reconnect
+   after pod replacement with internal mTLS enabled.
 
 Controller unit and envtest regressions exercise flags, outage handling and PVC
 retention, but do not run Minigres or establish runtime SQL compatibility. Keep
@@ -145,9 +151,15 @@ stopping etcd, it requires 45 consecutive SQL write/read iterations without
 retries, restarts the Minigres container, replaces the pod, and compares row
 checksums and PVC/PV identities. It also checks the cold-bootstrap gate and waits
 for both gateway and pooler records to advertise the replacement IP after etcd
-returns. SQL uses the gateway Service with `sslmode=disable`; public SQL TLS is
-not supported in Lite. RWO storage is explicit because Kind's local-path
-provisioner does not implement the default ReadWriteOncePod access mode.
+returns. That outage scenario uses the gateway Service with `sslmode=disable`.
+A separate `TestMinigresPublicTLS` scenario sets `certCommonName`, lets the
+operator and cert-manager issue the certificate, and runs an independent psql
+client through the gateway Service with `sslmode=verify-full`. It checks the
+negotiated TLS connection, writes/reads, wrong-hostname and untrusted-CA
+rejection, and verified SQL after pod replacement. Admin mTLS remains enabled
+and is checked before and after replacement. RWO storage is explicit because
+Kind's local-path provisioner does not implement the default ReadWriteOncePod
+access mode.
 
 Every code PR runs this package with fixture images pinned to the qualified
 upstream revision `d063d0b437dac1fb935e0476c142f1a42a2af9f1`. The nightly canary
@@ -165,9 +177,20 @@ the original PVC/PV, blocked cold bootstrap, and restored topology registration
 and Healthy status all passed. All 49 final rows survived, with fingerprint
 `49:4969bfd9794e22638e7acdbbb0e00f70`. The cluster was removed afterward. The operator
 and GC binaries were cross-built with `CGO_ENABLED=0` and packaged in the standard
-distroless runtime. This run does not qualify amd64, multi-node CSI,
+distroless runtime. That 2026-10-26 run does not qualify amd64, multi-node CSI,
 ReadWriteOncePod fencing, public SQL TLS, or the pending upstream backup feature.
 Compiled defaults and promotion evidence are inherited unchanged from main.
+
+On 2026-10-28, the regular Minigres package passed again on local linux/arm64
+with the same promoted fixture images in 446.047 seconds. The outage/recovery
+scenario passed in 258.21 seconds. `TestMinigresPublicTLS` passed in 69.09 seconds:
+an independent psql client negotiated TLS 1.3 through the gateway Service with
+`sslmode=verify-full`, wrote and read rows, rejected the wrong hostname and an
+untrusted CA, and reconnected after pod replacement with the original PVC and
+persisted row. Admin mTLS passed before and after replacement. This qualifies
+public SQL TLS for those fixture images on single-node Kind with RWO storage;
+it does not extend the platform/storage coverage or qualify public SQL TLS for
+the opt-in backup candidate. The disposable cluster was removed after the run.
 
 Run the same qualification locally with Docker, Kind and kubectl available:
 
