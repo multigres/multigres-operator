@@ -6,7 +6,7 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/google/go-cmp v0.7.0
 	github.com/multigres/kubedial v0.1.0
-	github.com/multigres/multigres v0.0.0-20261027101556-41dbdef3d6ba
+	github.com/multigres/multigres v0.0.0-20261028043209-c36f657d0db1
 	github.com/multigres/testkit v0.4.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
