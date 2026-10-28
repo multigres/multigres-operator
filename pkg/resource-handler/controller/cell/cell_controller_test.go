@@ -137,7 +137,7 @@ func TestCellReconciler_Reconcile(t *testing.T) {
 				},
 			},
 			existingObjects: []client.Object{},
-			wantRequeue:     true,
+			wantRequeue:     false,
 			assertFunc: func(t *testing.T, c client.Client, cell *multigresv1alpha1.Cell) {
 				hashedName := buildHashedName("lite-cluster", "zone1")
 
