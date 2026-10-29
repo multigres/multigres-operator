@@ -38,7 +38,16 @@ jobs:
         run: make build
 
       - name: Test
-        run: make test-integration
+        id: tests
+        run: make test-integration TEST_JSON_FILE="$RUNNER_TEMP/integration-tests.jsonl"
+
+      - name: Upload test results to Trunk
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: ./.github/actions/upload-test-results
+        with:
+          json-file: ${{ runner.temp }}/integration-tests.jsonl
+          previous-step-outcome: ${{ steps.tests.outcome }}
+          variant: integration
 
       - name: Save build cache
         if: github.event_name != 'pull_request'

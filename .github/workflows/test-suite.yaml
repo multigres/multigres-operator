@@ -37,4 +37,13 @@ jobs:
           cache: false
 
       - name: Run test suite
-        run: make test-suite
+        id: tests
+        run: make test-suite TEST_JSON_FILE="$RUNNER_TEMP/test-suite.jsonl"
+
+      - name: Upload test results to Trunk
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: ./.github/actions/upload-test-results
+        with:
+          json-file: ${{ runner.temp }}/test-suite.jsonl
+          previous-step-outcome: ${{ steps.tests.outcome }}
+          variant: test-suite

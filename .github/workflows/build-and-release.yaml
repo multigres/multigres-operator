@@ -50,13 +50,31 @@ jobs:
           cache: false
 
       - name: Run tests
+        id: tests
         run: |
-          go test $(go list ./... | grep -v /test/suite) \
-            -coverprofile=./cover.out -covermode=atomic -coverpkg=./...
+          go test -json $(go list ./... | grep -v /test/suite) \
+            -coverprofile=./cover.out -covermode=atomic -coverpkg=./... | tee "$RUNNER_TEMP/unit-tests.jsonl"
+
+      - name: Upload test results to Trunk
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: ./.github/actions/upload-test-results
+        with:
+          json-file: ${{ runner.temp }}/unit-tests.jsonl
+          previous-step-outcome: ${{ steps.tests.outcome }}
+          variant: unit
 
       - name: Run observer tests against current operator API
+        id: observer-tests
         working-directory: tools/observer
-        run: go test -mod=readonly ./...
+        run: go test -json -mod=readonly ./... | tee "$RUNNER_TEMP/observer-tests.jsonl"
+
+      - name: Upload observer test results to Trunk
+        if: ${{ !cancelled() && steps.observer-tests.outcome != 'skipped' }}
+        uses: ./.github/actions/upload-test-results
+        with:
+          json-file: ${{ runner.temp }}/observer-tests.jsonl
+          previous-step-outcome: ${{ steps.observer-tests.outcome }}
+          variant: observer
 
   build-scan-push-container:
     needs: [ test-go ]
