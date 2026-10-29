@@ -284,6 +284,12 @@ build-installer: manifests generate kustomize ## Generate consolidated install Y
 
 ##@ Test
 
+# Set TEST_JSON_FILE to capture Go test events for CI uploads.
+# Append shared E2E invocations to preserve results from both package groups.
+TEST_JSON_FILE ?=
+TEST_OUTPUT_FLAGS = $(if $(TEST_JSON_FILE),-json)
+TEST_OUTPUT_PIPE = $(if $(TEST_JSON_FILE),| tee -a "$(TEST_JSON_FILE)")
+
 # test/suite is the multi-controller envtest suite. It carries no build tag, so
 # every `go test ./...` call site has to exclude it by path or it lands in the
 # required check before it is ready. That is one filter per call site, which is
@@ -297,7 +303,7 @@ build-installer: manifests generate kustomize ## Generate consolidated install Y
 .PHONY: test-suite
 test-suite: manifests generate fmt vet setup-envtest ## Run the multi-controller test suite
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -v -p 1 -timeout 20m ./test/suite/...
+		go test $(TEST_OUTPUT_FLAGS) -v -p 1 -timeout 20m ./test/suite/... $(TEST_OUTPUT_PIPE)
 
 # A separate target rather than a flag on the one above. Measured 2026-09-19:
 # 183s against a 166s baseline, so about 10% rather than the roughly-double a
@@ -324,25 +330,25 @@ test-suite: manifests generate fmt vet setup-envtest ## Run the multi-controller
 .PHONY: test-suite-race
 test-suite-race: manifests generate fmt vet setup-envtest ## Run the multi-controller test suite under the race detector
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -race -v -p 1 -timeout 40m ./test/suite/...
+		go test $(TEST_OUTPUT_FLAGS) -race -v -p 1 -timeout 40m ./test/suite/... $(TEST_OUTPUT_PIPE)
 
 .PHONY: test
 test: manifests generate fmt vet ## Run tests (no integration testing)
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out
+		go test $(TEST_OUTPUT_FLAGS) -p 1 $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out $(TEST_OUTPUT_PIPE)
 
 .PHONY: test-integration
 test-integration: manifests generate fmt vet setup-envtest ## Run integration tests
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out
+		go test $(TEST_OUTPUT_FLAGS) -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out $(TEST_OUTPUT_PIPE)
 
 .PHONY: test-coverage
 test-coverage: manifests generate fmt vet setup-envtest ## Generate coverage report with HTML
 	@mkdir -p coverage
 	@echo "==> Generating coverage..."
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) \
-		-coverprofile=coverage/combined.out -covermode=atomic
+		go test $(TEST_OUTPUT_FLAGS) -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) \
+		-coverprofile=coverage/combined.out -covermode=atomic $(TEST_OUTPUT_PIPE)
 	@echo "==> Generating HTML report..."
 	@go tool cover -html=coverage/combined.out -o=coverage/combined.html
 	@echo "Generated: coverage/combined.html"
@@ -389,8 +395,8 @@ run-e2e-shared:
 	run_e2e() { \
 		local package_parallelism="$$1"; \
 		shift; \
-		go test -tags=e2e -p "$$package_parallelism" "$$@" \
-			-v -count=1 "-timeout=$(E2E_TIMEOUT)"; \
+		go test $(TEST_OUTPUT_FLAGS) -tags=e2e -p "$$package_parallelism" "$$@" \
+			-v -count=1 "-timeout=$(E2E_TIMEOUT)" $(TEST_OUTPUT_PIPE); \
 	}; \
 	wait_for_shared_namespaces() { \
 		if ! kind get clusters | grep -Fxq e2e-shared; then return 0; fi; \
@@ -451,7 +457,7 @@ test-e2e-keep: manifests generate fmt vet container ## Run e2e tests; keep clust
 test-e2e-full: manifests generate fmt vet container ## Run e2e tests (dedicated cluster per test, full isolation)
 	OPERATOR_IMG=$(IMG) \
 	REPO_ROOT=$(shell pwd) \
-	go test -tags=e2e $(E2E_PACKAGES_DEDICATED) -v -count=1 -timeout=30m -parallel 2
+	go test $(TEST_OUTPUT_FLAGS) -tags=e2e $(E2E_PACKAGES_DEDICATED) -v -count=1 -timeout=30m -parallel 2 $(TEST_OUTPUT_PIPE)
 
 ##@ Deployment
 

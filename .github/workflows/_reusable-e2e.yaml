@@ -225,6 +225,7 @@ jobs:
           fi
 
       - name: Run e2e tests
+        id: tests
         env:
           E2E_KEEP_CLUSTERS: never
           E2E_FAILURE_LOG_DIR: ${{ runner.temp }}/e2e-failure-logs
@@ -255,14 +256,24 @@ jobs:
           export REPO_ROOT
 
           if [ "$MODE" != "shared" ]; then
-            go test -tags=e2e "${packages[@]}" -v -count=1 \
-              "-timeout=${TIMEOUT_MINUTES}m"
+            go test -json -tags=e2e "${packages[@]}" -v -count=1 \
+              "-timeout=${TIMEOUT_MINUTES}m" | tee "$RUNNER_TEMP/e2e-tests.jsonl"
             exit 0
           fi
 
           make run-e2e-shared \
             E2E_PACKAGE_FILE="$RUNNER_TEMP/e2e-packages" \
+            TEST_JSON_FILE="$RUNNER_TEMP/e2e-tests.jsonl" \
             E2E_TIMEOUT="${TIMEOUT_MINUTES}m"
+
+      # Compatibility runs can check out refs that predate the local action.
+      - name: Upload test results to Trunk
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' && hashFiles('.github/actions/upload-test-results/action.yaml') != '' }}
+        uses: ./.github/actions/upload-test-results
+        with:
+          json-file: ${{ runner.temp }}/e2e-tests.jsonl
+          previous-step-outcome: ${{ steps.tests.outcome }}
+          variant: e2e-${{ inputs.mode }}-${{ inputs.test-spec || 'all' }}
 
       - name: Collect Kind logs on failure
         if: failure()

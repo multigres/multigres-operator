@@ -66,7 +66,16 @@ jobs:
         run: make build
 
       - name: Test and generate coverage report
-        run: make test-coverage
+        id: tests
+        run: make test-coverage TEST_JSON_FILE="$RUNNER_TEMP/coverage-tests.jsonl"
+
+      - name: Upload test results to Trunk
+        if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
+        uses: ./.github/actions/upload-test-results
+        with:
+          json-file: ${{ runner.temp }}/coverage-tests.jsonl
+          previous-step-outcome: ${{ steps.tests.outcome }}
+          variant: coverage
 
       # Get test coverage from cache and coverage.out -- at this point, only
       # work out the summary files, and some environment variables for more
