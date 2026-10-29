@@ -2,6 +2,7 @@ package suite
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -83,6 +84,19 @@ func (r *topoRegistry) forget(k topoKey) error {
 		return nil
 	}
 	return s.Close()
+}
+
+// closeAll closes every store the registry created and forgets them.
+func (r *topoRegistry) closeAll() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var errs []error
+	for k, s := range r.stores {
+		errs = append(errs, s.Close())
+		delete(r.stores, k)
+		delete(r.facts, k)
+	}
+	return errors.Join(errs...)
 }
 
 func (r *topoRegistry) client(k topoKey) (topoclient.Store, error) {

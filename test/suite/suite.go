@@ -12,6 +12,7 @@ package suite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"net/url"
@@ -81,7 +82,7 @@ func Boot() (*ctrltest.Suite, func() error, error) {
 		}
 	}
 
-	return ctrltest.Boot(ctrltest.Options{
+	s, teardown, err := ctrltest.Boot(ctrltest.Options{
 		Scheme:       scheme,
 		CRDPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		WatchedKinds: watchedKinds(),
@@ -103,6 +104,16 @@ func Boot() (*ctrltest.Suite, func() error, error) {
 			Register: register,
 		}},
 	})
+	if err != nil {
+		return nil, nil, err
+	}
+	// Close the topology stores only after the manager has stopped, so no
+	// reconcile can open or use one while it is closing. The stores outlive any
+	// one test, so nothing else closes them, and each holds goroutines that
+	// only exit on Close.
+	return s, func() error {
+		return errors.Join(teardown(), topo.closeAll())
+	}, nil
 }
 
 // watchedKinds is every kind the operator writes in a test namespace. A kind
