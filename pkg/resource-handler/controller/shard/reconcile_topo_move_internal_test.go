@@ -265,7 +265,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 		mp := &clustermetadata.Multipooler{
 			Id:       &clustermetadata.ID{Cell: topoMoveCell, Name: podName},
 			Hostname: podName,
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "s1"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "s1"},
 		}
 		if shutdown {
 			mp.LifecycleStatus = &clustermetadata.PoolerLifecycle{

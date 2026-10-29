@@ -373,7 +373,7 @@ func registeredReplica(
 	if err := store.RegisterMultipooler(t.Context(), &clustermetadata.Multipooler{
 		Id:       id,
 		Hostname: name,
-		ShardKey: &clustermetadata.ShardKey{
+		ShardRef: &clustermetadata.ShardRef{
 			Database:   string(shard.Spec.DatabaseName),
 			TableGroup: string(shard.Spec.TableGroupName),
 			Shard:      string(shard.Spec.ShardName),
@@ -441,7 +441,7 @@ func notYetSettledReplica(
 	if err := store.RegisterMultipooler(t.Context(), &clustermetadata.Multipooler{
 		Id:       id,
 		Hostname: name,
-		ShardKey: &clustermetadata.ShardKey{
+		ShardRef: &clustermetadata.ShardRef{
 			Database:   string(shard.Spec.DatabaseName),
 			TableGroup: string(shard.Spec.TableGroupName),
 			Shard:      string(shard.Spec.ShardName),
@@ -577,7 +577,7 @@ func TestReconcilePostureAcceptedMismatchAndNotReadyStillRequeues(t *testing.T) 
 	if err := store.RegisterMultipooler(t.Context(), &clustermetadata.Multipooler{
 		Id:       id,
 		Hostname: "pooler-0",
-		ShardKey: &clustermetadata.ShardKey{
+		ShardRef: &clustermetadata.ShardRef{
 			Database:   string(shard.Spec.DatabaseName),
 			TableGroup: string(shard.Spec.TableGroupName),
 			Shard:      string(shard.Spec.ShardName),
@@ -779,7 +779,7 @@ func TestReconcilePostureBacksOffThenClearsOnceAPrimaryIsElected(t *testing.T) {
 	if err := store.RegisterMultipooler(t.Context(), &clustermetadata.Multipooler{
 		Id:       id0,
 		Hostname: "pooler-0",
-		ShardKey: &clustermetadata.ShardKey{
+		ShardRef: &clustermetadata.ShardRef{
 			Database:   string(shard.Spec.DatabaseName),
 			TableGroup: string(shard.Spec.TableGroupName),
 			Shard:      string(shard.Spec.ShardName),

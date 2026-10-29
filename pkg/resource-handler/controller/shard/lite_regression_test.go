@@ -266,7 +266,7 @@ func TestLiteReloadConvergesWithoutReplacingPod(t *testing.T) {
 				},
 				Hostname: pod.Status.PodIP,
 				PortMap:  map[string]int32{"grpc": DefaultMultipoolerGRPCPort},
-				ShardKey: &cm.ShardKey{
+				ShardRef: &cm.ShardRef{
 					Database:   string(shard.Spec.DatabaseName),
 					TableGroup: string(shard.Spec.TableGroupName),
 					Shard:      string(shard.Spec.ShardName),
