@@ -328,7 +328,7 @@ func (p *poolerSim) tickTopology(
 		pooler := &cm.Multipooler{
 			Id:       id,
 			Hostname: pod.Name,
-			ShardKey: &cm.ShardKey{
+			ShardRef: &cm.ShardRef{
 				Database:   pod.Labels[metadata.LabelMultigresDatabase],
 				TableGroup: pod.Labels[metadata.LabelMultigresTableGroup],
 				Shard:      pod.Labels[metadata.LabelMultigresShard],

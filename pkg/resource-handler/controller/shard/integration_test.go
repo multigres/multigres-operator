@@ -1838,7 +1838,7 @@ func rolloutDataPlane(
 		poolers = append(poolers, &cm.Multipooler{
 			Id:       id,
 			Hostname: id.Name,
-			ShardKey: &cm.ShardKey{
+			ShardRef: &cm.ShardRef{
 				Database:   string(shard.Spec.DatabaseName),
 				TableGroup: string(shard.Spec.TableGroupName),
 				Shard:      string(shard.Spec.ShardName),

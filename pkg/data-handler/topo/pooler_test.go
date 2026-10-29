@@ -86,13 +86,13 @@ func TestFindPrimaryPooler(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica-pod"},
 			Hostname:     "replica-pod",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:           &clustermetadata.ID{Cell: "cell2", Name: "primary-pod"},
 			Hostname:     "primary-pod",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -131,7 +131,7 @@ func TestFindPrimaryPooler(t *testing.T) {
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 			},
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -165,7 +165,7 @@ func TestFindPrimaryPooler(t *testing.T) {
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_QUARANTINED,
 			},
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -322,19 +322,19 @@ func TestMarkDeadPoolers(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
 			Hostname:     "active-pod",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
 			Hostname:     "stale-pod",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "dead-pod"},
 			Hostname:     "dead-pod",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -404,7 +404,7 @@ func TestMarkDeadPoolers(t *testing.T) {
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 			},
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -438,7 +438,7 @@ func TestMarkDeadPoolers(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "pod-1"},
 			Hostname:     "pod-1",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -501,13 +501,13 @@ func TestMarkDeadPoolers(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "active-pod"},
 			Hostname:     "active-pod.headless-svc.ns.svc.cluster.local",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "stale-pod"},
 			Hostname:     "stale-pod.headless-svc.ns.svc.cluster.local",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -573,7 +573,7 @@ func TestMarkDeadPoolers(t *testing.T) {
 						RoutingState: routingState(
 							clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
 						),
-						ShardKey: &clustermetadata.ShardKey{
+						ShardRef: &clustermetadata.ShardRef{
 							Database:   "db",
 							TableGroup: "tg",
 							Shard:      "0",
@@ -619,7 +619,7 @@ func TestMarkDeadPoolers(t *testing.T) {
 						RoutingState: routingState(
 							clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
 						),
-						ShardKey: &clustermetadata.ShardKey{
+						ShardRef: &clustermetadata.ShardRef{
 							Database:   "db",
 							TableGroup: "tg",
 							Shard:      "0",
@@ -709,18 +709,18 @@ func TestGetPoolerStatus(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "primary"},
 			Hostname:     "primary",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "replica"},
 			Hostname:     "replica",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:       &clustermetadata.ID{Cell: "cell1", Name: "unknown"},
 			Hostname: "unknown",
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 		_ = store.RegisterMultipooler(ctx, &clustermetadata.Multipooler{
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "quarantined"},
@@ -729,7 +729,7 @@ func TestGetPoolerStatus(t *testing.T) {
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_QUARANTINED,
 			},
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -783,7 +783,7 @@ func TestGetPoolerStatus(t *testing.T) {
 			LifecycleStatus: &clustermetadata.PoolerLifecycle{
 				Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 			},
-			ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -818,7 +818,7 @@ func TestGetPoolerStatus(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "orphaned-pod"},
 			Hostname:     "orphaned-pod",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -873,7 +873,7 @@ func TestGetPoolerStatus(t *testing.T) {
 			Id:           &clustermetadata.ID{Cell: "cell1", Name: "my-pod-0"},
 			Hostname:     "",
 			RoutingState: routingState(clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY),
-			ShardKey:     &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+			ShardRef:     &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 		}, false)
 
 		shard := &multigresv1alpha1.Shard{
@@ -907,7 +907,7 @@ func TestLivePoolerPods(t *testing.T) {
 			},
 		},
 	}
-	key := &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"}
+	key := &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"}
 
 	t.Run("reports live registrations only", func(t *testing.T) {
 		t.Parallel()
@@ -919,22 +919,22 @@ func TestLivePoolerPods(t *testing.T) {
 		ctx := t.Context()
 
 		for _, mp := range []*clustermetadata.Multipooler{
-			{Id: &clustermetadata.ID{Cell: "cell1", Name: "live"}, Hostname: "live", ShardKey: key},
+			{Id: &clustermetadata.ID{Cell: "cell1", Name: "live"}, Hostname: "live", ShardRef: key},
 			{
 				// Registered under a service ID, found by its FQDN hostname.
 				Id:       &clustermetadata.ID{Cell: "cell1", Name: "p-1234"},
 				Hostname: "fqdn.pool.ns.svc.cluster.local",
-				ShardKey: key,
+				ShardRef: key,
 			},
 			{
-				Id: &clustermetadata.ID{Cell: "cell1", Name: "gone"}, Hostname: "gone", ShardKey: key,
+				Id: &clustermetadata.ID{Cell: "cell1", Name: "gone"}, Hostname: "gone", ShardRef: key,
 				LifecycleStatus: &clustermetadata.PoolerLifecycle{
 					Status: clustermetadata.PoolerLifecycleStatus_LIFECYCLE_SHUTDOWN,
 				},
 			},
 			{
 				Id: &clustermetadata.ID{Cell: "cell1", Name: "other-shard"}, Hostname: "other-shard",
-				ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "1"},
+				ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "1"},
 			},
 		} {
 			if err := store.RegisterMultipooler(ctx, mp, false); err != nil {

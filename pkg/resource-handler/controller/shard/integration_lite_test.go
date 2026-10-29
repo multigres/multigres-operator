@@ -354,7 +354,7 @@ func TestLiteStatusReachesAvailableAndPrimary(t *testing.T) {
 		},
 		Hostname: "10.0.0.7",
 		PortMap:  map[string]int32{"grpc": shardcontroller.DefaultMultipoolerGRPCPort},
-		ShardKey: &cm.ShardKey{Database: "testdb", TableGroup: "default", Shard: "0-inf"},
+		ShardRef: &cm.ShardRef{Database: "testdb", TableGroup: "default", Shard: "0-inf"},
 	}
 	require.NoError(t, store.RegisterMultipooler(ctx, pooler, false))
 	rpc.ReloadConfigResponses[topoclient.ComponentIDString(pooler.Id)] = &md.ReloadConfigResponse{

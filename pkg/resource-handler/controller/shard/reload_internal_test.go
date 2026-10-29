@@ -110,7 +110,7 @@ func reloadTestStore(t *testing.T) (topoclient.Store, topoclient.ComponentID) {
 	if err := store.RegisterMultipooler(context.Background(), &clustermetadata.Multipooler{
 		Id:       id,
 		Hostname: reloadTestPod,
-		ShardKey: &clustermetadata.ShardKey{Database: "db", TableGroup: "tg", Shard: "0"},
+		ShardRef: &clustermetadata.ShardRef{Database: "db", TableGroup: "tg", Shard: "0"},
 	}, false); err != nil {
 		t.Fatalf("register pooler: %v", err)
 	}

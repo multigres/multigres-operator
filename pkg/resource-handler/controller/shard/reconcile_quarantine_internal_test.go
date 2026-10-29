@@ -122,7 +122,7 @@ func qrStoreWithQuarantinedReason(
 			RoutingState: &clustermetadata.RoutingState{
 				Role: clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
 			},
-			ShardKey: &clustermetadata.ShardKey{
+			ShardRef: &clustermetadata.ShardRef{
 				Database: "testdb", TableGroup: "default", Shard: "shard0",
 			},
 		}

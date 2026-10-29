@@ -142,7 +142,7 @@ func postureTestStore(t *testing.T) (topoclient.Store, topoclient.ComponentID) {
 	if err := store.RegisterMultipooler(context.Background(), &clustermetadata.Multipooler{
 		Id:       id,
 		Hostname: "pooler-0",
-		ShardKey: &clustermetadata.ShardKey{
+		ShardRef: &clustermetadata.ShardRef{
 			Database:   "database",
 			TableGroup: "table-group",
 			Shard:      "0",
