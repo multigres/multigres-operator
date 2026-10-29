@@ -156,9 +156,20 @@ type poolerSim struct {
 	topo     *topoRegistry
 	interval time.Duration
 
-	mu         sync.Mutex
-	registered map[string]bool
-	held       map[string]bool
+	mu            sync.Mutex
+	registered    map[string]bool
+	held          map[string]bool
+	lateAdmission map[string]*admissionDelay
+}
+
+// leaderAdmissionTicks is how many sim ticks a new leader spends outside its
+// cohort under AdmitLeadersLate: long enough for the operator to observe it.
+const leaderAdmissionTicks = 6
+
+// admissionDelay is what AdmitLeadersLate records for one namespace.
+type admissionDelay struct {
+	ticks map[string]int
+	seen  bool
 }
 
 // HoldRegistrations stops this fake registering any *new* pooler in ns until
@@ -190,6 +201,38 @@ func (p *poolerSim) HoldRegistrations(ns string) func() {
 			p.mu.Unlock()
 		})
 	}
+}
+
+// AdmitLeadersLate makes this fake commit every new leader in ns outside its
+// cohort for leaderAdmissionTicks ticks, then admit it, until the returned
+// function is called. This is multiorch's own sequence: a failover keeps the
+// outgoing cohort while choosing any eligible leader, and the cohort-mismatch
+// analyzer then admits that leader. A topology group with a single pod has no
+// cohort to leave the leader out of, so the state needs two pods on one
+// topology; the returned function reports whether it was ever committed.
+func (p *poolerSim) AdmitLeadersLate(ns string) (release func(), seen func() bool) {
+	a := &admissionDelay{ticks: map[string]int{}}
+	p.mu.Lock()
+	if p.lateAdmission == nil {
+		p.lateAdmission = map[string]*admissionDelay{}
+	}
+	p.lateAdmission[ns] = a
+	p.mu.Unlock()
+
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			p.mu.Lock()
+			delete(p.lateAdmission, ns)
+			p.mu.Unlock()
+		})
+	}
+	seen = func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return a.seen
+	}
+	return release, seen
 }
 
 func registrationKey(k topoKey, ns, podUID string) string {
@@ -273,10 +316,21 @@ func (p *poolerSim) tickTopology(
 		return
 	}
 	leader := ids[0]
+	cohort := ids
+	p.mu.Lock()
+	if a := p.lateAdmission[ns]; a != nil && len(ids) > 1 {
+		key := registrationPrefix(k) + leader.Name
+		if a.ticks[key] < leaderAdmissionTicks {
+			a.ticks[key]++
+			a.seen = true
+			cohort = ids[1:]
+		}
+	}
+	p.mu.Unlock()
 	rule := &cm.ShardRule{
 		RuleNumber:       &cm.RuleNumber{CoordinatorTerm: 2},
 		LeaderId:         leader,
-		CohortMembers:    ids,
+		CohortMembers:    cohort,
 		DurabilityPolicy: topoclient.AtLeastN(1),
 	}
 	store := p.topo.Store(k)

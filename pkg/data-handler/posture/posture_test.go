@@ -215,6 +215,52 @@ func TestEvaluate(t *testing.T) {
 		}
 	})
 
+	// A failover can leave its leader outside the cohort until multiorch
+	// admits it. The leader stays unready for that window so the shard PDB
+	// still counts the cohort a member short.
+	t.Run("committed leader outside its cohort is not ready", func(t *testing.T) {
+		t.Parallel()
+		shard := testShard()
+		primary := poolerInfo(
+			"primary-pod", clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY,
+			clustermetadata.PoolerLifecycleStatus_LIFECYCLE_UNKNOWN,
+		)
+		replica := poolerInfo(
+			"replica-pod", clustermetadata.RoutingRole_ROUTING_ROLE_REPLICA,
+			clustermetadata.PoolerLifecycleStatus_LIFECYCLE_UNKNOWN,
+		)
+		store := &mockTopoStore{
+			getMultipoolersByCellFunc: func(context.Context, string, *topoclient.GetMultipoolersByCellOptions) ([]*topoclient.MultipoolerInfo, error) {
+				return []*topoclient.MultipoolerInfo{primary, replica}, nil
+			},
+		}
+		rpc := rpcclient.NewFakeClient()
+		withStatus(rpc, primary, multipoolermanagerdata.PostgresStatus_POSTGRES_STATUS_PRIMARY)
+		withStatus(rpc, replica, multipoolermanagerdata.PostgresStatus_POSTGRES_STATUS_STANDBY)
+		for _, mp := range []*topoclient.MultipoolerInfo{primary, replica} {
+			response, _ := rpc.Status(
+				t.Context(), mp.Multipooler, &multipoolermanagerdata.StatusRequest{},
+			)
+			decision := response.ConsensusStatus.CurrentPosition.Position.Decision
+			decision.LeaderId = primary.Id
+			decision.CohortMembers = []*clustermetadata.ID{replica.Id}
+			rpc.SetStatusResponse(topoclient.ComponentIDString(mp.Id), response)
+		}
+
+		result, err := posture.Evaluate(
+			t.Context(), store, rpc, shard, []string{"primary-pod", "replica-pod"},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := result.Readiness["primary-pod"]; got.Ready || got.Reason != "NotCohortMember" {
+			t.Errorf("readiness[primary-pod] = %#v, want NotCohortMember", got)
+		}
+		if got := result.Readiness["replica-pod"]; !got.Ready {
+			t.Errorf("readiness[replica-pod] = %#v, want ready", got)
+		}
+	})
+
 	t.Run("multiple primaries detected", func(t *testing.T) {
 		t.Parallel()
 		shard := testShard()
