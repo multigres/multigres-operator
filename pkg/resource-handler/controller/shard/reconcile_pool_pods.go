@@ -225,6 +225,7 @@ func (r *ShardReconciler) createMissingResources(
 				poolSpec,
 				int(i),
 				r.Scheme,
+				r.podOptions()...,
 			)
 			if buildErr != nil {
 				return 0, false, fmt.Errorf("failed to build pod %s: %w", podName, buildErr)
@@ -285,7 +286,15 @@ func (r *ShardReconciler) createMissingResources(
 		}
 
 		// Check if it's drifted
-		isDrifted := podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i), r.Scheme)
+		isDrifted := podNeedsUpdate(
+			pod,
+			shard,
+			poolName,
+			cellName,
+			poolSpec,
+			int(i),
+			r.Scheme,
+			r.podOptions()...)
 		if isDrifted {
 			driftedCount++
 		}
@@ -836,6 +845,7 @@ func (r *ShardReconciler) handleRollingUpdates(
 			poolSpec,
 			podIdx,
 			r.Scheme,
+			r.podOptions()...,
 		) {
 			continue
 		}
@@ -1199,6 +1209,7 @@ func podNeedsUpdate(
 	poolSpec multigresv1alpha1.PoolSpec,
 	index int,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) bool {
 	// If it has a deletion timestamp, let it die
 	if !existing.DeletionTimestamp.IsZero() {
@@ -1213,7 +1224,7 @@ func podNeedsUpdate(
 
 	// Compute desired hash by building the ideal pod spec
 	// NOTE: BuildPoolPod doesn't make API calls, it's safe to call frequently.
-	desired, err := BuildPoolPod(shard, poolName, cellName, poolSpec, index, scheme)
+	desired, err := BuildPoolPod(shard, poolName, cellName, poolSpec, index, scheme, opts...)
 	if err != nil {
 		return false // Assume no update needed if we can't build it
 	}

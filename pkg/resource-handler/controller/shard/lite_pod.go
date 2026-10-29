@@ -35,6 +35,7 @@ func BuildLitePod(
 	cellName string,
 	poolSpec multigresv1alpha1.PoolSpec,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) (*corev1.Pod, error) {
 	if err := validatePoolRuntimeIdentity(poolSpec); err != nil {
 		return nil, err
@@ -103,7 +104,7 @@ func BuildLitePod(
 			// pgctld is the native sidecar so it outlives minigres on pod
 			// termination, as it outlives multipooler in a pool pod. The
 			// pgBackRest sidecar starts first, as in a pool pod.
-			InitContainers: buildPoolInitContainers(shard, poolSpec),
+			InitContainers: buildPoolInitContainers(shard, poolSpec, newPodConfig(opts)),
 			Containers: []corev1.Container{
 				buildLiteContainer(shard, poolSpec, poolName, cellName, serviceID),
 				buildPostgresExporterContainer(shard),
@@ -133,7 +134,7 @@ func (r *ShardReconciler) buildLitePod(
 	poolName, cellName string,
 	poolSpec multigresv1alpha1.PoolSpec,
 ) (*corev1.Pod, error) {
-	pod, err := BuildLitePod(shard, poolName, cellName, poolSpec, r.Scheme)
+	pod, err := BuildLitePod(shard, poolName, cellName, poolSpec, r.Scheme, r.podOptions()...)
 	if err != nil {
 		return nil, err
 	}

@@ -169,6 +169,7 @@ func walSegmentBytes(initdbArgs string) int64 {
 func buildPgBackRestSidecar(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
+	cfg podConfig,
 ) corev1.Container {
 	loc := sidecarLocation(shard)
 
@@ -180,6 +181,9 @@ func buildPgBackRestSidecar(
 		"--pg-user=" + postgresSuperuserOrDefault(shard.Spec.PostgresSuperuser),
 		"--pg-password-file=" + PostgresPasswordFilePath,
 		"--location-type=" + string(loc.Type),
+		// The mode is part of the container args and so of the pod spec hash:
+		// changing it rolls every pool pod.
+		"--sandbox=" + cfg.sandbox(),
 	}
 
 	volumeMounts := []corev1.VolumeMount{
@@ -449,9 +453,10 @@ func pgbackrestSocketArgs() []string {
 func buildPoolInitContainers(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
+	cfg podConfig,
 ) []corev1.Container {
 	return []corev1.Container{
-		buildPgBackRestSidecar(shard, pool),
+		buildPgBackRestSidecar(shard, pool, cfg),
 		buildPgctldSidecar(shard, pool),
 	}
 }
@@ -471,4 +476,70 @@ func hashPgBackRestPodFields(h hash.Hash32, pod *corev1.Pod) {
 	if v := pod.Annotations[SkipContainersAnnotation]; v != "" {
 		_, _ = fmt.Fprintf(h, "skipContainers=%s", v)
 	}
+}
+
+// The values of pgbackrestd's --sandbox flag. Whether pgBackRest children are
+// confined with Landlock is a property of the deployment: it needs a kernel
+// with Landlock enabled and a seccomp profile that allows landlock_*.
+const (
+	// SandboxRequired fails closed when Landlock is unavailable. The default.
+	SandboxRequired = "required"
+	// SandboxAuto confines when the node supports Landlock and runs
+	// unconfined otherwise.
+	SandboxAuto = "auto"
+	// SandboxOff never uses Landlock.
+	SandboxOff = "off"
+)
+
+// PgBackRestSandboxEnvVar supplies the default of the operator's
+// --pgbackrest-sandbox flag.
+const PgBackRestSandboxEnvVar = "MULTIGRES_PGBACKREST_SANDBOX"
+
+// ParseSandboxMode validates a sandbox mode. The empty string means required.
+func ParseSandboxMode(mode string) (string, error) {
+	switch mode {
+	case "":
+		return SandboxRequired, nil
+	case SandboxRequired, SandboxAuto, SandboxOff:
+		return mode, nil
+	}
+	return "", fmt.Errorf("invalid pgBackRest sandbox mode %q: accepted values are %q, %q and %q",
+		mode, SandboxRequired, SandboxAuto, SandboxOff)
+}
+
+// PodOption carries operator-level settings into the pod builders. Callers
+// that pass none get the operator defaults.
+type PodOption func(*podConfig)
+
+type podConfig struct {
+	sandboxMode string
+}
+
+func newPodConfig(opts []PodOption) podConfig {
+	var c podConfig
+	for _, o := range opts {
+		o(&c)
+	}
+	return c
+}
+
+// WithSandboxMode sets pgbackrestd's --sandbox value (required, auto or off).
+func WithSandboxMode(mode string) PodOption {
+	return func(c *podConfig) { c.sandboxMode = mode }
+}
+
+// sandbox is the effective mode: empty means the fail-closed default.
+func (c podConfig) sandbox() string {
+	if c.sandboxMode == "" {
+		return SandboxRequired
+	}
+	return c.sandboxMode
+}
+
+// podOptions is how the reconciler's operator-level configuration reaches the
+// pod builders. Every desired-pod build the reconciler does, including the
+// ones that only compute the spec hash for drift, must go through it, or a
+// mode change would not be seen as drift.
+func (r *ShardReconciler) podOptions() []PodOption {
+	return []PodOption{WithSandboxMode(r.PgBackRestSandbox)}
 }

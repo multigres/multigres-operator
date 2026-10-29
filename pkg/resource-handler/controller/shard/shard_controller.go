@@ -81,8 +81,12 @@ type ShardReconciler struct {
 	APIReader client.Reader
 	// LitePodPriorityClassName applies only to single-pod Lite shards.
 	LitePodPriorityClassName string
-	PoolerClients            poolerclient.Resolver
-	CreateTopoStore          func(*multigresv1alpha1.Shard) (topoclient.Store, error)
+	// PgBackRestSandbox is the --sandbox mode every pgbackrestd container is
+	// started with: required, auto or off. Empty means required. It is an
+	// operator-wide deployment property, not part of the Shard spec.
+	PgBackRestSandbox string
+	PoolerClients     poolerclient.Resolver
+	CreateTopoStore   func(*multigresv1alpha1.Shard) (topoclient.Store, error)
 	// Clock overrides time.Now for recordNotConverged's elapsed-time math.
 	// Nil in production; tests inject it to drive the readiness backoff
 	// deterministically.

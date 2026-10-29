@@ -62,6 +62,7 @@ func BuildPoolPod(
 	poolSpec multigresv1alpha1.PoolSpec,
 	index int,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) (*corev1.Pod, error) {
 	if err := validatePoolRuntimeIdentity(poolSpec); err != nil {
 		return nil, err
@@ -134,7 +135,7 @@ func BuildPoolPod(
 			},
 			// pgctld is the native sidecar so it outlives multipooler on pod
 			// termination, see docs/development/pod-management-design.md §6.
-			InitContainers: buildPoolInitContainers(shard, poolSpec),
+			InitContainers: buildPoolInitContainers(shard, poolSpec, newPodConfig(opts)),
 			Containers: []corev1.Container{
 				multipooler,
 				buildPostgresExporterContainer(shard),

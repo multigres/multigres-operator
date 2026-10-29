@@ -187,6 +187,7 @@ func TestBuildPoolPod_SidecarArgs(t *testing.T) {
 		"--pg-user=postgres",
 		"--pg-password-file=/etc/postgres-password/password",
 		"--location-type=s3",
+		"--sandbox=required",
 		"--s3-bucket=bkt",
 		"--s3-region=us-east-1",
 		"--s3-endpoint=https://s3.example",

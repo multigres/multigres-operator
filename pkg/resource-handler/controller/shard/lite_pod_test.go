@@ -229,7 +229,7 @@ func TestBuildLitePod(t *testing.T) {
 		)
 	}
 	if diff := cmp.Diff(
-		buildPgBackRestSidecar(shard, pool),
+		buildPgBackRestSidecar(shard, pool, podConfig{}),
 		pod.Spec.InitContainers[0],
 	); diff != "" {
 		t.Errorf("pgBackRest sidecar mismatch (-want +got):\n%s", diff)

@@ -118,7 +118,15 @@ func (r *ShardReconciler) podIsStale(shard *multigresv1alpha1.Shard, pod *corev1
 	if !ok {
 		return false
 	}
-	return podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme)
+	return podNeedsUpdate(
+		pod,
+		shard,
+		poolName,
+		cellName,
+		poolSpec,
+		index,
+		r.Scheme,
+		r.podOptions()...)
 }
 
 // sidecarNeverStarted reports whether pod's pgbackrest init container has not

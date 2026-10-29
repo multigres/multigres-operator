@@ -440,3 +440,58 @@ func TestLiteStatusReachesAvailableAndPrimary(t *testing.T) {
 		"ReloadConfig("+string(topoclient.ComponentIDString(pooler.Id))+")",
 	)
 }
+
+// The mode the operator was started with reaches the pgbackrestd container of
+// the pod the reconciler creates, through the same builder drift detection
+// uses.
+func TestReconcileUsesConfiguredPgBackRestSandbox(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = policyv1.AddToScheme(scheme)
+
+	mgr := testutil.SetUpEnvtestManager(t, scheme,
+		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
+	)
+	ctx := t.Context()
+	k8sClient := testutil.SetUpClient(t, mgr.GetConfig(), scheme)
+
+	shard := newLiteTestShard("sandbox-shard", "sandbox-cluster")
+	_, topoFactory := liteTopo(t)
+	if err := (&shardcontroller.ShardReconciler{
+		Client:            mgr.GetClient(),
+		APIReader:         mgr.GetAPIReader(),
+		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorderFor("shard-controller"),
+		CreateTopoStore:   topoFactory,
+		PgBackRestSandbox: shardcontroller.SandboxAuto,
+	}).SetupWithManager(mgr, controller.Options{SkipNameValidation: ptr.To(true)}); err != nil {
+		t.Fatalf("Failed to create controller: %v", err)
+	}
+
+	setTestPostgresPasswordSecretRef(shard)
+	createTestPostgresPasswordSecret(t, ctx, k8sClient, shard.Namespace)
+	require.NoError(t, k8sClient.Create(ctx, shard))
+
+	podKey := types.NamespacedName{
+		Namespace: "default",
+		Name:      shardcontroller.BuildPoolPodName(shard, "default", "zone1", 0),
+	}
+	pod := &corev1.Pod{}
+	require.Eventually(t, func() bool {
+		return k8sClient.Get(ctx, podKey, pod) == nil
+	}, 30*time.Second, 200*time.Millisecond, "Lite pod was not created")
+
+	var sidecar *corev1.Container
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == shardcontroller.PgBackRestSidecarContainerName {
+			sidecar = &pod.Spec.InitContainers[i]
+		}
+	}
+	require.NotNil(t, sidecar)
+	require.Contains(t, sidecar.Args, "--sandbox=auto")
+	require.NotContains(t, sidecar.Args, "--sandbox=required")
+}

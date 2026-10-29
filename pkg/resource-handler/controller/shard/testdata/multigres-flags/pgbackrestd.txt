@@ -29,6 +29,7 @@
 --s3-key-prefix
 --s3-region
 --s3-static-key-dir
+--sandbox
 --sandbox-anchor
 --server-port
 --state-dir

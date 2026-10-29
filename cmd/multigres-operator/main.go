@@ -155,6 +155,8 @@ func main() {
 		"PriorityClass for Lite database pods; empty uses the Kubernetes default.",
 	)
 
+	pgBackRestSandbox := registerPgBackRestSandboxFlag(flag.CommandLine)
+
 	// General Flags
 	flag.StringVar(
 		&metricsAddr,
@@ -296,6 +298,12 @@ func main() {
 		"GOMAXPROCS", goruntime.GOMAXPROCS(0),
 		"numCPU", goruntime.NumCPU(),
 	)
+
+	sandboxMode, err := shardcontroller.ParseSandboxMode(*pgBackRestSandbox)
+	if err != nil {
+		setupLog.Error(err, "invalid configuration", "flag", "--pgbackrest-sandbox")
+		os.Exit(1)
+	}
 
 	if imageUpdateStrategy != string(images.UpdateImmediate) &&
 		imageUpdateStrategy != string(images.UpdateLazy) {
@@ -587,6 +595,7 @@ func main() {
 		APIReader:                mgr.GetAPIReader(),
 		PoolerClients:            poolerClients,
 		LitePodPriorityClassName: litePodPriorityClassName,
+		PgBackRestSandbox:        sandboxMode,
 		Gate:                     gate,
 		DialContext:              laptopDial,
 	}).SetupWithManager(mgr); err != nil {
@@ -633,6 +642,19 @@ func main() {
 // It guards only the flag combinations of the --namespace laptop mode. Every
 // check that depends on the cluster, which namespace the deployed operator
 // runs in included, is preflight's, after the config is loaded.
+// registerPgBackRestSandboxFlag registers --pgbackrest-sandbox. The environment
+// variable is only the default, so an explicit flag wins over it.
+func registerPgBackRestSandboxFlag(fs *flag.FlagSet) *string {
+	return fs.String(
+		"pgbackrest-sandbox",
+		os.Getenv(shardcontroller.PgBackRestSandboxEnvVar),
+		"Landlock confinement of pgBackRest children in every pgbackrestd sidecar: "+
+			"'required' (fail closed, the default when empty), 'auto' (confine when the "+
+			"node supports Landlock, else run unconfined) or 'off'. Default from $"+
+			shardcontroller.PgBackRestSandboxEnvVar+". Changing it rolls every pool pod.",
+	)
+}
+
 func laptopModeStartupError(
 	laptopNS string,
 	leaderElection, webhooks bool,

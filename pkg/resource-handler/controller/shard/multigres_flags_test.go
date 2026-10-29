@@ -149,6 +149,26 @@ func TestContainerArgsCarryTheRequiredMultigresFlags(t *testing.T) {
 	assert.Contains(t, sidecar.Args, "--data-volume="+DataMountPath)
 }
 
+// --sandbox is a flag pgbackrestd accepts and carries the configured mode on
+// every pgbackrestd container the operator builds.
+func TestPgBackRestSandboxFlagIsAcceptedWithConfiguredValue(t *testing.T) {
+	require.True(t, acceptedFlags(t, "pgbackrestd")["--sandbox"],
+		"refresh testdata/multigres-flags/pgbackrestd.txt from a multigres that has --sandbox")
+
+	for _, mode := range []string{SandboxRequired, SandboxAuto, SandboxOff} {
+		pool, err := BuildPoolPod(sidecarTestShard(), "main", "z1", newTestPoolSpec(), 0,
+			testScheme(), WithSandboxMode(mode))
+		require.NoError(t, err)
+		lite, err := BuildLitePod(sidecarTestShard(), "main", "z1", newTestPoolSpec(),
+			testScheme(), WithSandboxMode(mode))
+		require.NoError(t, err)
+		for name, pod := range map[string]*corev1.Pod{"pool": pool, "lite": lite} {
+			c := containerNamed(t, pod, PgBackRestSidecarContainerName)
+			assert.Contains(t, c.Args, "--sandbox="+mode, "%s %s", name, mode)
+		}
+	}
+}
+
 func TestMultigresFlagGoldenListsDropRemovedFlags(t *testing.T) {
 	removed := map[string][]string{
 		"pgctld": {"--pgbackrest-sidecar", "--pgbackrest-port", "--pgbackrest-cert-dir"},
@@ -156,7 +176,6 @@ func TestMultigresFlagGoldenListsDropRemovedFlags(t *testing.T) {
 			"--pgbackrest-port", "--pgbackrest-cert-file", "--pgbackrest-key-file",
 			"--pgbackrest-ca-file", "--pgbackrest-cipher-key-file",
 		},
-		"pgbackrestd": {"--sandbox"},
 	}
 	for binary, flags := range removed {
 		accepted := acceptedFlags(t, binary)
