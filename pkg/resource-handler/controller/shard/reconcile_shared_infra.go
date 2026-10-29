@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -12,12 +13,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/cert"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
+
+// pvcFieldOwner is the server-side-apply field manager for the shared backup PVC.
+const pvcFieldOwner = "multigres-operator"
 
 // reconcilePgHbaConfigMap creates or updates the pg_hba ConfigMap for a shard.
 // This ConfigMap is shared across all pools and contains the authentication template.
@@ -209,7 +214,8 @@ func (r *ShardReconciler) reconcilePgBackRestCerts(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) error {
-	if shard.Spec.Backup == nil {
+	backup := shard.Spec.SidecarBackupLocation
+	if backup == nil {
 		return nil
 	}
 
@@ -217,9 +223,9 @@ func (r *ShardReconciler) reconcilePgBackRestCerts(
 	// We use APIReader instead of the cached client because the informer cache
 	// only stores operator-labeled Secrets, making external Secrets (e.g.,
 	// cert-manager) invisible to the cached r.Get().
-	if shard.Spec.Backup.PgBackRestTLS != nil &&
-		shard.Spec.Backup.PgBackRestTLS.SecretName != "" {
-		secretName := shard.Spec.Backup.PgBackRestTLS.SecretName
+	if backup.PgBackRestTLS != nil &&
+		backup.PgBackRestTLS.SecretName != "" {
+		secretName := backup.PgBackRestTLS.SecretName
 		secret := &corev1.Secret{}
 		if err := r.APIReader.Get(ctx, types.NamespacedName{
 			Name:      secretName,
@@ -282,11 +288,12 @@ func (r *ShardReconciler) reconcileBackupCipherSecret(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) error {
-	if shard.Spec.Backup == nil || shard.Spec.Backup.Encryption == nil {
+	backup := shard.Spec.SidecarBackupLocation
+	if backup == nil || backup.Encryption == nil {
 		return nil
 	}
 
-	secretName := shard.Spec.Backup.Encryption.SecretName
+	secretName := backup.Encryption.SecretName
 	if secretName == "" {
 		return fmt.Errorf(
 			"pgbackrest cipher key secret name is required when encryption is enabled",
@@ -319,7 +326,7 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 ) error {
 	// S3 backups use object storage; no shared PVC is needed.
 	// TODO: Consider cleaning up orphaned backup PVCs when migrating from filesystem to S3.
-	if shard.Spec.Backup != nil && shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeS3 {
+	if sidecarLocation(shard).Type == multigresv1alpha1.BackupTypeS3 {
 		return nil
 	}
 
@@ -335,6 +342,10 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 		return nil
 	}
 
+	if err := r.alignPVCWithExisting(ctx, shard, desired); err != nil {
+		return err
+	}
+
 	// Server Side Apply
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
 	if err := r.Patch(
@@ -342,7 +353,7 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
+		client.FieldOwner(pvcFieldOwner),
 	); err != nil {
 		return fmt.Errorf("failed to apply shared backup PVC: %w", err)
 	}
@@ -357,6 +368,138 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 	)
 
 	return nil
+}
+
+// alignPVCWithExisting adjusts the desired PVC to a claim that already exists,
+// so a change in which backup config the claim derives from cannot make the
+// server-side apply wedge the shard reconcile. It reads the claim through the
+// informer cache, so ownership is only visible while pkg/cacheopts keeps
+// managedFields (see TestNewKeepsManagedFields).
+func (r *ShardReconciler) alignPVCWithExisting(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	desired *corev1.PersistentVolumeClaim,
+) error {
+	existing := &corev1.PersistentVolumeClaim{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get shared backup PVC: %w", err)
+	}
+
+	for _, note := range alignPVC(desired, existing) {
+		r.Recorder.Eventf(shard, "Warning", "BackupPVCSpecIgnored",
+			"Shared backup PVC %s: %s", desired.Name, note)
+	}
+	return nil
+}
+
+// alignPVC rewrites desired in place and returns one note per change a user
+// would otherwise not see.
+//
+// It keeps every field the API server refuses to change on a live claim at
+// its live value, so a claim created from the shard-level backup config
+// survives the switch to the sidecar location:
+//
+//   - a field the operator owns is re-sent with the live value;
+//   - a field it does not own is sent only when it already equals the live
+//     value, or when the claim has no class yet and one is now specified
+//     (Kubernetes allows that, and the claim must not stay Pending). Otherwise
+//     it is omitted so the live value stands, which also means the operator
+//     never takes ownership of a class nobody specified, such as the one the
+//     default StorageClass plugin fills in;
+//   - volumeName is never sent;
+//   - the request is never lowered, except to a value strictly above the
+//     claim's status.capacity, which is the recovery path after a failed
+//     expansion and is what the API server accepts; a claim that is not bound
+//     keeps its request.
+func alignPVC(desired, existing *corev1.PersistentVolumeClaim) []string {
+	owned := operatorOwnedSpecFields(existing)
+	desiredClass := ptr.Deref(desired.Spec.StorageClassName, "")
+	existingClass := ptr.Deref(existing.Spec.StorageClassName, "")
+
+	var notes []string
+	switch {
+	case owned["f:storageClassName"]:
+		if desiredClass != "" && desiredClass != existingClass {
+			notes = append(notes, fmt.Sprintf(
+				"storageClassName %q ignored, the claim keeps %q", desiredClass, existingClass))
+		}
+		desired.Spec.StorageClassName = existing.Spec.StorageClassName
+	case existingClass == "" && desiredClass != "":
+	case desiredClass != "" && desiredClass == existingClass:
+	default:
+		if desiredClass != "" {
+			notes = append(notes, fmt.Sprintf(
+				"storageClassName %q ignored, the claim keeps %q", desiredClass, existingClass))
+		}
+		desired.Spec.StorageClassName = nil
+	}
+
+	switch {
+	case slices.Equal(desired.Spec.AccessModes, existing.Spec.AccessModes):
+	case owned["f:accessModes"]:
+		notes = append(notes, fmt.Sprintf(
+			"accessModes %v ignored, the claim keeps %v",
+			desired.Spec.AccessModes, existing.Spec.AccessModes))
+		desired.Spec.AccessModes = existing.Spec.AccessModes
+	default:
+		notes = append(notes, fmt.Sprintf(
+			"accessModes %v ignored, the claim keeps %v",
+			desired.Spec.AccessModes, existing.Spec.AccessModes))
+		desired.Spec.AccessModes = nil
+	}
+
+	// The operator never sets volumeName; it is the binder's.
+	desired.Spec.VolumeName = ""
+
+	if have, ok := existing.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+		want := desired.Spec.Resources.Requests[corev1.ResourceStorage]
+		keep := want
+		switch {
+		case existing.Status.Phase != corev1.ClaimBound:
+			keep = have
+		case want.Cmp(have) < 0:
+			// Lowering is accepted only strictly above status.capacity, the way
+			// out of an expansion the backend could not satisfy.
+			capacity, reported := existing.Status.Capacity[corev1.ResourceStorage]
+			if !reported || want.Cmp(capacity) <= 0 {
+				keep = have
+			}
+		}
+		if keep.Cmp(want) != 0 {
+			notes = append(notes, fmt.Sprintf(
+				"storage request %s ignored, the claim keeps %s", want.String(), keep.String()))
+			desired.Spec.Resources.Requests[corev1.ResourceStorage] = keep
+		}
+	}
+	return notes
+}
+
+// operatorOwnedSpecFields returns the spec fields the operator's apply manager
+// owns on obj, keyed by their managed-fields name (for example "f:accessModes").
+func operatorOwnedSpecFields(obj *corev1.PersistentVolumeClaim) map[string]bool {
+	owned := map[string]bool{}
+	for _, mf := range obj.ManagedFields {
+		if mf.Manager != pvcFieldOwner || mf.Operation != metav1.ManagedFieldsOperationApply ||
+			mf.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(mf.FieldsV1.GetRawBytes(), &fields); err != nil {
+			continue
+		}
+		var spec map[string]json.RawMessage
+		if err := json.Unmarshal(fields["f:spec"], &spec); err != nil {
+			continue
+		}
+		for k := range spec {
+			owned[k] = true
+		}
+	}
+	return owned
 }
 
 // reconcileShardPDB applies the shard-wide PodDisruptionBudget and removes

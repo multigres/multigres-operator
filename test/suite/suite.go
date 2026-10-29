@@ -63,6 +63,10 @@ var (
 	poolers *poolerSim
 )
 
+// sidecarStuckDeadline is the age at which the suite's shard reconciler lets a
+// pod whose pgbackrest sidecar has not started be replaced.
+const sidecarStuckDeadline = 5 * time.Second
+
 // Boot brings up envtest and the manager. The returned function tears both down
 // and must run before any goroutine leak check, since the manager owns
 // goroutines that only exit once its context is cancelled.
@@ -261,6 +265,10 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 		APIReader:       mgr.GetAPIReader(),
 		PoolerClients:   poolerclient.Static(rpc),
 		CreateTopoStore: topo.ForShard,
+		// envtest cannot backdate a pod's creationTimestamp, so the sidecar
+		// escape's real deadline would take minutes. A testkit primitive that
+		// backdates pods would let this go.
+		SidecarStartupDeadline: sidecarStuckDeadline,
 	}
 	if err := shard.SetupWithManagerReconciler(
 		mgr, s.Reconciles.Wrap("shard", shard), opts,

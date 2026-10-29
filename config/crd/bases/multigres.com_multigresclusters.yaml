@@ -160,6 +160,8 @@ spec:
                           The ServiceAccount must exist in the same namespace and be annotated with
                           eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
                           The operator does NOT create this ServiceAccount — the user must create it externally.
+                          spec.shardServiceAccount wins when both are set; this field applies when
+                          spec.shardServiceAccount is unset.
                         type: string
                       useEnvCredentials:
                         type: boolean
@@ -2864,6 +2866,8 @@ spec:
                                 The ServiceAccount must exist in the same namespace and be annotated with
                                 eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
                                 The operator does NOT create this ServiceAccount — the user must create it externally.
+                                spec.shardServiceAccount wins when both are set; this field applies when
+                                spec.shardServiceAccount is unset.
                               type: string
                             useEnvCredentials:
                               type: boolean
@@ -3014,6 +3018,8 @@ spec:
                                       The ServiceAccount must exist in the same namespace and be annotated with
                                       eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
                                       The operator does NOT create this ServiceAccount — the user must create it externally.
+                                      spec.shardServiceAccount wins when both are set; this field applies when
+                                      spec.shardServiceAccount is unset.
                                     type: string
                                   useEnvCredentials:
                                     type: boolean
@@ -3188,6 +3194,8 @@ spec:
                                             The ServiceAccount must exist in the same namespace and be annotated with
                                             eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
                                             The operator does NOT create this ServiceAccount — the user must create it externally.
+                                            spec.shardServiceAccount wins when both are set; this field applies when
+                                            spec.shardServiceAccount is unset.
                                           type: string
                                         useEnvCredentials:
                                           type: boolean
@@ -5493,6 +5501,69 @@ spec:
                                                 format: int64
                                                 minimum: 1
                                                 type: integer
+                                            type: object
+                                          pgbackrestResources:
+                                            description: |-
+                                              PgBackRestResources defines the compute resource requirements of the
+                                              pgBackRest sidecar container. When empty, the operator defaults to requests
+                                              of 100m CPU and 256Mi memory with a 1Gi memory limit and no CPU limit.
+                                            properties:
+                                              claims:
+                                                description: |-
+                                                  Claims lists the names of resources, defined in spec.resourceClaims,
+                                                  that are used by this container.
+
+                                                  This field depends on the
+                                                  DynamicResourceAllocation feature gate.
+
+                                                  This field is immutable. It can only be set for containers.
+                                                items:
+                                                  description: ResourceClaim references
+                                                    one entry in PodSpec.ResourceClaims.
+                                                  properties:
+                                                    name:
+                                                      description: |-
+                                                        Name must match the name of one entry in pod.spec.resourceClaims of
+                                                        the Pod where this field is used. It makes that resource available
+                                                        inside a container.
+                                                      type: string
+                                                    request:
+                                                      description: |-
+                                                        Request is the name chosen for a request in the referenced claim.
+                                                        If empty, everything from the claim is made available, otherwise
+                                                        only the result of this request.
+                                                      type: string
+                                                  required:
+                                                  - name
+                                                  type: object
+                                                type: array
+                                                x-kubernetes-list-map-keys:
+                                                - name
+                                                x-kubernetes-list-type: map
+                                              limits:
+                                                additionalProperties:
+                                                  anyOf:
+                                                  - type: integer
+                                                  - type: string
+                                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                                  x-kubernetes-int-or-string: true
+                                                description: |-
+                                                  Limits describes the maximum amount of compute resources allowed.
+                                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                                type: object
+                                              requests:
+                                                additionalProperties:
+                                                  anyOf:
+                                                  - type: integer
+                                                  - type: string
+                                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                                  x-kubernetes-int-or-string: true
+                                                description: |-
+                                                  Requests describes the minimum amount of compute resources required.
+                                                  If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                                                  otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                                type: object
                                             type: object
                                           postgres:
                                             description: Postgres container configuration.
@@ -7999,6 +8070,69 @@ spec:
                                                 minimum: 1
                                                 type: integer
                                             type: object
+                                          pgbackrestResources:
+                                            description: |-
+                                              PgBackRestResources defines the compute resource requirements of the
+                                              pgBackRest sidecar container. When empty, the operator defaults to requests
+                                              of 100m CPU and 256Mi memory with a 1Gi memory limit and no CPU limit.
+                                            properties:
+                                              claims:
+                                                description: |-
+                                                  Claims lists the names of resources, defined in spec.resourceClaims,
+                                                  that are used by this container.
+
+                                                  This field depends on the
+                                                  DynamicResourceAllocation feature gate.
+
+                                                  This field is immutable. It can only be set for containers.
+                                                items:
+                                                  description: ResourceClaim references
+                                                    one entry in PodSpec.ResourceClaims.
+                                                  properties:
+                                                    name:
+                                                      description: |-
+                                                        Name must match the name of one entry in pod.spec.resourceClaims of
+                                                        the Pod where this field is used. It makes that resource available
+                                                        inside a container.
+                                                      type: string
+                                                    request:
+                                                      description: |-
+                                                        Request is the name chosen for a request in the referenced claim.
+                                                        If empty, everything from the claim is made available, otherwise
+                                                        only the result of this request.
+                                                      type: string
+                                                  required:
+                                                  - name
+                                                  type: object
+                                                type: array
+                                                x-kubernetes-list-map-keys:
+                                                - name
+                                                x-kubernetes-list-type: map
+                                              limits:
+                                                additionalProperties:
+                                                  anyOf:
+                                                  - type: integer
+                                                  - type: string
+                                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                                  x-kubernetes-int-or-string: true
+                                                description: |-
+                                                  Limits describes the maximum amount of compute resources allowed.
+                                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                                type: object
+                                              requests:
+                                                additionalProperties:
+                                                  anyOf:
+                                                  - type: integer
+                                                  - type: string
+                                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                                  x-kubernetes-int-or-string: true
+                                                description: |-
+                                                  Requests describes the minimum amount of compute resources required.
+                                                  If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                                                  otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                                                  More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                                                type: object
+                                            type: object
                                           postgres:
                                             description: Postgres container configuration.
                                             properties:
@@ -9897,6 +10031,13 @@ spec:
                     type: string
                   multipooler:
                     description: ImageRef is a container image reference.
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  pgbackrestd:
+                    description: |-
+                      PgBackRestd is the pgBackRest sidecar image. Unset, it is the Multipooler
+                      image of the same resolved set, so it never moves independently of it.
                     maxLength: 512
                     minLength: 1
                     type: string
@@ -12296,6 +12437,37 @@ spec:
                     - Delete
                     type: string
                 type: object
+              shardServiceAccount:
+                description: |-
+                  ShardServiceAccount is the ServiceAccount the operator creates for every
+                  shard pod of this cluster, owned by the MultigresCluster. When unset,
+                  shard pods run as the ServiceAccount named by an S3 backup config's
+                  serviceAccountName, or the namespace default.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations are set on the ServiceAccount, for example an IRSA role ARN.
+                      The operator owns these keys once applied: removing a key from this map
+                      removes it from the ServiceAccount, even if another writer set it first,
+                      and it is not restored to the previous value. Platform writers must not
+                      manage the same keys, or the two will overwrite each other on every
+                      reconcile.
+                    type: object
+                  name:
+                    description: Name is the name of the ServiceAccount.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: 'name must not be ''default'': the operator would take
+                        over the namespace''s shared ServiceAccount'
+                      rule: self != 'default'
+                required:
+                - name
+                type: object
               templateDefaults:
                 description: |-
                   TemplateDefaults defines the default templates to use for components
@@ -12534,6 +12706,13 @@ spec:
                         maxLength: 512
                         minLength: 1
                         type: string
+                      pgbackrestd:
+                        description: |-
+                          PgBackRestd is set only in the effective set, derived from Multipooler;
+                          default and applied sets never carry it.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
                       postgres:
                         description: ImageRef is a container image reference.
                         maxLength: 512
@@ -12571,6 +12750,13 @@ spec:
                         type: string
                       multipooler:
                         description: ImageRef is a container image reference.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
+                      pgbackrestd:
+                        description: |-
+                          PgBackRestd is set only in the effective set, derived from Multipooler;
+                          default and applied sets never carry it.
                         maxLength: 512
                         minLength: 1
                         type: string
@@ -12614,6 +12800,13 @@ spec:
                         type: string
                       multipooler:
                         description: ImageRef is a container image reference.
+                        maxLength: 512
+                        minLength: 1
+                        type: string
+                      pgbackrestd:
+                        description: |-
+                          PgBackRestd is set only in the effective set, derived from Multipooler;
+                          default and applied sets never carry it.
                         maxLength: 512
                         minLength: 1
                         type: string

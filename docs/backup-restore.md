@@ -111,3 +111,46 @@ spec:
 
 > [!NOTE]
 > The operator internally renames `tls.crt` → `pgbackrest.crt` and `tls.key` → `pgbackrest.key` via projected volumes to match upstream pgBackRest expectations. Users do not need to perform any manual key renaming.
+
+## pgBackRest Sidecar
+
+pgBackRest runs in its own `pgbackrest` container in every shard pod, Lite pods included, and not in the `postgres`, `multipooler` or `minigres` containers. That container alone holds repository credentials, TLS keys and the cipher key. There is no switch for it.
+
+**Minimum multigres image.** The sidecar needs a multigres image that ships `/multigres/bin/pgbackrestd`, whose `multipooler` and `minigres` require `--pgbackrest-control-socket` and `--pgbackrest-wal-socket`, and whose `pgctld` and `pgbackrestd` have dropped the in-process pgBackRest flags (`--pgbackrest-sidecar`, `--sandbox`). An older image fails to start the pod on an unknown or missing flag. The sidecar image defaults to the resolved Multipooler image, so one multigres build serves both. Release the operator only after the cluster's images are at or past that build.
+
+**Credentials.** Every S3 backup config must use exactly one of these:
+
+| Source | How |
+|--------|-----|
+| IRSA | `serviceAccountName` on the S3 config, or the cluster's `shardServiceAccount` carrying the role annotation |
+| Static keys | `credentialsSecret` (with or without `useEnvCredentials: true`, the documented static-key form) |
+
+Node or instance-profile credentials (an S3 config with neither of the above), `useEnvCredentials: true` without a `credentialsSecret`, and EKS Pod Identity are not supported yet. Admission rejects them, and a shard whose configuration got past admission stops reconciling with a `ConfigError` event instead of rendering a sidecar that cannot get credentials. A cluster already stored with such a configuration stays updatable and deletable: updates that leave the violation unchanged are admitted with a warning. Filesystem repositories must use the default path `/backups`, under the same rule.
+
+**Resources.** The sidecar defaults to requests of 100m CPU and 256Mi memory and a 1Gi memory limit, with no CPU limit because pgBackRest compression bursts. Override per pool with `pgbackrestResources`:
+
+```yaml
+spec:
+  databases:
+    - name: postgres
+      tablegroups:
+        - name: default
+          shards:
+            - name: 0-inf
+              spec:
+                pools:
+                  main:
+                    pgbackrestResources:
+                      requests: {cpu: 500m, memory: 512Mi}
+                      limits: {memory: 2Gi}
+```
+
+An override replaces the defaults as a whole, so state every request and limit you want.
+
+**Probes.** The sidecar has a startup probe and a conservative liveness probe running `pgbackrestd health`, which only asks the sidecar's status endpoint and never waits on a backup or restore, so a long operation cannot get it restarted.
+
+**Upgrading an existing cluster.** Every pod of a cluster created before the sidecar rolls once to the new pod template, one at a time through the normal gated roll. The data volume and the shared backup volume keep their claims, and the shard ServiceAccount named by `shardServiceAccount` is adopted if it already exists. A shard spec stored by the previous operator version carries no sidecar image, so the shard controller does not touch its pods until the cluster controller rewrites it, which happens on the first reconcile after the upgrade.
+
+A pool that has no `fsGroup` gains one (the postgres group, with `fsGroupChangePolicy: OnRootMismatch`), because the 8432 server must read its TLS Secret. The first time kubelet sees that `fsGroup` on an already populated data volume it recursively changes the volume's group ownership before starting the pod. On a large `PGDATA` that walk delays the start of each pod once; later starts skip it. It is safe for postgres, since `pgctld` normalises `PGDATA` to mode 0700 and rewrites the password file as 0600. Set an explicit pool `fsGroup` beforehand to take the walk separately.
+
+**Service account.** `shardServiceAccount` is optional. When unset, shard pods run as the ServiceAccount named by an S3 config's `serviceAccountName` (the IRSA account an existing cluster already uses), or as the namespace default if there is none. Either way the pod does not mount an API token.

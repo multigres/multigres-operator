@@ -34,6 +34,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = storagev1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 
 	newReconciler := func(objs ...client.Object) *ShardReconciler {
 		c := fake.NewClientBuilder().
@@ -57,6 +58,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"primary": {Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
 				},
@@ -80,7 +82,10 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: filesystemBackup("backup-sc"),
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
+				SidecarBackupLocation: filesystemBackup("backup-sc"),
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"primary": {
 						Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: "fast"},
@@ -112,7 +117,10 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: filesystemBackup("backup-sc"),
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
+				SidecarBackupLocation: filesystemBackup("backup-sc"),
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"primary": {Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
 				},
@@ -136,6 +144,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"primary": {
 						Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: "fast"},
@@ -160,7 +169,9 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 	t.Run("missing backup class reports the backup dependency", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
-			Spec:       multigresv1alpha1.ShardSpec{Backup: filesystemBackup("missing-sc")},
+			Spec: multigresv1alpha1.ShardSpec{
+				SidecarBackupLocation: filesystemBackup("missing-sc"),
+			},
 		}
 		r := newReconciler(shard)
 
@@ -186,6 +197,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"primary": {
 						Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: "missing-sc"},
@@ -217,7 +229,10 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: filesystemBackup("missing-backup-sc"),
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
+				SidecarBackupLocation: filesystemBackup("missing-backup-sc"),
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"primary": {
 						Storage: multigresv1alpha1.StorageSpec{
@@ -246,6 +261,7 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 					"aaa": {
 						Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: "missing-a"},
@@ -390,6 +406,7 @@ func TestStorageClassCondition_IsStableAcrossReconciles(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"primary": {Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
 			},
@@ -507,6 +524,9 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "stable-shard", Namespace: "default"},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -663,6 +683,9 @@ func TestReconcile_MissingStorageClassReturnsDependencyRequeueEvenWhenPVCExists(
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -763,6 +786,9 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 				},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
 				Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -870,6 +896,9 @@ func storageClassGateShard(backupClass, poolClass string) *multigresv1alpha1.Sha
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -880,7 +909,7 @@ func storageClassGateShard(backupClass, poolClass string) *multigresv1alpha1.Sha
 			Multiorch: multigresv1alpha1.MultiorchSpec{
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
-			Backup: &multigresv1alpha1.BackupConfig{
+			SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 				Type: multigresv1alpha1.BackupTypeFilesystem,
 				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
 					Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: backupClass},
@@ -1218,6 +1247,7 @@ func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"primary": {
 					Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: "appears-later"},
@@ -1333,6 +1363,7 @@ func TestStorageClassCondition_PreservesLastTransitionTimeWithoutATransition(t *
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"primary": {Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"}},
 			},

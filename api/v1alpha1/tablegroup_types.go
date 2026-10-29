@@ -88,6 +88,16 @@ type TableGroupSpec struct {
 	// +optional
 	Backup *BackupConfig `json:"backup,omitempty"`
 
+	// ShardServiceAccountName is copied from
+	// MultigresCluster.Spec.ShardServiceAccount.Name when the cluster names one.
+	// +optional
+	ShardServiceAccountName string `json:"shardServiceAccountName,omitempty"`
+
+	// SidecarBackupLocation is the database-level backup location, the same
+	// value written to topology. Tablegroup-level overrides are not applied.
+	// +optional
+	SidecarBackupLocation *BackupConfig `json:"sidecarBackupLocation,omitempty"`
+
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Propagated from the cluster's cell configs.
 	// +optional

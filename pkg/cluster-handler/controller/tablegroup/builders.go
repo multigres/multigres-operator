@@ -69,6 +69,8 @@ func BuildShard(
 			Observability:             tg.Spec.Observability,
 			LogLevels:                 tg.Spec.LogLevels,
 			Backup:                    shardSpec.Backup,
+			ShardServiceAccountName:   tg.Spec.ShardServiceAccountName,
+			SidecarBackupLocation:     tg.Spec.SidecarBackupLocation,
 			TopologyPruning:           tg.Spec.TopologyPruning,
 			DurabilityPolicy:          tg.Spec.DurabilityPolicy,
 			Mode:                      tg.Spec.Mode,

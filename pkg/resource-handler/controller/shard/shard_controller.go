@@ -87,6 +87,12 @@ type ShardReconciler struct {
 	// Nil in production; tests inject it to drive the readiness backoff
 	// deterministically.
 	Clock func() time.Time
+	// SidecarStartupDeadline, when positive, replaces the age a pod must reach
+	// before sidecarStuckPod may nominate it (otherwise the sidecar's startup
+	// probe budget plus an image pull allowance, about seven minutes). Nil
+	// effect in production; the suite sets it because envtest cannot backdate a
+	// pod's creationTimestamp.
+	SidecarStartupDeadline time.Duration
 
 	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
 	// docs/development/reconcile-gating.md. The zero value is safe.
@@ -107,6 +113,11 @@ type ShardReconciler struct {
 	// when Apply fires.
 	notConvergedMu    sync.Mutex
 	notConvergedSince map[string]time.Time
+
+	// disruptionLoggedAt records, per target pod, when its blocked disruption
+	// was last logged, so the log repeats at a bounded cadence.
+	disruptionLogMu    sync.Mutex
+	disruptionLoggedAt map[string]time.Time
 }
 
 // Reconcile manages pool pods, PVCs, services, and data-plane topology for a Shard.
@@ -240,6 +251,19 @@ func (r *ShardReconciler) Reconcile(
 			"Warning",
 			"ConfigError",
 			"Failed to reconcile postgres init-secrets Secret: %v",
+			err,
+		)
+		return ctrl.Result{}, err
+	}
+
+	if err := validateSidecarLocation(shard); err != nil {
+		monitoring.RecordSpanError(span, err)
+		logger.Error(err, "Invalid pgBackRest sidecar backup location")
+		r.Recorder.Eventf(
+			shard,
+			"Warning",
+			"ConfigError",
+			"Invalid pgBackRest sidecar backup location: %v",
 			err,
 		)
 		return ctrl.Result{}, err

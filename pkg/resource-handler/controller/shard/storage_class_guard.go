@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -63,14 +64,11 @@ type storageClassCheck struct {
 }
 
 func backupFilesystemStorageClassName(shard *multigresv1alpha1.Shard) string {
-	if shard.Spec.Backup == nil ||
-		shard.Spec.Backup.Type != multigresv1alpha1.BackupTypeFilesystem {
+	backup := sidecarLocation(shard)
+	if backup.Type != multigresv1alpha1.BackupTypeFilesystem || backup.Filesystem == nil {
 		return ""
 	}
-	if shard.Spec.Backup.Filesystem == nil {
-		return ""
-	}
-	return shard.Spec.Backup.Filesystem.Storage.Class
+	return backup.Filesystem.Storage.Class
 }
 
 func (r *ShardReconciler) validateStorageClassExists(
@@ -104,6 +102,18 @@ func (r *ShardReconciler) validateStorageClassDependencies(
 	shard *multigresv1alpha1.Shard,
 ) (storageClassCheck, error) {
 	backupClass := backupFilesystemStorageClassName(shard)
+	if backupClass != "" {
+		// An existing claim keeps the class it has, whatever the location now
+		// names, so a missing location class blocks nothing and must not park
+		// the shard in the requeue loop.
+		exists, err := r.sharedBackupPVCExists(ctx, shard)
+		if err != nil {
+			return storageClassCheck{}, err
+		}
+		if exists {
+			backupClass = ""
+		}
+	}
 	if backupClass != "" {
 		exists, err := r.validateStorageClassExists(ctx, backupClass)
 		if err != nil {
@@ -258,4 +268,21 @@ func (r *ShardReconciler) setStorageClassCondition(
 	}
 
 	return nil
+}
+
+func (r *ShardReconciler) sharedBackupPVCExists(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (bool, error) {
+	err := r.Get(ctx, client.ObjectKey{
+		Name:      BuildSharedBackupPVCName(shard),
+		Namespace: shard.Namespace,
+	}, &corev1.PersistentVolumeClaim{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to get shared backup PVC: %w", err)
+	}
+	return true, nil
 }

@@ -784,6 +784,31 @@ func (r *ShardReconciler) handleRollingUpdates(
 		return nil
 	}
 
+	// A pod whose pgbackrest sidecar never started cannot turn Ready, so the
+	// health gates below would hold its replacement forever. It never started
+	// postgres either, so draining it costs no availability. One pod per pass,
+	// like the stranded-topology path above.
+	if pod := r.sidecarStuckPod(ctx, shard, existingPods); pod != nil {
+		if err := r.initiateDrain(ctx, pod); err != nil {
+			return fmt.Errorf(
+				"failed to initiate drain for pod %s with a stuck pgbackrest sidecar: %w",
+				pod.Name,
+				err,
+			)
+		}
+		rollout.SetStarted()
+		logger.Info("Initiated drain for pod whose pgbackrest sidecar never started",
+			"pod", pod.Name)
+		r.Recorder.Eventf(
+			shard,
+			"Normal",
+			"PodUpdated",
+			"Initiated drain for pod %s, whose pgbackrest sidecar never started",
+			pod.Name,
+		)
+		return nil
+	}
+
 	// Prevent a new drain if some other pool/cell in this shard is
 	// already mid-rollout or has not yet come back Ready. This reads uncached
 	// state and includes extra pods left over from scale-down.

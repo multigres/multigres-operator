@@ -95,6 +95,12 @@ type PoolSpec struct {
 	// +optional
 	Multipooler ContainerConfig `json:"multipooler,omitempty"`
 
+	// PgBackRestResources defines the compute resource requirements of the
+	// pgBackRest sidecar container. When empty, the operator defaults to requests
+	// of 100m CPU and 256Mi memory with a 1Gi memory limit and no CPU limit.
+	// +optional
+	PgBackRestResources corev1.ResourceRequirements `json:"pgbackrestResources,omitempty"`
+
 	// Affinity defines the pod's scheduling constraints.
 	// +optional
 	Affinity *corev1.Affinity `json:"affinity,omitempty"`
@@ -200,6 +206,19 @@ type ShardSpec struct {
 	// +optional
 	Backup *BackupConfig `json:"backup,omitempty"`
 
+	// ShardServiceAccountName is the name of the ServiceAccount shard pods run
+	// as. Set from MultigresCluster.Spec.ShardServiceAccount.Name when the
+	// cluster names one.
+	// +optional
+	ShardServiceAccountName string `json:"shardServiceAccountName,omitempty"`
+
+	// SidecarBackupLocation is the database-level backup location, the same
+	// value written to topology. Shard- and tablegroup-level location
+	// overrides are deliberately not applied here: multipooler renders from
+	// topology, so the sidecar must match it.
+	// +optional
+	SidecarBackupLocation *BackupConfig `json:"sidecarBackupLocation,omitempty"`
+
 	// TopologyPruning controls whether stale topology entries are pruned.
 	// Inherited from MultigresCluster.
 	// +optional
@@ -263,6 +282,13 @@ type ShardImages struct {
 
 	// Postgres is the image for the postgres database.
 	Postgres ImageRef `json:"postgres"`
+
+	// PgBackRestd is the image for the pgBackRest sidecar. It is resolved on
+	// the MultigresCluster and defaults to the Multipooler image of the same
+	// set. A shard spec without it predates the sidecar and is not rolled until
+	// the cluster controller fills it in.
+	// +optional
+	PgBackRestd ImageRef `json:"pgbackrestd,omitempty"`
 }
 
 // ============================================================================

@@ -1652,6 +1652,110 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 	})
 }
 
+func TestMultigresClusterValidator_SidecarEnvCredentials(t *testing.T) {
+	t.Parallel()
+	fakeClient := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(
+		&multigresv1alpha1.CoreTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.ShardTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+	).
+		Build()
+	validator := NewMultigresClusterValidator(fakeClient)
+
+	cluster := func() *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeS3,
+					S3: &multigresv1alpha1.S3BackupConfig{
+						Bucket: "b", Region: "r", UseEnvCredentials: true,
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("create is rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := validator.ValidateCreate(t.Context(), cluster())
+		if err == nil || !strings.Contains(err.Error(), "credential source") {
+			t.Fatalf("want rejection, got %v", err)
+		}
+	})
+	t.Run("switching to env credentials is rejected", func(t *testing.T) {
+		t.Parallel()
+		old := cluster()
+		old.Spec.Backup.S3.UseEnvCredentials = false
+		old.Spec.Backup.S3.ServiceAccountName = "irsa"
+		_, err := validator.ValidateUpdate(t.Context(), old, cluster())
+		if err == nil || !strings.Contains(err.Error(), "credential source") {
+			t.Fatalf("want rejection, got %v", err)
+		}
+	})
+	// A persisted object that already violates the rule must stay writable,
+	// or the operator's own updates and finalizer removal would be refused and
+	// the cluster could neither reconcile nor be deleted.
+	t.Run("an already persisted violation stays writable", func(t *testing.T) {
+		t.Parallel()
+		old, updated := cluster(), cluster()
+		updated.Finalizers = []string{"multigres.com/test"}
+		warnings, err := validator.ValidateUpdate(t.Context(), old, updated)
+		if err != nil {
+			t.Fatalf("persisted violation blocked an update: %v", err)
+		}
+		if len(warnings) == 0 || !strings.Contains(warnings[0], "credential source") {
+			t.Fatalf("want a warning naming the problem, got %v", warnings)
+		}
+	})
+}
+
+func TestMultigresClusterValidator_SidecarPathPersistedViolationStaysWritable(t *testing.T) {
+	t.Parallel()
+	fakeClient := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(
+		&multigresv1alpha1.CoreTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.ShardTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+	).
+		Build()
+	validator := NewMultigresClusterValidator(fakeClient)
+	cluster := func() *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type:       multigresv1alpha1.BackupTypeFilesystem,
+					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/data/bk"},
+				},
+			},
+		}
+	}
+	if _, err := validator.ValidateCreate(t.Context(), cluster()); err == nil {
+		t.Fatal("create with a bad path must be rejected")
+	}
+	updated := cluster()
+	updated.Finalizers = []string{"multigres.com/test"}
+	warnings, err := validator.ValidateUpdate(t.Context(), cluster(), updated)
+	if err != nil {
+		t.Fatalf("persisted path violation blocked an update: %v", err)
+	}
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "/data/bk") {
+		t.Fatalf("want a warning naming the path, got %v", warnings)
+	}
+}
+
 func TestValidatePostgresConfig(t *testing.T) {
 	t.Parallel()
 

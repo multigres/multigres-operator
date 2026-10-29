@@ -882,3 +882,45 @@ func TestCEL_StatelessReplicasLimit(t *testing.T) {
 		t.Errorf("Expected error to contain 'less than or equal to 128', got %v", err)
 	}
 }
+
+func TestCEL_ShardServiceAccountName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		saName      string
+		expectError string
+	}{
+		{name: "cel-shard-sa-default", saName: "default", expectError: "name must not be 'default'"},
+		{name: "cel-shard-sa-uppercase", saName: "Shard_SA", expectError: "should match"},
+		{name: "cel-shard-sa-ok", saName: "shard-backup"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: tc.name, Namespace: testNamespace},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{Name: "zone-a", ZoneID: "use1-az1"}},
+					ShardServiceAccount: &multigresv1alpha1.ShardServiceAccountSpec{
+						Name: tc.saName,
+					},
+				},
+			}
+			setTestPostgresPasswordSecretRef(cluster)
+			err := k8sClient.Create(ctx, cluster)
+			if tc.expectError == "" {
+				if err != nil {
+					t.Fatalf("Expected success, got error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.expectError) {
+				t.Errorf("Expected error message to contain %q, got %q", tc.expectError, err.Error())
+			}
+		})
+	}
+}

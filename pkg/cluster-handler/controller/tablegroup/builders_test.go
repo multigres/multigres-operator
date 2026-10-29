@@ -9,6 +9,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
@@ -262,4 +263,91 @@ func TestBuildShard(t *testing.T) {
 			)
 		}
 	})
+}
+
+func s3Backup(bucket string) *multigresv1alpha1.BackupConfig {
+	return &multigresv1alpha1.BackupConfig{
+		Type: multigresv1alpha1.BackupTypeS3,
+		S3:   &multigresv1alpha1.S3BackupConfig{Bucket: bucket, Region: "us-east-1"},
+	}
+}
+
+// buildShardFromCluster runs the production path, cluster to TableGroup to
+// Shard, so the fixture cannot hand-set the fields under test.
+func buildShardFromCluster(
+	t *testing.T,
+	cluster *multigresv1alpha1.MultigresCluster,
+	dbCfg multigresv1alpha1.DatabaseConfig,
+	tgCfg *multigresv1alpha1.TableGroupConfig,
+	shardSpec multigresv1alpha1.ShardResolvedSpec,
+) *multigresv1alpha1.Shard {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	tg, err := multigrescluster.BuildTableGroup(
+		cluster, dbCfg, tgCfg, []multigresv1alpha1.ShardResolvedSpec{shardSpec},
+		multigresv1alpha1.GlobalTopoServerRef{}, scheme,
+	)
+	if err != nil {
+		t.Fatalf("BuildTableGroup() error = %v", err)
+	}
+	shard, err := BuildShard(tg, &shardSpec, scheme)
+	if err != nil {
+		t.Fatalf("BuildShard() error = %v", err)
+	}
+	return shard
+}
+
+func sidecarCluster() *multigresv1alpha1.MultigresCluster {
+	return &multigresv1alpha1.MultigresCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "default", UID: "c-uid"},
+		Spec: multigresv1alpha1.MultigresClusterSpec{
+			Backup: s3Backup("cluster-bucket"),
+		},
+	}
+}
+
+func TestBuildShard_SidecarLocationIgnoresTableGroupOverride(t *testing.T) {
+	cluster := sidecarCluster()
+	dbCfg := multigresv1alpha1.DatabaseConfig{Name: "postgres", Backup: s3Backup("db-bucket")}
+	tgCfg := &multigresv1alpha1.TableGroupConfig{
+		Name:    "default",
+		Default: true,
+		Backup:  s3Backup("tg-bucket"),
+	}
+	shardSpec := multigresv1alpha1.ShardResolvedSpec{Name: "0", Backup: s3Backup("tg-bucket")}
+
+	got := buildShardFromCluster(t, cluster, dbCfg, tgCfg, shardSpec)
+
+	if got.Spec.SidecarBackupLocation == nil || got.Spec.SidecarBackupLocation.S3 == nil {
+		t.Fatalf("SidecarBackupLocation = %+v, want S3 location", got.Spec.SidecarBackupLocation)
+	}
+	if b := got.Spec.SidecarBackupLocation.S3.Bucket; b != "db-bucket" {
+		t.Errorf("SidecarBackupLocation bucket = %q, want db-bucket", b)
+	}
+	if got.Spec.Backup == nil || got.Spec.Backup.S3 == nil ||
+		got.Spec.Backup.S3.Bucket != "tg-bucket" {
+		t.Errorf(
+			"Spec.Backup = %+v, want the tablegroup override bucket tg-bucket",
+			got.Spec.Backup,
+		)
+	}
+}
+
+func TestBuildShard_CarriesResolvedImageAndServiceAccount(t *testing.T) {
+	dbCfg := multigresv1alpha1.DatabaseConfig{Name: "postgres"}
+	tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "default", Default: true}
+	shardSpec := multigresv1alpha1.ShardResolvedSpec{Name: "0"}
+
+	cluster := sidecarCluster()
+	cluster.Spec.Images.PgBackRestd = "reg/multigres@sha256:abc"
+	cluster.Spec.ShardServiceAccount = &multigresv1alpha1.ShardServiceAccountSpec{Name: "shards"}
+	got := buildShardFromCluster(t, cluster, dbCfg, tgCfg, shardSpec)
+	if got.Spec.Images.PgBackRestd != "reg/multigres@sha256:abc" {
+		t.Errorf("Images.PgBackRestd = %q", got.Spec.Images.PgBackRestd)
+	}
+	if got.Spec.ShardServiceAccountName != "shards" {
+		t.Errorf("ShardServiceAccountName = %q, want shards", got.Spec.ShardServiceAccountName)
+	}
 }

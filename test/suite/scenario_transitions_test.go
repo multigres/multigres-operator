@@ -284,7 +284,6 @@ func testPVCDeletionPolicyRoundTrip(t *testing.T) {
 // there.
 func testBackupRoundTrip(t *testing.T) {
 	c := newCase(t)
-	ns := c.NS
 	cluster := c.MinimalCluster("backup")
 	c.WaitForClusterHealthy(cluster)
 	c.RequireQuiescent(5*time.Second, 30*time.Second)
@@ -302,72 +301,12 @@ func testBackupRoundTrip(t *testing.T) {
 		}
 	})
 
-	// The defect: the refused PVC apply returns an error from Reconcile
-	// (shard_controller.go), so everything after that block is skipped for as
-	// long as the field stays lowered, the postgres ConfigMap render, the pool
-	// pods, PDB sizing and reconcilePVCOwnerRefs, and controller-runtime
-	// retries forever. The status update is NOT skipped: updateStatus runs
-	// early in Reconcile, deliberately, so a wedged shard keeps reporting a
-	// current observedGeneration and phase. That is what makes this defect
-	// silent, and it is why a triage that looks for a stale status will not
-	// find one. A user who lowers this field wedges
-	// the shard's whole reconcile loop, with no clamping, no rejection at
-	// admission, and no condition on the Shard saying why.
-	//
-	// Pinned as non-quiescence rather than as a missing PVC event, because a
-	// missing event is what the API server's refusal guarantees on every run
-	// forever: no operator change could ever retire that pin, and a pin that
-	// cannot expire is a suppression. This one expires the day the operator
-	// clamps the value, because then the namespace goes quiet and quiescent
-	// returns nil.
-	//
-	// Two neighbouring fixes do not expire it through quiescence, and the
-	// difference is worth knowing before trusting this pin as a tracker. An
-	// admission refusal fails the test earlier, at the update call, so the
-	// suite still goes red but by another route. A fix that gives up and
-	// records a terminal condition only after retrying past this horizon's
-	// activity budget leaves the pin green, so that one has to be noticed by a
-	// human reading this comment rather than by the pin flipping.
-	//
-	// What this pin rests on, measured 2026-09-18 rather than assumed, because
-	// it used to rest on something weaker than it looked. The wedged pass makes
-	// several accepted no-op writes (both pg_hba and exporter-queries
-	// ConfigMaps, the multiorch Deployment and Service, a Shard status patch)
-	// before it reaches the refused PVC apply, so before the recorder counted
-	// rejected writes, this pin observed non-quiescence only through those
-	// earlier writes. Reordering updateStatus, a refactor with no behavioural
-	// intent, would have flipped it to "appears fixed" with the defect fully
-	// present. The recorder now counts the refused apply itself, which is the
-	// one signal the defect cannot occur without, so that particular
-	// reordering can no longer fool it.
-	//
-	// It is not yet true that the rejection alone carries the pin. Counting
-	// only rejected writes, the same wedge measured non-quiescent on one run
-	// and quiet on the next, 12 refused applies being right at the edge of a
-	// 5s window inside an 11s horizon as the retry backoff spreads them out.
-	// So the margin still comes from the signals combined. Widening the
-	// horizon is not the fix (see below); if this pin ever needs to stand on
-	// the rejection by itself, count refused reconcile passes directly rather
-	// than inferring them from a quiet window.
-	//
-	// The horizon is short on purpose. controller-runtime retries a failing
-	// Reconcile with exponential backoff, so the gap between failing passes
-	// grows without bound and a long enough horizon would let the backoff
-	// itself supply the quiet window while the shard is still wedged.
-	// Calibrated both ways on this harness, three runs each: measured from
-	// immediately after a legal spec write this goes quiet in about 5.3s,
-	// measured from immediately after this write it never goes quiet inside
-	// 11s, over 12 failing reconcile passes.
-	c.KnownDefect("MGO-BACKUP-PVC-SHRINK-WEDGES-SHARD-RECONCILE", func() error {
-		err := c.TryQuiescent(5*time.Second, 11*time.Second)
-		// A lost watch voids the measurement instead of observing the
-		// defect, and a non-nil error here is read as the defect still
-		// being present, which would hold this pin green on an unrelated
-		// failure.
-		c.True(err == nil || !strings.Contains(err.Error(), "is void"),
-			"quiescence over %s is void, so it is no evidence either way: %v", ns, err)
-		return err
-	})
+	// Lowering the request on a bound claim is refused by the API server, so
+	// the operator keeps the live request instead of sending the lowered one.
+	// The shard reconcile must not wedge on it: the namespace goes quiet and
+	// the claim still asks for what it did.
+	c.RequireQuiescent(5*time.Second, 30*time.Second)
+	c.Check().EqDiff(pvcsBefore, c.pvcRequests(), "the lowered request must not reach the claim")
 
 	// Where the value actually got to, as an executable claim rather than a
 	// comment, because the mechanism is easy to misread: it does reach the

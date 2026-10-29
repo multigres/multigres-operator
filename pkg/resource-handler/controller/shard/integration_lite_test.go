@@ -64,6 +64,7 @@ func newLiteTestShard(name, clusterName string) *multigresv1alpha1.Shard {
 			Images: multigresv1alpha1.ShardImages{
 				Multiorch:   "ghcr.io/multigres/multigres:main",
 				Multipooler: "ghcr.io/multigres/multigres:main",
+				PgBackRestd: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",
 			},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -77,7 +78,7 @@ func newLiteTestShard(name, clusterName string) *multigresv1alpha1.Shard {
 					Storage:         multigresv1alpha1.StorageSpec{Size: "1Gi"},
 				},
 			},
-			Backup: &multigresv1alpha1.BackupConfig{
+			SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 				Type: multigresv1alpha1.BackupTypeFilesystem,
 				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
 					Path:    "/backups",

@@ -57,6 +57,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -127,6 +130,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -207,6 +213,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -252,6 +261,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -313,6 +325,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -340,6 +355,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -367,6 +385,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -443,6 +464,7 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Images: multigresv1alpha1.ShardImages{
 						Multipooler: "custom/multipooler:v1.0.0",
 						Postgres:    "postgres:16",
+						PgBackRestd: "custom/multipooler:v1.0.0",
 					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"primary": {
@@ -501,6 +523,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Finalizers:        []string{"kubernetes.io/test"},
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -527,6 +552,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 						Finalizers:        []string{"testing"},
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
 						Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -567,6 +595,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -596,6 +627,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -635,6 +669,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -675,6 +712,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -714,6 +754,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -757,6 +800,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -786,6 +832,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -822,6 +871,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Backup: &multigresv1alpha1.BackupConfig{
@@ -865,6 +917,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Finalizers: []string{"shard.multigres.com/finalizer"},
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -924,6 +979,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 				},
@@ -955,6 +1013,9 @@ func TestShardReconciler_Reconcile(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
 					Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -1331,6 +1392,9 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 				},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
 				Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -1438,6 +1502,9 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 				Namespace: "default",
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
 				Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -1532,6 +1599,9 @@ func TestShardReconciler_UpdateStatus(t *testing.T) {
 				Namespace: "default",
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
 				Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -1713,6 +1783,9 @@ func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -1832,6 +1905,9 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -2126,6 +2202,9 @@ func TestRollingUpdateOrder(t *testing.T) {
 			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -2252,6 +2331,9 @@ func TestRollingUpdateWaitsForSiblingCell(t *testing.T) {
 			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",

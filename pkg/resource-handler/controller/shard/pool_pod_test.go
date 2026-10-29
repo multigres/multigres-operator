@@ -34,6 +34,8 @@ func newTestShard() *multigresv1alpha1.Shard {
 				Name: "multigres-admin-password",
 				Key:  PostgresPasswordSecretKey,
 			},
+			// Filled in by the cluster controller; a shard without it is refused.
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 		},
 	}
 }
@@ -165,16 +167,23 @@ func TestBuildPoolPod_Containers(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(pod.Spec.InitContainers) != 1 {
+	if len(pod.Spec.InitContainers) != 2 {
 		t.Fatalf(
-			"expected 1 init container (pgctld sidecar), got %d",
+			"expected 2 init containers (pgbackrest and pgctld sidecars), got %d",
 			len(pod.Spec.InitContainers),
 		)
 	}
-	if pod.Spec.InitContainers[0].Name != "postgres" {
+	if pod.Spec.InitContainers[0].Name != "pgbackrest" {
 		t.Errorf(
 			"init container name = %q, want %q",
 			pod.Spec.InitContainers[0].Name,
+			"pgbackrest",
+		)
+	}
+	if pod.Spec.InitContainers[1].Name != "postgres" {
+		t.Errorf(
+			"init container name = %q, want %q",
+			pod.Spec.InitContainers[1].Name,
 			"postgres",
 		)
 	}
@@ -295,7 +304,7 @@ func TestBuildPoolPod_PostgresPasswordFile(t *testing.T) {
 		t.Errorf("postgres password defaultMode = %v, want 0444", passwordVolume.Secret.DefaultMode)
 	}
 
-	postgres := pod.Spec.InitContainers[0]
+	postgres := sidecarTestContainer(t, pod, "postgres")
 	multipooler := pod.Spec.Containers[0]
 	for name, c := range map[string]corev1.Container{
 		"postgres":    postgres,
@@ -406,7 +415,7 @@ func TestBuildPoolPod_PostgresInitSecretsRef(t *testing.T) {
 		)
 	}
 
-	postgres := pod.Spec.InitContainers[0]
+	postgres := sidecarTestContainer(t, pod, "postgres")
 	assertEnvVarValue(t, postgres.Env, "POSTGRES_INIT_SECRETS_FILE", PostgresInitSecretsFilePath)
 	assertReadOnlyVolumeMount(
 		t,
@@ -462,10 +471,13 @@ func TestBuildPoolPod_SecurityContext(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if pod.Spec.SecurityContext != nil {
+	// A pool pod defaults fsGroup to the sidecar's group so it can read the
+	// pgBackRest TLS Secret.
+	if pod.Spec.SecurityContext == nil || pod.Spec.SecurityContext.FSGroup == nil ||
+		*pod.Spec.SecurityContext.FSGroup != DefaultPostgresGID {
 		t.Errorf(
-			"pod security context = %v, want nil when fsGroup is not configured",
-			pod.Spec.SecurityContext,
+			"pod security context = %v, want fsGroup %d by default",
+			pod.Spec.SecurityContext, DefaultPostgresGID,
 		)
 	}
 
@@ -499,7 +511,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
 			t,
-			pod.Spec.InitContainers[0],
+			sidecarTestContainer(t, pod, "postgres"),
 			ptr.To(DefaultPostgresUID),
 			ptr.To(DefaultPostgresGID),
 		)
@@ -529,7 +541,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
 			t,
-			pod.Spec.InitContainers[0],
+			sidecarTestContainer(t, pod, "postgres"),
 			ptr.To(DefaultPostgresUID),
 			ptr.To(DefaultPostgresGID),
 		)
@@ -566,7 +578,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
 			t,
-			pod.Spec.InitContainers[0],
+			sidecarTestContainer(t, pod, "postgres"),
 			ptr.To(int64(1000)),
 			ptr.To(int64(1001)),
 		)
@@ -600,7 +612,7 @@ func TestBuildPoolPod_FSGroupDoesNotOverrideContainerRuntimeIdentity(t *testing.
 		assertPoolPodFSGroup(t, pod, 2000)
 		assertContainerIdentity(
 			t,
-			pod.Spec.InitContainers[0],
+			sidecarTestContainer(t, pod, "postgres"),
 			ptr.To(int64(1000)),
 			ptr.To(int64(1001)),
 		)
@@ -725,7 +737,7 @@ func TestComputeSpecHash_ChangesOnPostgresPasswordFileSpec(t *testing.T) {
 
 	t.Run("pgctld env", func(t *testing.T) {
 		oldPod := pod.DeepCopy()
-		useLegacyPasswordEnv(&oldPod.Spec.InitContainers[0])
+		useLegacyPasswordEnv(&oldPod.Spec.InitContainers[1])
 		if got := ComputeSpecHash(oldPod); got == wantHash {
 			t.Error("spec hash should differ when pgctld password env changes")
 		}
@@ -988,7 +1000,7 @@ func TestBuildPoolPod_Hostname(t *testing.T) {
 func TestBuildPoolPod_ServiceAccountName(t *testing.T) {
 	t.Run("set when S3 serviceAccountName configured", func(t *testing.T) {
 		shard := newTestShard()
-		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+		shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 			Type: multigresv1alpha1.BackupTypeS3,
 			S3: &multigresv1alpha1.S3BackupConfig{
 				Bucket:             "my-bucket",
@@ -1057,7 +1069,7 @@ func TestComputeSpecHash_ChangesOnServiceAccountName(t *testing.T) {
 	pod1, _ := BuildPoolPod(shard, "main", "z1", newTestPoolSpec(), 0, testScheme())
 
 	shardWithSA := newTestShard()
-	shardWithSA.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shardWithSA.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeS3,
 		S3: &multigresv1alpha1.S3BackupConfig{
 			Bucket:             "my-bucket",

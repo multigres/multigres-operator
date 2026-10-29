@@ -497,6 +497,34 @@ func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
 	assertPoolIdentity("multipooler after source mutation", got.Multipooler, 1000, 2002)
 }
 
+func TestMergePoolSpec_PgBackRestResources(t *testing.T) {
+	base := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+	}
+	if got := mergePoolSpec(
+		base,
+		multigresv1alpha1.PoolSpec{},
+	); !got.PgBackRestResources.Requests.Cpu().
+		Equal(resource.MustParse("1")) {
+		t.Errorf("an empty override dropped the base: %v", got.PgBackRestResources)
+	}
+	override := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+		},
+	}
+	got := mergePoolSpec(base, override)
+	if !got.PgBackRestResources.Limits.Memory().Equal(resource.MustParse("2Gi")) {
+		t.Errorf("override not applied: %v", got.PgBackRestResources)
+	}
+	override.PgBackRestResources.Limits[corev1.ResourceMemory] = resource.MustParse("9Gi")
+	if !got.PgBackRestResources.Limits.Memory().Equal(resource.MustParse("2Gi")) {
+		t.Errorf("merge shares the override's map: %v", got.PgBackRestResources)
+	}
+}
+
 func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
 	t.Parallel()
 

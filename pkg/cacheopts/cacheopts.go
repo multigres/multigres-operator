@@ -109,6 +109,11 @@ func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) c
 			&appsv1.StatefulSet{}: {Namespaces: hybrid},
 			&corev1.Service{}:     {Namespaces: hybrid},
 			&corev1.Pod{}:         {Namespaces: hybrid},
+			// SERVICEACCOUNTS: the shard ServiceAccount the operator applies
+			// carries the managed-by label, and Owns() would otherwise cache
+			// every account in the cluster. A conflicting account lacks the
+			// label, so the conflict check reads through the APIReader.
+			&corev1.ServiceAccount{}: {Namespaces: hybrid},
 			// CONFIGMAPS are deliberately absent, so they fall back to
 			// DefaultNamespaces (unfiltered): users supply their own unlabelled
 			// ConfigMaps for postgresql.conf and the operator has to hash them.
