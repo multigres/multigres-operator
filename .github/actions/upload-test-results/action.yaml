@@ -64,19 +64,13 @@ inputs:
       Trunk test collection ID. Non-secret; safe to commit. The collection must
       accept uploads from forked pull requests.
     required: false
-    default: "" # Set the operator collection ID before merging.
+    default: BInj2zOW
 
 runs:
   using: composite
   steps:
-    - name: Report pending Trunk collection
-      if: inputs.test-collection-id == ''
-      shell: bash
-      run: echo "::notice::Trunk uploads are disabled until test-collection-id is set."
-
     - name: Prepare JUnit results for Trunk
       id: prepare
-      if: inputs.test-collection-id != ''
       shell: bash
       env:
         JUNIT_PATHS: ${{ inputs.junit-paths }}
@@ -85,7 +79,6 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/prepare-junit.sh"
 
     - name: Upload to Trunk
-      if: inputs.test-collection-id != ''
       uses: trunk-io/analytics-uploader@a86313c7029d22e6ea2d5c346060a224d90053dc # v2.1.6
       with:
         junit-paths: ${{ steps.prepare.outputs.junit-paths }}
