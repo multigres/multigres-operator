@@ -362,29 +362,16 @@ func testChildCRThrash(t *testing.T) {
 
 	c.RequireQuiescent(10*time.Second, 90*time.Second)
 
-	// A second live defect, found by this test: the shared backup PVC never
-	// has its orphan label cleared when a torn-down Shard's replacement
-	// reclaims it.
-	//
-	// reconcileSharedBackupPVC (reconcile_shared_infra.go) reapplies the PVC by
-	// server-side apply from BuildSharedBackupPVC's payload, which never
-	// mentions multigres.com/orphan-since, so SSA leaves that label exactly as
-	// cleanupShardPVCs (reconcile_deletion.go) left it during the prior
-	// teardown: marked orphan. Contrast the per-pool data PVC path, which
-	// explicitly calls pvcutil.ClearOrphan on reuse
-	// (reconcile_pool_pods.go:204). The shared backup PVC has no equivalent
-	// call anywhere in the shard controller.
-	//
-	// Net effect: after any teardown-and-recreate of a Shard whose backup PVC
-	// survives (WhenDeleted=Delete, which MinimalCluster sets, still only
-	// orphans rather than deletes it in-line, because resolvePodIndex cannot
-	// parse an ordinal out of a backup PVC's name-hash suffix and the !hasIndex
-	// arm short-circuits before pvcOrphanReplicasThreshold is consulted at
-	// all), the backup PVC is left labeled orphan
-	// forever, even though it is immediately reclaimed and stays in active use
-	// by the reconverged, healthy shard. The multigres-gc CronJob acts on
-	// exactly that label, so in a real cluster this is a live backup volume
-	// scheduled for deletion out from under a running shard.
+	// Tearing a Shard down marks the shared backup PVC orphan rather than
+	// deleting it, because resolvePodIndex finds no ordinal in its name-hash
+	// suffix and the !hasIndex arm of cleanupShardPVCs short-circuits at any
+	// replica count. The replacement shard then reclaims that same PVC, and
+	// reconcileSharedBackupPVC must clear the label itself: server-side apply
+	// does not, since the payload never mentions it and SSA only removes
+	// fields it already owns. This is asserted after the shard has
+	// reconverged and quiesced, not at any earlier point, because a stale
+	// label mid-reconcile would be indistinguishable from one about to be
+	// cleared.
 	backupPVCKey := client.ObjectKey{
 		Namespace: ns,
 		Name:      shardcontroller.BuildSharedBackupPVCName(shard),
@@ -395,17 +382,11 @@ func testChildCRThrash(t *testing.T) {
 		"get shared backup PVC %s",
 		backupPVCKey.Name,
 	)
-	c.KnownDefect("MGO-BACKUP-PVC-ORPHAN-STALE", func() error {
-		since, stale := pvc.Labels[metadata.LabelOrphan]
-		if !stale {
-			return nil
-		}
-		return fmt.Errorf(
-			"shared backup PVC %s still carries %s=%s from an earlier teardown, though the "+
-				"shard that owns it (uid %s) has reconverged healthy: reconcileSharedBackupPVC's "+
-				"server-side apply never clears the label on reuse, unlike the per-pool data PVC "+
-				"path (pvcutil.ClearOrphan in reconcile_pool_pods.go)",
-			backupPVCKey.Name, metadata.LabelOrphan, since, shard.UID,
-		)
-	})
+	since, stale := pvc.Labels[metadata.LabelOrphan]
+	c.False(
+		stale,
+		"shared backup PVC %s was reclaimed by shard uid %s and must not still carry "+
+			"%s=%s from the earlier teardown",
+		backupPVCKey.Name, shard.UID, metadata.LabelOrphan, since,
+	)
 }
