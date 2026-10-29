@@ -78,9 +78,13 @@ Since ConfigMaps are generally lower volume and lower security risk than Secrets
 
 ### Laptop-Mode Cache Scoping
 
-The cache options builder is `cacheopts.New(operatorNamespace, laptopNamespace string)`.
-With an empty `laptopNamespace` the configuration above is returned unchanged.
-When it is set (laptop mode, `--namespace`), the cache holds that one namespace
+The cache options builder is `cacheopts.New(operatorNamespace, laptopNamespace string, watchNamespaces ...string)`.
+With an empty `laptopNamespace` and no watch allowlist, the configuration above is
+returned unchanged. `--watch-namespace` accepts a comma-separated allowlist and
+scopes both `DefaultNamespaces` and every `ByObject` override to those namespaces
+plus the operator namespace. These explicit namespaces are unfiltered.
+Laptop mode takes precedence over that allowlist and never expands its watch scope.
+When `laptopNamespace` is set (laptop mode, `--namespace`), the cache holds that one namespace
 and nothing else. Laptop mode is only permitted against a namespace already
 labelled `multigres.com/reconcile=disabled`, so this matches what the process is
 allowed to reconcile:

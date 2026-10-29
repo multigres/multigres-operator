@@ -91,6 +91,21 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 
+	t.Run("CertCommonName propagates from TableGroup to Shard", func(t *testing.T) {
+		for _, commonName := range []string{"", "db.example.com"} {
+			liteTG := tg.DeepCopy()
+			liteTG.Spec.Mode = multigresv1alpha1.ModeLite
+			liteTG.Spec.CertCommonName = commonName
+			got, err := BuildShard(liteTG, shardSpec, scheme)
+			if err != nil {
+				t.Fatalf("BuildShard() error = %v", err)
+			}
+			if got.Spec.CertCommonName != commonName {
+				t.Errorf("CertCommonName = %q, want %q", got.Spec.CertCommonName, commonName)
+			}
+		}
+	})
+
 	t.Run("DurabilityPolicy propagates from TableGroup to Shard", func(t *testing.T) {
 		tgWithPolicy := tg.DeepCopy()
 		tgWithPolicy.Spec.DurabilityPolicy = "MULTI_CELL_AT_LEAST_2"
@@ -104,6 +119,19 @@ func TestBuildShard(t *testing.T) {
 				"Spec.DurabilityPolicy = %v, want MULTI_CELL_AT_LEAST_2",
 				got.Spec.DurabilityPolicy,
 			)
+		}
+	})
+
+	t.Run("Mode propagates from TableGroup to Shard", func(t *testing.T) {
+		liteTG := tg.DeepCopy()
+		liteTG.Spec.Mode = multigresv1alpha1.ModeLite
+
+		got, err := BuildShard(liteTG, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if got.Spec.Mode != multigresv1alpha1.ModeLite {
+			t.Errorf("Spec.Mode = %q, want %q", got.Spec.Mode, multigresv1alpha1.ModeLite)
 		}
 	})
 

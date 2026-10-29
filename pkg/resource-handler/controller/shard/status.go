@@ -30,6 +30,10 @@ func (r *ShardReconciler) updateStatus(
 	shard *multigresv1alpha1.Shard,
 	rendered renderedConfig,
 ) error {
+	if shard.Spec.Mode == multigresv1alpha1.ModeLite {
+		return r.updateLiteStatus(ctx, shard, rendered)
+	}
+
 	oldPhase := shard.Status.Phase
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 
@@ -110,6 +114,16 @@ func (r *ShardReconciler) updateStatus(
 
 	shard.Status.ObservedGeneration = shard.Generation
 
+	return r.patchStatus(ctx, shard, oldPhase)
+}
+
+// patchStatus writes the status computed in memory to the Shard with a
+// server-side apply patch and records a phase transition from oldPhase.
+func (r *ShardReconciler) patchStatus(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	oldPhase multigresv1alpha1.Phase,
+) error {
 	// Filter conditions for the SSA patch. Each condition type must belong to
 	// exactly one SSA field manager
 	var patchConditions []metav1.Condition

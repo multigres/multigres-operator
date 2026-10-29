@@ -1,0 +1,89 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: external-etcd-server
+  namespace: NAMESPACE
+spec:
+  secretName: external-etcd-server
+  dnsNames: [external-etcd, external-etcd.NAMESPACE.svc, external-etcd.NAMESPACE.svc.cluster.local]
+  issuerRef:
+    name: topo-e2e-ca
+    kind: ClusterIssuer
+  usages: [server auth, client auth]
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: external-etcd-client
+  namespace: NAMESPACE
+spec:
+  secretName: external-etcd-client
+  commonName: pr723-topology-client
+  issuerRef:
+    name: topo-e2e-ca
+    kind: ClusterIssuer
+  usages: [client auth]
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: external-etcd-data
+  namespace: NAMESPACE
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-etcd
+  namespace: NAMESPACE
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: external-etcd}
+  template:
+    metadata:
+      labels: {app: external-etcd}
+    spec:
+      containers:
+      - name: etcd
+        image: gcr.io/etcd-development/etcd:v3.6.7
+        command:
+        - /usr/local/bin/etcd
+        - --data-dir=/data
+        - --listen-client-urls=https://0.0.0.0:2379
+        - --advertise-client-urls=https://external-etcd.NAMESPACE.svc:2379
+        - --cert-file=/tls/tls.crt
+        - --key-file=/tls/tls.key
+        - --trusted-ca-file=/tls/ca.crt
+        - --client-cert-auth=true
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+        ports:
+        - containerPort: 2379
+        readinessProbe:
+          tcpSocket: {port: 2379}
+        volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+      - name: data
+        persistentVolumeClaim: {claimName: external-etcd-data}
+      - name: tls
+        secret: {secretName: external-etcd-server}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-etcd
+  namespace: NAMESPACE
+spec:
+  selector: {app: external-etcd}
+  ports:
+  - {port: 2379, targetPort: 2379}

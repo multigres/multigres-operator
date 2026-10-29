@@ -1,0 +1,140 @@
+diff --git a/go/services/multiadmin/backup.go b/go/services/multiadmin/backup.go
+index 222a5ab8..85cd47ea 100644
+--- a/go/services/multiadmin/backup.go
++++ b/go/services/multiadmin/backup.go
+@@ -121,7 +121,7 @@ func (s *MultiadminServer) findPoolerForBackup(ctx context.Context, database, ta
+ 		return nil, fmt.Errorf("failed to get cell names: %w", err)
+ 	}
+ 
+-	// Collect every serving pooler in the (database, tableGroup) so leader selection
++	// Collect serving poolers in the requested shard so leader selection
+ 	// can pick the highest-rule self_leadership across cells (a leader can be
+ 	// in any cell, and during a rule change two poolers may briefly both
+ 	// self-claim).
+@@ -132,8 +132,7 @@ func (s *MultiadminServer) findPoolerForBackup(ctx context.Context, database, ta
+ 			DatabaseShard: &topoclient.DatabaseShard{
+ 				Database:   database,
+ 				TableGroup: tableGroup,
+-				// Note: Shard is intentionally left empty to match all shards.
+-				// Multipoolers currently don't set Shard when registering.
++				Shard:      shard,
+ 			},
+ 		}
+ 		poolerInfos, err := s.ts.GetMultipoolersByCell(ctx, cellName, opts)
+diff --git a/go/services/multiadmin/backup_test.go b/go/services/multiadmin/backup_test.go
+index c9f593db..b97e2e66 100644
+--- a/go/services/multiadmin/backup_test.go
++++ b/go/services/multiadmin/backup_test.go
+@@ -143,6 +143,7 @@ func TestGetBackupJobStatus_FallbackToPooler(t *testing.T) {
+ 		ShardKey: &clustermetadatapb.ShardKey{
+ 			Database:   "testdb",
+ 			TableGroup: "default",
++			Shard:      "0",
+ 		},
+ 		Type: clustermetadatapb.PoolerType_REPLICA,
+ 	}
+@@ -247,7 +248,7 @@ func TestGetBackups_PropagatesLSNAndPgVersion(t *testing.T) {
+ 		Id:       &clustermetadatapb.ID{Component: clustermetadatapb.ID_MULTIPOOLER, Cell: "cell1", Name: "replica-pooler"},
+ 		Hostname: "replica-pooler.cell1",
+ 		PortMap:  map[string]int32{"grpc": 8081},
+-		ShardKey: &clustermetadatapb.ShardKey{Database: "testdb", TableGroup: "default"},
++		ShardKey: &clustermetadatapb.ShardKey{Database: "testdb", TableGroup: "default", Shard: "0"},
+ 		Type:     clustermetadatapb.PoolerType_REPLICA,
+ 	}
+ 	require.NoError(t, ts.CreateMultipooler(ctx, replicaPooler))
+@@ -345,6 +346,7 @@ func TestBackup_ForcePrimary(t *testing.T) {
+ 		ShardKey: &clustermetadatapb.ShardKey{
+ 			Database:   "testdb",
+ 			TableGroup: "default",
++			Shard:      "0-inf",
+ 		},
+ 		Type: clustermetadatapb.PoolerType_PRIMARY,
+ 		RoutingState: &clustermetadatapb.RoutingState{
+@@ -363,6 +365,7 @@ func TestBackup_ForcePrimary(t *testing.T) {
+ 		ShardKey: &clustermetadatapb.ShardKey{
+ 			Database:   "testdb",
+ 			TableGroup: "default",
++			Shard:      "0-inf",
+ 		},
+ 		Type: clustermetadatapb.PoolerType_REPLICA,
+ 	}
+@@ -439,6 +442,7 @@ func TestBackup_ForcePrimary(t *testing.T) {
+ 			ShardKey: &clustermetadatapb.ShardKey{
+ 				Database:   "testdb",
+ 				TableGroup: "default",
++				Shard:      "0-inf",
+ 			},
+ 			Type: clustermetadatapb.PoolerType_PRIMARY,
+ 			RoutingState: &clustermetadatapb.RoutingState{
+@@ -534,6 +538,7 @@ func TestVerifyBackups(t *testing.T) {
+ 			ShardKey: &clustermetadatapb.ShardKey{
+ 				Database:   "testdb",
+ 				TableGroup: "default",
++				Shard:      "0-inf",
+ 			},
+ 			Type: clustermetadatapb.PoolerType_REPLICA,
+ 		}
+diff --git a/go/services/multiadmin/backup_shard_test.go b/go/services/multiadmin/backup_shard_test.go
+new file mode 100644
+--- /dev/null
++++ b/go/services/multiadmin/backup_shard_test.go
+@@ -0,0 +1,59 @@
++// Copyright 2026 Supabase, Inc.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package multiadmin
++
++import (
++	"testing"
++
++	"github.com/stretchr/testify/require"
++
++	metadata "github.com/multigres/multigres/go/pb/clustermetadata"
++)
++
++func TestFindPoolerForBackup_RespectsShard(t *testing.T) {
++	for _, tc := range []struct {
++		name  string
++		role  metadata.RoutingRole
++		mode  metadata.LeadershipMode
++		force bool
++	}{
++		{"static", metadata.RoutingRole_ROUTING_ROLE_PRIMARY, metadata.LeadershipMode_LEADERSHIP_MODE_STATIC, false},
++		{"static forced", metadata.RoutingRole_ROUTING_ROLE_PRIMARY, metadata.LeadershipMode_LEADERSHIP_MODE_STATIC, true},
++		{"consensus leader", metadata.RoutingRole_ROUTING_ROLE_PRIMARY, metadata.LeadershipMode_LEADERSHIP_MODE_CONSENSUS, true},
++		{"consensus follower", metadata.RoutingRole_ROUTING_ROLE_REPLICA, metadata.LeadershipMode_LEADERSHIP_MODE_CONSENSUS, false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			server := newTestServer(t, "cell1")
++			defer server.Stop()
++			other := makeRoutedPooler("cell1", "other", tc.role)
++			other.ShardKey.Shard = "80-inf"
++			other.ServingStatus = metadata.PoolerServingStatus_SERVING
++			other.LeadershipMode = tc.mode
++			require.NoError(t, server.ts.CreateMultipooler(t.Context(), other))
++			_, err := server.findPoolerForBackup(t.Context(), "db1", "default", "0-80", tc.force)
++			require.Error(t, err, "must not operate on another shard's backup repository")
++			target := makeRoutedPooler("cell1", "target", tc.role)
++			target.ShardKey.Shard = "0-80"
++			target.ServingStatus = metadata.PoolerServingStatus_SERVING
++			target.LeadershipMode = tc.mode
++			require.NoError(t, server.ts.CreateMultipooler(t.Context(), target))
++			got, err := server.findPoolerForBackup(t.Context(), "db1", "default", "0-80", tc.force)
++			require.NoError(t, err)
++			require.Equal(t, target.Id.Name, got.Id.Name)
++			require.Equal(t, target.Id.Cell, got.Id.Cell)
++			require.Equal(t, target.Id.Component, got.Id.Component)
++		})
++	}
++}

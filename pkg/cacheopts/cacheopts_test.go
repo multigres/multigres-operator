@@ -112,3 +112,17 @@ func TestNewWithLaptopNamespaceScopesToItAlone(t *testing.T) {
 		}
 	}
 }
+
+// A watch allowlist must never broaden a laptop manager beyond its claimed namespace.
+func TestLaptopNamespaceTakesPrecedenceOverWatchAllowlist(t *testing.T) {
+	want := New("op", "dev")
+	got := New("op", "dev", "dev,other")
+	if !reflect.DeepEqual(got.DefaultNamespaces, want.DefaultNamespaces) {
+		t.Fatalf("DefaultNamespaces = %v, want %v", got.DefaultNamespaces, want.DefaultNamespaces)
+	}
+	for _, obj := range cachedKinds() {
+		if !reflect.DeepEqual(namespacesFor(t, got, obj), namespacesFor(t, want, obj)) {
+			t.Errorf("%T cache escaped the laptop namespace", obj)
+		}
+	}
+}

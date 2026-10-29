@@ -328,7 +328,17 @@ jobs:
           verify_image "$MULTIADMIN_WEB_IMAGE"
 
   e2e:
-    name: Canary e2e
+    name: Canary e2e (${{ matrix.suite }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: shared
+            mode: shared
+            test-spec: ''
+          - suite: minigres
+            mode: dedicated
+            test-spec: minigres
     needs: [resolve, preflight]
     if: needs.preflight.result == 'success'
     permissions:
@@ -337,6 +347,8 @@ jobs:
     with:
       ref: ${{ needs.resolve.outputs.operator-sha }}
       timeout-minutes: 60
+      mode: ${{ matrix.mode }}
+      test-spec: ${{ matrix.test-spec }}
       postgres-image: ${{ needs.preflight.outputs.pgctld-image }}
       multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
       multiadmin-web-image: ${{ needs.preflight.outputs.multiadmin-web-image }}

@@ -157,6 +157,18 @@ test('report and promotion have separate permissions and only promotion writes h
   assert.ok(!promotion.includes('continue-on-error'));
 });
 
+
+test('Minigres and shared runtime qualification both gate canary reporting and promotion', () => {
+  const e2e = workflow.split('\n  e2e:\n')[1].split('\n  report:\n')[0];
+  assert.match(e2e, /fail-fast: false/);
+  assert.match(e2e, /suite: shared\n            mode: shared/);
+  assert.match(e2e, /suite: minigres\n            mode: dedicated\n            test-spec: minigres/);
+  assert.ok(e2e.includes('mode: ${{ matrix.mode }}'));
+  assert.ok(e2e.includes('test-spec: ${{ matrix.test-spec }}'));
+  assert.ok(e2e.includes('multipooler-image: ${{ needs.preflight.outputs.multigres-image }}'));
+  assert.ok(e2e.includes('postgres-image: ${{ needs.preflight.outputs.pgctld-image }}'));
+});
+
 function manualBuild(overrides = {}) {
   return {
     id: 123, run_attempt: 2, head_sha: 'b'.repeat(40), status: 'completed',

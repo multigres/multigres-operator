@@ -471,3 +471,60 @@ func TestFindOperatorDeployment(t *testing.T) {
 		}
 	})
 }
+
+func TestCustomWebhookNamesDoNotReadOrRotateGlobalCertificates(t *testing.T) {
+	names := ConfigurationNames{Mutating: "lite-mutating", Validating: "lite-validating"}
+	global := &admissionregistrationv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        MutatingWebhookName,
+			Annotations: map[string]string{CertStrategyAnnotation: CertStrategySelfSigned},
+		},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			{
+				Name: "global.example.com",
+				ClientConfig: admissionregistrationv1.WebhookClientConfig{
+					CABundle: []byte("global-ca"),
+				},
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectNone(),
+			},
+		},
+	}
+	own := global.DeepCopy()
+	own.Name = names.Mutating
+	own.Annotations = nil
+	own.Webhooks[0].ClientConfig.CABundle = []byte("old-lite-ca")
+	valid := &admissionregistrationv1.ValidatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{Name: names.Validating},
+		Webhooks: []admissionregistrationv1.ValidatingWebhook{
+			{
+				Name:                    "lite.example.com",
+				AdmissionReviewVersions: []string{"v1"},
+				SideEffects:             sideEffectNone(),
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(pkiScheme(t)).WithObjects(global, own, valid).Build()
+	if HasCertAnnotation(t.Context(), cl, names) {
+		t.Fatal("read the global operator's annotation")
+	}
+	if err := PatchWebhookCABundle(t.Context(), cl, []byte("new-lite-ca"), names); err != nil {
+		t.Fatal(err)
+	}
+	got := &admissionregistrationv1.MutatingWebhookConfiguration{}
+	if err := cl.Get(t.Context(), client.ObjectKey{Name: MutatingWebhookName}, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Webhooks[0].ClientConfig.CABundle) != "global-ca" {
+		t.Fatal("changed global certificate")
+	}
+	if err := cl.Get(t.Context(), client.ObjectKey{Name: names.Mutating}, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Webhooks[0].ClientConfig.CABundle) != "new-lite-ca" {
+		t.Fatal("did not rotate Lite certificate")
+	}
+	if !HasCertAnnotation(t.Context(), cl, names) {
+		t.Fatal("did not read Lite annotation")
+	}
+}

@@ -47,7 +47,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: ShardSpec defines the desired state of Shard.
+            description: |-
+              ShardSpec defines the desired state of Shard.
+              Lite identity is fixed even when a template is edited without webhooks.
             properties:
               backup:
                 description: |-
@@ -189,6 +191,11 @@ spec:
                   Propagated from the cluster's cell configs so the shard controller
                   can inject nodeSelector without looking up Cell CRs.
                 type: object
+              certCommonName:
+                description: |-
+                  CertCommonName is the DNS name for the public PostgreSQL TLS certificate.
+                  Inherited from MultigresCluster.Spec.CertCommonName.
+                type: string
               databaseName:
                 description: DatabaseName is the name of the logical database this
                   shard belongs to.
@@ -360,6 +367,13 @@ spec:
                     - error
                     type: string
                 type: object
+              mode:
+                description: |-
+                  Mode is the cluster shape, inherited from MultigresCluster.Spec.Mode
+                  through the TableGroup.
+                enum:
+                - lite
+                type: string
               multiorch:
                 description: Multiorch is the fully resolved configuration for the
                   shard orchestrator.
@@ -2920,6 +2934,16 @@ spec:
             - shardName
             - tableGroupName
             type: object
+            x-kubernetes-validations:
+            - message: shard mode is immutable
+              rule: has(self.mode) == has(oldSelf.mode) && (!has(self.mode) || self.mode
+                == oldSelf.mode)
+            - message: lite pool identity is immutable
+              rule: '!has(oldSelf.mode) || oldSelf.mode != ''lite'' || (self.databaseName
+                == oldSelf.databaseName && self.tableGroupName == oldSelf.tableGroupName
+                && self.shardName == oldSelf.shardName && size(self.pools) == size(oldSelf.pools)
+                && oldSelf.pools.all(p, p in self.pools && has(self.pools[p].cells)
+                && has(oldSelf.pools[p].cells) && self.pools[p].cells == oldSelf.pools[p].cells))'
           status:
             description: ShardStatus defines the observed state of Shard.
             properties:

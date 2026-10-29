@@ -12,7 +12,7 @@ import (
 
 // certManagerVersion is the cert-manager release the topology TLS scenario
 // installs. Bump it in one place.
-const certManagerVersion = "v1.16.2"
+const certManagerVersion = "v1.19.2"
 
 // topoTLSIssuerName is the CA ClusterIssuer the topology TLS scenario points
 // topoTLS.issuerName at. The etcd serving certificate and the per-cluster
