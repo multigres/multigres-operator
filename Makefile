@@ -287,7 +287,7 @@ build-installer: manifests generate kustomize ## Generate consolidated install Y
 # Set TEST_JSON_FILE to capture Go test events for CI uploads.
 # Append shared E2E invocations to preserve results from both package groups.
 TEST_JSON_FILE ?=
-TEST_OUTPUT_FLAGS = $(if $(TEST_JSON_FILE),-json)
+TEST_OUTPUT_FLAGS = $(if $(TEST_JSON_FILE),-json -count=1)
 TEST_OUTPUT_PIPE = $(if $(TEST_JSON_FILE),| tee -a "$(TEST_JSON_FILE)")
 
 # test/suite is the multi-controller envtest suite. It carries no build tag, so
