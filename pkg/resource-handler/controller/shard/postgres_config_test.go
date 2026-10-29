@@ -215,6 +215,9 @@ func TestShardClusterName(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "mycluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "mydb",
 				TableGroupName: "mytg",
 				ShardName:      "0",
@@ -230,7 +233,12 @@ func TestShardClusterName(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Labels: map[string]string{metadata.LabelMultigresCluster: "c"},
 			},
-			Spec: multigresv1alpha1.ShardSpec{ShardName: "0"},
+			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
+				ShardName: "0",
+			},
 		}
 		if got := shardClusterName(shard); got != "c/0" {
 			t.Errorf("shardClusterName = %q, want c/0", got)
@@ -251,6 +259,9 @@ func TestShardClusterName(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "mycluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "mydb",
 				TableGroupName: "mytg",
 				ShardName:      "0",
@@ -272,6 +283,9 @@ func TestReduceShardResources(t *testing.T) {
 		func(t *testing.T) {
 			shard := &multigresv1alpha1.Shard{
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 						"a": {
 							// Limits present → used over requests.
@@ -322,7 +336,8 @@ func TestReduceShardResources(t *testing.T) {
 
 	t.Run("pools without resources return zeros", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{
-			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"a": {}},
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
+			Pools:  map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"a": {}},
 		}}
 		mem, cpu, disk := reduceShardResources(shard)
 		if mem != 0 || cpu != 0 || disk != 0 {

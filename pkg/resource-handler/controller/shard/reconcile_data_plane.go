@@ -799,7 +799,15 @@ func (r *ShardReconciler) isDrainStale(
 	}
 
 	// Pod is within replica range — check if its spec still matches desired.
-	return !podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme)
+	return !podNeedsUpdate(
+		pod,
+		shard,
+		poolName,
+		cellName,
+		poolSpec,
+		index,
+		r.Scheme,
+		r.podOptions()...)
 }
 
 // topoStore returns a topology store, using the custom factory if set, otherwise the default.

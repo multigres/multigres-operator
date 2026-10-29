@@ -225,6 +225,7 @@ func (r *ShardReconciler) createMissingResources(
 				poolSpec,
 				int(i),
 				r.Scheme,
+				r.podOptions()...,
 			)
 			if buildErr != nil {
 				return 0, false, fmt.Errorf("failed to build pod %s: %w", podName, buildErr)
@@ -285,7 +286,15 @@ func (r *ShardReconciler) createMissingResources(
 		}
 
 		// Check if it's drifted
-		isDrifted := podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i), r.Scheme)
+		isDrifted := podNeedsUpdate(
+			pod,
+			shard,
+			poolName,
+			cellName,
+			poolSpec,
+			int(i),
+			r.Scheme,
+			r.podOptions()...)
 		if isDrifted {
 			driftedCount++
 		}
@@ -784,6 +793,31 @@ func (r *ShardReconciler) handleRollingUpdates(
 		return nil
 	}
 
+	// A pod whose pgbackrest sidecar never started cannot turn Ready, so the
+	// health gates below would hold its replacement forever. It never started
+	// postgres either, so draining it costs no availability. One pod per pass,
+	// like the stranded-topology path above.
+	if pod := r.sidecarStuckPod(ctx, shard, existingPods); pod != nil {
+		if err := r.initiateDrain(ctx, pod); err != nil {
+			return fmt.Errorf(
+				"failed to initiate drain for pod %s with a stuck pgbackrest sidecar: %w",
+				pod.Name,
+				err,
+			)
+		}
+		rollout.SetStarted()
+		logger.Info("Initiated drain for pod whose pgbackrest sidecar never started",
+			"pod", pod.Name)
+		r.Recorder.Eventf(
+			shard,
+			"Normal",
+			"PodUpdated",
+			"Initiated drain for pod %s, whose pgbackrest sidecar never started",
+			pod.Name,
+		)
+		return nil
+	}
+
 	// Prevent a new drain if some other pool/cell in this shard is
 	// already mid-rollout or has not yet come back Ready. This reads uncached
 	// state and includes extra pods left over from scale-down.
@@ -811,6 +845,7 @@ func (r *ShardReconciler) handleRollingUpdates(
 			poolSpec,
 			podIdx,
 			r.Scheme,
+			r.podOptions()...,
 		) {
 			continue
 		}
@@ -1174,6 +1209,7 @@ func podNeedsUpdate(
 	poolSpec multigresv1alpha1.PoolSpec,
 	index int,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) bool {
 	// If it has a deletion timestamp, let it die
 	if !existing.DeletionTimestamp.IsZero() {
@@ -1188,7 +1224,7 @@ func podNeedsUpdate(
 
 	// Compute desired hash by building the ideal pod spec
 	// NOTE: BuildPoolPod doesn't make API calls, it's safe to call frequently.
-	desired, err := BuildPoolPod(shard, poolName, cellName, poolSpec, index, scheme)
+	desired, err := BuildPoolPod(shard, poolName, cellName, poolSpec, index, scheme, opts...)
 	if err != nil {
 		return false // Assume no update needed if we can't build it
 	}

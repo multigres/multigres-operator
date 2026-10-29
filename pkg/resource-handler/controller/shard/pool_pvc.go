@@ -134,18 +134,16 @@ func BuildSharedBackupPVC(
 	var pvcClass *string
 	accessModes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
 
-	if shard.Spec.Backup != nil &&
-		shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeFilesystem &&
-		shard.Spec.Backup.Filesystem != nil {
-
-		if shard.Spec.Backup.Filesystem.Storage.Size != "" {
-			storageSize = shard.Spec.Backup.Filesystem.Storage.Size
+	if backup := sidecarLocation(shard); backup.Type == multigresv1alpha1.BackupTypeFilesystem &&
+		backup.Filesystem != nil {
+		if backup.Filesystem.Storage.Size != "" {
+			storageSize = backup.Filesystem.Storage.Size
 		}
-		if shard.Spec.Backup.Filesystem.Storage.Class != "" {
-			pvcClass = &shard.Spec.Backup.Filesystem.Storage.Class
+		if backup.Filesystem.Storage.Class != "" {
+			pvcClass = &backup.Filesystem.Storage.Class
 		}
-		if len(shard.Spec.Backup.Filesystem.Storage.AccessModes) > 0 {
-			accessModes = shard.Spec.Backup.Filesystem.Storage.AccessModes
+		if len(backup.Filesystem.Storage.AccessModes) > 0 {
+			accessModes = backup.Filesystem.Storage.AccessModes
 		}
 	}
 

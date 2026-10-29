@@ -62,8 +62,12 @@ func BuildPoolPod(
 	poolSpec multigresv1alpha1.PoolSpec,
 	index int,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) (*corev1.Pod, error) {
 	if err := validatePoolRuntimeIdentity(poolSpec); err != nil {
+		return nil, err
+	}
+	if err := validateSidecarLocation(shard); err != nil {
 		return nil, err
 	}
 
@@ -131,9 +135,7 @@ func BuildPoolPod(
 			},
 			// pgctld is the native sidecar so it outlives multipooler on pod
 			// termination, see docs/development/pod-management-design.md §6.
-			InitContainers: []corev1.Container{
-				buildPgctldSidecar(shard, poolSpec),
-			},
+			InitContainers: buildPoolInitContainers(shard, poolSpec, newPodConfig(opts)),
 			Containers: []corev1.Container{
 				multipooler,
 				buildPostgresExporterContainer(shard),
@@ -148,11 +150,7 @@ func BuildPoolPod(
 		},
 	}
 
-	if shard.Spec.Backup != nil &&
-		shard.Spec.Backup.S3 != nil &&
-		shard.Spec.Backup.S3.ServiceAccountName != "" {
-		pod.Spec.ServiceAccountName = shard.Spec.Backup.S3.ServiceAccountName
-	}
+	applyPgBackRestPodSpec(shard, pod)
 
 	pod.Annotations[metadata.AnnotationSpecHash] = ComputeSpecHash(pod)
 
@@ -163,12 +161,11 @@ func BuildPoolPod(
 	return pod, nil
 }
 
-func buildPoolPodSecurityContext(poolSpec multigresv1alpha1.PoolSpec) *corev1.PodSecurityContext {
-	if poolSpec.FSGroup == nil {
-		return nil
-	}
+func buildPoolPodSecurityContext(
+	poolSpec multigresv1alpha1.PoolSpec,
+) *corev1.PodSecurityContext {
+	fsGroup := effectiveFSGroup(poolSpec)
 
-	fsGroup := *poolSpec.FSGroup
 	// With the default policy (Always), kubelet walks the whole volume and ORs
 	// in g+rw on every mount, including the remount it does after its own
 	// restart while the pod keeps running. That turns the 0600 libpq pgpass
@@ -368,6 +365,8 @@ func ComputeSpecHash(pod *corev1.Pod) string {
 	if v := pod.Annotations[metadata.AnnotationPostgresConfigHash]; v != "" {
 		_, _ = fmt.Fprintf(h, "pgcfg=%s", v)
 	}
+
+	hashPgBackRestPodFields(h, pod)
 
 	return hex.EncodeToString(h.Sum(nil))
 }

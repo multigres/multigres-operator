@@ -46,6 +46,8 @@ func TestBuildLiteContainer_Args(t *testing.T) {
 		"--postgres-unrecoverable-timeout=0",
 		"--log-level=info",
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
+		"--pgbackrest-control-socket=" + PgBackRestControlSocketPath,
+		"--pgbackrest-wal-socket=" + PgBackRestWALSocketPath,
 	}
 	hostname := "--hostname=$(POD_IP)"
 
@@ -56,33 +58,15 @@ func TestBuildLiteContainer_Args(t *testing.T) {
 		"no optional settings": {
 			want: append(slices.Clone(base), hostname),
 		},
+		// The sidecar holds the keys, so no backup location adds a flag.
 		"backup configured": {
 			mutate: func(s *multigresv1alpha1.Shard) {
-				s.Spec.Backup = &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeFilesystem,
-				}
-			},
-			want: append(slices.Clone(base),
-				"--pgbackrest-cert-file="+PgBackRestCertMountPath+"/pgbackrest.crt",
-				"--pgbackrest-key-file="+PgBackRestCertMountPath+"/pgbackrest.key",
-				"--pgbackrest-ca-file="+PgBackRestCertMountPath+"/ca.crt",
-				hostname,
-			),
-		},
-		"backup encryption configured": {
-			mutate: func(s *multigresv1alpha1.Shard) {
-				s.Spec.Backup = &multigresv1alpha1.BackupConfig{
+				s.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 					Type:       multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{SecretName: "cipher"},
 				}
 			},
-			want: append(slices.Clone(base),
-				"--pgbackrest-cert-file="+PgBackRestCertMountPath+"/pgbackrest.crt",
-				"--pgbackrest-key-file="+PgBackRestCertMountPath+"/pgbackrest.key",
-				"--pgbackrest-ca-file="+PgBackRestCertMountPath+"/ca.crt",
-				"--pgbackrest-cipher-key-file="+PgBackRestCipherKeyFilePath,
-				hostname,
-			),
+			want: append(slices.Clone(base), hostname),
 		},
 		"internal TLS enabled": {
 			mutate: func(s *multigresv1alpha1.Shard) {
@@ -188,7 +172,7 @@ func TestBuildLiteContainer_HostnameFromPodIP(t *testing.T) {
 
 func TestBuildLitePod(t *testing.T) {
 	shard := newTestLiteShard()
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeS3,
 		S3: &multigresv1alpha1.S3BackupConfig{
 			Bucket:             "backups",
@@ -238,10 +222,19 @@ func TestBuildLitePod(t *testing.T) {
 		t.Errorf("shared volumes mismatch (-want +got):\n%s", diff)
 	}
 
-	if len(pod.Spec.InitContainers) != 1 {
-		t.Fatalf("init containers = %d, want the pgctld sidecar", len(pod.Spec.InitContainers))
+	if len(pod.Spec.InitContainers) != 2 {
+		t.Fatalf(
+			"init containers = %d, want the pgBackRest and pgctld sidecars",
+			len(pod.Spec.InitContainers),
+		)
 	}
-	pgctld := pod.Spec.InitContainers[0]
+	if diff := cmp.Diff(
+		buildPgBackRestSidecar(shard, pool, podConfig{}),
+		pod.Spec.InitContainers[0],
+	); diff != "" {
+		t.Errorf("pgBackRest sidecar mismatch (-want +got):\n%s", diff)
+	}
+	pgctld := pod.Spec.InitContainers[1]
 	if diff := cmp.Diff(buildPgctldSidecar(shard, pool), pgctld); diff != "" {
 		t.Errorf("pgctld sidecar mismatch (-want +got):\n%s", diff)
 	}
@@ -434,59 +427,6 @@ func TestPublicTLSChangesOnlyLitePod(t *testing.T) {
 			shard.Spec.CertCommonName = ""
 			require.Equal(t, before, buildPod())
 		})
-	}
-}
-
-func TestBuildLitePod_WithoutPublicTLSOnlyChangesRecoveryPolicy(t *testing.T) {
-	// These hashes were captured from 74f2e3db before applying Lite public TLS
-	// support, including its image defaults and internal mTLS flags. Keep them
-	// fixed. The recovery timeout override intentionally changes every Lite pod;
-	// remove only that flag to prove public TLS still introduces no other changes.
-	for _, tc := range []struct {
-		name        string
-		internalTLS *multigresv1alpha1.InternalTLSConfig
-		wantHashes  [2]string
-	}{
-		{name: "internal TLS unset", wantHashes: [2]string{"44ae2567", "0d774fb9"}},
-		{
-			name:        "internal TLS disabled",
-			internalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(false)},
-			wantHashes:  [2]string{"44ae2567", "0d774fb9"},
-		},
-		{
-			name:        "internal TLS enabled",
-			internalTLS: &multigresv1alpha1.InternalTLSConfig{Enabled: ptr.To(true)},
-			wantHashes:  [2]string{"19997ed5", "593f9023"},
-		},
-	} {
-		for i, variant := range []string{"plain", "backup and topology TLS"} {
-			t.Run(tc.name+"/"+variant, func(t *testing.T) {
-				shard := newTestLiteShard()
-				// Pin the baseline image so runtime promotions do not change this fixture.
-				shard.Spec.Images.Postgres = "ghcr.io/multigres/pgctld@sha256:0d575779d24c1f840123658c8c78bdd1e33e511b1e4fedd4fd4ba76fe2f4e5fc"
-				shard.Spec.InternalTLS = tc.internalTLS
-				pool := newTestPoolSpec()
-				if i == 1 {
-					shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
-						Type: multigresv1alpha1.BackupTypeFilesystem,
-					}
-					shard.Spec.GlobalTopoServer.ClientCertSecret = "topo-client"
-					shard.Spec.GlobalTopoServer.CASecret = "topo-ca"
-					pool.FSGroup = ptr.To(int64(999))
-				}
-				require.Empty(t, shard.Spec.CertCommonName)
-				pod, err := BuildLitePod(shard, "main", "z1", pool, testScheme())
-				require.NoError(t, err)
-				require.Equal(t, ComputeSpecHash(pod), pod.Annotations[metadata.AnnotationSpecHash])
-				require.NotEqual(t, tc.wantHashes[i], ComputeSpecHash(pod))
-				args := pod.Spec.Containers[0].Args
-				require.Contains(t, args, "--postgres-unrecoverable-timeout=0")
-				pod.Spec.Containers[0].Args = slices.DeleteFunc(args, func(arg string) bool {
-					return arg == "--postgres-unrecoverable-timeout=0"
-				})
-				require.Equal(t, tc.wantHashes[i], ComputeSpecHash(pod))
-			})
-		}
 	}
 }
 

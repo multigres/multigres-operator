@@ -369,7 +369,14 @@ E2E_TEST_SPEC ?=
 E2E_PACKAGES_SHARED = $(if $(E2E_TEST_SPEC),$(foreach t,$(subst $(comma),$(space),$(E2E_TEST_SPEC)),./test/e2e/shared/$(t)/),./test/e2e/shared/...)
 E2E_PACKAGES_DEDICATED = $(if $(E2E_TEST_SPEC),$(foreach t,$(subst $(comma),$(space),$(E2E_TEST_SPEC)),./test/e2e/dedicated/$(t)/),./test/e2e/dedicated/...)
 E2E_PACKAGE_FILE ?=
-E2E_TIMEOUT ?= 20m
+E2E_TIMEOUT ?= $(if $(findstring PgBackRestSidecar,$(E2E_FOCUS)),60m,20m)
+# E2E_FOCUS: regular expression passed to `go test -run`. When neither
+# E2E_TEST_SPEC nor E2E_PACKAGE_FILE is given, only the shared packages that
+# define a matching top-level test are run, so a focused run does not build the
+# shared Kind cluster for packages it would skip.
+# Example: make test-e2e E2E_FOCUS=PgBackRestSidecar
+E2E_FOCUS ?=
+E2E_FOCUS_TOP = $(firstword $(subst /, ,$(E2E_FOCUS)))
 comma := ,
 space := $(empty) $(empty)
 
@@ -378,6 +385,11 @@ run-e2e-shared:
 	@packages=(); \
 	if [ -n "$(E2E_PACKAGE_FILE)" ]; then \
 		while IFS= read -r package; do packages+=("$$package"); done < "$(E2E_PACKAGE_FILE)"; \
+	elif [ -n "$(E2E_FOCUS_TOP)" ] && [ -z "$(E2E_TEST_SPEC)" ]; then \
+		while IFS= read -r package; do packages+=("$$package"); done < <( \
+			grep -rlE '^func Test.*($(E2E_FOCUS_TOP))' --include='*_test.go' test/e2e/shared | \
+				xargs -n1 dirname | sort -u | sed 's|^|./|' | xargs go list -tags=e2e \
+		); \
 	else \
 		while IFS= read -r package; do packages+=("$$package"); done < <( \
 			go list -tags=e2e $(E2E_PACKAGES_SHARED) \
@@ -390,7 +402,7 @@ run-e2e-shared:
 		local package_parallelism="$$1"; \
 		shift; \
 		go test -tags=e2e -p "$$package_parallelism" "$$@" \
-			-v -count=1 "-timeout=$(E2E_TIMEOUT)"; \
+			-v -count=1 "-timeout=$(E2E_TIMEOUT)" $(if $(E2E_FOCUS),-run "$(E2E_FOCUS)"); \
 	}; \
 	wait_for_shared_namespaces() { \
 		if ! kind get clusters | grep -Fxq e2e-shared; then return 0; fi; \
@@ -439,8 +451,34 @@ run-e2e-shared:
 		run_e2e 1 "$$templated_package"; \
 	fi
 
+# The pgBackRest sidecar e2e runs the multigres and pgctld images built from a
+# multigres checkout, tagged multigres:pgbr-e2e and pgctld:pgbr-e2e. Set
+# PGBR_E2E_MULTIGRES_DIR to a multigres worktree to (re)build them from a clean
+# `git archive` copy of its HEAD, then checks the multigres image ships every
+# binary it should (tools/check_image_binaries.sh); without it the images must
+# already exist in the local Docker cache. The Go test loads them into its own Kind cluster.
+PGBR_E2E_MULTIGRES_DIR ?=
+PGBR_E2E_IMAGES = multigres:pgbr-e2e pgctld:pgbr-e2e
+
+.PHONY: pgbr-e2e-images
+pgbr-e2e-images: ## Build (PGBR_E2E_MULTIGRES_DIR) or verify the pgBackRest sidecar e2e images
+	@if [ -n "$(PGBR_E2E_MULTIGRES_DIR)" ]; then \
+		src="$$(mktemp -d "$${TMPDIR:-/tmp}/pgbr-e2e-src.XXXXXX")"; \
+		trap 'rm -rf "$$src"' EXIT; \
+		git -C "$(PGBR_E2E_MULTIGRES_DIR)" archive HEAD | tar -x -C "$$src"; \
+		$(CONTAINER_TOOL) build -f "$$src/Dockerfile" -t multigres:pgbr-e2e "$$src"; \
+		$(CONTAINER_TOOL) build -f "$$src/Dockerfile.pgctld" -t pgctld:pgbr-e2e "$$src"; \
+		bash "$$src/tools/check_image_binaries.sh" --image multigres:pgbr-e2e; \
+	fi; \
+	for img in $(PGBR_E2E_IMAGES); do \
+		$(CONTAINER_TOOL) image inspect "$$img" >/dev/null 2>&1 || { \
+			echo "ERROR: image $$img not found; set PGBR_E2E_MULTIGRES_DIR to a multigres checkout to build it"; \
+			exit 1; \
+		}; \
+	done
+
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet container ## Run e2e tests (shared cluster, fast)
+test-e2e: manifests generate fmt vet container $(if $(findstring PgBackRestSidecar,$(E2E_FOCUS)),pgbr-e2e-images) ## Run e2e tests (shared cluster, fast)
 	$(MAKE) run-e2e-shared
 
 .PHONY: test-e2e-keep

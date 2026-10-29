@@ -71,6 +71,8 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 					"--pg-port=5432",
 					"--log-level=info",
 					"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
+					"--pgbackrest-control-socket=" + PgBackRestControlSocketPath,
+					"--pgbackrest-wal-socket=" + PgBackRestWALSocketPath,
 				},
 				Ports:     buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
@@ -118,14 +120,11 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 						MountPath: PoolerDirMountPath,
 					},
 					{
-						Name:      BackupVolumeName,
-						MountPath: BackupMountPath,
-					},
-					{
 						Name:      SocketDirVolumeName,
 						MountPath: SocketDirMountPath,
 					},
 					postgresPasswordVolumeMount(),
+					pgbackrestControlSocketMount(),
 				},
 			},
 		},
@@ -179,6 +178,8 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 					"--pg-port=5432",
 					"--log-level=info",
 					"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
+					"--pgbackrest-control-socket=" + PgBackRestControlSocketPath,
+					"--pgbackrest-wal-socket=" + PgBackRestWALSocketPath,
 				},
 				Ports:     buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
@@ -226,14 +227,11 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 						MountPath: PoolerDirMountPath,
 					},
 					{
-						Name:      BackupVolumeName,
-						MountPath: BackupMountPath,
-					},
-					{
 						Name:      SocketDirVolumeName,
 						MountPath: SocketDirMountPath,
 					},
 					postgresPasswordVolumeMount(),
+					pgbackrestControlSocketMount(),
 				},
 			},
 		},
@@ -296,6 +294,8 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 					"--pg-port=5432",
 					"--log-level=info",
 					"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
+					"--pgbackrest-control-socket=" + PgBackRestControlSocketPath,
+					"--pgbackrest-wal-socket=" + PgBackRestWALSocketPath,
 				},
 				Ports: buildMultipoolerContainerPorts(),
 				Resources: corev1.ResourceRequirements{
@@ -352,14 +352,11 @@ func TestBuildMultipoolerContainer(t *testing.T) {
 						MountPath: PoolerDirMountPath,
 					},
 					{
-						Name:      BackupVolumeName,
-						MountPath: BackupMountPath,
-					},
-					{
 						Name:      SocketDirVolumeName,
 						MountPath: SocketDirMountPath,
 					},
 					postgresPasswordVolumeMount(),
+					pgbackrestControlSocketMount(),
 				},
 			},
 		},
@@ -878,84 +875,39 @@ func TestBuildPgctldSidecar(t *testing.T) {
 		assertOTELResourceAttribute(t, c.Env, "multigres.component=pgctld")
 	})
 
-	t.Run("with backup filesystem", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeFilesystem,
-					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
-						Path: "/custom-backups",
-					},
-				},
+	t.Run("defers pgBackRest to the sidecar whatever the backup location", func(t *testing.T) {
+		for name, loc := range map[string]*multigresv1alpha1.BackupConfig{
+			"none": nil,
+			"filesystem": {
+				Type:       multigresv1alpha1.BackupTypeFilesystem,
+				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups"},
 			},
-		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsFlag(t, c.Args, "--pgbackrest-cert-dir="+PgBackRestCertMountPath)
-		assertContainsFlag(t, c.Args, "--pgbackrest-port=8432")
-		assertNotContainsFlag(t, c.Args, "--backup-type")
-		assertNotContainsFlag(t, c.Args, "--backup-path")
-	})
-
-	t.Run("with backup s3", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeS3,
-					S3: &multigresv1alpha1.S3BackupConfig{
-						Bucket: "my-bucket",
-						Region: "us-west-2",
-					},
+			"s3 with a credentials secret": {
+				Type: multigresv1alpha1.BackupTypeS3,
+				S3: &multigresv1alpha1.S3BackupConfig{
+					Bucket: "my-bucket", Region: "us-west-2", CredentialsSecret: "aws-creds",
 				},
+				Encryption: &multigresv1alpha1.BackupEncryptionConfig{SecretName: "cipher"},
 			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				shard := &multigresv1alpha1.Shard{
+					Spec: multigresv1alpha1.ShardSpec{SidecarBackupLocation: loc},
+				}
+				c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
+				assertNotContainsFlag(t, c.Args, "--pgbackrest-sidecar")
+				assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-dir")
+				assertNotContainsFlag(t, c.Args, "--pgbackrest-port")
+				assertNotContainsFlag(t, c.Args, "--backup-type")
+				assertNotContainsEnvVar(t, c.Env, "AWS_REGION")
+				assertNotContainsEnvVar(t, c.Env, "AWS_ACCESS_KEY_ID")
+				assertNotContainsEnvVar(t, c.Env, "AWS_SECRET_ACCESS_KEY")
+				assert.True(t, hasMountPath(c, PgBackRestWALMountPath))
+				assert.False(t, hasMountName(c, BackupVolumeName))
+				assert.False(t, hasMountName(c, PgBackRestCertVolumeName))
+				assert.False(t, hasMountName(c, PgBackRestCipherKeyVolumeName))
+			})
 		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsFlag(t, c.Args, "--pgbackrest-cert-dir="+PgBackRestCertMountPath)
-		assertContainsFlag(t, c.Args, "--pgbackrest-port=8432")
-		assertNotContainsFlag(t, c.Args, "--backup-type")
-		assertNotContainsFlag(t, c.Args, "--backup-bucket")
-		assertNotContainsFlag(t, c.Args, "--backup-region")
-	})
-
-	t.Run("no backup flags without backup config", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{},
-		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-dir")
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-port")
-		assertNotContainsFlag(t, c.Args, "--backup-type")
-	})
-
-	t.Run("s3 credentials secret injects AWS env vars", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeS3,
-					S3: &multigresv1alpha1.S3BackupConfig{
-						Bucket:            "my-bucket",
-						Region:            "us-west-2",
-						CredentialsSecret: "aws-creds",
-					},
-				},
-			},
-		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsEnvVar(t, c.Env, "AWS_REGION")
-		assertContainsEnvVar(t, c.Env, "AWS_ACCESS_KEY_ID")
-		assertContainsEnvVar(t, c.Env, "AWS_SECRET_ACCESS_KEY")
-	})
-
-	t.Run("filesystem backup does not inject AWS env vars", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeFilesystem,
-				},
-			},
-		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertNotContainsEnvVar(t, c.Env, "AWS_REGION")
-		assertNotContainsEnvVar(t, c.Env, "AWS_ACCESS_KEY_ID")
 	})
 
 	t.Run("with initdbArgs", func(t *testing.T) {
@@ -1040,107 +992,6 @@ func TestBuildPgctldSidecar(t *testing.T) {
 	})
 }
 
-func TestS3EnvVars(t *testing.T) {
-	t.Run("nil backup returns nil", func(t *testing.T) {
-		got := s3EnvVars(nil)
-		if got != nil {
-			t.Errorf("s3EnvVars(nil) = %v, want nil", got)
-		}
-	})
-
-	t.Run("filesystem backup returns nil", func(t *testing.T) {
-		got := s3EnvVars(&multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeFilesystem,
-		})
-		if got != nil {
-			t.Errorf("s3EnvVars(filesystem) = %v, want nil", got)
-		}
-	})
-
-	t.Run("s3 with region only", func(t *testing.T) {
-		got := s3EnvVars(&multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeS3,
-			S3: &multigresv1alpha1.S3BackupConfig{
-				Bucket: "b",
-				Region: "eu-west-1",
-			},
-		})
-		if len(got) != 1 || got[0].Name != "AWS_REGION" || got[0].Value != "eu-west-1" {
-			t.Errorf("s3EnvVars(region-only) = %v, want [{AWS_REGION eu-west-1}]", got)
-		}
-	})
-
-	t.Run("s3 with credentials secret", func(t *testing.T) {
-		got := s3EnvVars(&multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeS3,
-			S3: &multigresv1alpha1.S3BackupConfig{
-				Bucket:            "b",
-				Region:            "us-east-1",
-				CredentialsSecret: "my-secret",
-			},
-		})
-		if len(got) != 3 {
-			t.Fatalf("s3EnvVars(full) returned %d vars, want 3", len(got))
-		}
-		assertContainsEnvVar(t, got, "AWS_REGION")
-		assertContainsEnvVar(t, got, "AWS_ACCESS_KEY_ID")
-		assertContainsEnvVar(t, got, "AWS_SECRET_ACCESS_KEY")
-
-		// Verify it references the correct secret
-		for _, e := range got {
-			if e.Name == "AWS_ACCESS_KEY_ID" {
-				if e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil {
-					t.Fatal("AWS_ACCESS_KEY_ID missing SecretKeyRef")
-				}
-				if e.ValueFrom.SecretKeyRef.Name != "my-secret" {
-					t.Errorf("AWS_ACCESS_KEY_ID secret = %q, want %q",
-						e.ValueFrom.SecretKeyRef.Name, "my-secret")
-				}
-			}
-		}
-	})
-
-	t.Run(
-		"s3 with serviceAccountName only does not inject AWS credential env vars",
-		func(t *testing.T) {
-			got := s3EnvVars(&multigresv1alpha1.BackupConfig{
-				Type: multigresv1alpha1.BackupTypeS3,
-				S3: &multigresv1alpha1.S3BackupConfig{
-					Bucket:             "b",
-					Region:             "us-east-1",
-					ServiceAccountName: "multigres-backup",
-				},
-			})
-			// Should only have AWS_REGION, no credential env vars
-			if len(got) != 1 {
-				t.Fatalf(
-					"s3EnvVars(serviceAccountName-only) returned %d vars, want 1 (AWS_REGION only)",
-					len(got),
-				)
-			}
-			assertContainsEnvVar(t, got, "AWS_REGION")
-			assertNotContainsEnvVar(t, got, "AWS_ACCESS_KEY_ID")
-			assertNotContainsEnvVar(t, got, "AWS_SECRET_ACCESS_KEY")
-		},
-	)
-
-	t.Run("s3 with no region", func(t *testing.T) {
-		got := s3EnvVars(&multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeS3,
-			S3: &multigresv1alpha1.S3BackupConfig{
-				Bucket:            "b",
-				CredentialsSecret: "my-secret",
-			},
-		})
-		// Should have 2 vars: KEY_ID and SECRET_KEY, but no REGION
-		if len(got) != 2 {
-			t.Fatalf("s3EnvVars(no-region) returned %d vars, want 2", len(got))
-		}
-		assertNotContainsEnvVar(t, got, "AWS_REGION")
-		assertContainsEnvVar(t, got, "AWS_ACCESS_KEY_ID")
-	})
-}
-
 func TestBuildSharedBackupVolume_S3(t *testing.T) {
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1150,7 +1001,7 @@ func TestBuildSharedBackupVolume_S3(t *testing.T) {
 			DatabaseName:   "postgres",
 			TableGroupName: "default",
 			ShardName:      "0-inf",
-			Backup: &multigresv1alpha1.BackupConfig{
+			SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 				Type: multigresv1alpha1.BackupTypeS3,
 				S3: &multigresv1alpha1.S3BackupConfig{
 					Bucket: "my-bucket",
@@ -1459,7 +1310,7 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 				},
 			},
@@ -1522,7 +1373,7 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 	t.Run("user-provided Secret volume", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeS3,
 					S3: &multigresv1alpha1.S3BackupConfig{
 						Bucket: "b", Region: "r",
@@ -1564,7 +1415,7 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "shard1"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type:          multigresv1alpha1.BackupTypeFilesystem,
 					PgBackRestTLS: nil,
 				},
@@ -1583,7 +1434,7 @@ func TestBuildPgBackRestCertVolume(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "shard1"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					PgBackRestTLS: &multigresv1alpha1.PgBackRestTLSConfig{
 						SecretName: "",
@@ -1613,7 +1464,7 @@ func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
 	t.Run("nil when backup configured but encryption disabled", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 				},
 			},
@@ -1628,7 +1479,7 @@ func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
 						SecretName: "my-cipher-secret",
@@ -1655,57 +1506,11 @@ func TestBuildPgBackRestCipherKeyVolume(t *testing.T) {
 	})
 }
 
-func TestPgctldContainer_PgBackRestCertArgs(t *testing.T) {
-	t.Run("cert args present when backup configured", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeFilesystem,
-				},
-			},
-		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertContainsFlag(t, c.Args, "--pgbackrest-cert-dir=/certs/pgbackrest")
-		assertContainsFlag(t, c.Args, "--pgbackrest-port=8432")
-		assertContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
-
-		// Verify volume mount is read-only
-		for _, m := range c.VolumeMounts {
-			if m.Name == PgBackRestCertVolumeName && !m.ReadOnly {
-				t.Error("pgbackrest cert volume mount should be read-only")
-			}
-		}
-	})
-
-	t.Run("no cert args when no backup", func(t *testing.T) {
-		shard := &multigresv1alpha1.Shard{Spec: multigresv1alpha1.ShardSpec{}}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-dir")
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-port")
-		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
-	})
-
-	t.Run("no cipher key flag or mount even when encryption enabled", func(t *testing.T) {
-		// Upstream only wired --pgbackrest-cipher-key-file into multipooler,
-		// not pgctld; pgctld must never get the cipher volume/flag.
-		shard := &multigresv1alpha1.Shard{
-			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
-					Type: multigresv1alpha1.BackupTypeFilesystem,
-					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
-						SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
-					},
-				},
-			},
-		}
-		c := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-cipher-key-file")
-		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
-	})
-}
-
-func TestMultipoolerSidecar_PgBackRestCertArgs(t *testing.T) {
-	baseShard := &multigresv1alpha1.Shard{
+// The sidecar alone holds the pgBackRest TLS key and the cipher key, so
+// neither pgctld nor multipooler gets a cert or cipher flag or mount, whatever
+// the backup location asks for.
+func TestPgctldAndMultipooler_HoldNoPgBackRestKeyMaterial(t *testing.T) {
+	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
 			Labels: map[string]string{"multigres.com/cluster": "test"},
 		},
@@ -1717,88 +1522,42 @@ func TestMultipoolerSidecar_PgBackRestCertArgs(t *testing.T) {
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
+			SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
+				Type: multigresv1alpha1.BackupTypeS3,
+				S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
+				Encryption: &multigresv1alpha1.BackupEncryptionConfig{
+					SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
+				},
+			},
 		},
 	}
+	pgctld := buildPgctldSidecar(shard, multigresv1alpha1.PoolSpec{})
+	multipooler := buildMultipoolerContainer(
+		shard, multigresv1alpha1.PoolSpec{}, "primary", "zone1", "p-keys123",
+	)
+	lite := buildLiteContainer(shard, multigresv1alpha1.PoolSpec{}, "primary", "zone1", "p-lite123")
 
-	t.Run("cert args present when backup configured", func(t *testing.T) {
-		shard := baseShard.DeepCopy()
-		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeS3,
-			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
-		}
-		c := buildMultipoolerContainer(
-			shard,
-			multigresv1alpha1.PoolSpec{},
-			"primary",
-			"zone1",
-			"p-backup123",
-		)
-		assertContainsFlag(t, c.Args, "--pgbackrest-cert-file=/certs/pgbackrest/pgbackrest.crt")
-		assertContainsFlag(t, c.Args, "--pgbackrest-key-file=/certs/pgbackrest/pgbackrest.key")
-		assertContainsFlag(t, c.Args, "--pgbackrest-ca-file=/certs/pgbackrest/ca.crt")
-		assertContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
-	})
-
-	t.Run("no cert args when no backup", func(t *testing.T) {
-		shard := baseShard.DeepCopy()
-		c := buildMultipoolerContainer(
-			shard,
-			multigresv1alpha1.PoolSpec{},
-			"primary",
-			"zone1",
-			"p-noback123",
-		)
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-cert-file")
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-key-file")
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-ca-file")
-		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
-	})
-
-	t.Run("cipher key flag and mount present when encryption enabled", func(t *testing.T) {
-		shard := baseShard.DeepCopy()
-		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeS3,
-			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
-			Encryption: &multigresv1alpha1.BackupEncryptionConfig{
-				SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
-			},
-		}
-		c := buildMultipoolerContainer(
-			shard,
-			multigresv1alpha1.PoolSpec{},
-			"primary",
-			"zone1",
-			"p-cipher123",
-		)
-		assertContainsFlag(
-			t,
-			c.Args,
-			"--pgbackrest-cipher-key-file=/secrets/pgbackrest-cipher/keys.json",
-		)
-		assertContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
-		for _, m := range c.VolumeMounts {
-			if m.Name == PgBackRestCipherKeyVolumeName && !m.ReadOnly {
-				t.Error("pgbackrest cipher key volume mount should be read-only")
+	for name, c := range map[string]corev1.Container{
+		"pgctld": pgctld, "multipooler": multipooler, "minigres": lite,
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, flag := range []string{
+				"--pgbackrest-sidecar", "--pgbackrest-cert-dir", "--pgbackrest-port",
+				"--pgbackrest-cert-file",
+				"--pgbackrest-key-file", "--pgbackrest-ca-file", "--pgbackrest-cipher-key-file",
+			} {
+				assertNotContainsFlag(t, c.Args, flag)
 			}
-		}
-	})
+			assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCertVolumeName)
+			assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
+			assertNotContainsVolumeMount(t, c.VolumeMounts, BackupVolumeName)
+		})
+	}
 
-	t.Run("no cipher key flag or mount when encryption disabled", func(t *testing.T) {
-		shard := baseShard.DeepCopy()
-		shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeS3,
-			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
-		}
-		c := buildMultipoolerContainer(
-			shard,
-			multigresv1alpha1.PoolSpec{},
-			"primary",
-			"zone1",
-			"p-nocipher123",
-		)
-		assertNotContainsFlag(t, c.Args, "--pgbackrest-cipher-key-file")
-		assertNotContainsVolumeMount(t, c.VolumeMounts, PgBackRestCipherKeyVolumeName)
-	})
+	for _, c := range []corev1.Container{multipooler, lite} {
+		assertContainsFlag(t, c.Args, "--pgbackrest-control-socket="+PgBackRestControlSocketPath)
+		assertContainsFlag(t, c.Args, "--pgbackrest-wal-socket="+PgBackRestWALSocketPath)
+	}
 }
 
 func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
@@ -1853,7 +1612,7 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				Labels: map[string]string{"multigres.com/cluster": "test"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 				},
 			},
@@ -1893,7 +1652,7 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				Labels: map[string]string{"multigres.com/cluster": "test"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
 						SecretName: "test-cipher-secret", // #nosec G101 -- Secret object name, not a credential
@@ -1921,7 +1680,7 @@ func TestBuildPoolVolumes_CertVolumePresence(t *testing.T) {
 				Labels: map[string]string{"multigres.com/cluster": "test"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 				},
 			},

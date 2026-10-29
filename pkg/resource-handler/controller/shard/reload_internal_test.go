@@ -52,6 +52,9 @@ func reloadTestShard() *multigresv1alpha1.Shard {
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "0",

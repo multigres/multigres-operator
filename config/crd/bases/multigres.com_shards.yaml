@@ -144,6 +144,8 @@ spec:
                           The ServiceAccount must exist in the same namespace and be annotated with
                           eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
                           The operator does NOT create this ServiceAccount — the user must create it externally.
+                          spec.shardServiceAccount wins when both are set; this field applies when
+                          spec.shardServiceAccount is unset.
                         type: string
                       useEnvCredentials:
                         type: boolean
@@ -287,6 +289,15 @@ spec:
                   multipooler:
                     description: Multipooler is the image for the connection pooler
                       sidecar.
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  pgbackrestd:
+                    description: |-
+                      PgBackRestd is the image for the pgBackRest sidecar. It is resolved on
+                      the MultigresCluster and defaults to the Multipooler image of the same
+                      set. A shard spec without it predates the sidecar and is not rolled until
+                      the cluster controller fills it in.
                     maxLength: 512
                     minLength: 1
                     type: string
@@ -2586,6 +2597,68 @@ spec:
                           minimum: 1
                           type: integer
                       type: object
+                    pgbackrestResources:
+                      description: |-
+                        PgBackRestResources defines the compute resource requirements of the
+                        pgBackRest sidecar container. When empty, the operator defaults to requests
+                        of 100m CPU and 256Mi memory with a 1Gi memory limit and no CPU limit.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This field depends on the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
                     postgres:
                       description: Postgres container configuration.
                       properties:
@@ -2903,6 +2976,145 @@ spec:
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              shardServiceAccountName:
+                description: |-
+                  ShardServiceAccountName is the name of the ServiceAccount shard pods run
+                  as. Set from MultigresCluster.Spec.ShardServiceAccount.Name when the
+                  cluster names one.
+                type: string
+              sidecarBackupLocation:
+                description: |-
+                  SidecarBackupLocation is the database-level backup location, the same
+                  value written to topology. Shard- and tablegroup-level location
+                  overrides are deliberately not applied here: multipooler renders from
+                  topology, so the sidecar must match it.
+                properties:
+                  encryption:
+                    description: Encryption enables client-side pgBackRest backup
+                      encryption.
+                    properties:
+                      secretName:
+                        description: |-
+                          SecretName references an existing Secret containing the cipher key
+                          file under key "keys.json": a JSON document mapping backup
+                          repository generation to passphrase, e.g. {"1": "<passphrase>"}.
+                        minLength: 1
+                        type: string
+                    required:
+                    - secretName
+                    type: object
+                  filesystem:
+                    description: |-
+                      Filesystem defines configuration for local/PVC-based backups.
+                      Required when type is "filesystem".
+                    properties:
+                      path:
+                        description: |-
+                          Path is the filesystem directory for backups.
+                          Defaults to "/backups".
+                        type: string
+                      storage:
+                        description: |-
+                          Storage defines the PVC configuration for the backup volume.
+                          This volume is shared by all pools in the shard.
+                        properties:
+                          accessModes:
+                            description: |-
+                              AccessModes contains the desired access modes the volume should have.
+                              More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes#access-modes
+                            items:
+                              type: string
+                            type: array
+                          class:
+                            description: Class is the StorageClass name.
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          size:
+                            description: Size of the persistent volume.
+                            maxLength: 63
+                            pattern: ^([0-9]+)(.+)$
+                            type: string
+                        type: object
+                    type: object
+                  pgbackrestTLS:
+                    description: |-
+                      PgBackRestTLS configures TLS certificates for pgBackRest inter-node communication.
+                      Required for multi-replica shards where standbys connect to the primary's
+                      pgBackRest server. When SecretName is set, the operator mounts that Secret directly.
+                      When SecretName is empty, the operator auto-generates and rotates certificates.
+                    properties:
+                      secretName:
+                        description: |-
+                          SecretName is the name of an existing Secret containing pgBackRest TLS certificates.
+                          The Secret must contain three keys: ca.crt, tls.crt, tls.key.
+                          This is directly compatible with cert-manager Certificate resources.
+                          When empty, the operator generates and rotates certificates automatically.
+                        type: string
+                    type: object
+                  s3:
+                    description: |-
+                      S3 defines the S3-compatible storage configuration.
+                      Required when type is "s3".
+                    properties:
+                      bucket:
+                        minLength: 1
+                        type: string
+                      credentialsSecret:
+                        description: CredentialsSecret is the name of the Secret containing
+                          AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+                        type: string
+                      endpoint:
+                        type: string
+                      keyPrefix:
+                        type: string
+                      region:
+                        minLength: 1
+                        type: string
+                      serviceAccountName:
+                        description: |-
+                          ServiceAccountName is the name of the ServiceAccount to use for IRSA-based S3 authentication.
+                          The ServiceAccount must exist in the same namespace and be annotated with
+                          eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
+                          The operator does NOT create this ServiceAccount — the user must create it externally.
+                          spec.shardServiceAccount wins when both are set; this field applies when
+                          spec.shardServiceAccount is unset.
+                        type: string
+                      useEnvCredentials:
+                        type: boolean
+                    required:
+                    - bucket
+                    - region
+                    type: object
+                    x-kubernetes-validations:
+                    - message: serviceAccountName and credentialsSecret are mutually
+                        exclusive
+                      rule: '!(has(self.serviceAccountName) && size(self.serviceAccountName)
+                        > 0 && has(self.credentialsSecret) && size(self.credentialsSecret)
+                        > 0)'
+                    - message: serviceAccountName and useEnvCredentials are mutually
+                        exclusive — IRSA credentials are handled automatically
+                      rule: '!(has(self.serviceAccountName) && size(self.serviceAccountName)
+                        > 0 && has(self.useEnvCredentials) && self.useEnvCredentials)'
+                  type:
+                    description: Type is the backup storage backend (filesystem or
+                      s3).
+                    enum:
+                    - filesystem
+                    - s3
+                    type: string
+                required:
+                - type
+                type: object
+                x-kubernetes-validations:
+                - message: s3 config is required when type is 's3'
+                  rule: self.type != 's3' || has(self.s3)
+                - message: filesystem config is required when type is 'filesystem'
+                  rule: self.type != 'filesystem' || has(self.filesystem)
+                - message: encryption is immutable and cannot be added, removed, or
+                    changed after creation
+                  rule: has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption)
+                    || self.encryption == oldSelf.encryption)
               tableGroupName:
                 description: TableGroupName is the name of the table group this shard
                   belongs to.

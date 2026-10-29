@@ -3,8 +3,12 @@ package shard
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/multigres/multigres/go/common/rpcclient"
 	"github.com/multigres/multigres/go/common/topoclient"
 	cm "github.com/multigres/multigres/go/pb/clustermetadata"
@@ -43,6 +47,9 @@ func fourToTwoFixture(
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:     "db",
 			TableGroupName:   "tg",
 			ShardName:        "0",
@@ -607,4 +614,59 @@ func observeHealthyDisruption(
 	r.PoolerClients = poolerclient.Static(rpc)
 	r.CreateTopoStore = func(*multigresv1alpha1.Shard) (topoclient.Store, error) { return store, nil }
 	return rpc, responses
+}
+
+func TestDisruptionBlockedIsLoggedAtABoundedCadence(t *testing.T) {
+	r, shard, groups, _, responses := fourToTwoFixture(t)
+	// A cohort member with no pod blocks the preflight with a posture error.
+	name := BuildPoolPodName(shard, "main", "b", 1)
+	target := groups["b"][name]
+	r.APIReader = r.Client
+	store, err := r.CreateTopoStore(shard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topo := store.(*disruptionTopo)
+	topo.poolers = slices.DeleteFunc(
+		topo.poolers,
+		func(p *topoclient.MultipoolerInfo) bool { return p.Id.Name == name },
+	)
+	if len(responses) == 0 {
+		t.Fatal("fixture has no pooler responses")
+	}
+	now := time.Now()
+	r.Clock = func() time.Time { return now }
+
+	var lines []string
+	logger := funcr.New(func(prefix, args string) {
+		lines = append(lines, args)
+	}, funcr.Options{})
+	ctx := logr.NewContext(t.Context(), logger)
+
+	preflight := func() {
+		t.Helper()
+		allowed, err := r.canStartDisruption(ctx, shard, target, &shardRolloutTracker{})
+		if err != nil || allowed {
+			t.Fatalf("preflight not blocked: allowed=%v err=%v", allowed, err)
+		}
+	}
+	preflight()
+	if len(lines) != 1 {
+		t.Fatalf("first block not logged exactly once: %q", lines)
+	}
+	for _, want := range []string{"Disruption blocked", name, "reason"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("log line %q lacks %q", lines[0], want)
+		}
+	}
+	now = now.Add(disruptionBlockedLogEvery - time.Second)
+	preflight()
+	if len(lines) != 1 {
+		t.Fatalf("repeat within the cadence was logged: %q", lines)
+	}
+	now = now.Add(2 * time.Second)
+	preflight()
+	if len(lines) != 2 {
+		t.Fatalf("block past the cadence was not logged again: %q", lines)
+	}
 }

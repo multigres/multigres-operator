@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
@@ -15,6 +16,11 @@ import (
 )
 
 const disruptionRecoveryRequeue = 5 * time.Second
+
+// disruptionBlockedLogEvery bounds how often one pod's blocked disruption is
+// logged. The preflight reruns every disruptionRecoveryRequeue, so logging each
+// pass would flood the log, yet it must repeat so a long stall stays visible.
+const disruptionBlockedLogEvery = 5 * time.Minute
 
 // listDisruptionPods reads from the API server so a new reconcile cannot miss
 // a drain annotation that a previous reconcile just wrote through the cache.
@@ -101,6 +107,9 @@ func (r *ShardReconciler) canStartDisruption(
 		available,
 		disruptionTarget,
 	); err != nil {
+		// The Event alone is not enough: client-go's spam filter drops it once
+		// the Shard's burst is spent, which left a stalled roll silent.
+		r.logDisruptionBlocked(ctx, shard, target, err)
 		if r.Recorder != nil {
 			r.Recorder.Eventf(
 				shard,
@@ -114,6 +123,30 @@ func (r *ShardReconciler) canStartDisruption(
 		return false, nil
 	}
 	return true, nil
+}
+
+func (r *ShardReconciler) logDisruptionBlocked(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	target *corev1.Pod,
+	reason error,
+) {
+	key := client.ObjectKeyFromObject(target).String()
+	now := r.now()
+	r.disruptionLogMu.Lock()
+	if last, ok := r.disruptionLoggedAt[key]; ok && now.Sub(last) < disruptionBlockedLogEvery {
+		r.disruptionLogMu.Unlock()
+		return
+	}
+	if r.disruptionLoggedAt == nil {
+		r.disruptionLoggedAt = make(map[string]time.Time)
+	}
+	r.disruptionLoggedAt[key] = now
+	r.disruptionLogMu.Unlock()
+	log.FromContext(ctx).Info("Disruption blocked, waiting for shard recovery",
+		"shard", client.ObjectKeyFromObject(shard).String(),
+		"pod", target.Name,
+		"reason", reason.Error())
 }
 
 // selectShardScaleDownPod ranks removable pods across pool/cell boundaries.

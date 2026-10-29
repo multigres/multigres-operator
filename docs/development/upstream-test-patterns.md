@@ -205,10 +205,8 @@ func (s *ShardSetup) WaitForMultigatewayQueryServing(t *testing.T) {
 --socket-file=/data/pg_sockets/.s.PGSQL.5432
 --grpc-socket-file=/data/multipooler.sock
 --service-map=grpc-pooler
---pgbackrest-cert-file=/certs/tls.crt
---pgbackrest-key-file=/certs/tls.key
---pgbackrest-ca-file=/certs/ca.crt
---pgbackrest-port=8432
+--pgbackrest-control-socket=/run/pgbackrest-control/control.sock
+--pgbackrest-wal-socket=/run/pgbackrest-wal/wal.sock
 ```
 
 ### pgctld Args (sidecar in multipooler pod)

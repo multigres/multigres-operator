@@ -35,7 +35,7 @@ func litePVCLifecycleFixture(
 	shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
 		WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
 	}
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeFilesystem,
 	}
 	scheme := reloadTestScheme(t)
