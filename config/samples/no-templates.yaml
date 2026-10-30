@@ -68,8 +68,9 @@ spec:
              # Session-level cap; must be >= window (binary default 20s).
              maxFailoverDuration: 20s
            # Gateway-served multigres.multigateways and multigres.multipoolers
-           # views. Off by default; needs a gateway image with multigres
-           # commit 25080e2d or later.
+           # views. Off by default; the flag is passed only when enabled, and
+           # enabling needs a gateway image with multigres commit 25080e2d or
+           # later.
            clusterViews:
              enabled: false
 

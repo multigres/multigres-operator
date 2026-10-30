@@ -121,9 +121,9 @@ type GatewayBufferConfig struct {
 type GatewayClusterViewsConfig struct {
 	// Enabled controls the cluster views (--enable-cluster-views). Default off.
 	// The resolver defaults it to false when building Cells from a
-	// MultigresCluster so the flag is always emitted explicitly. On a
-	// hand-written Cell CR the field stays as authored (unset emits no flag;
-	// the binary default applies).
+	// MultigresCluster. The flag is passed to the gateway only when true, so
+	// clusters that do not opt in keep their current args and gateway images
+	// without the flag keep starting.
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 }

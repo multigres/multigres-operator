@@ -2552,10 +2552,10 @@ func TestBuildMultigatewayDeployment_ClusterViews(t *testing.T) {
 		want []string // --enable-cluster-views args expected, nil for none
 	}{
 		// A Cell resolved from a default MultigresCluster carries
-		// clusterViews.enabled: false.
-		"default resolved cell emits --enable-cluster-views=false": {
-			cv:   &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
-			want: []string{"--enable-cluster-views=false"},
+		// clusterViews.enabled: false. No flag is emitted so gateway images
+		// that predate the flag keep starting.
+		"default resolved cell emits no flag": {
+			cv: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 		},
 		"enabled emits --enable-cluster-views=true": {
 			cv:   &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(true)},

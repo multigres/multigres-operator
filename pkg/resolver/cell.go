@@ -243,9 +243,8 @@ func defaultGatewayBuffer(spec *multigresv1alpha1.MultigatewaySpec) {
 }
 
 // defaultGatewayClusterViews turns the cluster views off unless the user
-// enabled them explicitly. The value is always set so the controller emits
-// the flag explicitly and the operator's off default keeps holding if the
-// binary default ever flips, the same reasoning as defaultGatewayBuffer.
+// enabled them explicitly, so the resolved Cell states the choice. The
+// controller emits the flag only when enabled; see BuildMultigatewayDeployment.
 func defaultGatewayClusterViews(spec *multigresv1alpha1.MultigatewaySpec) {
 	if spec.ClusterViews == nil {
 		spec.ClusterViews = &multigresv1alpha1.GatewayClusterViewsConfig{}
