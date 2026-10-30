@@ -33,11 +33,14 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(1))}},
 			},
 		}
-		// "Large" Template -> Replicas: 5
+		// "Large" Template -> Replicas: 5, cluster views on
 		largeTpl := &multigresv1alpha1.CellTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "large", Namespace: testNamespace},
 			Spec: multigresv1alpha1.CellTemplateSpec{
-				Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))}},
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(5))},
+					ClusterViews:  &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(true)},
+				},
 			},
 		}
 
@@ -58,32 +61,39 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 					CellTemplate: "small",
 				},
 				Cells: []multigresv1alpha1.CellConfig{
-					// Case A: Fallback to Cluster Default (Expect 1)
+					// Case A: Fallback to Cluster Default (Expect 1, views off by default)
 					{Name: "zone-a", ZoneID: "use1-az1"},
 
-					// Case B: Explicit Template Ref (Expect 5)
+					// Case B: Explicit Template Ref (Expect 5, views on from template)
 					{
 						Name:         "zone-b",
 						ZoneID:       "use1-az2",
 						CellTemplate: "large",
 					},
 
-					// Case C: Explicit Template Ref + Inline Override (Expect 3)
+					// Case C: Explicit Template Ref + Inline Override (Expect 3;
+					// override flips only clusterViews.enabled back off)
 					{
 						Name:         "zone-c",
 						ZoneID:       "use1-az3",
 						CellTemplate: "large",
 						Overrides: &multigresv1alpha1.CellOverrides{
-							Multigateway: &multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))}},
+							Multigateway: &multigresv1alpha1.MultigatewaySpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+								ClusterViews:  &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
+							},
 						},
 					},
 
-					// Case D: Inline Spec (Highest Priority) (Expect 9)
+					// Case D: Inline Spec (Highest Priority) (Expect 9, views on inline)
 					{
 						Name:   "zone-d",
 						ZoneID: "use1-az4",
 						Spec: &multigresv1alpha1.CellInlineSpec{
-							Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))}},
+							Multigateway: multigresv1alpha1.MultigatewaySpec{
+								StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(9))},
+								ClusterViews:  &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(true)},
+							},
 						},
 					},
 				},
@@ -101,7 +111,7 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 		watcher.SetCmpOpts(testutil.CompareSpecOnly()...)
 
 		// Helper to build expectation
-		makeExpected := func(zone string, replicas int32, allCells []string) *multigresv1alpha1.Cell {
+		makeExpected := func(zone string, replicas int32, clusterViews bool, allCells []string) *multigresv1alpha1.Cell {
 			cellNames := make([]multigresv1alpha1.CellName, len(allCells))
 			for i, c := range allCells {
 				cellNames[i] = multigresv1alpha1.CellName(c)
@@ -130,7 +140,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 							Replicas:  ptr.To(replicas),
 							Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 						},
-						Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+						Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+						ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(clusterViews)},
 					},
 					AllCells: cellNames,
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -155,17 +166,18 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 
 		allCells := []string{"zone-a", "zone-b", "zone-c", "zone-d"}
 		cases := []struct {
-			zone         string
-			wantReplicas int32
+			zone             string
+			wantReplicas     int32
+			wantClusterViews bool
 		}{
-			{"zone-a", 1},
-			{"zone-b", 5},
-			{"zone-c", 3},
-			{"zone-d", 9},
+			{"zone-a", 1, false},
+			{"zone-b", 5, true},
+			{"zone-c", 3, false},
+			{"zone-d", 9, true},
 		}
 
 		for _, tc := range cases {
-			if err := watcher.WaitForMatch(makeExpected(tc.zone, tc.wantReplicas, allCells)); err != nil {
+			if err := watcher.WaitForMatch(makeExpected(tc.zone, tc.wantReplicas, tc.wantClusterViews, allCells)); err != nil {
 				t.Errorf("Precedence failed for %s: %v", tc.zone, err)
 			}
 		}
@@ -216,7 +228,8 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 						Replicas:  ptr.To(int32(1)),
 						Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 					},
-					Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+					Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+					ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 				},
 				AllCells: []multigresv1alpha1.CellName{"zone-a"},
 				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -447,7 +460,8 @@ func TestMultigresCluster_EnforcementLogic(t *testing.T) {
 					Replicas:  ptr.To(int32(2)),
 					Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 				},
-				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 			},
 			AllCells: []multigresv1alpha1.CellName{"zone-a"},
 			GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{

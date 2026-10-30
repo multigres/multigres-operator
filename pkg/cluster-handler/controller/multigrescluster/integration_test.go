@@ -540,7 +540,8 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Replicas:  ptr.To(int32(1)),
 								Resources: resolver.DefaultResourcesGateway(), // Expected default
 							},
-							Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+							Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+							ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 						},
 						AllCells: []multigresv1alpha1.CellName{"zone-a"},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -909,7 +910,8 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Replicas:  ptr.To(int32(1)), // From default template
 								Resources: resolver.DefaultResourcesGateway(),
 							},
-							Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+							Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+							ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 						},
 						AllCells: []multigresv1alpha1.CellName{"zone-a"},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
@@ -1277,7 +1279,8 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 								Replicas:  ptr.To(int32(1)),
 								Resources: resolver.DefaultResourcesGateway(), // FIX: Expect defaults
 							},
-							Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+							Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+							ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 						},
 						AllCells: []multigresv1alpha1.CellName{"zone-a"},
 						GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
