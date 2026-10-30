@@ -1200,6 +1200,20 @@ spec:
                         pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|μs|ms|s|m|h))+$
                         type: string
                     type: object
+                  clusterViews:
+                    description: |-
+                      ClusterViews configures the gateway-served multigres.multigateways and
+                      multigres.multipoolers views.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled controls the cluster views (--enable-cluster-views). Default off.
+                          The resolver defaults it to false when building Cells from a
+                          MultigresCluster so the flag is always emitted explicitly. On a
+                          hand-written Cell CR the field stays as authored (unset emits no flag;
+                          the binary default applies).
+                        type: boolean
+                    type: object
                   podAnnotations:
                     additionalProperties:
                       type: string

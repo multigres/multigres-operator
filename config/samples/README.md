@@ -162,7 +162,24 @@ Fields left out emit no flag, so the multigateway binary's own defaults apply. S
 
 ---
 
-## 7. Scenarios & Gotchas
+## 7. Gateway Cluster Views
+
+Multigateway can serve two read-only views, `multigres.multigateways` and `multigres.multipoolers`, that let any client inspect cluster topology with plain SQL. They are off by default (`--enable-cluster-views=false`); opt in per cell via the `clusterViews` block next to `buffer` (see `no-templates.yaml`):
+
+```yaml
+cells:
+  - name: "z1"
+    spec:
+      multigateway:
+        clusterViews:
+          enabled: true              # operator default is false
+```
+
+The views are visible to PUBLIC and must be schema-qualified (`select * from multigres.multigateways;`). With the flag off, those names pass through to PostgreSQL unchanged and fail with "relation does not exist". The gateway image must include multigres commit `25080e2d` or later; older binaries reject the flag at startup.
+
+---
+
+## 8. Scenarios & Gotchas
 
 ### Scenario A: Namespace Defaults (The "Happy Path")
 

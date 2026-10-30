@@ -259,6 +259,15 @@ func BuildMultigatewayDeployment(
 		}
 	}
 
+	// Same explicit-emit rule as the buffer: operator-resolved Cells always
+	// carry a value; a nil Enabled (hand-written or legacy Cell CR) emits
+	// nothing so the binary default applies.
+	if cv := cell.Spec.Multigateway.ClusterViews; cv != nil && cv.Enabled != nil {
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		container.Args = append(container.Args,
+			fmt.Sprintf("--enable-cluster-views=%t", *cv.Enabled))
+	}
+
 	if otelVol, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		cell.Spec.Observability,
 	); otelVol != nil {

@@ -40,6 +40,7 @@ func (r *Resolver) ResolveCell(
 		defaultStatelessSpec(&gateway.StatelessSpec, DefaultResourcesGateway(), 1)
 	}
 	defaultGatewayBuffer(gateway)
+	defaultGatewayClusterViews(gateway)
 
 	// Note: We do NOT default LocalTopo here because it is optional.
 	if localTopo != nil {
@@ -165,14 +166,24 @@ func mergeCellConfig(
 }
 
 // mergeMultigatewaySpec merges an override onto a base gateway spec: the shared
-// stateless fields and the buffer settings both merge per-field, so an override
-// that only sets one buffer knob keeps the rest from the base.
+// stateless fields, the buffer settings and the cluster views settings all
+// merge per-field, so an override that only sets one knob keeps the rest from
+// the base.
 func mergeMultigatewaySpec(
 	base *multigresv1alpha1.MultigatewaySpec,
 	override *multigresv1alpha1.MultigatewaySpec,
 ) {
 	mergeStatelessSpec(&base.StatelessSpec, &override.StatelessSpec)
+	mergeGatewayBuffer(base, override)
+	mergeGatewayClusterViews(base, override)
+}
 
+// mergeGatewayBuffer merges the override's buffer settings per-field onto the
+// base.
+func mergeGatewayBuffer(
+	base *multigresv1alpha1.MultigatewaySpec,
+	override *multigresv1alpha1.MultigatewaySpec,
+) {
 	if override.Buffer == nil {
 		return
 	}
@@ -202,6 +213,23 @@ func mergeMultigatewaySpec(
 	}
 }
 
+// mergeGatewayClusterViews merges the override's cluster views settings
+// per-field onto the base.
+func mergeGatewayClusterViews(
+	base *multigresv1alpha1.MultigatewaySpec,
+	override *multigresv1alpha1.MultigatewaySpec,
+) {
+	if override.ClusterViews == nil {
+		return
+	}
+	if base.ClusterViews == nil {
+		base.ClusterViews = &multigresv1alpha1.GatewayClusterViewsConfig{}
+	}
+	if override.ClusterViews.Enabled != nil {
+		base.ClusterViews.Enabled = ptr.To(*override.ClusterViews.Enabled)
+	}
+}
+
 // defaultGatewayBuffer turns failover buffering on unless the user disabled it
 // explicitly. All other buffer fields stay unset so the multigateway binary's
 // own defaults apply.
@@ -211,5 +239,18 @@ func defaultGatewayBuffer(spec *multigresv1alpha1.MultigatewaySpec) {
 	}
 	if spec.Buffer.Enabled == nil {
 		spec.Buffer.Enabled = ptr.To(true)
+	}
+}
+
+// defaultGatewayClusterViews turns the cluster views off unless the user
+// enabled them explicitly. The value is always set so the controller emits
+// the flag explicitly and the operator's off default keeps holding if the
+// binary default ever flips, the same reasoning as defaultGatewayBuffer.
+func defaultGatewayClusterViews(spec *multigresv1alpha1.MultigatewaySpec) {
+	if spec.ClusterViews == nil {
+		spec.ClusterViews = &multigresv1alpha1.GatewayClusterViewsConfig{}
+	}
+	if spec.ClusterViews.Enabled == nil {
+		spec.ClusterViews.Enabled = ptr.To(false)
 	}
 }
