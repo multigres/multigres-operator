@@ -230,6 +230,14 @@ type ShardSpec struct {
 	// +optional
 	PostgresInitSecretsRef *PostgresInitSecretsRef `json:"postgresInitSecretsRef,omitempty"`
 
+	// PostgresMountsSecretRef lists Secrets that the operator mounts into the
+	// postgres container of every pool pod. Inherited from the cluster.
+	// +optional
+	// +listType=map
+	// +listMapKey=mountPath
+	// +kubebuilder:validation:MaxItems=16
+	PostgresMountsSecretRef []PostgresSecretMount `json:"postgresMountsSecretRef,omitempty"`
+
 	// CellTopologyLabels maps cell names to their topology nodeSelector labels.
 	// Each entry is a map like {"topology.kubernetes.io/zone": "us-east-1a"}.
 	// Propagated from the cluster's cell configs so the shard controller

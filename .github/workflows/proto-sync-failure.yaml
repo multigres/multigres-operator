@@ -43,8 +43,9 @@ jobs:
             });
             const expectedRepo = `${context.repo.owner}/${context.repo.repo}`;
             const branchMatch = pr.head.ref.match(/^chore\/sync-proto-([0-9a-f]{7})$/);
-            const upstreamSha =
-              pr.body?.match(/multigres\/multigres@([0-9a-f]{40})/)?.[1];
+            const upstreamSha = pr.body?.match(
+              /^- New revision: \[`([0-9a-f]{40})`\]\(https:\/\/github\.com\/multigres\/multigres\/commit\/\1\)/m,
+            )?.[1];
             const matchesSyncShape =
               pr.head.repo?.full_name === expectedRepo &&
               pr.user?.type === 'Bot' &&

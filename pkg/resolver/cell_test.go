@@ -50,7 +50,8 @@ func TestResolver_ResolveCell(t *testing.T) {
 					Resources: DefaultResourcesGateway(),
 				},
 				// Expect buffering defaulted to enabled
-				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 			},
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
 				Etcd: &multigresv1alpha1.EtcdSpec{
@@ -84,7 +85,8 @@ func TestResolver_ResolveCell(t *testing.T) {
 					// Expect default resources to be applied here too
 					Resources: DefaultResourcesGateway(),
 				},
-				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 			},
 			wantTopo: nil, // Inline spec didn't provide one
 		},
@@ -109,6 +111,27 @@ func TestResolver_ResolveCell(t *testing.T) {
 					Enabled: ptr.To(false),
 					Window:  &metav1.Duration{Duration: 5 * time.Second},
 				},
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
+			},
+		},
+		"Inline ClusterViews Enabled": {
+			config: &multigresv1alpha1.CellConfig{
+				Spec: &multigresv1alpha1.CellInlineSpec{
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{
+							Enabled: ptr.To(true),
+						},
+					},
+				},
+			},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				StatelessSpec: multigresv1alpha1.StatelessSpec{
+					Replicas:  ptr.To(int32(1)),
+					Resources: DefaultResourcesGateway(),
+				},
+				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				// Explicit opt-in is preserved; defaulting must not flip it back.
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(true)},
 			},
 		},
 		"Inline External Topo": {
@@ -127,7 +150,8 @@ func TestResolver_ResolveCell(t *testing.T) {
 					Replicas:  ptr.To(int32(1)),
 					Resources: DefaultResourcesGateway(),
 				},
-				Buffer: &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				Buffer:       &multigresv1alpha1.GatewayBufferConfig{Enabled: ptr.To(true)},
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
 			},
 			wantTopo: &multigresv1alpha1.LocalTopoServerSpec{
 				External: &multigresv1alpha1.ExternalTopoServerSpec{
@@ -458,6 +482,33 @@ func TestMergeCellConfig(t *testing.T) {
 					Enabled: ptr.To(false),                                // from inline
 					Window:  &metav1.Duration{Duration: 20 * time.Second}, // from template
 					Size:    ptr.To(int32(2000)),                          // from overrides
+				},
+			},
+		},
+		"ClusterViews Per-Field Merge": {
+			tpl: &multigresv1alpha1.CellTemplate{
+				Spec: multigresv1alpha1.CellTemplateSpec{
+					Multigateway: &multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+						Buffer: &multigresv1alpha1.GatewayBufferConfig{
+							Size: ptr.To(int32(500)),
+						},
+					},
+				},
+			},
+			overrides: &multigresv1alpha1.CellOverrides{
+				Multigateway: &multigresv1alpha1.MultigatewaySpec{
+					ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{
+						Enabled: ptr.To(true),
+					},
+				},
+			},
+			wantGw: &multigresv1alpha1.MultigatewaySpec{
+				// Replicas and Buffer come from the template untouched.
+				StatelessSpec: multigresv1alpha1.StatelessSpec{Replicas: ptr.To(int32(3))},
+				Buffer:        &multigresv1alpha1.GatewayBufferConfig{Size: ptr.To(int32(500))},
+				ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{
+					Enabled: ptr.To(true), // from overrides
 				},
 			},
 		},

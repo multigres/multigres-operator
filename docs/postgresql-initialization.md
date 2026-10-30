@@ -177,3 +177,37 @@ When `postgresInitSecretsRef` is set, the operator mounts the Secret read-only i
 **Mounted on every pool pod.** Any replica may initialize a fresh PVC, so every pool pod mounts the Secret into pgctld.
 
 **The payload stays out of arguments and logs.** `POSTGRES_INIT_SECRETS_FILE` contains only the mounted file path. The payload does not appear in container arguments, pod events, or operator logs.
+
+## Mounting Secrets into the postgres container
+
+Use `postgresMountsSecretRef` to mount your own Secrets into the `postgres` container of every pool pod. This is a generic option. The operator does not know what the files are for.
+
+```yaml
+spec:
+  postgresMountsSecretRef:
+    # One key as a single file. Other files in the same directory stay visible.
+    - name: my-root-key
+      key: root.key
+      mountPath: /etc/postgresql-custom/pgsodium_root.key
+    # No key: the whole Secret as a directory.
+    - name: my-extra-certs
+      mountPath: /etc/my-extra-certs
+```
+
+| Field | Description |
+| --- | --- |
+| `name` | Name of a Secret in the same namespace as the cluster. |
+| `mountPath` | Absolute path in the container, with no trailing slash. It must be unique in the list and must not match a path that the operator mounts. |
+| `key` | Optional. If set, only this key is mounted, as one file at `mountPath` (with `subPath`). If not set, the whole Secret is mounted as a directory at `mountPath`. |
+
+**The operator does not manage these Secrets.** It does not create, check, own, change, or delete them. If the field is not set, the operator adds no volume and no mount.
+
+**Create the Secret before you reference it.** If a Secret is missing, the kubelet cannot start the pod. The pod stays in `Init:0/1` and shows `FailedMount ... secret "<name>" not found` in its events. The operator does not replace pods while another pod is not ready, so a missing Secret also stops a rolling update. If you fix the reference, the stuck pod is not replaced by itself. Delete the stuck pod, and the operator creates it again from the current spec.
+
+**Read-only, postgres container only.** The mounts are read-only and have mode `0444`. They are in the `postgres` container only, not in `multipooler` or other containers. The list passes from the cluster to every TableGroup and Shard.
+
+**Changing the content.** Kubernetes does not update `subPath` mounts (entries with `key`), and a process may read a file only when it starts. To change the content, create a new Secret and set `name` to it. The pod spec changes, so the operator replaces the pods. A change to the data in the Secret that is already referenced does not restart pods. The kubelet does refresh a directory mount (an entry without `key`), but the process must read the files again itself.
+
+**Changing the key changes what the process can read.** If a process encrypted data with the old content, for example a Vault root key, it cannot read that data with new content. Point `name` back at the old Secret to read it again.
+
+**Example: a stable key for an extension.** The Supabase Postgres image reads a Vault root key from `/etc/postgresql-custom/pgsodium_root.key` when Postgres starts. If the file does not exist, the image makes a random key inside the container, and the key is lost when the container is replaced. Mount a Secret at that path (with `key`, so `supautils.conf` and `conf.d` stay visible) to give every pod of a cluster the same key.

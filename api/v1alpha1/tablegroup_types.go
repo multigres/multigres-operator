@@ -120,6 +120,14 @@ type TableGroupSpec struct {
 	// PostgresInitSecretsRef is inherited from the cluster.
 	// +optional
 	PostgresInitSecretsRef *PostgresInitSecretsRef `json:"postgresInitSecretsRef,omitempty"`
+
+	// PostgresMountsSecretRef lists Secrets that the operator mounts into the
+	// postgres container of every pool pod. Inherited from the cluster.
+	// +optional
+	// +listType=map
+	// +listMapKey=mountPath
+	// +kubebuilder:validation:MaxItems=16
+	PostgresMountsSecretRef []PostgresSecretMount `json:"postgresMountsSecretRef,omitempty"`
 }
 
 // ShardResolvedSpec represents the fully calculated spec for a shard,

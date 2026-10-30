@@ -146,6 +146,10 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 									Buffer: &multigresv1alpha1.GatewayBufferConfig{
 										Enabled: ptr.To(true),
 									},
+									// Cluster views are defaulted to disabled.
+									ClusterViews: &multigresv1alpha1.GatewayClusterViewsConfig{
+										Enabled: ptr.To(false),
+									},
 								},
 							},
 						},

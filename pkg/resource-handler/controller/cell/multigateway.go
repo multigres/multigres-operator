@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -257,6 +258,15 @@ func BuildMultigatewayDeployment(
 			container.Args = append(container.Args,
 				"--buffer-drain-concurrency", fmt.Sprintf("%d", *buf.DrainConcurrency))
 		}
+	}
+
+	// Unlike the buffer, the flag is emitted only when enabled. Gateway
+	// images older than multigres 25080e2d reject it at startup, so emitting
+	// an explicit =false would crash-loop every cluster pinned to such an
+	// image even though nothing opted in.
+	if cv := cell.Spec.Multigateway.ClusterViews; cv != nil && ptr.Deref(cv.Enabled, false) {
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		container.Args = append(container.Args, "--enable-cluster-views=true")
 	}
 
 	if otelVol, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(

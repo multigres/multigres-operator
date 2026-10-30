@@ -38,14 +38,19 @@ import (
 // These specs are used by CellTemplate, MultigresCluster, and the Cell child CR.
 
 // MultigatewaySpec defines the configuration specifically for Multigateway,
-// which adds gateway-only settings (failover request buffering) on top of the
-// shared stateless spec.
+// which adds gateway-only settings (failover request buffering, cluster
+// views) on top of the shared stateless spec.
 type MultigatewaySpec struct {
 	StatelessSpec `json:",inline"`
 
 	// Buffer configures request buffering during planned failovers.
 	// +optional
 	Buffer *GatewayBufferConfig `json:"buffer,omitempty"`
+
+	// ClusterViews configures the gateway-served multigres.multigateways and
+	// multigres.multipoolers views.
+	// +optional
+	ClusterViews *GatewayClusterViewsConfig `json:"clusterViews,omitempty"`
 }
 
 // GatewayBufferConfig controls multigateway request buffering during planned
@@ -103,6 +108,24 @@ type GatewayBufferConfig struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	DrainConcurrency *int32 `json:"drainConcurrency,omitempty"`
+}
+
+// GatewayClusterViewsConfig controls whether multigateway serves the
+// multigres.multigateways and multigres.multipoolers views. The views are
+// read-only, visible to PUBLIC, and must be schema-qualified. With the flag
+// off, queries naming them pass through to PostgreSQL unchanged and fail
+// there with "relation does not exist".
+//
+// The gateway image must include multigres commit 25080e2d or later; older
+// binaries reject the flag at startup.
+type GatewayClusterViewsConfig struct {
+	// Enabled controls the cluster views (--enable-cluster-views). Default off.
+	// The resolver defaults it to false when building Cells from a
+	// MultigresCluster. The flag is passed to the gateway only when true, so
+	// clusters that do not opt in keep their current args and gateway images
+	// without the flag keep starting.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // ============================================================================

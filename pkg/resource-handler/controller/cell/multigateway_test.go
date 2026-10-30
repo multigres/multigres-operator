@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -2515,6 +2516,69 @@ func TestBuildMultigatewayDeployment_Buffer(t *testing.T) {
 			t.Errorf("expected --buffer-enabled=false when disabled, got %v", args)
 		}
 	})
+}
+
+func TestBuildMultigatewayDeployment_ClusterViews(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	buildCell := func(cv *multigresv1alpha1.GatewayClusterViewsConfig) *multigresv1alpha1.Cell {
+		return &multigresv1alpha1.Cell{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster-views",
+				Namespace: "default",
+				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+			},
+			Spec: multigresv1alpha1.CellSpec{
+				Name: "zone-cluster-views",
+				Multigateway: multigresv1alpha1.MultigatewaySpec{
+					ClusterViews: cv,
+				},
+			},
+		}
+	}
+
+	gatewayArgs := func(t *testing.T, cellObj *multigresv1alpha1.Cell) []string {
+		t.Helper()
+		deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
+		if err != nil {
+			t.Fatalf("BuildMultigatewayDeployment failed: %v", err)
+		}
+		return deploy.Spec.Template.Spec.Containers[0].Args
+	}
+
+	tests := map[string]struct {
+		cv   *multigresv1alpha1.GatewayClusterViewsConfig
+		want []string // --enable-cluster-views args expected, nil for none
+	}{
+		// A Cell resolved from a default MultigresCluster carries
+		// clusterViews.enabled: false. No flag is emitted so gateway images
+		// that predate the flag keep starting.
+		"default resolved cell emits no flag": {
+			cv: &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(false)},
+		},
+		"enabled emits --enable-cluster-views=true": {
+			cv:   &multigresv1alpha1.GatewayClusterViewsConfig{Enabled: ptr.To(true)},
+			want: []string{"--enable-cluster-views=true"},
+		},
+		// Legacy Cell CRs written before this field existed.
+		"nil config emits no flag": {cv: nil},
+		"empty config emits no flag": {
+			cv: &multigresv1alpha1.GatewayClusterViewsConfig{},
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var got []string
+			for _, arg := range gatewayArgs(t, buildCell(tt.cv)) {
+				if strings.HasPrefix(arg, "--enable-cluster-views") {
+					got = append(got, arg)
+				}
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestBuildMultigatewayDeployment_TopoClientTLS(t *testing.T) {
