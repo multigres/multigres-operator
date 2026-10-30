@@ -19,7 +19,6 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
@@ -754,11 +753,7 @@ func TestTableGroupReconciler_Reconcile_Success(t *testing.T) {
 				objects = append(objects, tc.tableGroup)
 			}
 
-			clientBuilder := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objects...).
-				WithStatusSubresource(&multigresv1alpha1.TableGroup{}, &multigresv1alpha1.Shard{})
-			baseClient := clientBuilder.Build()
+			baseClient := newTestClient(t, objects...)
 
 			if tc.preReconcileClient != nil {
 				tc.preReconcileClient(t, baseClient)
@@ -882,14 +877,7 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(tg).
-		WithStatusSubresource(
-			&multigresv1alpha1.TableGroup{},
-			&multigresv1alpha1.Shard{},
-		).
-		Build()
+	c := newTestClient(t, tg)
 
 	reconciler := &TableGroupReconciler{
 		Client:   c,
@@ -942,14 +930,7 @@ func TestTableGroupReconciler_DefaultMVPShape(t *testing.T) {
 	healthyShard.Status.Phase = multigresv1alpha1.PhaseHealthy
 	healthyShard.Status.ObservedGeneration = healthyShard.Generation
 
-	c = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(healthyShard, healthyTG).
-		WithStatusSubresource(
-			&multigresv1alpha1.TableGroup{},
-			&multigresv1alpha1.Shard{},
-		).
-		Build()
+	c = newTestClient(t, healthyShard, healthyTG)
 
 	reconciler.Client = c
 	if got, err := reconciler.Reconcile(t.Context(), req); err != nil {
@@ -1269,13 +1250,9 @@ func TestTableGroupReconciler_Reconcile_Failure(t *testing.T) {
 			// Create the TableGroup so reconcile reaches the failing step.
 			objects = append(objects, tc.tableGroup)
 
-			clientBuilder := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objects...).
-				WithStatusSubresource(&multigresv1alpha1.TableGroup{}, &multigresv1alpha1.Shard{})
-			baseClient := clientBuilder.Build()
+			baseClient := newTestClient(t, objects...)
 
-			finalClient := client.Client(baseClient)
+			finalClient := baseClient
 			if tc.failureConfig != nil {
 				finalClient = testutil.NewFakeClientWithFailures(baseClient, tc.failureConfig)
 			}
@@ -1334,7 +1311,7 @@ func TestTableGroupReconciler_Reconcile_BuildFailure(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 	baseTG, _, _, _, _, _ := setupFixtures(t)
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(baseTG).Build()
+	c := newTestClient(t, baseTG)
 
 	// The empty scheme makes BuildShard fail when it sets the owner reference.
 	r := &TableGroupReconciler{
@@ -1461,27 +1438,19 @@ func TestTableGroupReconciler_ReadsChildShardsOnce(t *testing.T) {
 			// Count Lists of child Shards during one Reconcile.
 			var shardListCount atomic.Int64
 
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objects...).
-				WithStatusSubresource(
-					&multigresv1alpha1.TableGroup{},
-					&multigresv1alpha1.Shard{},
-				).
-				WithInterceptorFuncs(interceptor.Funcs{
-					List: func(
-						ctx context.Context,
-						cli client.WithWatch,
-						list client.ObjectList,
-						opts ...client.ListOption,
-					) error {
-						if _, ok := list.(*multigresv1alpha1.ShardList); ok {
-							shardListCount.Add(1)
-						}
-						return cli.List(ctx, list, opts...)
-					},
-				}).
-				Build()
+			c := newTestClientWith(t, interceptor.Funcs{
+				List: func(
+					ctx context.Context,
+					cli client.WithWatch,
+					list client.ObjectList,
+					opts ...client.ListOption,
+				) error {
+					if _, ok := list.(*multigresv1alpha1.ShardList); ok {
+						shardListCount.Add(1)
+					}
+					return cli.List(ctx, list, opts...)
+				},
+			}, objects...)
 
 			reconciler := &TableGroupReconciler{
 				Client:   c,
@@ -1600,39 +1569,31 @@ func TestTableGroupReconciler_PendingDeletionUpgradeCompatibility(t *testing.T) 
 			var shardPatchCount atomic.Int64
 			var shardDeleteCount atomic.Int64
 
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(child, tg).
-				WithStatusSubresource(
-					&multigresv1alpha1.TableGroup{},
-					&multigresv1alpha1.Shard{},
-				).
-				WithInterceptorFuncs(interceptor.Funcs{
-					Patch: func(
-						ctx context.Context,
-						cli client.WithWatch,
-						obj client.Object,
-						patch client.Patch,
-						opts ...client.PatchOption,
-					) error {
-						if _, ok := obj.(*multigresv1alpha1.Shard); ok {
-							shardPatchCount.Add(1)
-						}
-						return cli.Patch(ctx, obj, patch, opts...)
-					},
-					Delete: func(
-						ctx context.Context,
-						cli client.WithWatch,
-						obj client.Object,
-						opts ...client.DeleteOption,
-					) error {
-						if _, ok := obj.(*multigresv1alpha1.Shard); ok {
-							shardDeleteCount.Add(1)
-						}
-						return cli.Delete(ctx, obj, opts...)
-					},
-				}).
-				Build()
+			c := newTestClientWith(t, interceptor.Funcs{
+				Patch: func(
+					ctx context.Context,
+					cli client.WithWatch,
+					obj client.Object,
+					patch client.Patch,
+					opts ...client.PatchOption,
+				) error {
+					if _, ok := obj.(*multigresv1alpha1.Shard); ok {
+						shardPatchCount.Add(1)
+					}
+					return cli.Patch(ctx, obj, patch, opts...)
+				},
+				Delete: func(
+					ctx context.Context,
+					cli client.WithWatch,
+					obj client.Object,
+					opts ...client.DeleteOption,
+				) error {
+					if _, ok := obj.(*multigresv1alpha1.Shard); ok {
+						shardDeleteCount.Add(1)
+					}
+					return cli.Delete(ctx, obj, opts...)
+				},
+			}, child, tg)
 
 			reconciler := &TableGroupReconciler{
 				Client:   c,
@@ -1773,14 +1734,7 @@ func TestTableGroupReconciler_PendingDeletionPublishesProgressingStatus(t *testi
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(orphan, tg).
-		WithStatusSubresource(
-			&multigresv1alpha1.TableGroup{},
-			&multigresv1alpha1.Shard{},
-		).
-		Build()
+	c := newTestClient(t, orphan, tg)
 
 	recorder := record.NewFakeRecorder(100)
 	reconciler := &TableGroupReconciler{
@@ -1903,14 +1857,7 @@ func TestTableGroupReconciler_SteadyStateDoesNotFlap(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(childShard, tg).
-		WithStatusSubresource(
-			&multigresv1alpha1.TableGroup{},
-			&multigresv1alpha1.Shard{},
-		).
-		Build()
+	c := newTestClient(t, childShard, tg)
 
 	recorder := record.NewFakeRecorder(100)
 

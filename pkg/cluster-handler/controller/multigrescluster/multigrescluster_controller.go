@@ -32,6 +32,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/images"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -597,6 +598,9 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	// Both SetupWithManager and test/suite go through here, so the owner cannot diverge.
+	r.Client = client.WithFieldOwner(r.Client, ownership.ManagerCluster)
+
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}
@@ -609,6 +613,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 			builder.WithPredicates(predicate.Or(
 				projectRefOrGenerationChangedPredicate(),
 				features.LabelsChanged(),
+				statusClearedPredicate(),
 			)),
 		).
 		Owns(&multigresv1alpha1.Cell{}).
@@ -845,4 +850,32 @@ func collectTrackingLabels(cluster *multigresv1alpha1.MultigresCluster) map[stri
 	}
 
 	return labels
+}
+
+// statusClearedPredicate admits an update that empties the phase.
+//
+// The For() filter above drops status-only updates, so a status that is
+// wiped out of band (a restore, a manual edit of the subresource) would
+// otherwise never be rebuilt until an unrelated event arrived: a Healthy
+// object requeues nowhere, and its parent keeps reading the empty phase as
+// not Healthy. The reconcile it triggers rewrites the phase, so this cannot
+// loop on the controller's own writes. Only the phase is checked: a partial
+// wipe that leaves it set is not caught.
+func statusClearedPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldObj, ok := e.ObjectOld.(*multigresv1alpha1.MultigresCluster)
+			if !ok {
+				return false
+			}
+			newObj, ok := e.ObjectNew.(*multigresv1alpha1.MultigresCluster)
+			if !ok {
+				return false
+			}
+			return oldObj.Status.Phase != "" && newObj.Status.Phase == ""
+		},
+	}
 }

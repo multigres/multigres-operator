@@ -16,6 +16,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -180,12 +181,12 @@ func (r *ShardReconciler) patchStatus(
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-resource-handler"),
 		client.ForceOwnership,
 	); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
 
+	ownership.TidyLegacy(ctx, r.Client, patchObj)
 	return nil
 }
 

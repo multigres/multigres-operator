@@ -10,7 +10,6 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
@@ -38,7 +37,7 @@ func TestConvergedTopologyReconcileDoesNotWrite(t *testing.T) {
 		},
 	}
 	store := newClusterTopologyMemoryStore(t)
-	c := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(cluster).Build()
+	c := newTestClient(t, cluster)
 	r := &MultigresClusterReconciler{
 		Client:          c,
 		Scheme:          setupScheme(),
@@ -110,9 +109,9 @@ func TestReconcileTopologySharedTopo(t *testing.T) {
 
 	store := newClusterTopologyMemoryStore(t)
 	var openedRef multigresv1alpha1.GlobalTopoServerRef
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	kc := newTestClient(t, cluster)
 	reconciler := &MultigresClusterReconciler{
-		Client:   client,
+		Client:   kc,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
@@ -124,7 +123,7 @@ func TestReconcileTopologySharedTopo(t *testing.T) {
 	result, err := reconciler.reconcileTopology(
 		context.Background(),
 		cluster,
-		resolver.NewResolver(client, "default"),
+		resolver.NewResolver(kc, "default"),
 	)
 	if err != nil {
 		t.Fatalf("reconcileTopology() error = %v", err)
@@ -188,17 +187,13 @@ func TestReconcileTopologyManagedLocalTopo(t *testing.T) {
 	store := newClusterTopologyMemoryStore(t)
 	k8sCell := expectedManagedLocalCell("cluster", "cell1", "default")
 	ts := healthyManagedLocalTopoServer(k8sCell)
-	client := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-		WithObjects(cluster, k8sCell, ts).
-		Build()
+	kc := newTestClient(t, cluster, k8sCell, ts)
 	ts.Status.ObservedGeneration = ts.Generation
-	if err := client.Status().Update(context.Background(), ts); err != nil {
+	if err := kc.Status().Update(context.Background(), ts); err != nil {
 		t.Fatalf("failed to update TopoServer status: %v", err)
 	}
 	reconciler := &MultigresClusterReconciler{
-		Client:   client,
+		Client:   kc,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
@@ -208,7 +203,7 @@ func TestReconcileTopologyManagedLocalTopo(t *testing.T) {
 	result, err := reconciler.reconcileTopology(
 		context.Background(),
 		cluster,
-		resolver.NewResolver(client, "default"),
+		resolver.NewResolver(kc, "default"),
 	)
 	if err != nil {
 		t.Fatalf("reconcileTopology() error = %v", err)
@@ -260,17 +255,13 @@ func TestReconcileTopologyWaitsForManagedLocalTopoNotOwnedByCell(t *testing.T) {
 	cell := expectedManagedLocalCell("cluster", "cell1", "default")
 	ts := healthyManagedLocalTopoServer(cell)
 	ts.OwnerReferences = nil
-	client := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-		WithObjects(cluster, cell, ts).
-		Build()
+	kc := newTestClient(t, cluster, cell, ts)
 	ts.Status.ObservedGeneration = ts.Generation
-	if err := client.Status().Update(context.Background(), ts); err != nil {
+	if err := kc.Status().Update(context.Background(), ts); err != nil {
 		t.Fatalf("failed to update TopoServer status: %v", err)
 	}
 	reconciler := &MultigresClusterReconciler{
-		Client:   client,
+		Client:   kc,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
@@ -282,7 +273,7 @@ func TestReconcileTopologyWaitsForManagedLocalTopoNotOwnedByCell(t *testing.T) {
 	result, err := reconciler.reconcileTopology(
 		context.Background(),
 		cluster,
-		resolver.NewResolver(client, "default"),
+		resolver.NewResolver(kc, "default"),
 	)
 	if err != nil {
 		t.Fatalf("reconcileTopology() error = %v", err)
@@ -317,9 +308,9 @@ func TestReconcileTopologyWaitsForManagedLocalTopo(t *testing.T) {
 	}
 
 	store := newClusterTopologyMemoryStore(t)
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	kc := newTestClient(t, cluster)
 	reconciler := &MultigresClusterReconciler{
-		Client:   client,
+		Client:   kc,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
@@ -329,7 +320,7 @@ func TestReconcileTopologyWaitsForManagedLocalTopo(t *testing.T) {
 	result, err := reconciler.reconcileTopology(
 		context.Background(),
 		cluster,
-		resolver.NewResolver(client, "default"),
+		resolver.NewResolver(kc, "default"),
 	)
 	if err != nil {
 		t.Fatalf("reconcileTopology() error = %v", err)
@@ -382,9 +373,9 @@ func TestReconcileTopologyKeepsExistingCellRecordWhileManagedLocalTopoWaits(t *t
 		t.Fatalf("failed to seed existing cell topology: %v", err)
 	}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	kc := newTestClient(t, cluster)
 	reconciler := &MultigresClusterReconciler{
-		Client:   client,
+		Client:   kc,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
@@ -395,7 +386,7 @@ func TestReconcileTopologyKeepsExistingCellRecordWhileManagedLocalTopoWaits(t *t
 	result, err := reconciler.reconcileTopology(
 		context.Background(),
 		cluster,
-		resolver.NewResolver(client, "default"),
+		resolver.NewResolver(kc, "default"),
 	)
 	if err != nil {
 		t.Fatalf("reconcileTopology() error = %v", err)
@@ -464,9 +455,9 @@ func TestReconcileTopologyKeepsPendingDeletionCellRecord(t *testing.T) {
 		}
 	}
 
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, pendingCell).Build()
+	kc := newTestClient(t, cluster, pendingCell)
 	reconciler := &MultigresClusterReconciler{
-		Client:   client,
+		Client:   kc,
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
@@ -477,7 +468,7 @@ func TestReconcileTopologyKeepsPendingDeletionCellRecord(t *testing.T) {
 	result, err := reconciler.reconcileTopology(
 		context.Background(),
 		cluster,
-		resolver.NewResolver(client, "default"),
+		resolver.NewResolver(kc, "default"),
 		true,
 	)
 	if err != nil {

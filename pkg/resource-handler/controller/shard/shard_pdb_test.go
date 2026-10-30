@@ -13,7 +13,6 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -143,10 +142,7 @@ func TestReconcileShardPDBReplacesLegacyPoolCellPDBs(t *testing.T) {
 	unmanaged.Name = "unmanaged-pdb"
 	unmanaged.OwnerReferences = nil
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard, legacy, unmanaged).
-		Build()
+	c := newTestClient(t, shard, legacy, unmanaged)
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	if err := r.reconcileShardPDB(t.Context(), shard); err != nil {
@@ -189,7 +185,7 @@ func TestReconcileShardPDBCountsMaintenanceSurge(t *testing.T) {
 			Annotations: map[string]string{metadata.AnnotationMaintenanceSurge: "true"},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, surge).Build()
+	c := newTestClient(t, shard, surge)
 	r := &ShardReconciler{Client: c, Scheme: scheme}
 
 	if err := r.reconcileShardPDB(t.Context(), shard); err != nil {

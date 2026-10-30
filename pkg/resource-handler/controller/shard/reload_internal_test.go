@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -118,11 +117,12 @@ func reloadTestStore(t *testing.T) (topoclient.Store, topoclient.ComponentID) {
 }
 
 func newReloadReconciler(
+	t *testing.T,
 	scheme *runtime.Scheme,
 	rpc rpcclient.MultipoolerClient,
 	objs ...client.Object,
 ) *ShardReconciler {
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	c := newTestClient(t, objs...)
 	return &ShardReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -166,7 +166,7 @@ func TestReconcileReloadStateStampsWhenVerified(t *testing.T) {
 	}
 
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil) // stale reload-hash, current restart-hash
-	r := newReloadReconciler(scheme, rpc, shard, pod)
+	r := newReloadReconciler(t, scheme, rpc, shard, pod)
 
 	wait, err := r.reconcileReloadState(
 		context.Background(),
@@ -209,7 +209,7 @@ func TestReconcileReloadStateNotSyncedRetries(t *testing.T) {
 	}
 
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
-	r := newReloadReconciler(scheme, rpc, shard, pod)
+	r := newReloadReconciler(t, scheme, rpc, shard, pod)
 
 	wait, err := r.reconcileReloadState(
 		context.Background(),
@@ -246,7 +246,7 @@ func TestReconcileReloadStateNeedsRestart(t *testing.T) {
 	}
 
 	pod := reloadTestPodObj("R1", reloadTestRestart, nil)
-	r := newReloadReconciler(scheme, rpc, shard, pod)
+	r := newReloadReconciler(t, scheme, rpc, shard, pod)
 
 	wait, err := r.reconcileReloadState(
 		context.Background(),
@@ -297,7 +297,7 @@ func TestReconcileReloadStateSkips(t *testing.T) {
 			}
 
 			pod := reloadTestPodObj(tc.reloadHash, tc.restart, tc.extraAnn)
-			r := newReloadReconciler(scheme, rpc, shard, pod)
+			r := newReloadReconciler(t, scheme, rpc, shard, pod)
 
 			if _, err := r.reconcileReloadState(
 				context.Background(),

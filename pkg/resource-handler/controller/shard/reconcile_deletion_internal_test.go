@@ -61,7 +61,7 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 			},
 		})
 		r := &ShardReconciler{
-			Client:          c,
+			Client:          withShardOwner(c),
 			Scheme:          scheme,
 			Recorder:        record.NewFakeRecorder(10),
 			CreateTopoStore: newMemoryTopoFactory(),
@@ -85,7 +85,7 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 			},
 		})
 		r := &ShardReconciler{
-			Client:          c,
+			Client:          withShardOwner(c),
 			Scheme:          scheme,
 			Recorder:        record.NewFakeRecorder(10),
 			CreateTopoStore: newMemoryTopoFactory(),
@@ -107,11 +107,7 @@ func TestHandleDeletion_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, deploy).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
+		c := newTestClient(t, shard, deploy)
 		r := &ShardReconciler{
 			Client:          c,
 			Scheme:          scheme,

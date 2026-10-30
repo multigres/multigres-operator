@@ -215,7 +215,6 @@ func (r *ShardReconciler) reconcileDataPlane(
 				ctx,
 				shard,
 				client.MergeFrom(backupBase),
-				client.FieldOwner("multigres-resource-handler"),
 			); patchErr != nil {
 				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
 			}
@@ -236,7 +235,6 @@ func (r *ShardReconciler) reconcileDataPlane(
 				ctx,
 				shard,
 				client.MergeFrom(backupBase),
-				client.FieldOwner("multigres-resource-handler"),
 			); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
@@ -340,7 +338,6 @@ func (r *ShardReconciler) reconcilePodRoles(
 			ctx,
 			shard,
 			client.MergeFrom(statusBase),
-			client.FieldOwner("multigres-resource-handler"),
 		); err != nil {
 			logger.Error(err, "Failed to update shard pod roles")
 		}

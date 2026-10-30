@@ -14,7 +14,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/certs"
@@ -196,7 +195,7 @@ func TestReconcileCertificate(t *testing.T) {
 	t.Run("applies the certificate when enabled", func(t *testing.T) {
 		scheme := certScheme()
 		toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver).Build()
+		c := newTestClient(t, scheme, toposerver)
 		r := &TopoServerReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -233,7 +232,7 @@ func TestReconcileCertificate(t *testing.T) {
 			Controller: ptr.To(true),
 		}})
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver, foreign).Build()
+		c := newTestClient(t, scheme, toposerver, foreign)
 		r := &TopoServerReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -273,10 +272,7 @@ func TestReconcileCertificate(t *testing.T) {
 		}
 
 		toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(false)})
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(toposerver, existing, secret).
-			Build()
+		c := newTestClient(t, scheme, toposerver, existing, secret)
 		r := &TopoServerReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -308,7 +304,7 @@ func TestReconcileCertificate(t *testing.T) {
 	t.Run("issues nothing when TLS is unset", func(t *testing.T) {
 		scheme := certScheme()
 		toposerver := certTestTopoServer(nil)
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(toposerver).Build()
+		c := newTestClient(t, scheme, toposerver)
 		r := &TopoServerReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -343,10 +339,7 @@ func TestReconcileCertificate(t *testing.T) {
 		}
 
 		toposerver := certTestTopoServer(nil)
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(toposerver, existing, secret).
-			Build()
+		c := newTestClient(t, scheme, toposerver, existing, secret)
 		r := &TopoServerReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -379,10 +372,7 @@ func TestReconcileCertificate(t *testing.T) {
 		foreign.SetOwnerReferences(nil)
 
 		toposerver := certTestTopoServer(nil)
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(toposerver, foreign).
-			Build()
+		c := newTestClient(t, scheme, toposerver, foreign)
 		r := &TopoServerReconciler{
 			Client:   c,
 			Scheme:   scheme,

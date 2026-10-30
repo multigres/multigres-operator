@@ -11,7 +11,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -31,11 +30,7 @@ func TestMaintenanceSurgeLifecycleForRollingUpdate(t *testing.T) {
 	target.Annotations[metadata.AnnotationSpecHash] = "stale"
 	setReady(target, true)
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&corev1.Pod{}).
-		WithObjects(shard, target).
-		Build()
+	c := newTestClient(t, shard, target)
 	r := &ShardReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -133,11 +128,7 @@ func TestExplicitMaintenanceRequestWaitsForSurge(t *testing.T) {
 	}
 	setReady(peer, true)
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&corev1.Pod{}).
-		WithObjects(shard, target, peer).
-		Build()
+	c := newTestClient(t, shard, target, peer)
 	r := &ShardReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -223,11 +214,7 @@ func TestScaleUpPromotesMaintenanceSurgesToDesiredCapacity(t *testing.T) {
 		}
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&corev1.Pod{}).
-		WithObjects(objects...).
-		Build()
+	c := newTestClient(t, objects...)
 	r := &ShardReconciler{
 		Client:   c,
 		Scheme:   scheme,

@@ -17,7 +17,6 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
@@ -28,10 +27,12 @@ func TestTopologyTLSLongFallbackUsesSameRoot(t *testing.T) {
 	cluster := topoTLSCluster("cluster-abcdefghijklmnop", "namespace-abcdefghijklmnopqrstu", nil)
 	cluster.Spec.Cells = []multigresv1alpha1.CellConfig{{Name: "zone-a"}}
 	scheme := setupScheme()
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	c := newTestClient(t, cluster)
 	store := newClusterTopologyMemoryStore(t)
 	r := &MultigresClusterReconciler{
-		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10),
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
 		CreateTopoStore: func(ref multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
 			assert.Equal(
 				t,
@@ -81,8 +82,7 @@ func TestReconcileOversizedProjectRefStatusAndRecovery(t *testing.T) {
 			)
 			cluster.Generation = 3
 			scheme := setupScheme()
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).
-				WithStatusSubresource(cluster).Build()
+			c := newTestClient(t, cluster)
 			r := &MultigresClusterReconciler{
 				Client:   c,
 				Scheme:   scheme,
@@ -128,11 +128,7 @@ func TestReconcileCertificatePreservesExplicitLongRoot(t *testing.T) {
 		Etcd: &multigresv1alpha1.EtcdSpec{RootPath: explicitRoot},
 	}
 	scheme := setupScheme()
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster).
-		WithStatusSubresource(cluster).
-		Build()
+	c := newTestClient(t, cluster)
 	r := &MultigresClusterReconciler{
 		Client:   c,
 		Scheme:   scheme,
@@ -320,7 +316,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 	t.Run("issues the client certificate when topology TLS is enabled", func(t *testing.T) {
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -350,10 +346,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 		if err != nil {
 			t.Fatalf("buildTopoClientCertificate() error = %v", err)
 		}
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(cluster, existing).
-			Build()
+		c := newTestClient(t, cluster, existing)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -391,7 +384,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 					},
 				},
 			}
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+			c := newTestClient(t, cluster)
 			r := &MultigresClusterReconciler{
 				Client:   c,
 				Scheme:   scheme,
@@ -431,7 +424,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 				ClientCertSecret: "infra-etcd-client",
 			},
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -456,7 +449,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 		scheme := setupScheme()
 		cluster := topoTLSCluster("test-cluster", "supabase", nil)
 		cluster.Spec.TopoTLS = nil
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,

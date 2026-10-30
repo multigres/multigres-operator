@@ -59,7 +59,11 @@ func TestLiteCellReadinessFollowsItsPod(t *testing.T) {
 				WithStatusSubresource(cell).
 				Build()
 			cl := testutil.NewFakeClientWithFailures(base, nil)
-			r := &CellReconciler{Client: cl, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+			r := &CellReconciler{
+				Client:   withCellOwner(cl),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
 			if err := r.updateLiteStatus(t.Context(), cell); err != nil {
 				t.Fatal(err)
 			}

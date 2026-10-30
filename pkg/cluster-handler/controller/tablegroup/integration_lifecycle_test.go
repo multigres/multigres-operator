@@ -235,7 +235,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		}
 
 		oldDeleteMeUID := string(deleteMe.UID)
-		if got := deleteMe.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 1 {
+		if got := deleteMe.Spec.Multiorch.Replicas; got == nil || *got != 1 {
 			t.Fatalf("Initial delete-me replicas = %v, want 1", got)
 		}
 
@@ -288,7 +288,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 		if deleteMe.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
 			t.Fatal("Draining shard lost PendingDeletion after same-name re-add")
 		}
-		if got := deleteMe.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 1 {
+		if got := deleteMe.Spec.Multiorch.Replicas; got == nil || *got != 1 {
 			t.Fatalf("Draining shard was updated during cleanup: replicas = %v, want 1", got)
 		}
 
@@ -329,7 +329,7 @@ func TestTableGroup_Lifecycle(t *testing.T) {
 			); err == nil &&
 				string(latest.UID) != oldDeleteMeUID &&
 				latest.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
-				if got := latest.Spec.Multiorch.StatelessSpec.Replicas; got == nil || *got != 2 {
+				if got := latest.Spec.Multiorch.Replicas; got == nil || *got != 2 {
 					t.Fatalf("Replacement shard replicas = %v, want 2", got)
 				}
 				break

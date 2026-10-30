@@ -15,7 +15,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/images"
@@ -122,12 +121,10 @@ func TestResolveImages(t *testing.T) {
 	newHarness := func(t *testing.T, strategy images.UpdateStrategy, cluster *multigresv1alpha1.MultigresCluster) *MultigresClusterReconciler {
 		t.Helper()
 		scheme := setupScheme()
-		baseClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(cluster).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-			Build()
-		c := &patchCountingClient{Client: baseClient}
+		baseClient := newTestClient(t, cluster)
+		c := &patchCountingClient{
+			Client: baseClient,
+		}
 		return &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -704,16 +701,7 @@ func TestReconcile_LazyImageRollout(t *testing.T) {
 	}
 
 	scheme := setupScheme()
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(coreTpl, cellTpl, shardTpl, baseCluster).
-		WithStatusSubresource(
-			&multigresv1alpha1.MultigresCluster{},
-			&multigresv1alpha1.Cell{},
-			&multigresv1alpha1.TableGroup{},
-			&multigresv1alpha1.TopoServer{},
-		).
-		Build()
+	c := newTestClient(t, coreTpl, cellTpl, shardTpl, baseCluster)
 	r := &MultigresClusterReconciler{
 		Client:   c,
 		Scheme:   scheme,

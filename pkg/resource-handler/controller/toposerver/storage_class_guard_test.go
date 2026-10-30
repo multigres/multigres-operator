@@ -10,7 +10,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/testutil"
@@ -29,12 +28,12 @@ func TestValidateEtcdStorageClassDependency(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test-ts", Namespace: "default"},
 			Spec:       multigresv1alpha1.TopoServerSpec{},
 		}
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(ts).
-			WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-			Build()
-		r := &TopoServerReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, scheme, ts)
+		r := &TopoServerReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.validateEtcdStorageClassDependency(t.Context(), ts); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -65,12 +64,12 @@ func TestValidateEtcdStorageClassDependency(t *testing.T) {
 			ObjectMeta:        metav1.ObjectMeta{Name: "fast-ssd"},
 			VolumeBindingMode: ptr.To(storagev1.VolumeBindingWaitForFirstConsumer),
 		}
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(ts, sc).
-			WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-			Build()
-		r := &TopoServerReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, scheme, ts, sc)
+		r := &TopoServerReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.validateEtcdStorageClassDependency(t.Context(), ts); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -103,11 +102,7 @@ func TestValidateEtcdStorageClassDependency(t *testing.T) {
 				ObjectMeta:        metav1.ObjectMeta{Name: "immediate-sc"},
 				VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate),
 			}
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(ts, sc).
-				WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-				Build()
+			c := newTestClient(t, scheme, ts, sc)
 			r := &TopoServerReconciler{
 				Client:   c,
 				Scheme:   scheme,
@@ -147,11 +142,7 @@ func TestValidateEtcdStorageClassDependency(t *testing.T) {
 					},
 				},
 			}
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(ts).
-				WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-				Build()
+			c := newTestClient(t, scheme, ts)
 			r := &TopoServerReconciler{
 				Client:   c,
 				Scheme:   scheme,
@@ -189,11 +180,7 @@ func TestValidateEtcdStorageClassDependency(t *testing.T) {
 				},
 			},
 		}
-		baseClient := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(ts).
-			WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-			Build()
+		baseClient := newTestClient(t, scheme, ts)
 		fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 			OnGet: testutil.FailOnKeyName("some-sc", testutil.ErrNetworkTimeout),
 		})

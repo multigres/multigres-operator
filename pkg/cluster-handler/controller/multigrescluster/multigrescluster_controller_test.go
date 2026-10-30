@@ -76,14 +76,9 @@ func runReconcileTest(t *testing.T, tests map[string]reconcileTestCase) {
 				objects = []client.Object{coreTpl, cellTpl, shardTpl}
 			}
 
-			clientBuilder := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objects...).
-				WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}, &multigresv1alpha1.Cell{}, &multigresv1alpha1.TableGroup{})
-			baseClient := clientBuilder.Build()
+			baseClient := newTestClient(t, objects...)
 
-			var finalClient client.Client
-			finalClient = client.Client(baseClient)
+			finalClient := baseClient
 			if tc.failureConfig != nil {
 				finalClient = testutil.NewFakeClientWithFailures(baseClient, tc.failureConfig)
 			}
@@ -368,7 +363,7 @@ func TestHandleDeletionReleasesPoolerClient(t *testing.T) {
 	t.Run("after successful cleanup", func(t *testing.T) {
 		forgotten := make(chan types.NamespacedName, 1)
 		r := &MultigresClusterReconciler{
-			Client:   fake.NewClientBuilder().WithScheme(setupScheme()).Build(),
+			Client:   newTestClient(t),
 			Recorder: record.NewFakeRecorder(1),
 			PoolerClientCache: poolerClientCacheFunc(func(key types.NamespacedName) {
 				forgotten <- key
@@ -389,7 +384,7 @@ func TestHandleDeletionReleasesPoolerClient(t *testing.T) {
 	})
 
 	t.Run("not when cleanup fails", func(t *testing.T) {
-		baseClient := fake.NewClientBuilder().WithScheme(setupScheme()).Build()
+		baseClient := newTestClient(t)
 		failingClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 			OnList: testutil.FailObjListAfterNCalls(0, errors.New("list failed")),
 		})
@@ -470,10 +465,7 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 			cluster := newCluster()
 			forgotten := false
 			r := &MultigresClusterReconciler{
-				Client: fake.NewClientBuilder().
-					WithScheme(setupScheme()).
-					WithObjects(cluster, tt.child).
-					Build(),
+				Client:   newTestClient(t, cluster, tt.child),
 				Recorder: record.NewFakeRecorder(1),
 				PoolerClientCache: poolerClientCacheFunc(func(types.NamespacedName) {
 					forgotten = true
@@ -508,10 +500,7 @@ func TestHandleDeletionWaitsForChildren(t *testing.T) {
 	t.Run("no children", func(t *testing.T) {
 		cluster := newCluster()
 		r := &MultigresClusterReconciler{
-			Client: fake.NewClientBuilder().
-				WithScheme(setupScheme()).
-				WithObjects(cluster).
-				Build(),
+			Client:   newTestClient(t, cluster),
 			Recorder: record.NewFakeRecorder(1),
 		}
 		forgotten := make(chan types.NamespacedName, 1)
@@ -558,7 +547,7 @@ func TestReconcileNotFoundReleasesPoolerClient(t *testing.T) {
 	key := types.NamespacedName{Name: "missing", Namespace: "test-ns"}
 	forgotten := make(chan types.NamespacedName, 1)
 	r := &MultigresClusterReconciler{
-		Client: fake.NewClientBuilder().WithScheme(setupScheme()).Build(),
+		Client: newTestClient(t),
 		PoolerClientCache: poolerClientCacheFunc(func(got types.NamespacedName) {
 			forgotten <- got
 		}),
@@ -621,7 +610,7 @@ func TestReconcileNotFoundForgetsClusterMetrics(t *testing.T) {
 		setClusterGauges("notfound-gone")
 		setClusterGauges("notfound-kept")
 
-		c := fake.NewClientBuilder().WithScheme(setupScheme()).Build()
+		c := newTestClient(t)
 		if err := reconcile(t, c, "notfound-gone"); err != nil {
 			t.Fatalf("Reconcile() error = %v", err)
 		}
@@ -640,7 +629,7 @@ func TestReconcileNotFoundForgetsClusterMetrics(t *testing.T) {
 
 		injected := errors.New("injected get failure")
 		c := testutil.NewFakeClientWithFailures(
-			fake.NewClientBuilder().WithScheme(setupScheme()).Build(),
+			newTestClient(t),
 			&testutil.FailureConfig{OnGet: testutil.FailOnKeyName("geterr-cluster", injected)},
 		)
 		if err := reconcile(t, c, "geterr-cluster"); !errors.Is(err, injected) {
@@ -1164,10 +1153,13 @@ func TestEnqueueRequestsFromTemplate(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(clusterWithCore, clusterWithShard, clusterNilStatus, clusterOtherNS).
-		Build()
+	fakeClient := newTestClient(
+		t,
+		clusterWithCore,
+		clusterWithShard,
+		clusterNilStatus,
+		clusterOtherNS,
+	)
 
 	r := &MultigresClusterReconciler{
 		Client: fakeClient,
@@ -1611,11 +1603,7 @@ func TestReconciler_TopologyFailure(t *testing.T) {
 	scheme := setupScheme()
 	coreTpl, cellTpl, shardTpl, baseCluster, clusterName, namespace := setupFixtures(t)
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(coreTpl, cellTpl, shardTpl, baseCluster).
-		WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-		Build()
+	baseClient := newTestClient(t, coreTpl, cellTpl, shardTpl, baseCluster)
 
 	r := &MultigresClusterReconciler{
 		Client:   baseClient,
@@ -1639,11 +1627,7 @@ func TestReconciler_TopologyRequeueWhenUnavailable(t *testing.T) {
 	coreTpl, cellTpl, shardTpl, baseCluster, clusterName, namespace := setupFixtures(t)
 	baseCluster.CreationTimestamp = metav1.Now() // Trigger grace period
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(coreTpl, cellTpl, shardTpl, baseCluster).
-		WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-		Build()
+	baseClient := newTestClient(t, coreTpl, cellTpl, shardTpl, baseCluster)
 
 	r := &MultigresClusterReconciler{
 		Client:   baseClient,
@@ -1669,11 +1653,7 @@ func TestReconciler_TopologyErrorWhenUnavailableExpired(t *testing.T) {
 	scheme := setupScheme()
 	coreTpl, cellTpl, shardTpl, baseCluster, clusterName, namespace := setupFixtures(t)
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(coreTpl, cellTpl, shardTpl, baseCluster).
-		WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-		Build()
+	baseClient := newTestClient(t, coreTpl, cellTpl, shardTpl, baseCluster)
 
 	r := &MultigresClusterReconciler{
 		Client:   baseClient,

@@ -12,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
@@ -144,12 +143,12 @@ func qrReconciler(t *testing.T, objs ...client.Object) *ShardReconciler {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		WithObjects(objs...).
-		Build()
-	return &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(20)}
+	c := newTestClient(t, objs...)
+	return &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(20),
+	}
 }
 
 func exists(t *testing.T, r *ShardReconciler, obj client.Object, key client.ObjectKey) bool {

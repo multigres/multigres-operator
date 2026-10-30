@@ -18,6 +18,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -37,9 +38,7 @@ func TestReconcileStatefulSet_InvalidScheme(t *testing.T) {
 		Spec: multigresv1alpha1.TopoServerSpec{},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(invalidScheme).
-		Build()
+	fakeClient := newTestClient(t, invalidScheme)
 
 	reconciler := &TopoServerReconciler{
 		Client:   fakeClient,
@@ -65,9 +64,7 @@ func TestReconcileHeadlessService_InvalidScheme(t *testing.T) {
 		Spec: multigresv1alpha1.TopoServerSpec{},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(invalidScheme).
-		Build()
+	fakeClient := newTestClient(t, invalidScheme)
 
 	reconciler := &TopoServerReconciler{
 		Client:   fakeClient,
@@ -93,9 +90,7 @@ func TestReconcileClientService_InvalidScheme(t *testing.T) {
 		Spec: multigresv1alpha1.TopoServerSpec{},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(invalidScheme).
-		Build()
+	fakeClient := newTestClient(t, invalidScheme)
 
 	reconciler := &TopoServerReconciler{
 		Client:   fakeClient,
@@ -123,11 +118,7 @@ func TestUpdateStatus_StatefulSetNotFound(t *testing.T) {
 		Spec: multigresv1alpha1.TopoServerSpec{},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(toposerver).
-		WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-		Build()
+	fakeClient := newTestClient(t, scheme, toposerver)
 
 	reconciler := &TopoServerReconciler{
 		Client:   fakeClient,
@@ -158,10 +149,7 @@ func TestReconcileClientService_PatchError(t *testing.T) {
 	}
 
 	// Create client with failure injection
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(toposerver).
-		Build()
+	baseClient := newTestClient(t, scheme, toposerver)
 
 	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 		OnPatch: func(obj client.Object) error {
@@ -198,11 +186,7 @@ func TestUpdateStatus_GetError(t *testing.T) {
 		Spec: multigresv1alpha1.TopoServerSpec{},
 	}
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(toposerver).
-		WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-		Build()
+	baseClient := newTestClient(t, scheme, toposerver)
 
 	fakeClient := testutil.NewFakeClientWithFailures(baseClient, &testutil.FailureConfig{
 		OnGet: testutil.FailOnKeyName("test-toposerver", testutil.ErrNetworkTimeout),
@@ -244,7 +228,7 @@ func TestSetupWithManager(t *testing.T) {
 	t.Run("default options", func(t *testing.T) {
 		mgr := createMgr()
 		r := &TopoServerReconciler{
-			Client:   mgr.GetClient(),
+			Client:   client.WithFieldOwner(mgr.GetClient(), ownership.ManagerTopoServer),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
@@ -259,7 +243,7 @@ func TestSetupWithManager(t *testing.T) {
 	t.Run("with options", func(t *testing.T) {
 		mgr := createMgr()
 		r := &TopoServerReconciler{
-			Client:   mgr.GetClient(),
+			Client:   client.WithFieldOwner(mgr.GetClient(), ownership.ManagerTopoServer),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
@@ -278,7 +262,7 @@ func TestSetupWithManager(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			mgr := createMgr()
 			r := &TopoServerReconciler{
-				Client:    mgr.GetClient(),
+				Client:    client.WithFieldOwner(mgr.GetClient(), ownership.ManagerTopoServer),
 				APIReader: reader,
 				Scheme:    scheme,
 				Recorder:  record.NewFakeRecorder(100),
@@ -344,11 +328,7 @@ func TestUpdateStatus_DegradedOnCrashLoop(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(toposerver, sts, crashPod).
-		WithStatusSubresource(&multigresv1alpha1.TopoServer{}).
-		Build()
+	fakeClient := newTestClient(t, scheme, toposerver, sts, crashPod)
 
 	reconciler := &TopoServerReconciler{
 		Client:   fakeClient,

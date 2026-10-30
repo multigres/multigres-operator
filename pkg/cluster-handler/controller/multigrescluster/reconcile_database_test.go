@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/name"
@@ -302,10 +303,12 @@ func TestReconcileDatabases_BuildError_SchemeMismatch(t *testing.T) {
 	}
 
 	// Fake client needs to know about TableGroup to List them (which returns empty)
+	// Explicit wrap: newTestClient registers every type, which would defeat the
+	// deliberately narrowed scheme.
 	cl := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	r := &MultigresClusterReconciler{
-		Client:   cl,
+		Client:   client.WithFieldOwner(cl, ownership.ManagerCluster),
 		Scheme:   scheme, // <--- This scheme is missing MultigresCluster GVK
 		Recorder: record.NewFakeRecorder(10),
 	}
@@ -372,8 +375,7 @@ func TestReconcileDatabases_Direct_Error_GlobalTopoRef(t *testing.T) {
 	objs := []client.Object{cellTpl, shardTpl}
 
 	// Setup Client with failure
-	clientBuilder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...)
-	baseClient := clientBuilder.Build()
+	baseClient := newTestClient(t, objs...)
 
 	failureConfig := &testutil.FailureConfig{
 		OnGet: testutil.FailOnKeyName("topo-fail-db", errSimulated),

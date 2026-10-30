@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 const (
@@ -176,8 +177,8 @@ func (r *ShardReconciler) validateStorageClassDependencies(
 }
 
 // setStorageClassCondition patches the StorageClassValid condition using SSA.
-// Uses FieldOwner("multigres-resource-handler-guard") to avoid ownership conflicts
-// with updateStatus which uses FieldOwner("multigres-resource-handler").
+// Uses the ManagerShardGuard field owner to avoid ownership conflicts
+// with updateStatus, which writes under ManagerShard.
 //
 // The payload is unstructured and carries status.conditions and nothing else.
 // An SSA apply payload is a complete statement of what its field manager owns,
@@ -251,7 +252,7 @@ func (r *ShardReconciler) setStorageClassCondition(
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-resource-handler-guard"),
+		client.FieldOwner(ownership.ManagerShardGuard),
 		client.ForceOwnership,
 	); err != nil {
 		return fmt.Errorf("failed to patch Shard StorageClass condition: %w", err)

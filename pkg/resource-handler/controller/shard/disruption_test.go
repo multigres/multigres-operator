@@ -80,7 +80,7 @@ func fourToTwoFixture(
 	}
 	shard.Status.PodRoles[BuildPoolPodName(shard, "main", "a", 1)] = "PRIMARY"
 	r := &ShardReconciler{
-		Client:   fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
+		Client:   newTestClient(t, objects...),
 		Scheme:   scheme,
 		Recorder: record.NewFakeRecorder(100),
 	}

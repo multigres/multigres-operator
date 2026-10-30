@@ -79,7 +79,6 @@ func (r *MultigresClusterReconciler) reconcileAdminNetworkPolicies(
 			policy,
 			client.Apply,
 			client.ForceOwnership,
-			client.FieldOwner("multigres-operator"),
 		); err != nil {
 			return fmt.Errorf("failed to apply network policy %s: %w", policy.Name, err)
 		}
@@ -119,7 +118,6 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply global topo server: %w", err)
 	}
@@ -163,7 +161,6 @@ func (r *MultigresClusterReconciler) reconcileMultiadmin(
 		desired,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply multiadmin deployment: %w", err)
 	}
@@ -188,7 +185,6 @@ func (r *MultigresClusterReconciler) reconcileMultiadmin(
 		desiredSvc,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply multiadmin service: %w", err)
 	}
@@ -270,7 +266,6 @@ func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 		desiredDeploy,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply multiadmin-web deployment: %w", err)
 	}
@@ -295,7 +290,6 @@ func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 		desiredSvc,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply multiadmin-web service: %w", err)
 	}
@@ -316,7 +310,6 @@ func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 		desiredGwSvc,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply global multigateway service: %w", err)
 	}
@@ -338,7 +331,6 @@ func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 		desiredReplicaGwSvc,
 		client.Apply,
 		client.ForceOwnership,
-		client.FieldOwner("multigres-operator"),
 	); err != nil {
 		return fmt.Errorf("failed to apply global replica multigateway service: %w", err)
 	}

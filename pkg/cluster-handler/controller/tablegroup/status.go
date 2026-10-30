@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 // stepComputeStatus derives TableGroup status from desired children whose
@@ -140,7 +141,6 @@ func stepPatchStatus(ctx context.Context, rc *reconcileContext) (stepResult, err
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-operator"),
 		client.ForceOwnership,
 	); err != nil {
 		return stepResult{}, newStepError(
@@ -150,6 +150,7 @@ func stepPatchStatus(ctx context.Context, rc *reconcileContext) (stepResult, err
 			fmt.Sprintf("Failed to patch status: %v", err),
 		)
 	}
+	ownership.TidyLegacy(ctx, rc.r.Client, patchObj)
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(rc.start).String())
 	if !rc.pendingDeletion {

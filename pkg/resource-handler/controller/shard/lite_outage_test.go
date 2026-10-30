@@ -108,7 +108,10 @@ func TestLiteOutageRecovery(t *testing.T) {
 				topoErr = grpcstatus.Error(codes.PermissionDenied, "not authorized")
 			}
 			r := &ShardReconciler{
-				Client: testutil.NewFakeClientWithFailures(base, nil), Scheme: scheme,
+				Client: withShardOwner(
+					testutil.NewFakeClientWithFailures(base, nil),
+				),
+				Scheme:   scheme,
 				Recorder: record.NewFakeRecorder(20),
 				CreateTopoStore: func(*multigresv1alpha1.Shard) (topoclient.Store, error) {
 					return liteRegistrationFailure{err: topoErr}, nil

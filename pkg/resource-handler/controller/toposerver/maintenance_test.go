@@ -18,10 +18,10 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 type fakeEtcdMaintenance struct {
@@ -128,20 +128,18 @@ func maintenanceFixture(
 			},
 		})
 	}
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&multigresv1alpha1.TopoServer{}, &appsv1.StatefulSet{}, &corev1.Pod{}).
-		WithObjects(objects...).
-		Build()
+	c := newFakeBase(t, scheme, objects...)
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(ts), ts); err != nil {
 		t.Fatal(err)
 	}
 	r := &TopoServerReconciler{
-		Client:               c,
-		APIReader:            c,
-		Scheme:               scheme,
-		Recorder:             record.NewFakeRecorder(100),
-		newMaintenanceClient: func(context.Context, *multigresv1alpha1.TopoServer) (etcdMaintenanceClient, error) { return f, nil },
+		// APIReader must stay the unwrapped fake: the "reservation conflict"
+		// case layers an interceptor over it, which needs a client.WithWatch.
+		Client:                   client.WithFieldOwner(c, ownership.ManagerTopoServer),
+		APIReader:                c,
+		Scheme:                   scheme,
+		Recorder:                 record.NewFakeRecorder(100),
+		MaintenanceClientFactory: func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error) { return f, nil },
 	}
 	return r, ts, f
 }
@@ -224,9 +222,9 @@ func TestEtcdMaintenanceHealthGates(t *testing.T) {
 			}
 		}, false},
 		{"reservation conflict", func(r *TopoServerReconciler, _ *multigresv1alpha1.TopoServer, _ *fakeEtcdMaintenance) {
-			r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			r.Client = client.WithFieldOwner(interceptor.NewClient(r.APIReader.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
 				return apierrors.NewConflict(multigresv1alpha1.GroupVersion.WithResource("toposervers").GroupResource(), "topo", errors.New("conflict"))
-			}})
+			}}), ownership.ManagerTopoServer)
 		}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {

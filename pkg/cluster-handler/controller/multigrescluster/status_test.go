@@ -116,11 +116,7 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg).
-		WithStatusSubresource(cluster, cell, tg).
-		Build()
+	fakeClient := newTestClient(t, cluster, cell, tg)
 
 	r := &MultigresClusterReconciler{
 		Client:   fakeClient,
@@ -173,11 +169,7 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		},
 	}
 
-	fakeClient = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg, cDegraded).
-		WithStatusSubresource(cluster, cell, tg, cDegraded).
-		Build()
+	fakeClient = newTestClient(t, cluster, cell, tg, cDegraded)
 
 	r.Client = fakeClient
 	if err := r.updateStatus(context.Background(), cluster); err != nil {
@@ -208,11 +200,7 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		},
 	}
 
-	fakeClient = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg, cProgressing).
-		WithStatusSubresource(cluster, cell, tg, cProgressing).
-		Build()
+	fakeClient = newTestClient(t, cluster, cell, tg, cProgressing)
 	r.Client = fakeClient
 
 	if err := r.updateStatus(context.Background(), cluster); err != nil {
@@ -244,11 +232,7 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		},
 	}
 
-	fakeClient = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg, tgDegraded).
-		WithStatusSubresource(cluster, cell, tg, tgDegraded).
-		Build()
+	fakeClient = newTestClient(t, cluster, cell, tg, tgDegraded)
 
 	r.Client = fakeClient
 	if err := r.updateStatus(context.Background(), cluster); err != nil {
@@ -282,11 +266,7 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		},
 	}
 
-	fakeClient = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg, tgInit).
-		WithStatusSubresource(cluster, cell, tg, tgInit).
-		Build()
+	fakeClient = newTestClient(t, cluster, cell, tg, tgInit)
 
 	r.Client = fakeClient
 	if err := r.updateStatus(context.Background(), cluster); err != nil {
@@ -316,11 +296,7 @@ func TestUpdateStatus_Coverage(t *testing.T) {
 		},
 	}
 
-	fakeClient = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg, tsDegraded).
-		WithStatusSubresource(cluster, cell, tg, tsDegraded).
-		Build()
+	fakeClient = newTestClient(t, cluster, cell, tg, tsDegraded)
 
 	r.Client = fakeClient
 	if err := r.updateStatus(context.Background(), cluster); err != nil {
@@ -367,11 +343,7 @@ func TestUpdateStatus_ZeroResources(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster).
-		WithStatusSubresource(cluster).
-		Build()
+	fakeClient := newTestClient(t, cluster)
 
 	r := &MultigresClusterReconciler{
 		Client:   fakeClient,
@@ -587,11 +559,7 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			objects := append([]client.Object{tt.cluster}, tt.children...)
-			fakeClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objects...).
-				WithStatusSubresource(objects...).
-				Build()
+			fakeClient := newTestClient(t, objects...)
 			r := &MultigresClusterReconciler{
 				Client:   fakeClient,
 				Scheme:   scheme,
@@ -661,11 +629,7 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tableGroup).
-		WithStatusSubresource(cluster, cell, tableGroup).
-		Build()
+	fakeClient := newTestClient(t, cluster, cell, tableGroup)
 
 	r := &MultigresClusterReconciler{
 		Client:   fakeClient,
@@ -692,11 +656,7 @@ func TestUpdateStatus_InitializedAtSticky(t *testing.T) {
 		},
 	}
 
-	fakeClient = fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, degradedCell, tableGroup).
-		WithStatusSubresource(cluster, degradedCell, tableGroup).
-		Build()
+	fakeClient = newTestClient(t, cluster, degradedCell, tableGroup)
 	r.Client = fakeClient
 
 	require.NoError(t, r.updateStatus(t.Context(), cluster))
@@ -764,11 +724,7 @@ func TestUpdateStatus_GenerationMismatch(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, cell, tg).
-		WithStatusSubresource(cluster, cell, tg).
-		Build()
+	fakeClient := newTestClient(t, cluster, cell, tg)
 
 	r := &MultigresClusterReconciler{
 		Client:   fakeClient,
@@ -852,11 +808,7 @@ func TestUpdateStatus_UsesAPIReaderForChildHealth(t *testing.T) {
 		},
 	}
 
-	cachedClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster, staleCell, tableGroup).
-		WithStatusSubresource(cluster, staleCell, tableGroup).
-		Build()
+	cachedClient := newTestClient(t, cluster, staleCell, tableGroup)
 	liveReader := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(liveCell, tableGroup.DeepCopy()).
@@ -1092,11 +1044,7 @@ func TestUpdateStatus_GatewayServiceErrors(t *testing.T) {
 
 	t.Run("NotFound global service sets AwaitingEndpoint when enabled", func(t *testing.T) {
 		// No Service object created — Get will return NotFound.
-		cl := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(baseCluster.DeepCopy()).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-			Build()
+		cl := newTestClient(t, baseCluster.DeepCopy())
 
 		r := &MultigresClusterReconciler{
 			Client:   cl,
@@ -1185,11 +1133,7 @@ func TestUpdateStatus_StaleCellGenerationIgnored(t *testing.T) {
 		},
 	}
 
-	cl := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster.DeepCopy(), gwSvc, freshCell, staleCell).
-		WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-		Build()
+	cl := newTestClient(t, cluster.DeepCopy(), gwSvc, freshCell, staleCell)
 
 	r := &MultigresClusterReconciler{
 		Client:   cl,
@@ -1214,11 +1158,7 @@ func TestUpdateStatus_StaleCellGenerationIgnored(t *testing.T) {
 
 	// Now verify that if we remove the fresh cell (only stale remains),
 	// the aggregate is 0 and condition becomes NoReadyGateways.
-	cl2 := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(cluster.DeepCopy(), gwSvc, staleCell).
-		WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-		Build()
+	cl2 := newTestClient(t, cluster.DeepCopy(), gwSvc, staleCell)
 
 	r2 := &MultigresClusterReconciler{
 		Client:   cl2,
@@ -1358,11 +1298,7 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 	})
 
 	t.Run("NotFound admin-web service sets AwaitingEndpoint when enabled", func(t *testing.T) {
-		cl := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(baseCluster.DeepCopy()).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-			Build()
+		cl := newTestClient(t, baseCluster.DeepCopy())
 
 		r := &MultigresClusterReconciler{
 			Client:   cl,
@@ -1443,11 +1379,7 @@ func TestUpdateStatus_AdminWebServiceErrors(t *testing.T) {
 			},
 		}
 
-		cl := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(baseCluster.DeepCopy(), awSvc, awDeploy).
-			WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}).
-			Build()
+		cl := newTestClient(t, baseCluster.DeepCopy(), awSvc, awDeploy)
 
 		r := &MultigresClusterReconciler{
 			Client:   cl,

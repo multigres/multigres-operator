@@ -14,7 +14,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -244,7 +243,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 			objs = append(objs, pod)
 			pods[pod.Name] = pod
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		c := newTestClient(t, objs...)
 		store, factory := memorytopo.NewServerAndFactory(ctx, topoMoveCell)
 		t.Cleanup(func() { _ = store.Close() })
 		r := &ShardReconciler{

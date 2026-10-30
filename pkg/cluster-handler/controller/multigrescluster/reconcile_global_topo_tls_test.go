@@ -7,7 +7,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/resolver"
@@ -40,7 +39,7 @@ func resolveTopoRef(
 ) multigresv1alpha1.GlobalTopoServerRef {
 	t.Helper()
 	scheme := setupScheme()
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+	c := newTestClient(t, cluster)
 	r := &MultigresClusterReconciler{
 		Client:   c,
 		Scheme:   scheme,

@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 const (
@@ -160,8 +161,8 @@ func (r *TopoServerReconciler) validateEtcdStorageClassDependency(
 }
 
 // setStorageClassCondition patches the StorageClassValid condition using SSA.
-// Uses FieldOwner("multigres-operator-guard") to avoid ownership conflicts with
-// updateStatus which uses FieldOwner("multigres-operator").
+// Uses the ManagerTopoServerGuard field owner to avoid ownership conflicts with
+// updateStatus, which writes under ManagerTopoServer.
 
 // TODO: This stale-safe condition skip logic is mirrored in the Shard guard;
 // extract a shared helper to reduce duplication.
@@ -223,7 +224,7 @@ func (r *TopoServerReconciler) setStorageClassCondition(
 		ctx,
 		patchObj,
 		client.Apply,
-		client.FieldOwner("multigres-operator-guard"),
+		client.FieldOwner(ownership.ManagerTopoServerGuard),
 		client.ForceOwnership,
 	); err != nil {
 		return fmt.Errorf("failed to patch TopoServer StorageClass condition: %w", err)

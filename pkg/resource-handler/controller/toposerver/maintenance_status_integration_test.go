@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,7 +41,8 @@ func TestMaintenanceReservationSurvivesStatusApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := &TopoServerReconciler{
-		Client:    c,
+		// A real apiserver client, which newTestClient (a fake) cannot supply.
+		Client:    client.WithFieldOwner(c, ownership.ManagerTopoServer),
 		APIReader: c,
 		Scheme:    scheme,
 		Recorder:  record.NewFakeRecorder(100),

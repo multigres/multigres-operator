@@ -12,6 +12,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 )
 
@@ -22,8 +23,16 @@ func TestReconcile_GatedBackstopWritesNothing(t *testing.T) {
 	require.NoError(t, corev1.AddToScheme(scheme))
 	testutil.RequireGatedReconcileIsNoop(t, scheme, &multigresv1alpha1.TableGroup{},
 		func(c client.Client, gate features.Gate) reconcile.Reconciler {
+			// The client is built by RequireGatedReconcileIsNoop, not by
+			// newTestClient, so the wrap stays explicit here.
 			return &TableGroupReconciler{
-				Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10), Gate: gate,
+				Client: client.WithFieldOwner(
+					c,
+					ownership.ManagerTableGroup,
+				),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+				Gate:     gate,
 			}
 		})
 }

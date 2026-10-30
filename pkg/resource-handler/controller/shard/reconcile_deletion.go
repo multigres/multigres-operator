@@ -350,7 +350,6 @@ func (r *ShardReconciler) handlePendingDeletion(
 			ctx,
 			shard,
 			client.MergeFrom(statusBase),
-			client.FieldOwner("multigres-resource-handler"),
 		); err != nil {
 			return ctrl.Result{}, fmt.Errorf("setting ReadyForDeletion condition: %w", err)
 		}

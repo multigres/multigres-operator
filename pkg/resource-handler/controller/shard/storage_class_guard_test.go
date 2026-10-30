@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/tools/record"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -36,12 +37,12 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 	_ = storagev1.AddToScheme(scheme)
 
 	newReconciler := func(objs ...client.Object) *ShardReconciler {
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(objs...).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
-		return &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, objs...)
+		return &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 	}
 
 	filesystemBackup := func(class string) *multigresv1alpha1.BackupConfig {
@@ -329,7 +330,11 @@ func TestSetStorageClassCondition_AppliesOnlyConditions(t *testing.T) {
 		},
 	})
 
-	r := &ShardReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(fakeClient),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	check := storageClassCheck{
 		status:  metav1.ConditionTrue,
@@ -410,7 +415,11 @@ func TestStorageClassCondition_IsStableAcrossReconciles(t *testing.T) {
 		},
 	})
 
-	r := &ShardReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(50)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(fakeClient),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(50),
+	}
 
 	reconcileStorageClasses := func() []byte {
 		check, err := r.validateStorageClassDependencies(t.Context(), shard)
@@ -539,7 +548,7 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 				opts ...client.SubResourcePatchOption,
 			) error {
 				popts := (&client.SubResourcePatchOptions{}).ApplyOptions(opts)
-				if popts.FieldManager == "multigres-resource-handler-guard" {
+				if popts.FieldManager == ownership.ManagerShardGuard {
 					raw, err := json.Marshal(obj)
 					if err != nil {
 						t.Fatalf("marshal guard payload: %v", err)
@@ -573,7 +582,7 @@ func TestReconcile_StorageClassConditionSettlesAcrossReconciles(t *testing.T) {
 		Build()
 
 	r := &ShardReconciler{
-		Client:          fakeClient,
+		Client:          withShardOwner(fakeClient),
 		Scheme:          scheme,
 		Recorder:        record.NewFakeRecorder(100),
 		CreateTopoStore: newMemoryTopoFactory(),
@@ -695,11 +704,7 @@ func TestReconcile_MissingStorageClassReturnsDependencyRequeueEvenWhenPVCExists(
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard, existingPVC, testPostgresPasswordSecretForShard(shard)).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, shard, existingPVC, testPostgresPasswordSecretForShard(shard))
 
 	r := &ShardReconciler{
 		Client:          c,
@@ -816,7 +821,7 @@ func TestShardReconciler_FieldOwnershipIsolation(t *testing.T) {
 		})
 
 		r := &ShardReconciler{
-			Client:   fakeClient,
+			Client:   withShardOwner(fakeClient),
 			Scheme:   scheme,
 			Recorder: record.NewFakeRecorder(100),
 		}
@@ -921,11 +926,7 @@ func TestReconcile_MissingBackupStorageClassStopsBeforeTheSharedBackupPVC(t *tes
 	scheme := storageClassGateScheme()
 	shard := storageClassGateShard("missing-backup-sc", "")
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard, testPostgresPasswordSecretForShard(shard)).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, shard, testPostgresPasswordSecretForShard(shard))
 
 	r := &ShardReconciler{
 		Client:          c,
@@ -967,15 +968,12 @@ func TestReconcile_MissingPoolStorageClassStopsAfterTheSharedBackupPVC(t *testin
 	scheme := storageClassGateScheme()
 	shard := storageClassGateShard("backup-sc", "missing-pool-sc")
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(
-			shard,
-			testPostgresPasswordSecretForShard(shard),
-			&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "backup-sc"}},
-		).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(
+		t,
+		shard,
+		testPostgresPasswordSecretForShard(shard),
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "backup-sc"}},
+	)
 
 	r := &ShardReconciler{
 		Client:          c,
@@ -1167,7 +1165,7 @@ func TestSetStorageClassCondition_RepublishesWhenOneComparedFieldDiffers(t *test
 				},
 			)
 			r := &ShardReconciler{
-				Client:   fakeClient,
+				Client:   withShardOwner(fakeClient),
 				Scheme:   scheme,
 				Recorder: record.NewFakeRecorder(10),
 			}
@@ -1239,7 +1237,11 @@ func TestStorageClassCondition_UpdatesWhenTheVerdictChanges(t *testing.T) {
 			return nil
 		},
 	})
-	r := &ShardReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(50)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(fakeClient),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(50),
+	}
 
 	key := client.ObjectKeyFromObject(shard)
 	cycle := func() metav1.Condition {
@@ -1366,7 +1368,11 @@ func TestStorageClassCondition_PreservesLastTransitionTimeWithoutATransition(t *
 			return nil
 		},
 	})
-	r := &ShardReconciler{Client: fakeClient, Scheme: scheme, Recorder: record.NewFakeRecorder(50)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(fakeClient),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(50),
+	}
 
 	check, err := r.validateStorageClassDependencies(t.Context(), shard)
 	if err != nil {

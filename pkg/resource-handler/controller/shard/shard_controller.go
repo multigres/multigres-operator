@@ -28,6 +28,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
@@ -732,6 +733,9 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	// Both SetupWithManager and test/suite go through here, so the owner cannot diverge.
+	r.Client = client.WithFieldOwner(r.Client, ownership.ManagerShard)
+
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}

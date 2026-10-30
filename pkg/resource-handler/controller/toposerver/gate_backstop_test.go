@@ -12,6 +12,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/features"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 )
 
@@ -23,7 +24,15 @@ func TestReconcile_GatedBackstopWritesNothing(t *testing.T) {
 	testutil.RequireGatedReconcileIsNoop(t, scheme, &multigresv1alpha1.TopoServer{},
 		func(c client.Client, gate features.Gate) reconcile.Reconciler {
 			return &TopoServerReconciler{
-				Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10), Gate: gate,
+				// c comes from the shared gate harness, not newTestClient, so the
+				// owner is wrapped here.
+				Client: client.WithFieldOwner(
+					c,
+					ownership.ManagerTopoServer,
+				),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+				Gate:     gate,
 			}
 		})
 }

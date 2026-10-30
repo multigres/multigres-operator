@@ -311,7 +311,7 @@ func TestReconcile_InvalidScheme(t *testing.T) {
 				Build()
 
 			reconciler := &ShardReconciler{
-				Client:    fakeClient,
+				Client:    withShardOwner(fakeClient),
 				Scheme:    invalidScheme,
 				Recorder:  record.NewFakeRecorder(100),
 				APIReader: fakeClient,
@@ -347,11 +347,7 @@ func TestUpdateStatus_PoolPodsNotFound(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	fakeClient := newTestClient(t, shard)
 
 	reconciler := &ShardReconciler{
 		Client:    fakeClient,
@@ -518,7 +514,7 @@ func TestReconcile_PatchError(t *testing.T) {
 			})
 
 			reconciler := &ShardReconciler{
-				Client:    fakeClient,
+				Client:    withShardOwner(fakeClient),
 				Scheme:    scheme,
 				Recorder:  record.NewFakeRecorder(100),
 				APIReader: fakeClient,
@@ -561,11 +557,7 @@ func TestReconcile_PostgresSecretError(t *testing.T) {
 		},
 	}
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	baseClient := newTestClient(t, shard)
 
 	reconciler := &ShardReconciler{
 		Client:          baseClient,
@@ -709,7 +701,7 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 			}
 
 			reconciler := &ShardReconciler{
-				Client:    fakeClient,
+				Client:    withShardOwner(fakeClient),
 				Scheme:    scheme,
 				Recorder:  record.NewFakeRecorder(100),
 				APIReader: fakeClient,
@@ -782,7 +774,7 @@ func TestUpdateStatus_GetError(t *testing.T) {
 	})
 
 	reconciler := &ShardReconciler{
-		Client:    fakeClient,
+		Client:    withShardOwner(fakeClient),
 		Scheme:    scheme,
 		Recorder:  record.NewFakeRecorder(100),
 		APIReader: fakeClient,
@@ -823,9 +815,11 @@ func (w *capturingStatusWriter) Patch(
 	return w.StatusWriter.Patch(ctx, obj, patch, opts...)
 }
 
-// TestUpdateStatus_FieldOwner verifies that the SSA status patch uses
-// "multigres-resource-handler" as the field owner, not "multigres-operator".
-func TestUpdateStatus_FieldOwner(t *testing.T) {
+// TestUpdateStatus_NoPerCallFieldOwner verifies the status apply names no
+// owner of its own: ManagerShard comes from the client installed by
+// SetupWithManagerReconciler, so a per-call owner here would be a second source
+// of truth. TestShard_WritesUnderOwnManager pins the resulting managedFields.
+func TestUpdateStatus_NoPerCallFieldOwner(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = appsv1.AddToScheme(scheme)
@@ -846,13 +840,11 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 		},
 	}
 
-	baseClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	baseClient := newTestClient(t, shard)
 
-	capture := &statusPatchCapture{Client: baseClient}
+	capture := &statusPatchCapture{
+		Client: baseClient,
+	}
 
 	reconciler := &ShardReconciler{
 		Client:    capture,
@@ -866,18 +858,13 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 		t.Fatalf("updateStatus() unexpected error: %v", err)
 	}
 
-	// Verify the field owner is "multigres-resource-handler"
-	foundFieldOwner := false
+	if len(capture.capturedOpts) == 0 {
+		t.Fatal("no options captured from Status().Patch() call")
+	}
 	for _, opt := range capture.capturedOpts {
 		if fo, ok := opt.(client.FieldOwner); ok {
-			if string(fo) != "multigres-resource-handler" {
-				t.Errorf("field owner = %q, want %q", string(fo), "multigres-resource-handler")
-			}
-			foundFieldOwner = true
+			t.Errorf("per-call field owner %q set on the status apply", string(fo))
 		}
-	}
-	if !foundFieldOwner {
-		t.Error("no FieldOwner option found in Status().Patch() call")
 	}
 }
 
@@ -1096,10 +1083,7 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 				objects = append(objects, p.DeepCopy())
 			}
 
-			fakeClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objects...).
-				Build()
+			fakeClient := newTestClient(t, objects...)
 
 			reconciler := &ShardReconciler{
 				Client:   fakeClient,
@@ -1199,7 +1183,7 @@ func TestSetupWithManager(t *testing.T) {
 	t.Run("default options", func(t *testing.T) {
 		mgr := createMgr()
 		r := &ShardReconciler{
-			Client:    mgr.GetClient(),
+			Client:    withShardOwner(mgr.GetClient()),
 			Scheme:    scheme,
 			Recorder:  record.NewFakeRecorder(100),
 			APIReader: mgr.GetClient(),
@@ -1212,7 +1196,7 @@ func TestSetupWithManager(t *testing.T) {
 	t.Run("with options", func(t *testing.T) {
 		mgr := createMgr()
 		r := &ShardReconciler{
-			Client:    mgr.GetClient(),
+			Client:    withShardOwner(mgr.GetClient()),
 			Scheme:    scheme,
 			Recorder:  record.NewFakeRecorder(100),
 			APIReader: mgr.GetClient(),
@@ -1276,7 +1260,7 @@ func TestClusterIsChurning(t *testing.T) {
 			if tc.cluster != nil {
 				objs = append(objs, tc.cluster)
 			}
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+			fakeClient := newTestClient(t, objs...)
 			r := &ShardReconciler{Client: fakeClient}
 
 			got, err := r.clusterIsChurning(context.Background(), "default", tc.clusterName)
@@ -1409,10 +1393,7 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 				objs = append(objs, makePVC(fmt.Sprintf("filler-pvc-%d", i)))
 			}
 
-			fakeClient := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(objs...).
-				Build()
+			fakeClient := newTestClient(t, objs...)
 
 			reconciler := &ShardReconciler{
 				Client:    fakeClient,
@@ -1499,8 +1480,12 @@ func TestHandleExternalDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1530,9 +1515,13 @@ func TestHandleExternalDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
+		c := newTestClient(t, shard, pod)
 		rec := record.NewFakeRecorder(10)
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: rec}
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: rec,
+		}
 
 		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1577,8 +1566,12 @@ func TestHandleExternalDeletion(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1607,8 +1600,12 @@ func TestHandleExternalDeletion(t *testing.T) {
 			Status: corev1.PodStatus{},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.handleExternalDeletion(context.Background(), shard, pod); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -1647,7 +1644,11 @@ func TestHandleExternalDeletion(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.handleExternalDeletion(context.Background(), shard, pod)
 		if err == nil {
@@ -1667,7 +1668,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			Spec:       multigresv1alpha1.ShardSpec{},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).Build()
+		c := newTestClient(t)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1704,7 +1705,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, secret).Build()
+		c := newTestClient(t, shard, secret)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1732,7 +1733,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := newTestClient(t, shard)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1773,7 +1774,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, secret).Build()
+		c := newTestClient(t, shard, secret)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1802,7 +1803,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			Spec:       multigresv1alpha1.ShardSpec{},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := newTestClient(t, shard)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1833,7 +1834,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := newTestClient(t, shard)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1877,7 +1878,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, secret).Build()
+		c := newTestClient(t, shard, secret)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1914,7 +1915,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := newTestClient(t, shard)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1954,7 +1955,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, secret).Build()
+		c := newTestClient(t, shard, secret)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -1985,7 +1986,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+		c := newTestClient(t, shard)
 		r := &ShardReconciler{
 			Client:    c,
 			Scheme:    scheme,
@@ -2040,8 +2041,12 @@ func TestCreateMissingResources(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod, pvc)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName: pod}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName: pvc}
@@ -2091,8 +2096,12 @@ func TestCreateMissingResources(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pvc)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName: pvc}
@@ -2148,8 +2157,12 @@ func TestCreateMissingResources(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod, pvc)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName: pod}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName: pvc}
@@ -2198,8 +2211,12 @@ func TestCreateMissingResources(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: "default"},
 			}
 
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
-			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+			c := newTestClient(t, shard, pod, pvc)
+			r := &ShardReconciler{
+				Client:   c,
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
 
 			existingPods := map[string]*corev1.Pod{podName: pod}
 			existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName: pvc}
@@ -2269,8 +2286,12 @@ func TestCreateMissingResources(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: pvcName0, Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod0, pvc0).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod0, pvc0)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName0: pod0}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName0: pvc0}
@@ -2312,8 +2333,12 @@ func TestCreateMissingResources(t *testing.T) {
 	t.Run("all missing pods and PVCs created in one pass", func(t *testing.T) {
 		shard := baseShard.DeepCopy()
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		_, actionTaken, err := r.createMissingResources(
 			context.Background(),
@@ -2374,11 +2399,12 @@ func TestCreateMissingResources(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: pvcName1, Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod0, pod1, pvc0, pvc1).
-			Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod0, pod1, pvc0, pvc1)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName0: pod0, podName1: pod1}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName0: pvc0, pvcName1: pvc1}
@@ -2420,8 +2446,12 @@ func TestCreateMissingResources(t *testing.T) {
 		podName := BuildPoolPodName(shard, poolName, cellName, 0)
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{}
@@ -2472,7 +2502,11 @@ func TestCreateMissingResources(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		_, _, err := r.createMissingResources(
 			context.Background(), shard, poolName, cellName, poolSpec,
@@ -2495,7 +2529,11 @@ func TestCreateMissingResources(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		_, _, err := r.createMissingResources(
 			context.Background(), shard, poolName, cellName, poolSpec,
@@ -2525,7 +2563,11 @@ func TestCreateMissingResources(t *testing.T) {
 				return testutil.ErrNetworkTimeout
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName: pod}
 		existingPVCs := map[string]*corev1.PersistentVolumeClaim{pvcName: pvc}
@@ -2818,8 +2860,12 @@ func TestInitiateDrain(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.initiateDrain(context.Background(), pod); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -2856,7 +2902,11 @@ func TestInitiateDrain(t *testing.T) {
 				return testutil.ErrNetworkTimeout
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.initiateDrain(context.Background(), pod)
 		if err == nil {
@@ -2892,8 +2942,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 
 	t.Run("no drifted pods sets RollingUpdate condition to false", func(t *testing.T) {
 		shard := baseShard.DeepCopy()
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.handleRollingUpdates(
 			context.Background(), shard, poolName, cellName, poolSpec,
@@ -2931,8 +2985,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.handleRollingUpdates(
 			context.Background(), shard, poolName, cellName, poolSpec,
@@ -2970,8 +3028,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.handleRollingUpdates(
 			context.Background(), shard, poolName, cellName, poolSpec,
@@ -3010,8 +3072,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		err := r.handleRollingUpdates(
@@ -3053,8 +3119,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.handleRollingUpdates(
 			context.Background(), shard, poolName, cellName, poolSpec,
@@ -3102,8 +3172,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod0, pod1).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod0, pod1)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		err := r.handleRollingUpdates(
@@ -3162,7 +3236,11 @@ func TestHandleRollingUpdates(t *testing.T) {
 				return testutil.ErrNetworkTimeout
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		err := r.handleRollingUpdates(
@@ -3193,7 +3271,11 @@ func TestHandleRollingUpdates(t *testing.T) {
 				return testutil.ErrNetworkTimeout
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		err := r.handleRollingUpdates(
@@ -3252,8 +3334,12 @@ func TestHandleRollingUpdates_RolloutTrackerBlocksSameShardPass(t *testing.T) {
 
 	// No other pods exist, so isShardHealthy alone would report the shard
 	// healthy (nothing draining or unready) and let this drain proceed.
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	c := newTestClient(t, shard, pod)
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	rollout := &shardRolloutTracker{}
 	rollout.SetStarted()
@@ -3334,8 +3420,12 @@ func TestIsShardHealthy_MissingPodCountsAsUnhealthy(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, healthyPod).Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	c := newTestClient(t, shard, healthyPod)
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	healthy, err := r.isShardHealthy(context.Background(), shard)
 	if err != nil {
@@ -3367,8 +3457,12 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.reconcileSharedBackupPVC(context.Background(), shard); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -3388,8 +3482,12 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.reconcileSharedBackupPVC(context.Background(), shard); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -3428,7 +3526,11 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.reconcileSharedBackupPVC(context.Background(), shard)
 		if err == nil {
@@ -3548,7 +3650,11 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		poolSpec := multigresv1alpha1.PoolSpec{
 			PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -3588,7 +3694,11 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		poolSpec := multigresv1alpha1.PoolSpec{
 			PVCDeletionPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -3619,8 +3729,12 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod, pvc)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		// nil PVCDeletionPolicy defaults to Delete -> orphans the PVC.
 		err := r.cleanupDrainedPod(
@@ -3683,7 +3797,11 @@ func TestReconcilePoolPods_ErrorPaths(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.reconcilePoolPods(
 			context.Background(),
@@ -3709,7 +3827,11 @@ func TestReconcilePoolPods_ErrorPaths(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		err := r.reconcilePoolPods(
 			context.Background(),
@@ -3782,7 +3904,11 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 				return testutil.ErrNetworkTimeout
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		existingPods := map[string]*corev1.Pod{podName0: pod0, podName1: pod1}
@@ -3819,7 +3945,11 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName0: pod0}
 		_, _, err := r.handleScaleDown(
@@ -3857,7 +3987,11 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 				return testutil.ErrNetworkTimeout
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		existingPods := map[string]*corev1.Pod{podName1: pod1}
 		_, _, err := r.handleScaleDown(
@@ -3931,11 +4065,7 @@ func TestReconcile_BackupCertsError(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, shard)
 
 	reconciler := &ShardReconciler{
 		Client:          c,
@@ -4036,7 +4166,11 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		err := r.reconcilePoolPods(
 			t.Context(),
 			shard,
@@ -4103,7 +4237,11 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		err := r.reconcilePoolPods(
 			t.Context(),
 			shard,
@@ -4151,7 +4289,11 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 				return nil
 			},
 		})
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(c),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 		err := r.reconcilePoolPods(
 			t.Context(),
@@ -4213,7 +4355,11 @@ func TestCreateMissingResources_PodBuildError(t *testing.T) {
 		WithScheme(goodScheme).
 		WithObjects(shardCopy, existingPVCs[pvcName]).
 		Build()
-	r := &ShardReconciler{Client: base, Scheme: emptyScheme, Recorder: record.NewFakeRecorder(10)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(base),
+		Scheme:   emptyScheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	_, _, err := r.createMissingResources(
 		t.Context(), shardCopy, poolName, cellName, poolSpec,
@@ -4277,7 +4423,11 @@ func TestCreateMissingResources_ExternalDeletionError(t *testing.T) {
 			return testutil.ErrInjected
 		},
 	})
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(c),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	existingPods := map[string]*corev1.Pod{podName: pod}
 	existingPVCs := map[string]*corev1.PersistentVolumeClaim{
@@ -4332,8 +4482,12 @@ func TestHandleScaleDown_ExternalDeletionSetsActionTaken(t *testing.T) {
 		},
 	}
 
-	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, extraPod).Build()
-	r := &ShardReconciler{Client: base, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	base := newTestClient(t, shard, extraPod)
+	r := &ShardReconciler{
+		Client:   base,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	existingPods := map[string]*corev1.Pod{extraPodName: extraPod}
 	actionTaken, _, err := r.handleScaleDown(
@@ -4408,11 +4562,12 @@ func TestHandleRollingUpdates_SkipsUpToDatePods(t *testing.T) {
 		},
 	}
 
-	base := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard.DeepCopy(), pod0, pod1).
-		Build()
-	r := &ShardReconciler{Client: base, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	base := newTestClient(t, shard.DeepCopy(), pod0, pod1)
+	r := &ShardReconciler{
+		Client:   base,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 	observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 	existingPods := map[string]*corev1.Pod{pod0Name: pod0, pod1Name: pod1}
@@ -4477,8 +4632,12 @@ func TestReconcileSharedBackupPVC_BuildErrorAndNilReturn(t *testing.T) {
 				},
 			},
 		}
-		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy()).Build()
-		r := &ShardReconciler{Client: base, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		base := newTestClient(t, shard.DeepCopy())
+		r := &ShardReconciler{
+			Client:   base,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		err := r.reconcileSharedBackupPVC(t.Context(), shard)
 		if err == nil {
 			t.Fatal("expected error from build failure")
@@ -4517,11 +4676,7 @@ func TestReconcile_Deletion(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, shard)
 
 	reconciler := &ShardReconciler{
 		Client:          c,
@@ -4574,7 +4729,11 @@ func TestReconcileShardPDB_Error(t *testing.T) {
 			return nil
 		},
 	})
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(c),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 	err := r.reconcileShardPDB(t.Context(), shard)
 	if err == nil {
 		t.Fatal("expected error from PDB reconciliation")
@@ -4630,14 +4789,14 @@ func TestUpdateStatus_ProgressingPhase(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard, pod).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
+	c := newTestClient(t, shard, pod)
 
 	recorder := record.NewFakeRecorder(10)
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: recorder,
+	}
 
 	err := r.updateStatus(t.Context(), shard, renderedConfig{})
 	if err != nil {
@@ -4675,9 +4834,13 @@ func TestUpdatePoolsStatus_PoolEmptyEvent(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+	c := newTestClient(t, shard)
 	recorder := record.NewFakeRecorder(10)
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: recorder,
+	}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
@@ -4734,7 +4897,11 @@ func TestReconcilePool_PoolPodsError(t *testing.T) {
 			return nil
 		},
 	})
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	r := &ShardReconciler{
+		Client:   withShardOwner(c),
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	err := r.reconcilePool(t.Context(), shard, "primary", poolSpec, &shardRolloutTracker{})
 	if err == nil {
@@ -4845,14 +5012,14 @@ func TestUpdateStatus_HealthyPhase(t *testing.T) {
 				},
 			}
 
-			c := fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(shard, pod, moDeploy).
-				WithStatusSubresource(&multigresv1alpha1.Shard{}).
-				Build()
+			c := newTestClient(t, shard, pod, moDeploy)
 
 			recorder := record.NewFakeRecorder(10)
-			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+			r := &ShardReconciler{
+				Client:   c,
+				Scheme:   scheme,
+				Recorder: recorder,
+			}
 
 			err := r.updateStatus(t.Context(), shard, renderedConfig{})
 			if err != nil {
@@ -4947,9 +5114,13 @@ func TestUpdatePoolsStatus_TerminatingPodExcluded(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
+	c := newTestClient(t, shard, pod)
 	recorder := record.NewFakeRecorder(10)
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: recorder,
+	}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
@@ -5135,9 +5306,13 @@ func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
+	c := newTestClient(t, shard, pod)
 	recorder := record.NewFakeRecorder(10)
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: recorder,
+	}
 
 	cellsSet := make(map[multigresv1alpha1.CellName]bool)
 	pools, err := r.updatePoolsStatus(t.Context(), shard, cellsSet, "", "")
@@ -5221,12 +5396,12 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Status: appsv1.DeploymentStatus{ReadyReplicas: 1, ObservedGeneration: 1},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(shard, pod, moDeploy).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, pod, moDeploy)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -5269,12 +5444,12 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Status: appsv1.DeploymentStatus{ReadyReplicas: 1, ObservedGeneration: 1},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(s, pod, moDeploy).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, s, pod, moDeploy)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.updateStatus(t.Context(), s, renderedConfig{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -5320,12 +5495,12 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Status: appsv1.DeploymentStatus{ReadyReplicas: 1, ObservedGeneration: 1},
 		}
 
-		c := fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(s, pod, moDeploy).
-			WithStatusSubresource(&multigresv1alpha1.Shard{}).
-			Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, s, pod, moDeploy)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		if err := r.updateStatus(t.Context(), s, renderedConfig{}); err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -5403,9 +5578,12 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 	}
 
 	t.Run("crash-looping pod on desired config is not settled", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(shard, crashLoopingPod(desiredHash)).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, crashLoopingPod(desiredHash))
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		pools, err := r.updatePoolsStatus(
 			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash, "",
@@ -5425,9 +5603,12 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 	})
 
 	t.Run("crash-looping pod on stale config is unsettled via drift", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(shard, crashLoopingPod("stale-hash")).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, crashLoopingPod("stale-hash"))
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		pools, err := r.updatePoolsStatus(
 			t.Context(), shard, make(map[multigresv1alpha1.CellName]bool), desiredHash, "",
@@ -5523,12 +5704,12 @@ func TestUpdateStatus_DegradedOnMultiorchCrashLoop(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shard, poolPod, moDeploy, moPod).
-		WithStatusSubresource(&multigresv1alpha1.Shard{}).
-		Build()
-	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+	c := newTestClient(t, shard, poolPod, moDeploy, moPod)
+	r := &ShardReconciler{
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
 
 	if err := r.updateStatus(t.Context(), shard, renderedConfig{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -5567,8 +5748,12 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 				},
 			},
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard.DeepCopy(), pvc)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
@@ -5596,9 +5781,13 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 				},
 			},
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
+		c := newTestClient(t, shard.DeepCopy(), pvc)
 		recorder := record.NewFakeRecorder(10)
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: recorder,
+		}
 
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "20Gi"},
@@ -5626,8 +5815,12 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 				},
 			},
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard.DeepCopy(), pvc)
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
@@ -5648,9 +5841,13 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-3", Namespace: "default"},
 		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
+		c := newTestClient(t, shard.DeepCopy(), pvc)
 		recorder := record.NewFakeRecorder(10)
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: recorder,
+		}
 
 		poolSpec := multigresv1alpha1.PoolSpec{
 			Storage: multigresv1alpha1.StorageSpec{Size: "5Gi"},
@@ -5853,10 +6050,7 @@ func TestEnqueueFromPostgresConfigMap(t *testing.T) {
 		},
 	}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(shardWithRef, shardNoRef, shardDifferentRef).
-		Build()
+	fakeClient := newTestClient(t, shardWithRef, shardNoRef, shardDifferentRef)
 
 	reconciler := &ShardReconciler{
 		Client:   fakeClient,
@@ -5901,8 +6095,11 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme}
+		c := newTestClient(t, cm)
+		r := &ShardReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
 
 		rc := r.renderEffectiveConfig(context.Background(), shard)
 		hash, err := rc.restartHash, rc.err
@@ -5934,8 +6131,11 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 			Data:       map[string]string{"pg.conf": "shared_buffers = '8GB'"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm1, cm2).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme}
+		c := newTestClient(t, cm1, cm2)
+		r := &ShardReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
 
 		shard1 := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "default"},
@@ -5986,8 +6186,11 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme}
+		c := newTestClient(t, cm)
+		r := &ShardReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
 
 		err := r.renderEffectiveConfig(context.Background(), shard).err
 		if err == nil {
@@ -6009,8 +6212,11 @@ func TestRenderEffectiveConfig_RefHashing(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme}
+		c := newTestClient(t)
+		r := &ShardReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
 
 		if r.renderEffectiveConfig(context.Background(), shard).err == nil {
 			t.Error("expected error for missing ConfigMap")
@@ -6050,7 +6256,11 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 			OnCreate: testutil.FailOnObjectName(pvcName, testutil.ErrPermissionError),
 		})
 
-		r := &ShardReconciler{Client: fails, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(fails),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		err := r.reconcilePoolPods(
 			context.Background(),
 			shard,
@@ -6101,7 +6311,11 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 			OnPatch: testutil.FailOnObjectName(pvcName, testutil.ErrPermissionError),
 		})
 
-		r := &ShardReconciler{Client: fails, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		r := &ShardReconciler{
+			Client:   withShardOwner(fails),
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 		err := r.cleanupDrainedPod(context.Background(), shard, pod, "main", poolSpec, 1)
 		if err == nil || !strings.Contains(err.Error(), "failed to mark PVC") {
 			t.Fatalf("expected PVC orphan-patch error, got %v", err)
@@ -6166,9 +6380,12 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 	}
 
 	t.Run("stale reload-hash is in progress even when restart-hash matches", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(shard, readyPod(desiredRestart, "reload-stale")).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, readyPod(desiredRestart, "reload-stale"))
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		pools, err := r.updatePoolsStatus(
 			t.Context(),
@@ -6186,9 +6403,12 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 	})
 
 	t.Run("both hashes current is settled", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme).
-			WithObjects(shard, readyPod(desiredRestart, desiredReload)).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		c := newTestClient(t, shard, readyPod(desiredRestart, desiredReload))
+		r := &ShardReconciler{
+			Client:   c,
+			Scheme:   scheme,
+			Recorder: record.NewFakeRecorder(10),
+		}
 
 		pools, err := r.updatePoolsStatus(
 			t.Context(),

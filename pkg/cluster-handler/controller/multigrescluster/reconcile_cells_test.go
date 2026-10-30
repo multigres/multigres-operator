@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
@@ -30,7 +29,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -63,7 +62,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,
@@ -85,11 +84,11 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			List: func(ctx context.Context, cli client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 				return errors.New("list error")
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -119,11 +118,11 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				return errors.New("patch error")
 			},
-		}).WithObjects(cluster).Build()
+		}, cluster)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -159,11 +158,11 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			Spec: multigresv1alpha1.CellSpec{Name: "zone-orphan"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		c := newTestClientWith(t, interceptor.Funcs{
 			Patch: func(ctx context.Context, cli client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 				return errors.New("patch error")
 			},
-		}).WithObjects(cluster, existingCell).Build()
+		}, cluster, existingCell)
 
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -194,7 +193,7 @@ func TestReconcileCells_ErrorPaths(t *testing.T) {
 			},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster).Build()
+		c := newTestClient(t, cluster)
 		// Use empty scheme for Reconciler to cause SetControllerReference to fail
 		r := &MultigresClusterReconciler{
 			Client:   c,
@@ -238,7 +237,7 @@ func TestReconcileCells_HappyPath(t *testing.T) {
 			Spec: multigresv1alpha1.CellSpec{Name: "zone-old"},
 		}
 
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, orphan).Build()
+		c := newTestClient(t, cluster, orphan)
 		r := &MultigresClusterReconciler{
 			Client:   c,
 			Scheme:   scheme,

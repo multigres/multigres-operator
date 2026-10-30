@@ -247,6 +247,9 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 		Client:   s.Ops.For("toposerver", base),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("toposerver-controller"),
+		// Maintenance never dials a real etcd in this suite; a case that
+		// enables it registers a simulator with c.EtcdSim.
+		MaintenanceClientFactory: etcdSimFactory,
 	}
 	if err := topoServer.SetupWithManagerReconciler(
 		mgr, s.Reconciles.Wrap("toposerver", topoServer), opts,

@@ -43,7 +43,11 @@ func TestLiteTerminalPodsAreReplaced(t *testing.T) {
 			require.NoError(t, err)
 			pvc.UID = "original-pvc"
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, pvc).Build()
-			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+			r := &ShardReconciler{
+				Client:   withShardOwner(c),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
 			require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
 			current := &corev1.Pod{}
 			err = c.Get(t.Context(), client.ObjectKeyFromObject(pod), current)
@@ -92,7 +96,11 @@ func TestLiteExistingPVCExpandsInPlace(t *testing.T) {
 				corev1.ResourceStorage: resource.MustParse("10Gi"),
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pvc).Build()
-			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+			r := &ShardReconciler{
+				Client:   withShardOwner(c),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
 			pool.Storage.Size = size
 			wait, err := r.ensureLiteDataPVC(t.Context(), shard, "main", "z1", pool)
 			require.NoError(t, err)
@@ -160,7 +168,11 @@ func TestLiteFilesystemResizeReplacesReadyPod(t *testing.T) {
 				}}
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, pvc).Build()
-			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+			r := &ShardReconciler{
+				Client:   withShardOwner(c),
+				Scheme:   scheme,
+				Recorder: record.NewFakeRecorder(10),
+			}
 			pool.Storage.Size = "20Gi"
 			wait, err := r.ensureLiteDataPVC(ctx, shard, "main", "z1", pool)
 			require.NoError(t, err)
@@ -295,10 +307,10 @@ func TestLiteReloadConvergesWithoutReplacingPod(t *testing.T) {
 			}
 			base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, pvc).Build()
 			r := &ShardReconciler{
-				Client: testutil.NewFakeClientWithFailures(
+				Client: withShardOwner(testutil.NewFakeClientWithFailures(
 					base,
 					nil,
-				),
+				)),
 				Scheme:        scheme,
 				Recorder:      record.NewFakeRecorder(20),
 				PoolerClients: poolerclient.Static(rpc),
