@@ -18,6 +18,7 @@ func TestRender(t *testing.T) {
 			"effective_cache_size = 192MB",
 			"wal_level = logical",
 			"cluster_name = 'default'",
+			"cron.use_background_workers = on",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("rendered baseline missing %q, got:\n%s", want, got)
