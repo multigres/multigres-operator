@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
-  "upstream_sha": "fb2881efa9540ac14824401a9680b4004cebc2db",
-  "operator_sha": "2e98eadabd8eec3aaa838396d8bc5c126dd86ddd",
+  "upstream_sha": "25080e2d5496e52d4008880f65b4e75ffba545a8",
+  "operator_sha": "1e3fff19cd85de90cde6a03cafc4a468e4242eae",
   "nightly_run": {
-    "id": "40821760184",
+    "id": "41006843200",
     "attempt": "1",
-    "url": "https://github.com/multigres/multigres/actions/runs/40821760184/attempts/1"
+    "url": "https://github.com/multigres/multigres/actions/runs/41006843200/attempts/1"
   },
   "canary_run": {
-    "id": "40847821423",
+    "id": "41031679658",
     "attempt": "1",
-    "url": "https://github.com/multigres/multigres-operator/actions/runs/40847821423/attempts/1"
+    "url": "https://github.com/multigres/multigres-operator/actions/runs/41031679658/attempts/1"
   },
   "images": {
-    "multigres": "ghcr.io/multigres/multigres@sha256:400059ce61e74285bf869cc7d350f43138ac6020307ab418e06de27b2cf90c2e",
-    "pgctld": "ghcr.io/multigres/pgctld@sha256:810949dad9a3afd3638a26a45073a8aac90e7c92087ab14feeee4a5701927061",
-    "multiadmin-web": "ghcr.io/multigres/multiadmin-web@sha256:35c099e1e0d0fb7b358734e548851ca8a010606d4ff32de4c76d12c2b6201ff6"
+    "multigres": "ghcr.io/multigres/multigres@sha256:395a2180416fc10a06e5a7969c408fc33c4ee7775c189f88e0eb46d7bf1c5c8f",
+    "pgctld": "ghcr.io/multigres/pgctld@sha256:38b2e3c4dbe17cc09b5834be1be32e28b70a5b8f5a85fdb6561378e104d4c89b",
+    "multiadmin-web": "ghcr.io/multigres/multiadmin-web@sha256:799de276ceca47abfdabbecca9e3dbca66cf17121044648054b5c77970ba5a66"
   }
 }
