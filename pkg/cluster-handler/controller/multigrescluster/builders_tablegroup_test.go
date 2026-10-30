@@ -1,6 +1,7 @@
 package multigrescluster
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -151,6 +152,38 @@ func TestBuildTableGroup(t *testing.T) {
 				got.Spec.PostgresPasswordSecretRef.Key,
 				"current",
 			)
+		}
+	})
+
+	t.Run("PostgresMountsSecretRef propagated when set", func(t *testing.T) {
+		c := *cluster
+		c.Spec.PostgresMountsSecretRef = []multigresv1alpha1.PostgresSecretMount{{
+			Name:      "root-key",
+			MountPath: "/etc/postgresql-custom/pgsodium_root.key",
+			Key:       "root.key",
+		}}
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-mounts"}
+		got, err := BuildTableGroup(&c, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if !reflect.DeepEqual(got.Spec.PostgresMountsSecretRef, c.Spec.PostgresMountsSecretRef) {
+			t.Errorf(
+				"PostgresMountsSecretRef = %#v, want %#v",
+				got.Spec.PostgresMountsSecretRef,
+				c.Spec.PostgresMountsSecretRef,
+			)
+		}
+	})
+
+	t.Run("PostgresMountsSecretRef empty when not set", func(t *testing.T) {
+		tgCfg := &multigresv1alpha1.TableGroupConfig{Name: "tg-no-mounts"}
+		got, err := BuildTableGroup(cluster, dbCfg, tgCfg, nil, globalTopoRef, scheme)
+		if err != nil {
+			t.Fatalf("BuildTableGroup() error = %v", err)
+		}
+		if len(got.Spec.PostgresMountsSecretRef) != 0 {
+			t.Errorf("PostgresMountsSecretRef = %#v, want empty", got.Spec.PostgresMountsSecretRef)
 		}
 	})
 

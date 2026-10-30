@@ -99,6 +99,10 @@ const (
 	//nolint:gosec // Path only: Secret provides the payload.
 	PostgresInitSecretsMountPath = "/etc/postgres-init-secrets"
 
+	// PostgresMountsVolumeNamePrefix prefixes the volume names for
+	// Spec.PostgresMountsSecretRef entries. The entry index follows the prefix.
+	PostgresMountsVolumeNamePrefix = "postgres-mounts"
+
 	// PostgresInitSecretsFilePath is passed to pgctld as POSTGRES_INIT_SECRETS_FILE.
 	PostgresInitSecretsFilePath = PostgresInitSecretsMountPath + "/" + PostgresInitSecretsFileName
 
@@ -283,6 +287,54 @@ func postgresInitSecretsVolumeMount() corev1.VolumeMount {
 	}
 }
 
+// postgresMountVolumeName returns the pod volume name for the i-th entry of
+// Spec.PostgresMountsSecretRef.
+func postgresMountVolumeName(i int) string {
+	return fmt.Sprintf("%s-%d", PostgresMountsVolumeNamePrefix, i)
+}
+
+// buildPostgresMountsVolumes returns one Secret volume for each entry of
+// Spec.PostgresMountsSecretRef. The operator does not create or check the
+// Secrets.
+func buildPostgresMountsVolumes(shard *multigresv1alpha1.Shard) []corev1.Volume {
+	volumes := make([]corev1.Volume, 0, len(shard.Spec.PostgresMountsSecretRef))
+	for i, m := range shard.Spec.PostgresMountsSecretRef {
+		// Keep readable when fsGroup is unset.
+		defaultMode := int32(0o444)
+		src := &corev1.SecretVolumeSource{
+			SecretName:  m.Name,
+			DefaultMode: &defaultMode,
+		}
+		if m.Key != "" {
+			src.Items = []corev1.KeyToPath{{Key: m.Key, Path: m.Key}}
+		}
+		volumes = append(volumes, corev1.Volume{
+			Name:         postgresMountVolumeName(i),
+			VolumeSource: corev1.VolumeSource{Secret: src},
+		})
+	}
+	return volumes
+}
+
+// buildPostgresMountsVolumeMounts returns the read-only mounts for the volumes
+// from buildPostgresMountsVolumes. With a Key, the mount is a single file
+// (subPath), so other files in the same directory stay visible.
+func buildPostgresMountsVolumeMounts(shard *multigresv1alpha1.Shard) []corev1.VolumeMount {
+	mounts := make([]corev1.VolumeMount, 0, len(shard.Spec.PostgresMountsSecretRef))
+	for i, m := range shard.Spec.PostgresMountsSecretRef {
+		mount := corev1.VolumeMount{
+			Name:      postgresMountVolumeName(i),
+			MountPath: m.MountPath,
+			ReadOnly:  true,
+		}
+		if m.Key != "" {
+			mount.SubPath = m.Key
+		}
+		mounts = append(mounts, mount)
+	}
+	return mounts
+}
+
 func shardTLSConfigured(shard *multigresv1alpha1.Shard) bool {
 	return shard.Spec.InternalTLS.IsEnabled()
 }
@@ -418,6 +470,7 @@ func buildPgctldSidecar(
 	if initSecretsConfigured(shard) {
 		volumeMounts = append(volumeMounts, postgresInitSecretsVolumeMount())
 	}
+	volumeMounts = append(volumeMounts, buildPostgresMountsVolumeMounts(shard)...)
 	if _, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		shard.Spec.Observability,
 	); otelMount != nil {
@@ -1026,6 +1079,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 	if initSecretsVol := buildPostgresInitSecretsVolume(shard); initSecretsVol != nil {
 		volumes = append(volumes, *initSecretsVol)
 	}
+	volumes = append(volumes, buildPostgresMountsVolumes(shard)...)
 	if certVol := buildPgBackRestCertVolume(shard); certVol != nil {
 		volumes = append(volumes, *certVol)
 	}
