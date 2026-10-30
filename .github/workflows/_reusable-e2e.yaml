@@ -225,6 +225,7 @@ jobs:
           fi
 
       - name: Run e2e tests
+        shell: bash
         id: tests
         env:
           E2E_KEEP_CLUSTERS: never

@@ -50,6 +50,7 @@ jobs:
           cache: false
 
       - name: Run tests
+        shell: bash
         id: tests
         run: |
           go test -json -count=1 $(go list ./... | grep -v /test/suite) \
@@ -64,6 +65,7 @@ jobs:
           variant: unit
 
       - name: Run observer tests against current operator API
+        shell: bash
         id: observer-tests
         working-directory: tools/observer
         run: go test -json -count=1 -mod=readonly ./... | tee "$RUNNER_TEMP/observer-tests.jsonl"
