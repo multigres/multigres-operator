@@ -355,6 +355,43 @@ type PostgresInitSecretsRef struct {
 	Key string `json:"key,omitempty"`
 }
 
+// PostgresSecretMount mounts a same-namespace Secret into the postgres
+// container. The operator does not create, validate, own, or delete the Secret.
+// It must exist when the pod starts, or the kubelet cannot start the pod.
+//
+// The mount is read-only. Kubernetes never refreshes a subPath (Key) mount, and
+// a process may read the files only at start. To change the content, point Name
+// at a new Secret. The pod spec changes, so the operator replaces the pods.
+// A change to the data of the referenced Secret does not restart pods. The
+// kubelet does refresh a directory mount (no Key), but the process must re-read
+// the files itself.
+//
+// MountPath must not match a path that the operator already mounts.
+type PostgresSecretMount struct {
+	// Name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// MountPath is the absolute path in the postgres container. It must not
+	// end with a slash.
+	// +kubebuilder:validation:MinLength=2
+	// +kubebuilder:validation:MaxLength=4096
+	// +kubebuilder:validation:Pattern=`^/([^/]+/)*[^/]+$`
+	MountPath string `json:"mountPath"`
+
+	// Key is a Secret data key. When set, the operator mounts only this key as
+	// a single file at MountPath (with subPath), and the other files in the
+	// parent directory stay visible. When not set, the operator mounts the whole
+	// Secret as a directory at MountPath.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
+	Key string `json:"key,omitempty"`
+}
+
 const (
 	// CertSecretName is the Secret name used by cert-manager for the
 	// multigateway TLS certificate, matching the non-HA project convention.

@@ -188,6 +188,15 @@ type MultigresClusterSpec struct {
 	// +optional
 	PostgresInitSecretsRef *PostgresInitSecretsRef `json:"postgresInitSecretsRef,omitempty"`
 
+	// PostgresMountsSecretRef lists Secrets that the operator mounts into the
+	// postgres container of every pool pod. TableGroups and Shards inherit the list.
+	// The operator does not manage these Secrets.
+	// +optional
+	// +listType=map
+	// +listMapKey=mountPath
+	// +kubebuilder:validation:MaxItems=16
+	PostgresMountsSecretRef []PostgresSecretMount `json:"postgresMountsSecretRef,omitempty"`
+
 	// InternalTLS configures mutual TLS for communication between internal
 	// Multigres components. When omitted or enabled is false, internal mTLS is disabled.
 	// +optional

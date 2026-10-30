@@ -1,6 +1,7 @@
 package tablegroup
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -150,6 +151,29 @@ func TestBuildShard(t *testing.T) {
 				"Spec.InternalTLS = %#v, want propagated pointer %#v",
 				got.Spec.InternalTLS,
 				tgWithInternalTLS.Spec.InternalTLS,
+			)
+		}
+	})
+
+	t.Run("PostgresMountsSecretRef propagates from TableGroup to Shard", func(t *testing.T) {
+		tgWithMounts := tg.DeepCopy()
+		tgWithMounts.Spec.PostgresMountsSecretRef = []multigresv1alpha1.PostgresSecretMount{{
+			Name:      "root-key",
+			MountPath: "/etc/postgresql-custom/pgsodium_root.key",
+			Key:       "root.key",
+		}}
+
+		got, err := BuildShard(tgWithMounts, shardSpec, scheme)
+		if err != nil {
+			t.Fatalf("BuildShard() error = %v", err)
+		}
+		if !reflect.DeepEqual(
+			got.Spec.PostgresMountsSecretRef,
+			tgWithMounts.Spec.PostgresMountsSecretRef,
+		) {
+			t.Errorf(
+				"Spec.PostgresMountsSecretRef = %#v, want propagated list",
+				got.Spec.PostgresMountsSecretRef,
 			)
 		}
 	})
