@@ -146,15 +146,14 @@ tools/
 
 ### Workflow Security
 
-The **Workflow security** check runs actionlint, zizmor, and regression tests for
-privileged workflow inputs on every PR. Pin external actions to full commit SHAs,
-keep PR-code execution read-only, and pass untrusted values through environment
-variables rather than interpolating them into scripts. Any audit suppression must
-explain the trust boundary beside the suppressed trigger.
+The **Workflow security** check runs actionlint, zizmor, and workflow regression
+tests on every PR. Pin external actions to full commit SHAs, give PR code
+read-only permissions, and pass untrusted values through environment variables.
+Explain audit suppressions in comments next to the affected code.
 
-Maintainers must add **Workflow security** to the repository's required status
-checks after its first successful run. Adding the workflow alone does not change
-branch protection. Keep this gate running on documentation-only PRs too.
+After its first successful run, maintainers must add **Workflow security** to
+the required status checks in repository settings. Keep it enabled for docs-only
+PRs.
 
 ## Documentation
 
