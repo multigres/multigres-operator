@@ -66,7 +66,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      digest: ${{ steps.image.outputs.digest }}
+      digest: ${{ steps.reuse.outputs.digest || steps.image.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,16 +79,44 @@ jobs:
         run: |
           echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
           echo "epoch=$(git show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          cosign-release: v3.1.4
+      - name: Reuse the verified main image for a stable release
+        if: startsWith(github.ref, 'refs/tags/')
+        id: reuse
+        env:
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${REPOSITORY,,}"
+          # A version release must not rebuild or replace the per-commit image.
+          digest=$(docker buildx imagetools inspect "$image:$GITHUB_SHA" --format '{{json .Manifest}}' | jq -er .digest)
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml@refs/heads/main"
+          cosign verify --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$image@$digest"
+          gh attestation verify "oci://$image@$digest" \
+            --repo "$GITHUB_REPOSITORY" --bundle-from-oci \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
+            --cert-identity "$identity" --signer-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+          docker run --rm -v "$PWD:/work" \
+            quay.io/skopeo/stable@sha256:62da3f53e4b72219741bfa6681e092d30391a880b6346d20bf064778f7caa3c5 \
+            copy --all --preserve-digests "docker://$image@$digest" oci-archive:/work/operator.tar
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Build OCI archive without publishing
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         id: image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          provenance: mode=max
+          provenance: false
           outputs: type=oci,dest=operator.tar,rewrite-timestamp=true
           build-args: |
-            VERSION=${{ inputs.release-tag }}
+            VERSION=${{ steps.source.outputs.version }}
             GIT_COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.source.outputs.date }}
             SOURCE_DATE_EPOCH=${{ steps.source.outputs.epoch }}
@@ -162,15 +190,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Generate digest-pinned install manifests
+      - name: Generate tagged and digest-pinned install manifests
         env:
           IMAGE: ghcr.io/${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.dry-run && github.sha || inputs.release-tag }}
           DIGEST: ${{ needs.build.outputs.digest }}
         run: |
-          make build-installer IMG="${IMAGE,,}@$DIGEST"
+          image="${IMAGE,,}:$RELEASE_TAG@$DIGEST"
+          make build-installer IMG="$image"
           for file in dist/install.yaml dist/install-certmanager.yaml dist/install-observability.yaml; do
-            # Both the controller and GC must use the verified image.
-            test "$(grep -Fc "image: ${IMAGE,,}@$DIGEST" "$file")" = 2
+            # Both workloads retain the consumer's tag and pin the built digest.
+            test "$(awk -v repository="${IMAGE,,}" '$1 == "image:" && index($2, repository) == 1 {print $2}' "$file")" = "$(printf '%s\n%s' "$image" "$image")"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -308,18 +338,25 @@ jobs:
           RELEASE_TAG: ${{ inputs.release-tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Treat registry errors as failures, not permission to overwrite a tag.
-          if existing=$(docker buildx imagetools inspect "$IMAGE:$RELEASE_TAG" --format '{{json .Manifest}}' 2>error.txt); then
-            test "$(jq -er .digest <<< "$existing")" = "$EXPECTED_DIGEST" || {
-              echo '::error::Refusing to replace an existing immutable image tag'
+          # Check every destination before writing any tag. Stable releases
+          # retain the full-SHA tag; the version is only an additional alias.
+          tags=("$GITHUB_SHA")
+          if [ "$RELEASE_TAG" != "$GITHUB_SHA" ]; then tags+=("$RELEASE_TAG"); fi
+          for tag in "${tags[@]}"; do
+            if existing=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{json .Manifest}}' 2>error.txt); then
+              test "$(jq -er .digest <<< "$existing")" = "$EXPECTED_DIGEST" || {
+                echo '::error::Refusing to replace an existing immutable image tag'
+                exit 1
+              }
+            elif ! grep -qi 'manifest unknown' error.txt &&
+                 ! grep -Fxq "ERROR: $IMAGE:$tag: not found" error.txt; then
+              cat error.txt >&2
               exit 1
-            }
-          elif ! grep -qi 'manifest unknown' error.txt &&
-               ! grep -Fxq "ERROR: $IMAGE:$RELEASE_TAG: not found" error.txt; then
-            cat error.txt >&2
-            exit 1
-          fi
-          docker buildx imagetools create --tag "$IMAGE:$RELEASE_TAG" "$IMAGE@$EXPECTED_DIGEST"
+            fi
+          done
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "$IMAGE:$tag" "$IMAGE@$EXPECTED_DIGEST"
+          done
           if [ "$GITHUB_REF" = refs/heads/main ]; then
             # A queued/stale main run must not move rolling aliases backwards.
             current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)

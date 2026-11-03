@@ -57,7 +57,7 @@ jobs:
           **Updated:** \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
 
           This is a rolling pre-release that tracks the latest successful build from \`main\`.
-          Install manifests below pin the verified container image by digest.
+          Install manifests below include the full commit-SHA image tag and pin its digest.
           Verify the attached Sigstore bundles before applying them; see RELEASE.md.
 
           ### Verified installation
