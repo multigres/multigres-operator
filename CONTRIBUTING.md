@@ -1,5 +1,11 @@
 # Contributing to Multigres Operator
 
+## Security Contributions
+
+We welcome reports that help improve the security of Multigres Operator. Please follow our [security reporting guidance](SECURITY.md) to share potential vulnerabilities privately, including reproduction steps and the potential impact.
+
+We close unsolicited pull requests that only add scanner output, audit reports, or promotional material for third-party services. Please discuss proposed security tooling or CI integrations with maintainers before opening a pull request.
+
 ## Development Environment
 
 ### Prerequisites
