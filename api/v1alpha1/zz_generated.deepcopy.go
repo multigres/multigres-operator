@@ -1779,6 +1779,11 @@ func (in *ShardOverrides) DeepCopy() *ShardOverrides {
 func (in *ShardResolvedSpec) DeepCopyInto(out *ShardResolvedSpec) {
 	*out = *in
 	in.Multiorch.DeepCopyInto(&out.Multiorch)
+	if in.GatewayClusterViews != nil {
+		in, out := &in.GatewayClusterViews, &out.GatewayClusterViews
+		*out = new(GatewayClusterViewsConfig)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.PostgresConfigRef != nil {
 		in, out := &in.PostgresConfigRef, &out.PostgresConfigRef
 		*out = new(PostgresConfigRef)
@@ -1826,6 +1831,11 @@ func (in *ShardSpec) DeepCopyInto(out *ShardSpec) {
 	in.Images.DeepCopyInto(&out.Images)
 	out.GlobalTopoServer = in.GlobalTopoServer
 	in.Multiorch.DeepCopyInto(&out.Multiorch)
+	if in.GatewayClusterViews != nil {
+		in, out := &in.GatewayClusterViews, &out.GatewayClusterViews
+		*out = new(GatewayClusterViewsConfig)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.PostgresConfigRef != nil {
 		in, out := &in.PostgresConfigRef, &out.PostgresConfigRef
 		*out = new(PostgresConfigRef)

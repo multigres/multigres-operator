@@ -779,6 +779,9 @@ func buildLiteContainer(
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
 	}
 
+	if cv := shard.Spec.GatewayClusterViews; cv != nil && ptr.Deref(cv.Enabled, false) {
+		args = append(args, "--enable-cluster-views=true")
+	}
 	if shard.Spec.CertCommonName != "" {
 		args = append(args,
 			"--pg-tls-cert-file", litePublicTLSCertFile,

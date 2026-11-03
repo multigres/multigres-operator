@@ -34,6 +34,20 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 		return false, fmt.Errorf("failed to get global topo ref: %w", err)
 	}
 
+	var gatewayClusterViews *multigresv1alpha1.GatewayClusterViewsConfig
+	if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+		if len(cluster.Spec.Cells) != 1 {
+			return false, fmt.Errorf("lite mode requires exactly one cell")
+		}
+		cellCfg := cluster.Spec.Cells[0].DeepCopy()
+		cellCfg.CellTemplate = cluster.Spec.EffectiveCellTemplate(cellCfg.CellTemplate)
+		gateway, _, _, err := res.ResolveCell(ctx, cluster, cellCfg)
+		if err != nil {
+			return false, fmt.Errorf("failed to resolve Lite gateway configuration: %w", err)
+		}
+		gatewayClusterViews = gateway.ClusterViews
+	}
+
 	activeTGNames := make(map[string]bool)
 
 	for _, db := range cluster.Spec.Databases {
@@ -93,14 +107,15 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 				// The Resolver now handles the "Empty Cells = All Cells" logic authoritatively.
 				// We no longer need to manually infer or sort here, just trust the resolver.
 				resolvedShards = append(resolvedShards, multigresv1alpha1.ShardResolvedSpec{
-					Name:              string(shard.Name),
-					Multiorch:         resolved.Multiorch,
-					InitdbArgs:        resolved.InitdbArgs,
-					PostgresConfigRef: resolved.PostgresConfigRef,
-					PostgresConfig:    resolved.PostgresConfig,
-					Pools:             resolved.Pools,
-					PVCDeletionPolicy: resolved.PVCDeletionPolicy,
-					Backup:            resolved.Backup,
+					Name:                string(shard.Name),
+					Multiorch:           resolved.Multiorch,
+					GatewayClusterViews: gatewayClusterViews.DeepCopy(),
+					InitdbArgs:          resolved.InitdbArgs,
+					PostgresConfigRef:   resolved.PostgresConfigRef,
+					PostgresConfig:      resolved.PostgresConfig,
+					Pools:               resolved.Pools,
+					PVCDeletionPolicy:   resolved.PVCDeletionPolicy,
+					Backup:              resolved.Backup,
 				})
 			}
 
