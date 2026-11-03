@@ -3,59 +3,42 @@ name: Build & Release
 on:
   workflow_call:
     inputs:
-      architectures:
-        description: A JSON list of GOARCH values for which to build
-        default: '["amd64", "arm64"]'
-        required: false
+      release-tag:
+        description: Immutable full-SHA or semver tag
+        required: true
         type: string
-      push-container-image:
-        description: Whether to push the resulting container image to the registry
-        default: false
-        required: false
+      dry-run:
+        description: Publish and verify a candidate without advancing release aliases
         type: boolean
-      additional-tags:
-        description: Space-separated list of additional tags to apply via imagetools (e.g. "current latest v1.2.3")
-        default: ""
-        required: false
-        type: string
-      generate-manifests:
-        description: Whether to generate and upload install manifests as workflow artifacts
         default: false
-        required: false
-        type: boolean
-      manifest-image-ref:
-        description: The image reference to embed in manifests (e.g. ghcr.io/.../multigres-operator:abc123)
-        default: ""
-        required: false
-        type: string
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   test-go:
-    runs-on: ubuntu-latest
+    if: >-
+      (github.repository == 'multigres/multigres-operator' && github.event_name == 'push' &&
+       ((github.ref == 'refs/heads/main' && github.workflow_ref == format('{0}/.github/workflows/main.yaml@{1}', github.repository, github.ref)) ||
+        (startsWith(github.ref, 'refs/tags/v') && github.workflow_ref == format('{0}/.github/workflows/release.yaml@{1}', github.repository, github.ref)))) ||
+      (inputs.dry-run && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+       github.workflow_ref == format('{0}/.github/workflows/release-dry-run.yaml@{1}', github.repository, github.ref))
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - name: Check out code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Install Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-
       - name: Run tests
         shell: bash
         id: tests
         run: |
           go test -json -count=1 $(go list ./... | grep -v /test/suite) \
             -coverprofile=./cover.out -covermode=atomic -coverpkg=./... | tee "$RUNNER_TEMP/unit-tests.jsonl"
-
       - name: Upload test results to Trunk
         if: ${{ !cancelled() && steps.tests.outcome != 'skipped' }}
         uses: ./.github/actions/upload-test-results
@@ -63,13 +46,11 @@ jobs:
           json-file: ${{ runner.temp }}/unit-tests.jsonl
           previous-step-outcome: ${{ steps.tests.outcome }}
           variant: unit
-
       - name: Run observer tests against current operator API
         shell: bash
         id: observer-tests
         working-directory: tools/observer
         run: go test -json -count=1 -mod=readonly ./... | tee "$RUNNER_TEMP/observer-tests.jsonl"
-
       - name: Upload observer test results to Trunk
         if: ${{ !cancelled() && steps.observer-tests.outcome != 'skipped' }}
         uses: ./.github/actions/upload-test-results
@@ -78,154 +59,270 @@ jobs:
           previous-step-outcome: ${{ steps.observer-tests.outcome }}
           variant: observer
 
-  build-scan-push-container:
-    needs: [ test-go ]
-    runs-on: ubuntu-latest
+  # Builds have no registry or OIDC credentials and do not use shared caches.
+  build:
+    needs: test-go
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write
-      security-events: write
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
     steps:
-      - name: Check out code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-
-      - name: Set up Docker for multi-platform
-        uses: docker/setup-docker-action@7ec28a010822b4626af4874f9448a4b05ac6f3e5 # v5.6.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
-          daemon-config: |
-            {
-              "features": {
-                "containerd-snapshotter": true
-              }
-            }
-
-      - name: Setup Docker buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Log into registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Compute short SHA
-        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-
-      - name: Build container image
+          driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+      - name: Read source metadata
+        id: source
+        run: |
+          echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+          echo "epoch=$(git show -s --format=%ct HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build OCI archive without publishing
+        id: image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile
-          platforms: linux/${{ join(fromJson(inputs.architectures), ',linux/') }}
-          load: true
-          push: false
-          tags: "ghcr.io/${{ github.repository }}:${{ github.sha }}"
-          provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          outputs: type=oci,dest=container-image.tar
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          outputs: type=oci,dest=operator.tar,rewrite-timestamp=true
           build-args: |
-            VERSION=${{ env.SHORT_SHA }}
+            VERSION=${{ inputs.release-tag }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.source.outputs.date }}
+            SOURCE_DATE_EPOCH=${{ steps.source.outputs.epoch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: operator-oci
+          path: operator.tar
+          compression-level: 0
+          retention-days: 3
 
-      - name: Push to registry (sha)
+  sbom:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: operator-oci
+      - name: Inventory the actual platform image
+        uses: anchore/sbom-action@fffec3d851af758d56fee099cf3fbf8aa8779843 # v0.24.3
         env:
-          IMAGE: ghcr.io/${{ github.repository }}
-          IMAGE_SHA: ${{ github.sha }}
-        run: |
-          docker push "$IMAGE:$IMAGE_SHA"
-
-      # grype requires that the container image be pushed already because
-      # the scanner runs in a container with a different local registry
-      - name: Scan final image with grype
+          SYFT_PLATFORM: linux/${{ matrix.arch }}
+        with:
+          image: oci-archive:operator.tar
+          syft-version: v1.56.0
+          format: spdx-json
+          output-file: operator-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Validate SBOM structure and binary coverage
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: python3 scripts/check-release-sbom.py "operator-$ARCH.spdx.json"
+      - name: Scan platform SBOM
         id: scan
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
-        continue-on-error: true
         with:
-          cache-db: true
-          image: "ghcr.io/${{ github.repository }}:${{ github.sha }}"
-          output-file: grype.sarif
+          sbom: operator-${{ matrix.arch }}.spdx.json
+          grype-version: v0.121.1
           severity-cutoff: high
-      - name: Upload SARIF file
+          output-file: grype.sarif
+      - name: Upload vulnerability findings
+        if: ${{ !cancelled() && hashFiles('grype.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: grype.sarif
-      - name: Check success or failure
-        if: ${{ steps.scan.outcome == 'failure' }}
-        run: |-
-          jq '.runs[0].results | map(select(.level == "error"))' grype.sarif
-          exit 1
+          category: release-${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ matrix.arch }}
+          path: operator-${{ matrix.arch }}.spdx.json
 
-      - name: Apply additional tags
-        if: ${{ inputs.additional-tags != '' }}
+  manifests:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Generate digest-pinned install manifests
         env:
-          ADDITIONAL_TAGS: ${{ inputs.additional-tags }}
           IMAGE: ghcr.io/${{ github.repository }}
-          IMAGE_SHA: ${{ github.sha }}
+          DIGEST: ${{ needs.build.outputs.digest }}
         run: |
-          for TAG in $ADDITIONAL_TAGS; do
-            docker buildx imagetools create \
-              --tag "$IMAGE:$TAG" \
-              "$IMAGE:$IMAGE_SHA"
+          make build-installer IMG="${IMAGE,,}@$DIGEST"
+          for file in dist/install.yaml dist/install-certmanager.yaml dist/install-observability.yaml; do
+            # Both the controller and GC must use the verified image.
+            test "$(grep -Fc "image: ${IMAGE,,}@$DIGEST" "$file")" = 2
           done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unsigned-installers
+          path: dist/install*.yaml
 
-  validate-installer:
-    needs: [ test-go ]
-    runs-on: ubuntu-latest
+  # No checkout, repository scripts, or build caches in this privileged job.
+  # This signs evidence from this run; it does not claim an isolated L3 builder.
+  publish:
+    needs: [build, sbom, manifests]
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      EXPECTED_DIGEST: ${{ needs.build.outputs.digest }}
     steps:
-      - name: Check out code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          persist-credentials: false
-
-      - name: Install Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          name: operator-oci
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Validate install manifests
-        run: make build-installer
-
-  generate-manifests:
-    if: ${{ inputs.generate-manifests }}
-    needs: [ build-scan-push-container ]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Check out code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          pattern: sbom-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          persist-credentials: false
-
-      - name: Install Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+          name: unsigned-installers
+          path: release
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Generate install manifests
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+      - name: Publish a candidate without changing release tags
+        id: candidate
         env:
-          MANIFEST_IMAGE_REF: ${{ inputs.manifest-image-ref }}
-        run: make build-installer IMG="$MANIFEST_IMAGE_REF"
-
-      - name: Upload install manifests
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          image="ghcr.io/${REPOSITORY,,}"
+          candidate="$image:candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker run --rm -v "$PWD:/work" -v "$HOME/.docker:/auth:ro" \
+            quay.io/skopeo/stable@sha256:62da3f53e4b72219741bfa6681e092d30391a880b6346d20bf064778f7caa3c5 \
+            copy --all --preserve-digests --authfile /auth/config.json \
+            oci-archive:/work/operator.tar "docker://$candidate"
+          digest=$(docker buildx imagetools inspect "$candidate" --format '{{json .Manifest}}' | jq -er .digest)
+          test "$digest" = "$EXPECTED_DIGEST"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          docker buildx imagetools inspect "$image@$digest" --raw > index.json
+          for arch in amd64 arm64; do
+            platform=$(jq -er --arg arch "$arch" '
+              [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch)] |
+              if length == 1 then .[0].digest else error("missing or duplicate platform") end
+            ' index.json)
+            echo "$arch=$platform" >> "$GITHUB_OUTPUT"
+            echo "DIGEST_${arch^^}=$platform" >> "$GITHUB_ENV"
+            config=$(docker buildx imagetools inspect "$image@$platform" --raw | jq -er .config.digest)
+            jq -e --arg config "$config" '
+              any(.packages[]; .versionInfo == $config and (.SPDXID | startswith("SPDXRef-DocumentRoot-Image-")))
+            ' "release/operator-$arch.spdx.json"
+          done
+          printf '%s@%s\n' "$image" "$digest" > release/image.txt
+      - name: Attest image provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
-          name: install-manifests
-          path: |
-            dist/install.yaml
-            dist/install-crds.yaml
-            dist/install-rbac.yaml
-            dist/install-certmanager.yaml
-            dist/install-observability.yaml
+          subject-name: ${{ steps.candidate.outputs.image }}
+          subject-digest: ${{ needs.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      # SBOM subjects are the platform digests, not two competing inventories
+      # for the index. The signed index binds both platform images together.
+      - name: Attest amd64 inventory
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.candidate.outputs.image }}
+          subject-digest: ${{ steps.candidate.outputs.amd64 }}
+          sbom-path: release/operator-amd64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: Attest arm64 inventory
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-name: ${{ steps.candidate.outputs.image }}
+          subject-digest: ${{ steps.candidate.outputs.arm64 }}
+          sbom-path: release/operator-arm64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+      - name: Sign and verify image and release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-and-release.yaml@${{ github.ref }}
+        run: |
+          cosign sign --yes "$IMAGE@$EXPECTED_DIGEST"
+          cosign verify --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$EXPECTED_DIGEST"
+          gh attestation verify "oci://$IMAGE@$EXPECTED_DIGEST" \
+            --repo "$GITHUB_REPOSITORY" --bundle-from-oci \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
+            --cert-identity "$IDENTITY" --signer-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+          for arch in amd64 arm64; do
+            variable="DIGEST_${arch^^}"
+            gh attestation verify "oci://$IMAGE@${!variable}" \
+              --repo "$GITHUB_REPOSITORY" --bundle-from-oci \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
+              --cert-identity "$IDENTITY" --signer-digest "$GITHUB_SHA" \
+              --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners \
+              --predicate-type https://spdx.dev/Document/v2.3 --format json > verified.json
+            jq -e --slurpfile expected "release/operator-$arch.spdx.json" \
+              'any(.[]; .verificationResult.statement.predicate == $expected[0])' verified.json
+          done
+          cd release
+          sha256sum install*.yaml operator-*.spdx.json image.txt > checksums.txt
+          for file in install*.yaml operator-*.spdx.json image.txt checksums.txt; do
+            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
+            cosign verify-blob --bundle "$file.sigstore.json" \
+              --certificate-identity "$IDENTITY" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$file"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-release
+          path: release/*
+          overwrite: true
+      - name: Promote only verified digests
+        if: ${{ !inputs.dry-run }}
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Treat registry errors as failures, not permission to overwrite a tag.
+          if existing=$(docker buildx imagetools inspect "$IMAGE:$RELEASE_TAG" --format '{{json .Manifest}}' 2>error.txt); then
+            test "$(jq -er .digest <<< "$existing")" = "$EXPECTED_DIGEST" || {
+              echo '::error::Refusing to replace an existing immutable image tag'
+              exit 1
+            }
+          elif ! grep -qi 'manifest unknown' error.txt &&
+               ! grep -Fxq "ERROR: $IMAGE:$RELEASE_TAG: not found" error.txt; then
+            cat error.txt >&2
+            exit 1
+          fi
+          docker buildx imagetools create --tag "$IMAGE:$RELEASE_TAG" "$IMAGE@$EXPECTED_DIGEST"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            # A queued/stale main run must not move rolling aliases backwards.
+            current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+            test "$current" = "$GITHUB_SHA"
+            docker buildx imagetools create --tag "$IMAGE:current" --tag "$IMAGE:latest" "$IMAGE@$EXPECTED_DIGEST"
+          fi

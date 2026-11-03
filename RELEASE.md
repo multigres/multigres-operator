@@ -10,15 +10,16 @@ This release model meets internal and OSS needs while Multigres and Multigres Op
 
 Every merge to `main` automatically:
 
-1. Builds a multi-arch container image and pushes it to GHCR with the full commit SHA, `current`, and `latest` tags
-2. Generates install manifests (`install.yaml`, `install-certmanager.yaml`, `install-observability.yaml`)
-3. Updates the rolling [`current` pre-release](https://github.com/multigres/multigres-operator/releases/tag/current) with the new manifests
+1. Builds a multi-arch OCI archive without publication credentials or shared build caches
+2. Inventories and scans both architectures, and generates digest-pinned install manifests
+3. Publishes a candidate, signs its digest, and verifies its provenance and platform SBOM attestations
+4. Signs all five install manifests, platform SBOMs, `image.txt`, and `checksums.txt` with Sigstore bundles
+5. Promotes the verified digest to the full commit SHA, `current`, and `latest` tags, then updates the rolling [`current` pre-release](https://github.com/multigres/multigres-operator/releases/tag/current)
 
-No manual steps required. Internal consumers can always pull the latest from the stable URL:
+No manual publication steps are required. Download and verify the assets as described below before applying an installer. The rolling release URL remains:
 
 ```bash
 curl -LO https://github.com/multigres/multigres-operator/releases/download/current/install.yaml
-kubectl apply -f install.yaml
 ```
 
 ### Stable lane (manual)
@@ -26,9 +27,10 @@ kubectl apply -f install.yaml
 Semver tag pushes (`vX.Y.Z`) trigger the stable lane, which:
 
 1. Verifies the tag points to a commit on `main`
-2. Builds a multi-arch container image tagged with the semver version
-3. Generates install manifests with the semver-tagged image reference
-4. Creates a GitHub release with grouped changelog and install manifest assets via GoReleaser
+2. Builds, scans, signs, and verifies artifacts through the same pipeline as the current lane
+3. Promotes the verified image digest to the semver tag; manifests retain the digest reference
+4. Prepares the grouped changelog with GoReleaser in a read-only job
+5. Creates a GitHub release in a separate upload-only job, without replacing existing releases or assets
 
 ## How to cut a stable release
 
@@ -51,20 +53,85 @@ gh run watch <run-id> --repo multigres/multigres-operator
 
 ### Verify the release
 
+Install cosign v3, GitHub CLI with attestation support, Docker Buildx, and jq.
+For a stable release, set the exact tag and source commit you expect. For the
+rolling release use `VERSION=current` and `REF=refs/heads/main`, with the source
+commit from the release you intend to install. A valid old signature alone does
+not prove that a rolling artifact is current.
+
 ```bash
-# Check the GitHub release has manifests
-gh release view vX.Y.Z --repo multigres/multigres-operator
+set -euo pipefail
+VERSION=vX.Y.Z
+REF=refs/tags/$VERSION
+SOURCE_SHA='REPLACE_WITH_EXPECTED_FULL_SOURCE_COMMIT'
+REPO=multigres/multigres-operator
+IDENTITY="https://github.com/$REPO/.github/workflows/build-and-release.yaml@$REF"
+gh release download "$VERSION" --repo "$REPO" --dir verified-release
+cd verified-release
 
-# Check the container image exists on GHCR
-docker buildx imagetools inspect ghcr.io/multigres/multigres-operator:vX.Y.Z
+# Authenticate the checksum list before trusting its entries.
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity "$IDENTITY" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+sha256sum -c checksums.txt
 
-# Check the manifest references the correct image
-curl -sL https://github.com/multigres/multigres-operator/releases/download/vX.Y.Z/install.yaml | grep 'image:'
+IMAGE=$(cat image.txt)
+cosign verify --certificate-identity "$IDENTITY" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE"
+gh attestation verify "oci://$IMAGE" --repo "$REPO" --bundle-from-oci \
+  --signer-workflow "$REPO/.github/workflows/build-and-release.yaml" \
+  --cert-identity "$IDENTITY" --signer-digest "$SOURCE_SHA" \
+  --source-ref "$REF" --source-digest "$SOURCE_SHA" --deny-self-hosted-runners
+
+# Verify the amd64 SBOM against its platform digest (repeat with arm64).
+PLATFORM=$(docker buildx imagetools inspect "$IMAGE" --raw | jq -er \
+  '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest')
+gh attestation verify "oci://${IMAGE%@*}@$PLATFORM" --repo "$REPO" --bundle-from-oci \
+  --signer-workflow "$REPO/.github/workflows/build-and-release.yaml" \
+  --cert-identity "$IDENTITY" --signer-digest "$SOURCE_SHA" \
+  --source-ref "$REF" --source-digest "$SOURCE_SHA" --deny-self-hosted-runners \
+  --predicate-type https://spdx.dev/Document/v2.3
+
+# Only apply after all verification succeeds.
+kubectl apply -f install.yaml
 ```
+
+Every release file also has an individual `.sigstore.json` bundle, so consumers
+can authenticate a single installer without downloading every asset. Do not
+disable transparency-log or certificate checks to work around failures. Bundles
+carry signing-time evidence for verification after the short-lived certificate
+expires.
+
+The image signature authenticates the multiarch index. Signed SBOMs describe its
+individual platform digests, and the publication gate checks that each inventory
+names that platform's image config. BuildKit metadata is retained in the index;
+GitHub-signed provenance additionally authenticates the source and workflow.
+Neither signing nor these inventories establish compatibility with a runtime
+release, and this workflow does not claim SLSA Build L3 or hermetic builds.
+
+### Dry run and retry behavior
+
+Manually dispatch **Release dry run** on `main` after reviewing the workflow. It
+also works on a fork, publishing only into that fork's GHCR namespace. This is a
+real publication test, not an offline simulation: it requires package, OIDC, and
+attestation permissions and creates `candidate-<run-id>-<attempt>` images. It
+uses the normal build, scan, sign, and verification path and uploads a
+`verified-release` Actions artifact, but creates no GitHub release and changes
+no full-SHA, semver, `current`, or `latest` image tags. Candidate images are not
+supported releases and may need manual cleanup under the registry retention policy.
+
+Stable releases and full-SHA tags are write-once: retries fail if the existing
+digest differs. A full rerun can produce different provenance bytes even when
+the executable images are reproducible. Recover by rerunning failed jobs while
+their artifacts remain available, or cut a new version; do not delete an existing
+stable release to force replacement. A stale current run cannot advance rolling
+aliases or replace the rolling GitHub release. An interrupted publication may
+leave a verified image without a GitHub release; these two services cannot be
+updated atomically.
 
 ### Pre-releases
 
-Tags with a semver pre-release suffix (e.g., `v1.0.0-rc.1`, `v1.0.0-beta.2`, `v1.0.0-alpha.3`) trigger the same stable-lane pipeline and are automatically marked as pre-releases on GitHub by GoReleaser. The `latest` and `current` container tags are not moved by pre-release tag pushes, those are only updated on `main` pushes by the current lane.
+Tags with a semver pre-release suffix (e.g., `v1.0.0-rc.1`, `v1.0.0-beta.2`, `v1.0.0-alpha.3`) trigger the same stable-lane pipeline and are automatically marked as pre-releases on GitHub. The `latest` and `current` container tags are not moved by pre-release tag pushes, those are only updated on `main` pushes by the current lane.
 
 ## Container image tags on GHCR
 
