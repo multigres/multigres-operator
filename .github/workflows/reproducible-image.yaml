@@ -1,0 +1,36 @@
+name: Reproducible operator image
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - go.mod
+      - go.sum
+      - scripts/check-reproducible-image.sh
+      - .github/workflows/reproducible-image.yaml
+  schedule:
+    - cron: '30 5 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+      - name: Compare independent uncached builds
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: bash scripts/check-reproducible-image.sh "$ARCH"

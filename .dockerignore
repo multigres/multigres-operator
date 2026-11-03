@@ -1,6 +1,7 @@
 # Git
 .git
 .gitignore
+.amp/
 
 # Local development environment (Nix, direnv)
 .direnv/
