@@ -9,6 +9,16 @@ const workflow = fs.readFileSync('.github/workflows/build-and-release.yaml', 'ut
 const promotion = workflow.split('      - name: Promote only verified digests\n')[1]
   .split('        run: |\n')[1].split('\n').map(line => line.slice(10)).join('\n');
 
+test('docs-only main pushes schedule a replacement for a superseded publication', () => {
+  const main = fs.readFileSync('.github/workflows/main.yaml', 'utf8');
+  const trigger = main.split('\non:\n')[1].split('\npermissions:')[0];
+  assert.match(trigger, /^  push:/m);
+  assert.match(trigger, /^    branches:\n      - main$/m);
+  // The stale-SHA guards reject A after any newer main commit B. Filtering
+  // README.md or notes.txt would leave no B run to finish publication.
+  assert.doesNotMatch(trigger, /^    paths(?:-ignore)?:/m);
+});
+
 test('promotion preserves immutable tags and rejects registry errors and stale rolling builds', t => {
   const digest = `sha256:${'a'.repeat(64)}`;
   for (const [existing, error, ref, current, ok] of [
@@ -20,7 +30,7 @@ test('promotion preserves immutable tags and rejects registry errors and stale r
     ['', 'host not found', 'refs/tags/v1.2.3', 'new', false],
     ['', 'ERROR: example.test/operator:v1.2.3: not found', 'refs/tags/v1.2.3', 'new', true],
     ['', 'manifest unknown', 'refs/heads/main', 'new', true],
-    ['', 'manifest unknown', 'refs/heads/main', 'other', false],
+    ['', 'manifest unknown', 'refs/heads/main', 'docs-only-commit', false],
   ]) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-promotion-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -35,7 +45,7 @@ fi
     fs.writeFileSync(path.join(dir, 'gh'), '#!/bin/bash\nprintf "%s" "$CURRENT"\n', { mode: 0o755 });
     const log = path.join(dir, 'tags');
     fs.writeFileSync(log, '');
-    const result = spawnSync('bash', ['-eo', 'pipefail', '-c', promotion], {
+    const result = spawnSync('/bin/bash', ['-eo', 'pipefail', '-c', promotion], {
       cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`,
         IMAGE: 'example.test/operator', RELEASE_TAG: 'v1.2.3', EXPECTED_DIGEST: digest,
         EXISTING: existing, REGISTRY_ERROR: error, PROMOTED: log, GITHUB_REF: ref,
@@ -43,7 +53,7 @@ fi
     });
     assert.equal(result.status === 0, ok, `${existing} ${error} ${ref}: ${result.stderr}`);
     const tags = fs.readFileSync(log, 'utf8');
-    if (!ok && current !== 'other') assert.equal(tags, '');
+    if (!ok && current !== 'docs-only-commit') assert.equal(tags, '');
     assert.equal(tags.includes('--tag example.test/operator:latest'), ok && ref === 'refs/heads/main');
     if (ok) assert.ok(tags.includes(`example.test/operator@${digest}`));
   }
