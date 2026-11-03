@@ -177,6 +177,8 @@ cells:
 
 The views are visible to PUBLIC and must be schema-qualified (`select * from multigres.multigateways;`). With the flag off, those names pass through to PostgreSQL unchanged and fail with "relation does not exist". Enabling requires a gateway image with multigres commit `25080e2d` or later; older binaries reject the flag at startup.
 
+In Lite mode, the same setting on the sole cell configures Minigres, including values inherited from a CellTemplate. Changing it replaces the Lite pod and retains its data PVC. The multipooler image must contain a Minigres binary that supports cluster views.
+
 ---
 
 ## 8. Scenarios & Gotchas
