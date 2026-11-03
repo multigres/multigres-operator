@@ -1,0 +1,20 @@
+name: Release dry run
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  verify-publication:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/build-and-release.yaml
+    with:
+      release-tag: dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+      dry-run: true

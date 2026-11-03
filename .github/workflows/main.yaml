@@ -4,12 +4,13 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "**/*.md"
-      - "**/*.txt"
 
 permissions:
   contents: read
+
+concurrency:
+  group: publish-current
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -17,16 +18,16 @@ jobs:
     uses: ./.github/workflows/_reusable-build-changed.yaml
 
   run:
+    if: github.repository == 'multigres/multigres-operator'
     permissions:
       contents: read
       packages: write
       security-events: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/build-and-release.yaml
     with:
-      push-container-image: true
-      additional-tags: "current latest"
-      generate-manifests: true
-      manifest-image-ref: "ghcr.io/${{ github.repository }}:${{ github.sha }}"
+      release-tag: ${{ github.sha }}
 
   update-current-release:
     needs: run
@@ -40,7 +41,7 @@ jobs:
       - name: Download install manifests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: install-manifests
+          name: verified-release
           path: dist
 
       - name: Create or update current pre-release
@@ -49,20 +50,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          test "$(gh api "repos/$GH_REPO/commits/main" --jq .sha)" = "$COMMIT_SHA"
           BODY="## Current Build
 
           **Commit:** \`$COMMIT_SHA\`
           **Updated:** \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`
 
           This is a rolling pre-release that tracks the latest successful build from \`main\`.
-          Install manifests below use the SHA-tagged container image for this commit.
+          Install manifests below include the full commit-SHA image tag and pin its digest.
+          Verify the attached Sigstore bundles before applying them; see RELEASE.md.
 
-          ### Quick Install
+          ### Verified installation
 
-          \`\`\`
-          curl -LO https://github.com/$GH_REPO/releases/download/current/install.yaml
-          kubectl apply -f install.yaml
-          \`\`\`"
+          Follow the [release verification instructions](https://github.com/$GH_REPO/blob/$COMMIT_SHA/RELEASE.md#verify-the-release) before applying an installer."
 
           # Delete existing release and tag, then recreate pointing at the new
           # commit. This is the standard pattern used by neovim, goreleaser, etc.
@@ -75,7 +75,7 @@ jobs:
             --title "Current (latest main)" \
             --notes "$BODY" \
             --target "$COMMIT_SHA" \
-            dist/install*.yaml
+            dist/*
 
   notify-builder:
     needs: update-current-release

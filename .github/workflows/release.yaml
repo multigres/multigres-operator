@@ -9,8 +9,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify-tag:
+    if: github.repository == 'multigres/multigres-operator'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,6 +31,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
+          [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::Tag $TAG_NAME does not point to a commit on the main branch. Delete the tag, ensure the commit is on main, and re-tag."
             exit 1
@@ -37,18 +43,17 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/build-and-release.yaml
     with:
-      push-container-image: true
-      additional-tags: "${{ github.ref_name }}"
-      generate-manifests: true
-      manifest-image-ref: "ghcr.io/${{ github.repository }}:${{ github.ref_name }}"
+      release-tag: ${{ github.ref_name }}
 
-  release:
+  release-notes:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,7 +64,7 @@ jobs:
       - name: Download install manifests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: install-manifests
+          name: verified-release
           path: manifests
 
       - name: Install Go
@@ -71,6 +76,38 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          args: release --clean
+          version: v2.16.0
+          args: release --clean --skip=publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: dist/CHANGELOG.md
+          if-no-files-found: error
+
+  # Only this job can create releases. It does not check out or execute source.
+  release:
+    needs: [build, release-notes]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verified-release
+          path: release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: notes
+      - name: Create release without replacing existing assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=()
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file notes/CHANGELOG.md "${flags[@]}" release/*
