@@ -208,6 +208,20 @@ spec:
                   DurabilityPolicy is the resolved durability policy for this shard's database.
                   Inherited from MultigresCluster → Database.
                 type: string
+              gatewayClusterViews:
+                description: |-
+                  GatewayClusterViews is the resolved cluster-view configuration from the
+                  sole Cell in Lite mode. It is unused in distributed mode.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled controls the cluster views (--enable-cluster-views). Default off.
+                      The resolver defaults it to false when building Cells from a
+                      MultigresCluster. The flag is passed to the gateway only when true, so
+                      clusters that do not opt in keep their current args and gateway images
+                      without the flag keep starting.
+                    type: boolean
+                type: object
               globalTopoServer:
                 description: GlobalTopoServer is a reference to the global topology
                   server.
