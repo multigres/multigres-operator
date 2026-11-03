@@ -56,6 +56,28 @@ func TestBuildLiteContainer_Args(t *testing.T) {
 		"no optional settings": {
 			want: append(slices.Clone(base), hostname),
 		},
+		"cluster views enabled": {
+			mutate: func(s *multigresv1alpha1.Shard) {
+				s.Spec.GatewayClusterViews = &multigresv1alpha1.GatewayClusterViewsConfig{
+					Enabled: ptr.To(true),
+				}
+			},
+			want: append(slices.Clone(base), "--enable-cluster-views=true", hostname),
+		},
+		"cluster views disabled": {
+			mutate: func(s *multigresv1alpha1.Shard) {
+				s.Spec.GatewayClusterViews = &multigresv1alpha1.GatewayClusterViewsConfig{
+					Enabled: ptr.To(false),
+				}
+			},
+			want: append(slices.Clone(base), hostname),
+		},
+		"cluster views empty": {
+			mutate: func(s *multigresv1alpha1.Shard) {
+				s.Spec.GatewayClusterViews = &multigresv1alpha1.GatewayClusterViewsConfig{}
+			},
+			want: append(slices.Clone(base), hostname),
+		},
 		"backup configured": {
 			mutate: func(s *multigresv1alpha1.Shard) {
 				s.Spec.Backup = &multigresv1alpha1.BackupConfig{

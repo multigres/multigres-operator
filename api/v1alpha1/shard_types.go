@@ -145,6 +145,11 @@ type ShardSpec struct {
 	// Multiorch is the fully resolved configuration for the shard orchestrator.
 	Multiorch MultiorchSpec `json:"multiorch"`
 
+	// GatewayClusterViews is the resolved cluster-view configuration from the
+	// sole Cell in Lite mode. It is unused in distributed mode.
+	// +optional
+	GatewayClusterViews *GatewayClusterViewsConfig `json:"gatewayClusterViews,omitempty"`
+
 	// InitdbArgs specifies extra arguments for initdb, propagated from the cluster spec.
 	// +optional
 	InitdbArgs InitdbArgs `json:"initdbArgs,omitempty"`
