@@ -16,7 +16,7 @@ Every merge to `main` automatically:
 4. Signs all five install manifests, platform SBOMs, `image.txt`, and `checksums.txt` with Sigstore bundles
 5. Promotes the verified digest to the full commit SHA, `current`, and `latest` tags, then updates the rolling [`current` pre-release](https://github.com/multigres/multigres-operator/releases/tag/current)
 
-No manual publication steps are required. Download and verify the assets as described below before applying an installer. The rolling release URL remains:
+Download the rolling installer, then follow the verification steps below before applying it:
 
 ```bash
 curl -LO https://github.com/multigres/multigres-operator/releases/download/current/install.yaml
@@ -96,29 +96,23 @@ gh attestation verify "oci://${IMAGE%@*}@$PLATFORM" --repo "$REPO" --bundle-from
 kubectl apply -f install.yaml
 ```
 
-Every release file also has an individual `.sigstore.json` bundle, so consumers
-can authenticate a single installer without downloading every asset. Do not
-disable transparency-log or certificate checks to work around failures. Bundles
-carry signing-time evidence for verification after the short-lived certificate
-expires.
+Each release file has a `.sigstore.json` bundle for individual verification.
+Bundles include signing-time evidence, allowing verification after the signing
+certificate expires. Keep certificate and transparency-log checks enabled.
 
-The image signature authenticates the multiarch index. Signed SBOMs describe its
-individual platform digests, and the publication gate checks that each inventory
-names that platform's image config. BuildKit metadata is retained in the index;
-GitHub-signed provenance additionally authenticates the source and workflow.
-Neither signing nor these inventories establish compatibility with a runtime
-release, and this workflow does not claim SLSA Build L3 or hermetic builds.
+The image signature covers the multiarch index. Each SBOM attestation covers a
+platform digest; publication checks that the SBOM matches its image config.
+Provenance identifies the source and workflow. These checks do not establish
+runtime compatibility, hermeticity, or SLSA Build L3.
 
 ### Dry run and retry behavior
 
-Manually dispatch **Release dry run** on `main` after reviewing the workflow. It
-also works on a fork, publishing only into that fork's GHCR namespace. This is a
-real publication test, not an offline simulation: it requires package, OIDC, and
-attestation permissions and creates `candidate-<run-id>-<attempt>` images. It
-uses the normal build, scan, sign, and verification path and uploads a
-`verified-release` Actions artifact, but creates no GitHub release and changes
-no full-SHA, semver, `current`, or `latest` image tags. Candidate images are not
-supported releases and may need manual cleanup under the registry retention policy.
+Dispatch **Release dry run** on `main` to test the build, scan, signing, and
+verification steps. It publishes `candidate-<run-id>-<attempt>` images to the
+repository's GHCR namespace and uploads a `verified-release` Actions artifact.
+It requires package, OIDC, and attestation permissions, including on forks.
+It creates no GitHub release and changes no full-SHA, semver, `current`, or
+`latest` tags. Remove candidate images when no longer needed.
 
 Stable releases and full-SHA tags are write-once: retries fail if the existing
 digest differs. A full rerun can produce different provenance bytes even when
