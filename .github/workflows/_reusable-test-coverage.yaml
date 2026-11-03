@@ -39,6 +39,8 @@ jobs:
       # Initial setup
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -128,18 +130,21 @@ jobs:
 
       # Exit with non-zero value if the test coverage has not reached the threshold.
       - name: Check coverage status
+        env:
+          THRESHOLD: ${{ inputs.COVERAGE_THRESHOLD }}
         run: |
-          echo "Coverage Threshold:     ${{ inputs.COVERAGE_THRESHOLD }}%"
-          echo "Previous test coverage: ${{ env.PREV_COVERAGE || 'Unknown' }}%"
-          echo "New test coverage:      ${{ env.NEW_COVERAGE }}%"
+          echo "Coverage Threshold:     $THRESHOLD%"
+          echo "Previous test coverage: ${PREV_COVERAGE:-Unknown}%"
+          echo "New test coverage:      $NEW_COVERAGE%"
           echo
 
-          if (( $(echo "${{ inputs.COVERAGE_THRESHOLD }} > ${{ env.NEW_COVERAGE }}" | bc -l) )); then
-            echo "❌ ERROR: The test coverage (${{ env.NEW_COVERAGE }}%) is below the threshold (${{ inputs.COVERAGE_THRESHOLD }}%)."
+          [[ "$THRESHOLD" =~ ^[0-9]+([.][0-9]+)?$ && "$NEW_COVERAGE" =~ ^[0-9]+([.][0-9]+)?$ ]]
+          if (( $(echo "$THRESHOLD > $NEW_COVERAGE" | bc -l) )); then
+            echo "❌ ERROR: The test coverage ($NEW_COVERAGE%) is below the threshold ($THRESHOLD%)."
             exit 1
           fi
 
-          echo "✅ PASS: Coverage (${{ env.NEW_COVERAGE }}%) meets the threshold (${{ inputs.COVERAGE_THRESHOLD }}%)."
+          echo "✅ PASS: Coverage ($NEW_COVERAGE%) meets the threshold ($THRESHOLD%)."
 
       # If triggered from non-PR setup, copy the new coverage as the new cached data.
       - name: Copy coverage information for cache

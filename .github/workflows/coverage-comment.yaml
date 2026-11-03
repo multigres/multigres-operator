@@ -11,13 +11,15 @@
 
 name: Coverage comment
 
-on:
+on: # zizmor: ignore[dangerous-triggers] No checkout or execution of PR code; bounded data is checked against the triggering PR before commenting.
   workflow_run:
     workflows: ["CI"]
     types:
       - completed
 
 permissions:
+  actions: read
+  contents: read
   pull-requests: write
 
 jobs:
@@ -46,6 +48,9 @@ jobs:
               console.log('No coverage-report artifact found — skipping.');
               return;
             }
+            if (match.size_in_bytes > 1024 * 1024) {
+              throw new Error('Coverage artifact exceeds 1 MiB');
+            }
             const download = await github.rest.actions.downloadArtifact({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -58,8 +63,21 @@ jobs:
       - name: Extract artifact
         if: steps.download.outputs.found == 'true'
         run: |
-          mkdir -p /tmp/coverage-artifact
-          unzip -o /tmp/coverage-report.zip -d /tmp/coverage-artifact
+          python3 - <<'PY'
+          import pathlib, zipfile
+          destination = pathlib.Path('/tmp/coverage-artifact')
+          destination.mkdir()
+          names = {'pr_number', 'threshold', 'new_coverage', 'prev_coverage', 'coverage_report.txt'}
+          with zipfile.ZipFile('/tmp/coverage-report.zip') as archive:
+              entries = archive.infolist()
+              if len(entries) != len(names) or {entry.filename for entry in entries} != names:
+                  raise ValueError('Unexpected or duplicate coverage artifact entries')
+              for entry in entries:
+                  if entry.file_size > 128 * 1024:
+                      raise ValueError('Coverage entry exceeds 128 KiB')
+                  # Write only allowlisted names; never extract paths or symlinks.
+                  (destination / entry.filename).write_bytes(archive.read(entry))
+          PY
 
       - name: Post PR comment
         if: steps.download.outputs.found == 'true'
@@ -69,9 +87,17 @@ jobs:
             const fs = require('fs/promises')
 
             // 1. Read artifact data
-            const prNumber = parseInt(
-              (await fs.readFile('/tmp/coverage-artifact/pr_number', 'utf8')).trim()
-            );
+            const number = (await fs.readFile('/tmp/coverage-artifact/pr_number', 'utf8')).trim();
+            if (!/^[1-9][0-9]*$/.test(number)) throw new Error('Invalid PR number');
+            const prNumber = Number(number);
+            const run = context.payload.workflow_run;
+            const { data: pr } = await github.rest.pulls.get({...context.repo, pull_number: prNumber});
+            if (pr.state !== 'open' || pr.head.sha !== run.head_sha ||
+                pr.head.repo?.id !== run.head_repository.id ||
+                pr.base.repo.id !== context.payload.repository.id ||
+                (run.pull_requests.length && !run.pull_requests.some(p => p.number === prNumber))) {
+              throw new Error('Coverage artifact does not match the triggering PR revision');
+            }
             const threshold = (await fs.readFile('/tmp/coverage-artifact/threshold', 'utf8')).trim();
             const newCovStr = (await fs.readFile('/tmp/coverage-artifact/new_coverage', 'utf8')).trim();
             const prevCovStr = (await fs.readFile('/tmp/coverage-artifact/prev_coverage', 'utf8')).trim();
@@ -81,6 +107,13 @@ jobs:
               reportContent = await fs.readFile('/tmp/coverage-artifact/coverage_report.txt', 'utf8');
             } catch (e) {
               console.log("Could not read coverage report file:", e.message);
+            }
+            // Artifact contents are untrusted text, never Markdown or mentions.
+            reportContent = reportContent.replaceAll('`', "'").replaceAll('@', '@\u200b');
+            for (const value of [threshold, newCovStr, prevCovStr]) {
+              if (value && value !== 'unknown' && !/^[0-9]+(?:\.[0-9]+)?$/.test(value)) {
+                throw new Error('Invalid coverage percentage');
+              }
             }
 
             // 2. Calculate status

@@ -1,0 +1,11 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        '*': hash-pin
+  self-repository:
+    # Migrating ./ checkout-relative actions to the newer $/ syntax is a
+    # separate compatibility change, not a publication security requirement.
+    # Keep the advice visible locally without blocking the security gate.
+    remap:
+      severity: informational

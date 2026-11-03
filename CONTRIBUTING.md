@@ -144,6 +144,17 @@ tools/
 | `make test-e2e`         | End-to-end tests using Kind clusters |
 | `make lint`             | Linting via golangci-lint            |
 
+### Workflow Security
+
+The **Workflow security** check runs actionlint, zizmor, and workflow regression
+tests on every PR. Pin external actions to full commit SHAs, give PR code
+read-only permissions, and pass untrusted values through environment variables.
+Explain audit suppressions in comments next to the affected code.
+
+After its first successful run, maintainers must add **Workflow security** to
+the required status checks in repository settings. Keep it enabled for docs-only
+PRs.
+
 ## Documentation
 
 - **User-facing docs** go in the [README](README.md) or `docs/` (backup-restore, observability, runbooks)
