@@ -36,7 +36,8 @@ pull-e2e-images: ## Pull tagged e2e images for import; the framework prepares di
 	done
 
 # Build metadata
-BUILD_DATE ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+SOURCE_DATE_EPOCH ?= $(shell git show -s --format=%ct HEAD)
+BUILD_DATE ?= $(shell git show -s --format=%cI HEAD)
 GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 
 # LDFLAGS for version info
@@ -245,7 +246,8 @@ container: ## Build container image
 	$(CONTAINER_TOOL) build \
 		--build-arg VERSION=$$(git rev-parse --short HEAD) \
 		--build-arg GIT_COMMIT=$$(git rev-parse HEAD) \
-		--build-arg BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) \
 		-t $(IMG_PREFIX)/$(IMG_REPO):$(VERSION_SHORT) .
 	@echo $(VERSION_SHORT) > $(IMG_TAG_FILE)
 
@@ -266,7 +268,8 @@ docker-buildx: ## Build and push docker image for cross-platform support
 	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
 		--build-arg VERSION=$$(git rev-parse --short HEAD) \
 		--build-arg GIT_COMMIT=$$(git rev-parse HEAD) \
-		--build-arg BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--build-arg SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) \
 		--tag ${IMG} .
 	- $(CONTAINER_TOOL) buildx rm multigres-operator-builder
 

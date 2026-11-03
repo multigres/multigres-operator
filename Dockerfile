@@ -1,6 +1,6 @@
 # Containerfile for multigres-operator
 
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.23 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.23@sha256:8a5046497cda39860b832ffdbe8dd66018a0f05bb01352f533a36e7e2ced66a0 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -10,6 +10,9 @@ ARG TARGETARCH
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
 ARG BUILD_DATE=unknown
+
+# A go.mod bump must update the pinned builder, not download another toolchain.
+ENV GOTOOLCHAIN=local
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -55,7 +58,7 @@ RUN CGO_ENABLED=0 \
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 
 LABEL org.opencontainers.image.source="https://github.com/multigres/multigres-operator"
 WORKDIR /

@@ -1,5 +1,16 @@
 version: 2
 updates:
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/tools/observer"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build(images): "
+
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
