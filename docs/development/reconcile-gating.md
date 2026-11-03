@@ -269,6 +269,51 @@ cluster, not only Kubernetes API traffic:
 
 Outside laptop mode every one of these dials directly, exactly as before.
 
+### RBAC for a laptop run
+
+On a shared cluster, run the laptop process as the deployed operator's
+ServiceAccount. The child-resource webhook then admits its writes, and the run
+doubles as a check that the operator's RBAC is sufficient. The manager role
+covers everything the operator does in-cluster, but not kubedial's forward mode,
+which the deployed operator never uses. kubedial v0.1.0 documents what forward
+mode needs:
+
+| Verb | Resource | In the manager role |
+|:---|:---|:---|
+| `create` | `pods/portforward` | no |
+| `list` | `endpointslices.discovery.k8s.io` | no |
+| `get` | `services` | yes |
+| `list` | `pods`, cluster-wide | yes |
+
+Cluster-wide `pods/portforward` reaches any port of any pod, Postgres included,
+so it stays out of the manager role, and out of production. It lives in a
+separate ClusterRole, `config/laptop-rbac` (released as
+`install-laptop-rbac.yaml`), that grants all four and is bound to the group
+`multigres-operator:laptop` rather than to the ServiceAccount. Install it on
+development and staging clusters only. `config/default` and
+`install-rbac.yaml` do not include it.
+
+A laptop run impersonates the ServiceAccount and adds the group, for example
+with these fields on the kubeconfig user:
+
+```yaml
+as: system:serviceaccount:multigres-operator:multigres-operator-controller-manager
+as-groups:
+- multigres-operator:laptop
+```
+
+or `--as` and `--as-group` with any tool that passes them through. Two
+consequences of impersonating a group:
+
+- Naming any group replaces the ServiceAccount's implicit groups
+  (`system:serviceaccounts`, `system:serviceaccounts:<ns>`). The API server still
+  adds `system:authenticated`. The operator's own permissions are bound to the
+  ServiceAccount by name, so they still apply.
+- The person running it needs `impersonate` on that ServiceAccount and on the
+  `multigres-operator:laptop` group.
+
+On a Kind cluster with an admin kubeconfig none of this is needed.
+
 ### Cache scoping
 
 Laptop mode must not cache the whole cluster, so `--namespace` narrows the

@@ -1,0 +1,19 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: multigres-operator
+    app.kubernetes.io/component: laptop
+    app.kubernetes.io/managed-by: kustomize
+  name: laptop-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: laptop-role
+# Bound to a group, not to the operator's ServiceAccount, so the deployed
+# operator never holds these verbs. A laptop run impersonates the
+# ServiceAccount and adds this group (--as-group multigres-operator:laptop).
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: multigres-operator:laptop

@@ -1,0 +1,39 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: multigres-operator
+    app.kubernetes.io/component: laptop
+    app.kubernetes.io/managed-by: kustomize
+  name: laptop-role
+rules:
+# kubedial forward mode, which laptop mode (--namespace, -tags kubedial) uses to
+# reach etcd, topology and multipooler addresses from outside the cluster. These
+# are the verbs kubedial v0.1.0 documents for forward mode. The deployed
+# operator dials directly and must not hold pods/portforward, so these rules
+# live here and not behind +kubebuilder:rbac markers in the manager role.
+- apiGroups:
+  - ""
+  resources:
+  - pods/portforward
+  verbs:
+  - create
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - get
+# Cluster-wide, so a pod IP in any namespace resolves to its pod.
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - list
