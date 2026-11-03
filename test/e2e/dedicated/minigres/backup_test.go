@@ -1,4 +1,4 @@
-//go:build e2e && minigres_candidate
+//go:build e2e
 
 package minigres_test
 
@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,21 +26,10 @@ import (
 	"github.com/multigres/multigres-operator/test/e2e/framework"
 )
 
-// This explicit build tag keeps the unmerged upstream backup candidate separate
-// from qualification of the promoted runtime, which does not support it yet.
+// TestMinigresBackupAndRestore qualifies normal static-leader backup operations
+// and recovery into the original data PVC using the published fixture images
+// or the runtime overrides supplied by the nightly canary.
 func TestMinigresBackupAndRestore(t *testing.T) {
-	require.NotEmpty(
-		t,
-		os.Getenv("E2E_MULTIPOOLER_IMAGE"),
-		"set an explicit backup-capable runtime candidate",
-	)
-	require.Equal(
-		t,
-		os.Getenv("E2E_MULTIPOOLER_IMAGE"),
-		os.Getenv("E2E_MULTIADMIN_IMAGE"),
-		"Minigres and multiadmin must use the same candidate",
-	)
-	require.NotEmpty(t, os.Getenv("E2E_POSTGRES_IMAGE"), "set the matching pgctld candidate")
 	cluster.EnsureTopoTLSIssuer(t)
 	ns := cluster.CreateNamespace(t)
 	c, err := cluster.CRClient()
@@ -57,7 +45,7 @@ func TestMinigresBackupAndRestore(t *testing.T) {
 		string(cr.Spec.Images.Multiadmin),
 	}))
 	t.Logf(
-		"backup candidate: minigres=%s multiadmin=%s pgctld=%s",
+		"backup runtime: minigres=%s multiadmin=%s pgctld=%s",
 		cr.Spec.Images.Multipooler,
 		cr.Spec.Images.Multiadmin,
 		cr.Spec.Images.Postgres,

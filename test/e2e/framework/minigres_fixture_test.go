@@ -26,6 +26,7 @@ func TestMinigresFixtureAcceptsNightlyImages(t *testing.T) {
 		pinned.Spec.Images.Multipooler,
 	)
 	require.Regexp(t, `^ghcr.io/multigres/pgctld@sha256:[0-9a-f]{64}$`, pinned.Spec.Images.Postgres)
+	require.Equal(t, pinned.Spec.Images.Multipooler, pinned.Spec.Images.Multiadmin)
 
 	candidate := "ghcr.io/multigres/multigres@sha256:" + strings.Repeat("a", 64)
 	postgres := "ghcr.io/multigres/pgctld@sha256:" + strings.Repeat("b", 64)
@@ -33,9 +34,12 @@ func TestMinigresFixtureAcceptsNightlyImages(t *testing.T) {
 	partial := MustLoadCluster(fixture, "test")
 	require.Equal(t, candidate, string(partial.Spec.Images.Multipooler))
 	require.Equal(t, pinned.Spec.Images.Postgres, partial.Spec.Images.Postgres)
+	require.Equal(t, pinned.Spec.Images.Multiadmin, partial.Spec.Images.Multiadmin)
 
 	t.Setenv(postgresImageEnv, postgres)
+	t.Setenv(multiadminImageEnv, candidate)
 	full := MustLoadCluster(fixture, "test")
 	require.Equal(t, candidate, string(full.Spec.Images.Multipooler))
 	require.Equal(t, postgres, string(full.Spec.Images.Postgres))
+	require.Equal(t, candidate, string(full.Spec.Images.Multiadmin))
 }
