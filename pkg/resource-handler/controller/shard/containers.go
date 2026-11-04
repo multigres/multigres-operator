@@ -2,6 +2,7 @@ package shard
 
 import (
 	"fmt"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -616,6 +617,14 @@ func buildMultipoolerContainer(
 		// rejects pings sent with no active RPC stream, and tears down the connection
 		// after a few strikes
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
+	}
+
+	// A dynamic tablegroup's poolers register with its catalog id, which is
+	// what CREATE TABLEGROUP's completion check keys on.
+	// Emitted only for dynamic shards, so other shards keep their args and
+	// pooler images without the flag keep starting.
+	if id := multigresv1alpha1.TableGroupIDOf(shard); id > 0 {
+		args = append(args, "--tablegroup-id="+strconv.FormatInt(id, 10))
 	}
 
 	if shard.Spec.Backup != nil {

@@ -39,6 +39,17 @@ func BuildShard(
 			metadata.AnnotationProjectRef: projectRef,
 		}
 	}
+	// A dynamic tablegroup's Shards carry its marker and catalog id: the
+	// Shard controller passes the id to poolers.
+	if v := tg.Labels[multigresv1alpha1.LabelDynamicTableGroup]; v != "" {
+		labels[multigresv1alpha1.LabelDynamicTableGroup] = v
+	}
+	if id := tg.Annotations[multigresv1alpha1.AnnotationTableGroupID]; id != "" {
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[multigresv1alpha1.AnnotationTableGroupID] = id
+	}
 
 	shardCR := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
