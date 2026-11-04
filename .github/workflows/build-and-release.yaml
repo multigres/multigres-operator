@@ -99,7 +99,6 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$image@$digest"
           gh attestation verify "oci://$image@$digest" \
             --repo "$GITHUB_REPOSITORY" --bundle-from-oci \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
             --cert-identity "$identity" --signer-digest "$GITHUB_SHA" \
             --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
           # skopeo v1.22.3; pin a release tag digest, not `latest` (old digests disappear)
@@ -306,14 +305,12 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE@$EXPECTED_DIGEST"
           gh attestation verify "oci://$IMAGE@$EXPECTED_DIGEST" \
             --repo "$GITHUB_REPOSITORY" --bundle-from-oci \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
             --cert-identity "$IDENTITY" --signer-digest "$GITHUB_SHA" \
             --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
           for arch in amd64 arm64; do
             variable="DIGEST_${arch^^}"
             gh attestation verify "oci://$IMAGE@${!variable}" \
               --repo "$GITHUB_REPOSITORY" --bundle-from-oci \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
               --cert-identity "$IDENTITY" --signer-digest "$GITHUB_SHA" \
               --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" --deny-self-hosted-runners \
               --predicate-type https://spdx.dev/Document/v2.3 --format json > verified.json
