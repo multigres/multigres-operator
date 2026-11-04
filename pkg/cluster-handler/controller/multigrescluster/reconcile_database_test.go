@@ -12,6 +12,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -227,6 +228,87 @@ func TestReconcile_Databases(t *testing.T) {
 			},
 			wantErrMsg: "failed to set PendingDeletion on tablegroup",
 		},
+		"Reconcile: Desired TableGroup Mid-Drain Is Not Applied Over": {
+			existingObjects: []client.Object{
+				coreTpl, cellTpl, shardTpl,
+				drainingTableGroup(wantedTG(clusterName), namespace, clusterName, false),
+			},
+			validate: func(t testing.TB, c client.Client) {
+				tg := &multigresv1alpha1.TableGroup{}
+				key := types.NamespacedName{Name: wantedTG(clusterName), Namespace: namespace}
+				if err := c.Get(t.Context(), key, tg); err != nil {
+					t.Fatalf(
+						"draining TableGroup was deleted before reporting ReadyForDeletion: %v",
+						err,
+					)
+				}
+				if tg.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
+					t.Errorf("draining TableGroup lost PendingDeletion")
+				}
+				if len(tg.Spec.Shards) != 0 {
+					t.Errorf(
+						"draining TableGroup was re-applied: got %d shards",
+						len(tg.Spec.Shards),
+					)
+				}
+			},
+		},
+		"Reconcile: Desired TableGroup Drained Is Deleted": {
+			existingObjects: []client.Object{
+				coreTpl, cellTpl, shardTpl,
+				drainingTableGroup(wantedTG(clusterName), namespace, clusterName, true),
+			},
+			validate: func(t testing.TB, c client.Client) {
+				requireTableGroupGone(t, c, wantedTG(clusterName), namespace)
+			},
+		},
+		"Reconcile: Drained Orphan Is Deleted While Another TableGroup Fails To Resolve": {
+			preReconcileUpdate: func(t testing.TB, c *multigresv1alpha1.MultigresCluster) {
+				c.Spec.Databases[0].TableGroups[0].Shards[0].ShardTemplate = "missing-shard-tpl"
+			},
+			existingObjects: []client.Object{
+				coreTpl, cellTpl, shardTpl,
+				drainingTableGroup(clusterName+"-orphan-tg", namespace, clusterName, true),
+			},
+			wantErrMsg: "failed to resolve shard",
+			validate: func(t testing.TB, c client.Client) {
+				requireTableGroupGone(t, c, clusterName+"-orphan-tg", namespace)
+			},
+		},
+		// The draining object is skipped before resolution, so its broken
+		// spec is never read until the fresh TableGroup is due.
+		"Reconcile: Re-Added Drained TableGroup Is Deleted Despite A Missing Template": {
+			preReconcileUpdate: func(t testing.TB, c *multigresv1alpha1.MultigresCluster) {
+				c.Spec.Databases[0].TableGroups[0].Shards[0].ShardTemplate = "missing-shard-tpl"
+			},
+			existingObjects: []client.Object{
+				coreTpl, cellTpl, shardTpl,
+				drainingTableGroup(wantedTG(clusterName), namespace, clusterName, true),
+			},
+			validate: func(t testing.TB, c client.Client) {
+				requireTableGroupGone(t, c, wantedTG(clusterName), namespace)
+			},
+		},
+		"Reconcile: Drained Orphan Is Deleted While Another TableGroup Fails To Apply": {
+			existingObjects: []client.Object{
+				coreTpl, cellTpl, shardTpl,
+				drainingTableGroup(clusterName+"-orphan-tg", namespace, clusterName, true),
+			},
+			failureConfig: &testutil.FailureConfig{
+				OnPatch: testutil.FailOnObjectName(wantedTG(clusterName), errSimulated),
+			},
+			wantErrMsg: "failed to apply tablegroup",
+			validate: func(t testing.TB, c client.Client) {
+				requireTableGroupGone(t, c, clusterName+"-orphan-tg", namespace)
+				if err := c.Get(
+					t.Context(),
+					types.NamespacedName{Name: wantedTG(clusterName), Namespace: namespace},
+					&multigresv1alpha1.TableGroup{},
+				); err == nil {
+					t.Errorf("failing TableGroup was created despite its apply failing")
+				}
+			},
+		},
 		"Create: Long Names (Truncation Check)": {
 			preReconcileUpdate: func(t testing.TB, c *multigresv1alpha1.MultigresCluster) {
 				longName := multigresv1alpha1.DatabaseName(strings.Repeat("a", 255))
@@ -403,4 +485,83 @@ func TestReconcileDatabases_Direct_Error_GlobalTopoRef(t *testing.T) {
 			t.Errorf("Expected error containing %q, got %q", expectedMsg, err.Error())
 		}
 	}
+}
+
+// wantedTG is the object name of the TableGroup the fixture cluster wants
+// (db1/tg1).
+func wantedTG(clusterName string) string {
+	return TableGroupName(clusterName, "db1", "tg1")
+}
+
+// drainingTableGroup is a TableGroup of the fixture cluster as it looks after
+// the cluster dropped it from spec and started its drain: PendingDeletion set,
+// and ReadyForDeletion set once drained is true.
+func drainingTableGroup(
+	tgName, namespace, clusterName string,
+	drained bool,
+) *multigresv1alpha1.TableGroup {
+	tg := &multigresv1alpha1.TableGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      tgName,
+			Namespace: namespace,
+			Labels:    map[string]string{"multigres.com/cluster": clusterName},
+			Annotations: map[string]string{
+				multigresv1alpha1.AnnotationPendingDeletion: "2026-01-01T00:00:00Z",
+			},
+		},
+	}
+	if drained {
+		tg.Status.Conditions = []metav1.Condition{{
+			Type:               multigresv1alpha1.ConditionReadyForDeletion,
+			Status:             metav1.ConditionTrue,
+			Reason:             "AllShardsReady",
+			LastTransitionTime: metav1.Now(),
+		}}
+	}
+	return tg
+}
+
+// requireTableGroupGone fails unless the named TableGroup no longer exists.
+func requireTableGroupGone(t testing.TB, c client.Client, tgName, namespace string) {
+	t.Helper()
+	err := c.Get(
+		t.Context(),
+		types.NamespacedName{Name: tgName, Namespace: namespace},
+		&multigresv1alpha1.TableGroup{},
+	)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("drained TableGroup %s still present (err %v)", tgName, err)
+	}
+}
+
+// TestReconcileDatabases_DesiredMidDrainIsPending pins the pending flag on the
+// pass that deletes the drained old object of a TableGroup the spec names.
+// The pruning loop reports nothing pending once it has deleted it, but the
+// TableGroup the spec wants does not exist yet, so the cluster must not count
+// itself settled (retireManagedGlobalTopo waits on that).
+func TestReconcileDatabases_DesiredMidDrainIsPending(t *testing.T) {
+	coreTpl, cellTpl, shardTpl, baseCluster, clusterName, namespace := setupFixtures(t)
+	scheme := setupScheme()
+	draining := drainingTableGroup(wantedTG(clusterName), namespace, clusterName, true)
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(coreTpl, cellTpl, shardTpl, baseCluster, draining).
+		WithStatusSubresource(draining).
+		Build()
+	r := &MultigresClusterReconciler{
+		Client:   cl,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	pending, err := r.reconcileDatabases(
+		t.Context(), baseCluster, resolver.NewResolver(cl, namespace),
+	)
+	if err != nil {
+		t.Fatalf("reconcileDatabases: %v", err)
+	}
+	if !pending {
+		t.Error("want pendingDeletion while the TableGroup the spec names is not yet recreated")
+	}
+	requireTableGroupGone(t, cl, wantedTG(clusterName), namespace)
 }

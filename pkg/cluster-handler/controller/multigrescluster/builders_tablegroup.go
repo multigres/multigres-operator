@@ -10,6 +10,17 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
 
+// TableGroupName is the object name BuildTableGroup gives a TableGroup. It
+// needs no resolution, so the spec's set of wanted names is known before any
+// TableGroup is resolved.
+func TableGroupName(
+	clusterName string,
+	db multigresv1alpha1.DatabaseName,
+	tg multigresv1alpha1.TableGroupName,
+) string {
+	return name.JoinWithConstraints(name.DefaultConstraints, clusterName, string(db), string(tg))
+}
+
 // BuildTableGroup constructs the desired TableGroup resource.
 func BuildTableGroup(
 	cluster *multigresv1alpha1.MultigresCluster,
@@ -19,12 +30,7 @@ func BuildTableGroup(
 	globalTopoRef multigresv1alpha1.GlobalTopoServerRef,
 	scheme *runtime.Scheme,
 ) (*multigresv1alpha1.TableGroup, error) {
-	tgNameHash := name.JoinWithConstraints(
-		name.DefaultConstraints,
-		cluster.Name,
-		string(dbCfg.Name),
-		string(tgCfg.Name),
-	)
+	tgNameHash := TableGroupName(cluster.Name, dbCfg.Name, tgCfg.Name)
 
 	labels := metadata.BuildStandardLabels(cluster.Name, metadata.ComponentTableGroup)
 	metadata.AddClusterLabel(labels, cluster.Name)

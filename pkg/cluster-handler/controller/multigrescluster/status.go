@@ -3,6 +3,7 @@ package multigrescluster
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -180,6 +181,15 @@ func (r *MultigresClusterReconciler) updateStatus(
 	dbShards := make(map[multigresv1alpha1.DatabaseName]struct {
 		Ready int32
 		Total int32
+	})
+
+	// A draining TableGroup is on its way out whatever the spec says, even
+	// when the spec names it again (reconcileDatabases recreates it once the
+	// drain ends). Its status is the one it had before draining began, since
+	// the drain path never recomputes it, so counting it would report a
+	// TableGroup the spec wants as serving while its pods are being deleted.
+	tgs.Items = slices.DeleteFunc(tgs.Items, func(tg multigresv1alpha1.TableGroup) bool {
+		return tgDraining(&tg)
 	})
 
 	for _, tg := range tgs.Items {

@@ -463,6 +463,14 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 			},
 		}
 	}
+	// drainingTableGroup is tg after its drain began: the drain path keeps the
+	// status it had, so it still reads Healthy.
+	drainingTableGroup := func(tg *multigresv1alpha1.TableGroup) *multigresv1alpha1.TableGroup {
+		tg.Annotations = map[string]string{
+			multigresv1alpha1.AnnotationPendingDeletion: "2026-01-01T00:00:00Z",
+		}
+		return tg
+	}
 	healthyGlobalTopo := func(name string) *multigresv1alpha1.TopoServer {
 		return &multigresv1alpha1.TopoServer{
 			ObjectMeta: metav1.ObjectMeta{
@@ -553,6 +561,28 @@ func TestUpdateStatus_ExpectedChildren(t *testing.T) {
 				healthyTableGroup("postgres", "other-tg"),
 			},
 			wantPhase: multigresv1alpha1.PhaseProgressing,
+		},
+		"a draining table group the spec names does not count as serving": {
+			cluster: clusterWithExpectedChildren(externalTopo),
+			children: []client.Object{
+				healthyCell("cell-1"),
+				drainingTableGroup(healthyTableGroup("postgres", "default")),
+			},
+			wantPhase: multigresv1alpha1.PhaseProgressing,
+		},
+		"a draining table group the spec dropped does not affect the phase": {
+			cluster: clusterWithExpectedChildren(externalTopo),
+			children: []client.Object{
+				healthyCell("cell-1"),
+				healthyTableGroup("postgres", "default"),
+				func() client.Object {
+					tg := drainingTableGroup(healthyTableGroup("postgres", "removed"))
+					tg.Status.Phase = multigresv1alpha1.PhaseDegraded
+					return tg
+				}(),
+			},
+			wantPhase:   multigresv1alpha1.PhaseHealthy,
+			initialized: true,
 		},
 		"missing managed global topo is progressing": {
 			cluster: clusterWithExpectedChildren(nil),

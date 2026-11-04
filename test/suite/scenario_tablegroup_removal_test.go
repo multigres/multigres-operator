@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -92,6 +93,47 @@ func (c *C) waitForTableGroupGone(cluster *MultigresCluster, tg string, within t
 		}
 		return nil
 	})
+}
+
+// waitForTableGroupServing waits until logical TableGroup tg exists as an
+// object other than any of notUIDs, carries no PendingDeletion, and it and its
+// Shard are Healthy. Returns the TableGroup's UID.
+func (c *C) waitForTableGroupServing(
+	cluster *MultigresCluster,
+	tg string,
+	within time.Duration,
+	notUIDs ...types.UID,
+) types.UID {
+	c.Helper()
+	var uid types.UID
+	c.Eventually(within, "TableGroup "+tg+" to be serving", func() error {
+		got, err := c.oneTableGroup(cluster, tg)
+		if err != nil {
+			return err
+		}
+		if slices.Contains(notUIDs, got.UID) {
+			return fmt.Errorf("TableGroup %s is still the old object %s", got.Name, got.UID)
+		}
+		if v := got.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; v != "" {
+			return fmt.Errorf("TableGroup %s still carries PendingDeletion=%s", got.Name, v)
+		}
+		if got.Status.Phase != multigresv1alpha1.PhaseHealthy {
+			return fmt.Errorf("TableGroup %s phase is %q", got.Name, got.Status.Phase)
+		}
+		shard, err := c.oneShard(cluster, tg)
+		if err != nil {
+			return err
+		}
+		if v := shard.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; v != "" {
+			return fmt.Errorf("Shard %s still carries PendingDeletion=%s", shard.Name, v)
+		}
+		if shard.Status.Phase != multigresv1alpha1.PhaseHealthy {
+			return fmt.Errorf("Shard %s phase is %q", shard.Name, shard.Status.Phase)
+		}
+		uid = got.UID
+		return nil
+	})
+	return uid
 }
 
 // holdFinalizer is a finalizer no controller knows, put on a pool pod so its
@@ -203,6 +245,33 @@ func (c *C) waitForDrainHeld(cluster *MultigresCluster, tg string) {
 	)
 }
 
+// waitForReAddObserved waits until the cluster has reconciled its current
+// spec, which names logical TableGroup tg again, while tg's old object (old)
+// is still held mid-drain. Releasing the hold any sooner lets the drain
+// finish before the re-add is seen, which turns the test into a plain return
+// trip. While the old object drains, the cluster must not report Healthy:
+// the TableGroup its spec names is not serving.
+func (c *C) waitForReAddObserved(cluster *MultigresCluster, tg string, old types.UID) {
+	c.Helper()
+	got := &MultigresCluster{}
+	c.NoError(c.Get(client.ObjectKeyFromObject(cluster), got), "get cluster")
+	gen := got.Generation
+	c.Eventually(30*time.Second, "cluster to observe the re-add", func() error {
+		if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
+			return err
+		}
+		if got.Status.ObservedGeneration < gen {
+			return fmt.Errorf("observedGeneration %d, want %d", got.Status.ObservedGeneration, gen)
+		}
+		return nil
+	})
+	still, err := c.oneTableGroup(cluster, tg)
+	c.NoError(err, "find the held TableGroup")
+	c.True(still.UID == old, "TableGroup %s was replaced while its drain was held", still.Name)
+	c.True(got.Status.Phase != multigresv1alpha1.PhaseHealthy,
+		"cluster reports Healthy while the TableGroup %s it names is draining", tg)
+}
+
 // TestTableGroupRemovalAloneStartsHandshake removes a TableGroup from a
 // settled cluster and nothing else. multigrescluster's only write to the
 // removed TableGroup is the PendingDeletion annotation, which changes neither
@@ -248,4 +317,132 @@ func TestTableGroupDrainDoesNotTrustALaggingCache(t *testing.T) {
 	c.waitForTableGroupGone(cluster, removableTG, 60*time.Second)
 	unlag()
 	c.WaitForClusterHealthy(cluster)
+}
+
+// TestTableGroupRemovalReturnTrip removes a TableGroup, lets the drain
+// handshake delete it, then adds it back. The second TableGroup must be a new
+// object that serves normally: nothing of the first one's drain (its
+// PendingDeletion annotation, its ReadyForDeletion condition) may carry over.
+func TestTableGroupRemovalReturnTrip(t *testing.T) {
+	c := newCase(t)
+	cluster := c.newMultiTableGroupCluster("tg-return-trip", removableTG)
+
+	first, err := c.oneTableGroup(cluster, removableTG)
+	c.NoError(err, "find TableGroup before removal")
+
+	c.setTableGroups(cluster)
+	c.waitForTableGroupGone(cluster, removableTG, 60*time.Second)
+
+	c.setTableGroups(cluster, removableTG)
+	c.waitForTableGroupServing(cluster, removableTG, 60*time.Second, first.UID)
+	c.WaitForClusterHealthy(cluster)
+	c.RequireQuiescent(10*time.Second, 90*time.Second)
+
+	got, err := c.oneTableGroup(cluster, removableTG)
+	c.NoError(err, "find re-added TableGroup")
+	c.False(
+		meta.IsStatusConditionTrue(
+			got.Status.Conditions,
+			multigresv1alpha1.ConditionReadyForDeletion,
+		),
+		"re-added TableGroup %s reports ReadyForDeletion",
+		got.Name,
+	)
+}
+
+// TestTableGroupReAddedMidDrain reverts a TableGroup's removal while its drain
+// is still in flight. A drain deletes pods, so it is not undone: the old
+// TableGroup must finish draining and be deleted, and a new one must then be
+// created and serve, exactly as for a Shard re-added to a TableGroup's spec
+// mid-drain. What must not happen is the old object being kept because the
+// spec names it again: it still carries PendingDeletion, which nothing
+// clears, so it would stay drained and unreconciled for good.
+func TestTableGroupReAddedMidDrain(t *testing.T) {
+	c := newCase(t)
+	cluster := c.newMultiTableGroupCluster("tg-readd", removableTG)
+
+	first, err := c.oneTableGroup(cluster, removableTG)
+	c.NoError(err, "find TableGroup before removal")
+	release := c.holdOnePod(t, cluster, removableTG)
+
+	c.setTableGroups(cluster)
+	c.waitForDrainHeld(cluster, removableTG)
+
+	c.setTableGroups(cluster, removableTG)
+	c.waitForReAddObserved(cluster, removableTG, first.UID)
+	release()
+
+	c.waitForTableGroupServing(cluster, removableTG, 90*time.Second, first.UID)
+	c.WaitForClusterHealthy(cluster)
+	c.RequireQuiescent(10*time.Second, 90*time.Second)
+}
+
+// TestTableGroupSwapInOneEdit removes one TableGroup and adds another in the
+// same spec update, then reverts the update while the removed one is still
+// draining. Each edit moves two TableGroups at once, so each must be handled
+// on its own terms: the removed one drains to deletion, the added one is
+// created and serves, and the default TableGroup, which neither edit names,
+// is never touched by the handshake at all.
+func TestTableGroupSwapInOneEdit(t *testing.T) {
+	c := newCase(t)
+	const added = "third"
+	cluster := c.newMultiTableGroupCluster("tg-swap", removableTG)
+
+	def, err := c.oneTableGroup(cluster, "default")
+	c.NoError(err, "find default TableGroup")
+	first, err := c.oneTableGroup(cluster, removableTG)
+	c.NoError(err, "find TableGroup before removal")
+	release := c.holdOnePod(t, cluster, removableTG)
+
+	c.setTableGroups(cluster, added)
+	c.waitForDrainHeld(cluster, removableTG)
+	c.waitForTableGroupServing(cluster, added, 60*time.Second)
+
+	// The return edit: the removed TableGroup back, the added one out.
+	c.setTableGroups(cluster, removableTG)
+	c.waitForReAddObserved(cluster, removableTG, first.UID)
+	release()
+
+	c.waitForTableGroupGone(cluster, added, 60*time.Second)
+	c.waitForTableGroupServing(cluster, removableTG, 90*time.Second, first.UID)
+	c.WaitForClusterHealthy(cluster)
+	c.RequireQuiescent(10*time.Second, 90*time.Second)
+
+	got, err := c.oneTableGroup(cluster, "default")
+	c.NoError(err, "find default TableGroup after both edits")
+	c.True(def.UID == got.UID, "default TableGroup was replaced: %s, then %s", def.UID, got.UID)
+	c.Empty(got.Annotations[multigresv1alpha1.AnnotationPendingDeletion],
+		"default TableGroup was marked PendingDeletion")
+}
+
+// TestTableGroupReAddedBrokenMidDrain reverts a TableGroup's removal mid-drain
+// with a spec that cannot resolve, since it names a ShardTemplate that does
+// not exist. The old TableGroup's drain must still finish and delete it: what
+// the spec now asks for being unbuildable is no reason to keep an object
+// that is being torn down either way. Once the template reference is fixed,
+// a fresh TableGroup must be created and serve.
+func TestTableGroupReAddedBrokenMidDrain(t *testing.T) {
+	c := newCase(t)
+	cluster := c.newMultiTableGroupCluster("tg-readd-broken", removableTG)
+
+	first, err := c.oneTableGroup(cluster, removableTG)
+	c.NoError(err, "find TableGroup before removal")
+	release := c.holdOnePod(t, cluster, removableTG)
+
+	c.setTableGroups(cluster)
+	c.waitForDrainHeld(cluster, removableTG)
+
+	c.updateCluster(cluster, func(got *MultigresCluster) {
+		broken := tableGroupConfig(removableTG)
+		broken.Shards[0].ShardTemplate = "does-not-exist"
+		got.Spec.Databases[0].TableGroups = append(got.Spec.Databases[0].TableGroups, broken)
+	})
+	c.waitForReAddObserved(cluster, removableTG, first.UID)
+	release()
+	c.waitForTableGroupGone(cluster, removableTG, 60*time.Second)
+
+	c.setTableGroups(cluster, removableTG)
+	c.waitForTableGroupServing(cluster, removableTG, 90*time.Second, first.UID)
+	c.WaitForClusterHealthy(cluster)
+	c.RequireQuiescent(10*time.Second, 90*time.Second)
 }
