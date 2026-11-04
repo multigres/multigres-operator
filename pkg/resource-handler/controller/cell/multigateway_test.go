@@ -2649,3 +2649,45 @@ func TestBuildMultigatewayDeployment_TopoClientTLS(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildMultigatewayDeployment_TableGroupDDL(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	for name, tt := range map[string]struct {
+		annotations map[string]string
+		want        []string
+	}{
+		"opted in emits --enable-tablegroup-ddl=true": {
+			annotations: map[string]string{multigresv1alpha1.AnnotationDynamicTableGroups: "true"},
+			want:        []string{"--enable-tablegroup-ddl=true"},
+		},
+		"no annotation emits no flag": {},
+		"other value emits no flag": {
+			annotations: map[string]string{multigresv1alpha1.AnnotationDynamicTableGroups: "false"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cellObj := &multigresv1alpha1.Cell{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "test-tablegroup-ddl",
+					Namespace:   "default",
+					Labels:      map[string]string{"multigres.com/cluster": "test-cluster"},
+					Annotations: tt.annotations,
+				},
+				Spec: multigresv1alpha1.CellSpec{Name: "zone1"},
+			}
+			deploy, err := BuildMultigatewayDeployment(cellObj, scheme)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, arg := range deploy.Spec.Template.Spec.Containers[0].Args {
+				if strings.HasPrefix(arg, "--enable-tablegroup-ddl") {
+					got = append(got, arg)
+				}
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

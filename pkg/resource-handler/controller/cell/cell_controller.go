@@ -765,8 +765,10 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 }
 
 // projectRefOrGenerationChangedPredicate requeues when desired gateway state can
-// change due to a spec update, a project-ref annotation update, or the
-// PendingDeletion annotation that starts this Cell's own drain handshake.
+// change due to a spec update, a project-ref annotation update, the
+// dynamic-tablegroups annotation that turns on the gateways' tablegroup DDL,
+// or the PendingDeletion annotation that starts this Cell's own drain
+// handshake.
 // Without the last of those, MultigresClusterReconciler stamping
 // AnnotationPendingDeletion on an orphan Cell produces an update event this
 // predicate drops, since it changes neither generation nor project-ref, and
@@ -798,6 +800,10 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 			newAnnotations := e.ObjectNew.GetAnnotations()
 			if oldAnnotations[metadata.AnnotationProjectRef] !=
 				newAnnotations[metadata.AnnotationProjectRef] {
+				return true
+			}
+			if oldAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups] !=
+				newAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups] {
 				return true
 			}
 			return oldAnnotations[multigresv1alpha1.AnnotationPendingDeletion] !=
