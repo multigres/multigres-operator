@@ -15,6 +15,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	multigresclustercontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
 	tablegroupcontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
+	"github.com/multigres/multigres-operator/pkg/features"
+	cellcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	"github.com/multigres/testkit/ctrltest"
 )
 
@@ -439,4 +441,198 @@ func conditionSetTrue(ev ctrltest.Event, conditionType string) bool {
 		}
 	}
 	return false
+}
+
+// TestReadyForDeletionProtocol_CellRestoredMidDrain asserts that a Cell put
+// back into spec after its drain ran, but before multigrescluster deleted it,
+// returns to normal service: PendingDeletion is cleared, the ReadyForDeletion
+// the drain set is dropped, the managed local TopoServer the drain deleted is
+// recreated, and the cleared condition is persisted before the TopoServer
+// comes back, so no stored True ever describes a Cell that is no longer
+// drained.
+//
+// The interleaving is forced with the reconcile gate rather than raced for.
+// Gating the Cell lets multigrescluster stamp it without the Cell draining;
+// gating the cluster then lets the Cell drain without the cluster deleting
+// it, and keeps the restore of spec.cells unseen until the gate lifts. The
+// gate is a production mechanism, and lifting it is what an operator does,
+// so every step runs on the real watch and reconcile paths.
+//
+// The Cell manages a local TopoServer so the drain has something to destroy:
+// without one, handlePendingDeletion has nothing to delete and a stranded
+// Cell would still look whole.
+func TestReadyForDeletionProtocol_CellRestoredMidDrain(t *testing.T) {
+	c := newCase(t)
+	cluster := c.newCluster("scenario-del-cell-restore", func(spec *MultigresClusterSpec) {
+		spec.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
+			LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
+				Etcd: &multigresv1alpha1.EtcdSpec{Replicas: ptr.To(int32(1))},
+			},
+		}
+	})
+	c.WaitForClusterHealthy(cluster)
+
+	settled := &MultigresCluster{}
+	c.NoError(c.Get(client.ObjectKeyFromObject(cluster), settled), "get settled cluster")
+	originalCells := settled.Spec.Cells
+
+	cells := &multigresv1alpha1.CellList{}
+	c.NoError(
+		c.List(cells, client.MatchingLabels{"multigres.com/cluster": cluster.Name}),
+		"list cells",
+	)
+	c.Len(cells.Items, 1, "want exactly one Cell")
+	cellKey := client.ObjectKeyFromObject(&cells.Items[0])
+	cellUID := cells.Items[0].UID
+	localTopoKey := client.ObjectKey{
+		Namespace: c.NS,
+		Name:      cellcontroller.BuildLocalTopoServerName(&cells.Items[0]),
+	}
+	c.NoError(c.Get(localTopoKey, &multigresv1alpha1.TopoServer{}), "get local TopoServer")
+	c.RequireQuiescent(2*time.Second, 30*time.Second)
+
+	c.setReconcileGate(&multigresv1alpha1.Cell{}, cellKey, true)
+	c.NoError(
+		c.Patch(settled, client.RawPatch(types.JSONPatchType,
+			[]byte(`[{"op":"remove","path":"/spec/cells"}]`))),
+		"remove spec.cells",
+	)
+	c.Eventually(30*time.Second, "multigrescluster to stamp PendingDeletion", func() error {
+		cell := &multigresv1alpha1.Cell{}
+		if err := c.Get(cellKey, cell); err != nil {
+			return err
+		}
+		if cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
+			return fmt.Errorf("not stamped yet")
+		}
+		return nil
+	})
+
+	clusterKey := client.ObjectKeyFromObject(cluster)
+	c.setReconcileGate(&MultigresCluster{}, clusterKey, true)
+	c.waitForGatedPass("multigrescluster", clusterKey)
+	c.setReconcileGate(&multigresv1alpha1.Cell{}, cellKey, false)
+	c.Eventually(30*time.Second, "Cell to drain its local TopoServer and report ready",
+		func() error {
+			cell := &multigresv1alpha1.Cell{}
+			if err := c.Get(cellKey, cell); err != nil {
+				return err
+			}
+			if !meta.IsStatusConditionTrue(cell.Status.Conditions,
+				multigresv1alpha1.ConditionReadyForDeletion) {
+				return fmt.Errorf("ReadyForDeletion not True")
+			}
+			err := c.Get(localTopoKey, &multigresv1alpha1.TopoServer{})
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("local TopoServer still present (err=%v)", err)
+			}
+			return nil
+		})
+
+	c.updateCluster(cluster, func(got *MultigresCluster) {
+		got.Spec.Cells = originalCells
+	})
+	restoredAt := time.Now()
+	c.setReconcileGate(&MultigresCluster{}, clusterKey, false)
+
+	c.Eventually(60*time.Second, "restored Cell to return to normal service", func() error {
+		cell := &multigresv1alpha1.Cell{}
+		if err := c.Get(cellKey, cell); err != nil {
+			return err
+		}
+		if cell.UID != cellUID {
+			return fmt.Errorf("Cell was replaced (uid %s, want %s)", cell.UID, cellUID)
+		}
+		if v := cell.Annotations[multigresv1alpha1.AnnotationPendingDeletion]; v != "" {
+			return fmt.Errorf("PendingDeletion still set: %q", v)
+		}
+		if meta.FindStatusCondition(cell.Status.Conditions,
+			multigresv1alpha1.ConditionReadyForDeletion) != nil {
+			return fmt.Errorf("ReadyForDeletion condition still present")
+		}
+		if err := c.Get(localTopoKey, &multigresv1alpha1.TopoServer{}); err != nil {
+			return fmt.Errorf("local TopoServer: %w", err)
+		}
+		if cell.Status.Phase != multigresv1alpha1.PhaseHealthy {
+			return fmt.Errorf("phase is %q", cell.Status.Phase)
+		}
+		return nil
+	})
+	c.WaitForClusterHealthy(cluster)
+	c.RequireQuiescent(2*time.Second, 30*time.Second)
+
+	// The Cell controller must persist the cleared condition before it
+	// recreates the local TopoServer. Otherwise a stored True could outlive
+	// the drain it describes: a status write that failed, or a removal that
+	// landed mid-pass, would leave ReadyForDeletion True on a Cell whose
+	// TopoServer is back, and multigrescluster would delete it undrained.
+	clearIdx, recreateIdx := -1, -1
+	for i, op := range Suite.Ops.OpsInNamespace(c.NS) {
+		if op.Controller != "cell" || op.Err != nil || op.At.Before(restoredAt) {
+			continue
+		}
+		switch {
+		case clearIdx < 0 && op.Key == cellKey && ctrltest.KindSuffix(op.Kind) == "Cell" &&
+			strings.HasPrefix(op.Verb, "status-"):
+			clearIdx = i
+		case recreateIdx < 0 && op.Key == localTopoKey &&
+			ctrltest.KindSuffix(op.Kind) == "TopoServer" && op.Verb != "delete":
+			recreateIdx = i
+		}
+	}
+	c.True(recreateIdx >= 0, "no recorded write recreating local TopoServer %s", localTopoKey.Name)
+	c.True(clearIdx >= 0 && clearIdx < recreateIdx,
+		"Cell %s recreated its local TopoServer (op %d) before persisting the cleared "+
+			"ReadyForDeletion (op %d)", cellKey.Name, recreateIdx, clearIdx)
+}
+
+// setReconcileGate sets or clears multigres.com/reconcile=disabled on one
+// object, pausing or resuming every controller that reconciles it. obj is
+// only a typed receiver for the read.
+func (c *C) setReconcileGate(obj client.Object, key client.ObjectKey, disabled bool) {
+	c.Helper()
+	c.NoError(c.Get(key, obj), "get "+key.String()+" to gate it")
+	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	if disabled {
+		labels[features.ReconcileLabel] = features.Disabled
+	} else {
+		delete(labels, features.ReconcileLabel)
+	}
+	obj.SetLabels(labels)
+	c.NoError(c.Patch(obj, patch), "set reconcile gate on "+key.String())
+}
+
+// waitForGatedPass blocks until controller has run a pass against key that
+// started after this call and wrote nothing, which is what a pass refused by
+// the reconcile gate looks like. The gate label reaches a controller through
+// its cache, so a pass already running, or one that read the cache before the
+// label arrived, can still act. Each controller here runs one pass at a time,
+// so once a gated pass has ended every earlier pass has too, and every later
+// one reads a cache that already holds the label. It is meant for a
+// controller whose real passes always write; the multigrescluster controller
+// applies its Cells and TableGroups on every one.
+//
+// Testkit gap: ctrltest has no barrier for "controller X's cache has observed
+// object Y at or after resourceVersion N". With one, this would wait on the
+// label patch's resourceVersion directly instead of inferring it from a
+// write-free pass, and would work for controllers whose real passes can be
+// write-free too.
+func (c *C) waitForGatedPass(controller string, key client.ObjectKey) {
+	c.Helper()
+	since := time.Now()
+	c.Eventually(30*time.Second, controller+" to observe the reconcile gate on "+key.String(),
+		func() error {
+			for _, r := range Suite.Reconciles.InNamespace(c.NS) {
+				if r.Controller == controller && r.Request.NamespacedName == key &&
+					r.Start.After(since) && !r.End.IsZero() && r.Err == nil &&
+					len(Suite.Reconciles.Ops(r)) == 0 {
+					return nil
+				}
+			}
+			return fmt.Errorf("no write-free pass since %s", since.Format(time.RFC3339Nano))
+		})
 }

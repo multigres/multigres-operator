@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -495,5 +496,67 @@ func TestProjectRefOrGenerationChangedPredicate_Update(t *testing.T) {
 				t.Errorf("Update() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestHandlePendingDeletion_AnswersOnTheVersionItRead pins that the drain's
+// ReadyForDeletion write is conditioned on the resourceVersion the drain
+// read, which is what makes it conflict when MultigresClusterReconciler
+// cancels the stamp while the drain is in flight.
+//
+// Pinned at the write rather than by interleaving the cancel in test/suite:
+// testkit's ctrltest has no hook to hold one controller's write mid-pass
+// while another controller's lands, which is the only way to put a cancel
+// between the drain's read and its write deterministically.
+func TestHandlePendingDeletion_AnswersOnTheVersionItRead(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+
+	stored := &multigresv1alpha1.Cell{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cell",
+			Namespace: "default",
+			Annotations: map[string]string{
+				multigresv1alpha1.AnnotationPendingDeletion: "2026-01-01T00:00:00Z",
+			},
+		},
+		Spec: multigresv1alpha1.CellSpec{Name: "zone1"},
+	}
+	var appliedVersions []string
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(stored).
+		WithStatusSubresource(&multigresv1alpha1.Cell{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(
+				_ context.Context,
+				_ client.Client,
+				subResource string,
+				obj client.Object,
+				_ client.Patch,
+				_ ...client.SubResourcePatchOption,
+			) error {
+				if subResource == "status" {
+					appliedVersions = append(appliedVersions, obj.GetResourceVersion())
+				}
+				return nil
+			},
+		}).
+		Build()
+	r := &CellReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+
+	cell := &multigresv1alpha1.Cell{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(stored), cell); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.handlePendingDeletion(context.Background(), cell); err != nil {
+		t.Fatal(err)
+	}
+	if len(appliedVersions) != 1 {
+		t.Fatalf("want one status write, got %d", len(appliedVersions))
+	}
+	if appliedVersions[0] == "" || appliedVersions[0] != cell.ResourceVersion {
+		t.Errorf("ReadyForDeletion applied at resourceVersion %q, want the version read, %q",
+			appliedVersions[0], cell.ResourceVersion)
 	}
 }

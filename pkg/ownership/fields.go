@@ -121,7 +121,11 @@ var Fields = []Field{
 		Class:   Gate,
 	},
 	// reconcile_cells.go pendingDeletion holds the Cell until this is True. The
-	// cell controller sets it after its gateway and managed local TopoServer drain.
+	// cell controller sets it after its managed local TopoServer drains, on the
+	// resourceVersion the drain read, and clears it, persisted before
+	// recreating anything, when a cancelled drain returns the Cell to normal
+	// reconciling; reconcile_cells.go deletes only the exact resourceVersion it
+	// read the condition from.
 	{
 		Kind:    kindCell,
 		Path:    `.status.conditions[type="ReadyForDeletion"]`,
