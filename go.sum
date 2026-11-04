@@ -10,6 +10,8 @@ github.com/MicahParks/jwkset v0.11.1 h1:Gr+6JeYoJ7twqyBGf8MXxj2NSCKPoX8RFMtey3GY
 github.com/MicahParks/jwkset v0.11.1/go.mod h1:U2oRhRaLgDCLjtpGL2GseNKGmZtLs/3O7p+OZaL5vo0=
 github.com/MicahParks/keyfunc/v3 v3.8.1 h1:VR3jlEs2wz1xGjvUUwUHeoB+eJ6gUnBrpnIByRrtj6g=
 github.com/MicahParks/keyfunc/v3 v3.8.1/go.mod h1:LcorJ0sz2tZGvgZqIfaeyLkJmM+kxIfRDu8dFY0TAas=
+github.com/NYTimes/gziphandler v1.1.1 h1:ZUDjpQae29j0ryrS0u/B8HZfJBtBQHjqw2rQ2cqUQ3I=
+github.com/NYTimes/gziphandler v1.1.1/go.mod h1:n/CVRwUEOgIxrgPvAQhUUr9oeUtvrhMomdKFjzJNB0c=
 github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e h1:4dAU9FXIyQktpoUAgOJK3OTFc/xug0PCXYCqU0FgDKI=
 github.com/alexbrainman/sspi v0.0.0-20250919150558-7d374ff0d59e/go.mod h1:cEWa1LVoE5KvSD9ONXsZrj0z6KqySlCCNKHlLzbqAt4=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
@@ -141,6 +143,10 @@ github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 h1:JeSE6pjso5T
 github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674/go.mod h1:r4w70xmWCQKmi1ONH4KIaBptdivuRPyosB9RmPlGEwA=
 github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 h1:UH//fgunKIs4JdUbpDl1VZCDaL56wXCB/5+wF6uHfaI=
 github.com/grpc-ecosystem/go-grpc-middleware v1.4.0/go.mod h1:g5qyo/la0ALbONm6Vbp88Yd8NsDy6rZz+RcrMPxvld8=
+github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0 h1:QGLs/O40yoNK9vmy4rhUGBVyMf1lISBGtXRpsu/Qu/o=
+github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus v1.1.0/go.mod h1:hM2alZsMUni80N33RBe6J0e423LB+odMj7d3EMP9l20=
+github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.3 h1:B+8ClL/kCQkRiU82d9xajRPKYMrB7E0MbtzWVi1K4ns=
+github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.3/go.mod h1:NbCUVmiS4foBGBHOYlCT25+YmGpJ32dZPi75pGEUpj4=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0 h1:Bd7KaOxzULLxtZ/K5s1aLbWhR0+5RToO65TXHsf3bqQ=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.31.0/go.mod h1:nN7ts3dFXKtCZWc//yfkpcQNKJABg16/uDVAZpLDalo=
 github.com/hashicorp/go-uuid v1.0.3 h1:2gKiV6YVmrJ1i2CKKa9obLvRieoRGviZFL26PcT/Co8=
@@ -201,8 +207,8 @@ github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFd
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/multigres/kubedial v0.3.0 h1:EYQrJlYkPY9Ud/Vd7gHtNozt7uP/dR+pe/j6KSl+tlk=
 github.com/multigres/kubedial v0.3.0/go.mod h1:3xneBZgPfkJFB4van/McyiJTSreF+LZVSh7QCTaZAYQ=
-github.com/multigres/multigres v0.0.0-20261102175712-49e7a2f7d4fe h1:quVUW4bjeC6GjlhPBD+EVLE3B+LTXP8EITjKvN2KK+M=
-github.com/multigres/multigres v0.0.0-20261102175712-49e7a2f7d4fe/go.mod h1:tE+I1bFA3jb3//H8nm9fHfWgOn7gdZI6sO6g+NTpkgo=
+github.com/multigres/multigres v0.0.0-20261104171132-5542f04ff96f h1:p2TDJqPvRWiz1UtBMczxp7hO+6ieTI9HmAtPlTFY3M4=
+github.com/multigres/multigres v0.0.0-20261104171132-5542f04ff96f/go.mod h1:tE+I1bFA3jb3//H8nm9fHfWgOn7gdZI6sO6g+NTpkgo=
 github.com/multigres/testkit v0.6.2 h1:TKMgOsF6ctG9Yyzv4YrerCjWZP0igZ9iU1/Z9uMJ2fE=
 github.com/multigres/testkit v0.6.2/go.mod h1:qQiTYkZR8XW6HkGJiv/fmLBbmEMwl58dhjacnmTzuc0=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
