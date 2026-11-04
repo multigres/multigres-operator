@@ -36,7 +36,7 @@ Controllers do **not** interact with Prometheus types directly. Instead, they ca
 
 ```go
 // In a controller:
-monitoring.SetClusterInfo(cluster.Name, cluster.Namespace, string(cluster.Status.Phase))
+monitoring.SetClusterInfo(cluster.Name, cluster.Namespace, string(cluster.Status.Phase), mode, initialized)
 monitoring.SetShardPoolReplicas(shard.Name, pool.Name, shard.Namespace, desired, ready)
 monitoring.RecordWebhookRequest("DEFAULT", "MultigresCluster", err, duration)
 ```

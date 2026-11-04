@@ -18,7 +18,7 @@ The operator exposes two classes of metrics:
 
 | Metric | Type | Labels | Description |
 |:---|:---|:---|:---|
-| `multigres_operator_cluster_info` | Gauge | `name`, `namespace`, `phase` | Cluster phase tracking (always 1) |
+| `multigres_operator_cluster_info` | Gauge | `name`, `namespace`, `phase`, `initialized`, `mode` | Cluster phase tracking (always 1); `mode` is `lite` or `distributed` |
 | `multigres_operator_cluster_cells_total` | Gauge | `cluster`, `namespace` | Cell count |
 | `multigres_operator_cluster_shards_total` | Gauge | `cluster`, `namespace` | Shard count |
 | `multigres_operator_cell_gateway_replicas` | Gauge | `cell`, `namespace`, `state` | Gateway ready/desired replicas |

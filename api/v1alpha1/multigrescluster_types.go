@@ -226,6 +226,11 @@ type MultigresClusterSpec struct {
 // ModeLite is the spec.mode value for a cluster that runs as one minigres pod.
 const ModeLite = "lite"
 
+// ModeDistributed names the cluster mode that runs when spec.mode is empty:
+// multigateway Deployments, multiorch and a cohort of pool pods per shard. It
+// is not an accepted spec.mode value, it labels the default mode in metrics.
+const ModeDistributed = "distributed"
+
 // ============================================================================
 // Images Config Section Specs
 // ============================================================================

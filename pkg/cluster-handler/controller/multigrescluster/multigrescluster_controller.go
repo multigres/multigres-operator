@@ -395,6 +395,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 		cluster.Name,
 		cluster.Namespace,
 		string(cluster.Status.Phase),
+		clusterMode(cluster),
 		cluster.Status.InitializedAt != nil,
 	)
 	var totalShards int
@@ -845,4 +846,12 @@ func collectTrackingLabels(cluster *multigresv1alpha1.MultigresCluster) map[stri
 	}
 
 	return labels
+}
+
+// clusterMode returns the value of the mode label on multigres_operator_cluster_info.
+func clusterMode(cluster *multigresv1alpha1.MultigresCluster) string {
+	if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+		return multigresv1alpha1.ModeLite
+	}
+	return multigresv1alpha1.ModeDistributed
 }

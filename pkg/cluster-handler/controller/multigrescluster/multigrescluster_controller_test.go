@@ -601,7 +601,7 @@ func TestReconcileNotFoundForgetsClusterMetrics(t *testing.T) {
 		return n
 	}
 	setClusterGauges := func(name string) {
-		monitoring.SetClusterInfo(name, "test-ns", "Progressing", true)
+		monitoring.SetClusterInfo(name, "test-ns", "Progressing", "distributed", true)
 		monitoring.SetClusterTopology(name, "test-ns", 1, 2)
 	}
 	reconcile := func(t *testing.T, c client.Client, name string) error {
