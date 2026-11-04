@@ -181,7 +181,28 @@ In Lite mode, the same setting on the sole cell configures Minigres, including v
 
 ---
 
-## 8. Scenarios & Gotchas
+## 8. Dynamic Tablegroups
+
+`CREATE TABLEGROUP`, run through a gateway, records intent in Multigres's sharding catalog; the operator provisions the tablegroup's shards to match. It is off unless the cluster opts in with an annotation (no CRD change is involved):
+
+```yaml
+metadata:
+  annotations:
+    multigres.com/dynamic-tablegroups: "true"
+```
+
+With it, the cluster's gateways run with `--enable-tablegroup-ddl`, and every 10 seconds the operator reads each database's desired tablegroups from multiadmin (`GET /api/v1/databases/{db}/tablegroups`). For each one it creates a TableGroup labelled `multigres.com/dynamic-tablegroup` and annotated `multigres.com/tablegroup-id`, shaped from the database's default tablegroup: every shard copies the default shard's resolved spec (cells, pools, storage, backup), and poolers get `--tablegroup-id`. The waiting `CREATE TABLEGROUP` returns once every shard has a serving primary. A failed read provisions nothing new. Names the spec also declares are left to the spec and reported in the `DynamicTableGroupConflict` condition; `DynamicTableGroups` reports what is provisioned.
+
+```sql
+SET statement_timeout = 0;  -- the gateway default (30s) is shorter than provisioning
+CREATE TABLEGROUP commerce SHARDS ('0-80', '80-inf');
+```
+
+The operator never removes a provisioned dynamic tablegroup, including one the catalog no longer lists, and never applies a spec-declared tablegroup over one. A tablegroup recreated under the same name with a new catalog id waits, reported in the condition, until someone deletes the earlier one's TableGroup and Shards. With `spec.networkPolicy.enabled`, list the operator's namespace in `allowedIngressNamespaces`: the operator reads multiadmin directly, and the policy admits only the cluster's namespace and the listed ones. Removing the annotation stops reading the catalog and leaves provisioned tablegroups in place. Lite clusters ignore the annotation. Images must include the multigres tablegroup operations (gateway `--enable-tablegroup-ddl`, pooler `--tablegroup-id`).
+
+---
+
+## 9. Scenarios & Gotchas
 
 ### Scenario A: Namespace Defaults (The "Happy Path")
 
