@@ -266,9 +266,8 @@ jobs:
             ' index.json)
             echo "$arch=$platform" >> "$GITHUB_OUTPUT"
             echo "DIGEST_${arch^^}=$platform" >> "$GITHUB_ENV"
-            config=$(docker buildx imagetools inspect "$image@$platform" --raw | jq -er .config.digest)
-            jq -e --arg config "$config" '
-              any(.packages[]; .versionInfo == $config and (.SPDXID | startswith("SPDXRef-DocumentRoot-Image-")))
+            jq -e --arg platform "$platform" '
+              any(.packages[]; .versionInfo == $platform and (.SPDXID | startswith("SPDXRef-DocumentRoot-Image-")))
             ' "release/operator-$arch.spdx.json"
           done
           printf '%s@%s\n' "$image" "$digest" > release/image.txt
