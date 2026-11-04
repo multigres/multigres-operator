@@ -69,18 +69,22 @@ func BuildShard(
 			InitdbArgs:          shardSpec.InitdbArgs,
 			PostgresConfigRef:   shardSpec.PostgresConfigRef,
 			PostgresConfig:      shardSpec.PostgresConfig,
-			Pools:               shardSpec.Pools,
+			Pools:               normalizedPools(shardSpec.Pools),
 			Replicas:            calculateTotalReplicas(shardSpec.Pools),
 			// Merge hierarchy: Shard → TableGroup
 			PVCDeletionPolicy: multigresv1alpha1.MergePVCDeletionPolicy(
 				shardSpec.PVCDeletionPolicy,
 				tg.Spec.PVCDeletionPolicy,
 			),
-			CertCommonName:            tg.Spec.CertCommonName,
-			InternalTLS:               tg.Spec.InternalTLS,
-			Observability:             tg.Spec.Observability,
-			LogLevels:                 tg.Spec.LogLevels,
-			Backup:                    shardSpec.Backup,
+			CertCommonName:          tg.Spec.CertCommonName,
+			InternalTLS:             tg.Spec.InternalTLS,
+			Observability:           tg.Spec.Observability,
+			LogLevels:               tg.Spec.LogLevels,
+			Backup:                  shardSpec.Backup,
+			ShardServiceAccountName: tg.Spec.ShardServiceAccountName,
+			SidecarBackupLocation: multigresv1alpha1.SidecarBackupLocation(
+				tg.Spec.Mode, tg.Spec.SidecarBackupLocation, shardSpec.Backup,
+			),
 			TopologyPruning:           tg.Spec.TopologyPruning,
 			DurabilityPolicy:          tg.Spec.DurabilityPolicy,
 			Mode:                      tg.Spec.Mode,
@@ -112,4 +116,21 @@ func calculateTotalReplicas(
 		total += replicas * int32(len(pool.Cells)) // #nosec G115
 	}
 	return &total
+}
+
+// normalizedPools copies a TableGroup's pools for a Shard. A TableGroup can
+// be written by hand with an empty-map pgbackrestResources block, which the
+// Shard apply must not carry: see PoolSpec.NormalizePgBackRestResources.
+func normalizedPools(
+	pools map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec,
+) map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec {
+	if pools == nil {
+		return nil
+	}
+	out := make(map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec, len(pools))
+	for name, pool := range pools {
+		pool.NormalizePgBackRestResources()
+		out[name] = pool
+	}
+	return out
 }

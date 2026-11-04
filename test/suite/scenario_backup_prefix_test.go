@@ -2,6 +2,7 @@ package suite
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestBackupPrefixSurvivesClusterRecreation(t *testing.T) {
 				spec.Mode = tc.mode
 				spec.PVCDeletionPolicy.WhenDeleted = api.RetainPVCRetentionPolicy
 				spec.Backup = &api.BackupConfig{Type: api.BackupTypeS3, S3: &api.S3BackupConfig{
-					Bucket: "shared", Region: "us-east-1", UseEnvCredentials: true,
+					Bucket: "shared", Region: "us-east-1", CredentialsSecret: "s3-credentials",
 				}}
 			})
 			manifest := &MultigresCluster{
@@ -84,7 +85,10 @@ func TestBackupPrefixSurvivesClusterRecreation(t *testing.T) {
 						for _, vol := range pod.Spec.Volumes {
 							if vol.PersistentVolumeClaim != nil &&
 								vol.PersistentVolumeClaim.ClaimName == data.Name {
-								return nil
+								// The sidecar does the archiving and restoring,
+								// so it is the sidecar that must be back on
+								// the original repository.
+								return sidecarKeyPrefix(&pod, want)
 							}
 						}
 					}
@@ -100,4 +104,20 @@ func TestBackupPrefixSurvivesClusterRecreation(t *testing.T) {
 			c.Eq(data.UID, claim.UID)
 		})
 	}
+}
+
+// sidecarKeyPrefix returns nil when pod's pgBackRest sidecar is started with
+// the S3 key prefix want.
+func sidecarKeyPrefix(pod *corev1.Pod, want string) error {
+	for _, container := range pod.Spec.InitContainers {
+		if container.Name != "pgbackrest" {
+			continue
+		}
+		if slices.Contains(container.Args, "--s3-key-prefix="+want) {
+			return nil
+		}
+		return fmt.Errorf("pod %s: pgbackrest sidecar args %v do not name prefix %s",
+			pod.Name, container.Args, want)
+	}
+	return fmt.Errorf("pod %s has no pgbackrest sidecar", pod.Name)
 }

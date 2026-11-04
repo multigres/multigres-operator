@@ -663,8 +663,8 @@ func (r *ShardReconciler) recordNotConverged(
 }
 
 // now returns the reconciler's clock, defaulting to time.Now so production
-// code never has to set Clock. Tests inject Clock to drive
-// recordNotConverged's elapsed-time math deterministically.
+// code never has to set Clock. Everything timed against the reconciler's
+// own records reads it; see Clock.
 func (r *ShardReconciler) now() time.Time {
 	if r.Clock != nil {
 		return r.Clock()
@@ -792,7 +792,15 @@ func (r *ShardReconciler) isDrainStale(
 	}
 
 	// Pod is within replica range — check if its spec still matches desired.
-	return !podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme)
+	return !podNeedsUpdate(
+		pod,
+		shard,
+		poolName,
+		cellName,
+		poolSpec,
+		index,
+		r.Scheme,
+		r.podOptions()...)
 }
 
 // topoStore returns a topology store, using the custom factory if set, otherwise the default.

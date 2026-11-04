@@ -17,9 +17,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/workqueue"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -83,12 +86,24 @@ type ShardReconciler struct {
 	APIReader client.Reader
 	// LitePodPriorityClassName applies only to single-pod Lite shards.
 	LitePodPriorityClassName string
-	PoolerClients            poolerclient.Resolver
-	CreateTopoStore          func(*multigresv1alpha1.Shard) (topoclient.Store, error)
-	// Clock overrides time.Now for recordNotConverged's elapsed-time math.
-	// Nil in production; tests inject it to drive the readiness backoff
-	// deterministically.
+	// PgBackRestSandbox is the --sandbox mode every pgbackrestd container is
+	// started with: required, auto or off. Empty means required. It is an
+	// operator-wide deployment property, not part of the Shard spec.
+	PgBackRestSandbox string
+	PoolerClients     poolerclient.Resolver
+	CreateTopoStore   func(*multigresv1alpha1.Shard) (topoclient.Store, error)
+	// Clock overrides time.Now for everything the reconciler times against
+	// its own records: recordNotConverged's elapsed-time math, the schedule
+	// on which a Shard a quota turned down sends its creates, and the one on
+	// which a Lite shard asks again about an unanswered replacement. Nil in
+	// production; tests inject it to drive those deterministically.
 	Clock func() time.Time
+	// SidecarStartupDeadline, when positive, replaces the age a pod must reach
+	// before sidecarStuckPod may nominate it (otherwise the sidecar's startup
+	// probe budget plus an image pull allowance, about seven minutes). Nil
+	// effect in production; the suite sets it because envtest cannot backdate a
+	// pod's creationTimestamp.
+	SidecarStartupDeadline time.Duration
 
 	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
 	// docs/development/reconcile-gating.md. The zero value is safe.
@@ -114,6 +129,98 @@ type ShardReconciler struct {
 	// when Apply fires.
 	notConvergedMu    sync.Mutex
 	notConvergedSince map[string]time.Time
+
+	// disruptionLoggedAt records, per target pod, when its blocked disruption
+	// was last logged, so the log repeats at a bounded cadence.
+	disruptionLogMu    sync.Mutex
+	disruptionLoggedAt map[string]time.Time
+
+	// quotaWaiting is the Shards the ResourceQuota watch reconciles.
+	quotaWaiting quotaWaiters
+	// retryLimiter is the controller's rate limiter. Nil until the
+	// controller is set up.
+	retryLimiter workqueue.TypedRateLimiter[reconcile.Request]
+	// liteUnanswered spaces out the dry runs of Lite shards that got no
+	// answer.
+	liteUnanswered unansweredAsks
+}
+
+// deferredCreateResult is how a pass ends whose create of a desired pod or
+// claim failed and was carried to its end (see deferCreateFailure), after
+// everything else succeeded.
+//
+// A requeue the pass asked for is when it has to look again: at a drain in
+// progress, or at a disruption preflight that refused (waitingForRecovery,
+// which Reconcile turns into a requeue), and no event reports that
+// preflight passing. Failing the pass would replace that requeue with the
+// rate limiter's delay, which after a long stall is many minutes, in exactly
+// the pass that is trying to make room. The create is tried again on the
+// requeued pass, and a quota that makes room for it reconciles the Shard
+// through its watch. With no requeue pending the pass fails with the
+// create's error, so that the rate limiter retries it.
+func deferredCreateResult(
+	result ctrl.Result,
+	waitingForRecovery bool,
+	deferred error,
+) (ctrl.Result, error) {
+	if result.RequeueAfter > 0 || waitingForRecovery {
+		return result, nil
+	}
+	return ctrl.Result{}, deferred
+}
+
+// endPass files what the pass learned in the reconciler's per-Shard
+// records. A Shard with a create turned down by a ResourceQuota, or held
+// back for one, stays in the waiter set whatever the pass returned, and is
+// retried on its quota schedule when the pass ended on the quota's answer; a
+// pass that ended without an error and without such a create takes it out. A
+// pass that ended without an error and had no question about a replacement
+// has no unanswered question left to space out.
+//
+// waitEnded is whether the pass took the Shard out of the waiter set. The
+// pass wrote status before that, with the wait in it (see setConditions),
+// and a wait can end without anything that reconciles the Shard again: the
+// create is no longer wanted, as when a maintenance surge is withdrawn, and
+// every pod is Ready.
+func (r *ShardReconciler) endPass(
+	ctx context.Context,
+	shard types.NamespacedName,
+	err error,
+) (waitEnded bool) {
+	pass, _ := ctx.Value(replacementPassKey{}).(*replacementPass)
+	if pass == nil {
+		return false
+	}
+	switch {
+	case pass.quotaWait:
+		retryAt := time.Time{}
+		if waits, _ := quotaWaitAnswer(err); waits {
+			retryAt = pass.quotaRetryAt
+		}
+		r.quotaWaiting.passEnded(shard, retryAt)
+	case err == nil:
+		waitEnded = r.quotaWaiting.clear(shard)
+	default:
+		r.quotaWaiting.passEnded(shard, time.Time{})
+	}
+	if err == nil && !pass.asked {
+		r.liteUnanswered.note(shard, "", time.Time{}, nil)
+	}
+	return waitEnded
+}
+
+// quotaWaitEndedRequeue is how soon a Shard is reconciled again after the
+// pass that ended its quota wait, so that status stops naming the wait.
+const quotaWaitEndedRequeue = time.Second
+
+// afterQuotaWait returns result with a requeue added when the pass ended
+// the Shard's quota wait and asked for none itself. One more pass follows,
+// which finds the Shard not waiting and asks for nothing.
+func afterQuotaWait(result ctrl.Result, waitEnded bool) ctrl.Result {
+	if waitEnded && result.RequeueAfter == 0 {
+		result.RequeueAfter = quotaWaitEndedRequeue
+	}
+	return result
 }
 
 // Reconcile manages pool pods, PVCs, services, and data-plane topology for a Shard.
@@ -130,6 +237,8 @@ func (r *ShardReconciler) Reconcile(
 		"Shard",
 	)
 	defer span.End()
+	ctx = withReplacementPass(ctx)
+	defer func() { result = afterQuotaWait(result, r.endPass(ctx, req.NamespacedName, err)) }()
 	defer func() { monitoring.RecordReconcileError(err, "shard", req.Name, req.Namespace) }()
 	ctx = monitoring.EnrichLoggerWithTrace(ctx)
 
@@ -250,6 +359,17 @@ func (r *ShardReconciler) Reconcile(
 			err,
 		)
 		return ctrl.Result{}, err
+	}
+
+	// A shard whose sidecar cannot serve the configured repository gets no
+	// certificates, multiorch or pods. updateStatus above has already set
+	// BackupRepositoryValid=False with the reason and emitted the event. Only
+	// a change to the Shard clears the refusal, and that change starts the
+	// next reconcile, so there is nothing to retry.
+	if err := validateSidecarLocation(shard); err != nil {
+		logger.Info("Not reconciling shard resources: pgBackRest sidecar is refused",
+			"reason", err.Error())
+		return ctrl.Result{}, nil
 	}
 
 	// Reconcile pgBackRest TLS certificates (required for inter-node backup communication)
@@ -435,6 +555,15 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
+	// deferredCreate is a failed create of a desired pod in a pool/cell that
+	// has a pod to scale down. The data-plane phases still run, because they
+	// are what carries that scale-down's drain to its end, and the pass then
+	// fails with this error so that it is retried.
+	var deferredCreate error
+	// Shared across every pool in this reconcile pass so that once one
+	// pool initiates a drain, no other pool starts one too in the same
+	// pass
+	rollout := &shardRolloutTracker{}
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcilePools")
 		if err := r.reconcileShardPDB(ctx, shard); err != nil {
@@ -451,10 +580,6 @@ func (r *ShardReconciler) Reconcile(
 			return ctrl.Result{}, err
 		}
 
-		// Shared across every pool in this reconcile pass so that once one
-		// pool initiates a drain, no other pool starts one too in the same
-		// pass
-		rollout := &shardRolloutTracker{}
 		defer func() {
 			// Consensus changes do not generate Kubernetes watch events.
 			// A refusal that has not changed since the last pass is waiting
@@ -470,9 +595,8 @@ func (r *ShardReconciler) Reconcile(
 				result.RequeueAfter = requeue
 			}
 		}()
-		// Each pool/cell writes RollingUpdate for itself and the last one
-		// reconciled wins, so the condition can pass through other states
-		// within one pass. Its transition time must follow only a change in
+		// Each pool/cell writes RollingUpdate as it is reconciled, so the
+		// condition can pass through other states within one pass. Its transition time must follow only a change in
 		// the final status, or every pass writes status and the Shard's own
 		// watch requeues it at once.
 		var rollingBefore *metav1.Condition
@@ -496,6 +620,7 @@ func (r *ShardReconciler) Reconcile(
 			}
 		}
 		finishRollingUpdateCondition(&shard.Status.Conditions, rollout, rollingBefore)
+		deferredCreate = rollout.createFailure
 		childSpan.End()
 	}
 
@@ -526,6 +651,13 @@ func (r *ShardReconciler) Reconcile(
 	dataPlaneCtx, dataPlaneCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dataPlaneCancel()
 	result, err = r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
+	if err == nil && deferredCreate != nil {
+		monitoring.RecordSpanError(span, deferredCreate)
+		logger.Error(deferredCreate, "Failed to create a pool pod or claim")
+		r.Recorder.Eventf(shard, "Warning", "FailedApply",
+			"Failed to reconcile pool: %v", deferredCreate)
+		return deferredCreateResult(result, rollout.waitingForRecovery, deferredCreate)
+	}
 	if err == nil && !shard.Status.PoolsReady &&
 		(result.RequeueAfter == 0 || result.RequeueAfter > stuckPodsRefreshInterval) {
 		result.RequeueAfter = stuckPodsRefreshInterval
@@ -753,6 +885,19 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 	if len(opts) > 0 {
 		controllerOpts = opts[0]
 	}
+	// The limiter controller-runtime would install, wrapped so that a Shard
+	// waiting on a quota is retried on its quota schedule (see
+	// quotaRetryLimiter).
+	if controllerOpts.RateLimiter == nil {
+		controllerOpts.RateLimiter = workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](
+			5*time.Millisecond,
+			1000*time.Second,
+		)
+	}
+	controllerOpts.RateLimiter = quotaRetryLimiter{
+		TypedRateLimiter: controllerOpts.RateLimiter, waiting: &r.quotaWaiting, now: r.now,
+	}
+	r.retryLimiter = controllerOpts.RateLimiter
 
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.Shard{}).
@@ -774,6 +919,13 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 		Watches(
 			&storagev1.StorageClass{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueFromStorageClass),
+		).
+		// A create that a ResourceQuota has no room for succeeds once the
+		// quota changes, and nothing else the Shard watches changes with it.
+		Watches(
+			&corev1.ResourceQuota{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueQuotaWaiters),
+			builder.WithPredicates(quotaMakesRoom(&r.quotaWaiting)),
 		)
 
 	return r.Gate.Wire(b, mgr, func() client.ObjectList {

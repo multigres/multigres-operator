@@ -59,8 +59,10 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 	ctx context.Context,
 	oldObj, newObj runtime.Object,
 ) (admission.Warnings, error) {
+	var liteBackupWarnings admission.Warnings
 	if oldCluster, ok := oldObj.(*multigresv1alpha1.MultigresCluster); ok {
 		if newCluster, ok := newObj.(*multigresv1alpha1.MultigresCluster); ok {
+			liteBackupWarnings = liteShardBackupWarnings(oldCluster, newCluster)
 			if err := v.validateBackupDefaultUpdate(ctx, oldCluster, newCluster); err != nil {
 				return nil, err
 			}
@@ -83,10 +85,11 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 			}
 		}
 	}
-	warnings, err := v.validate(ctx, newObj)
+	warnings, err := v.validateUpdate(ctx, oldObj, newObj)
 	if err != nil {
 		return warnings, err
 	}
+	warnings = append(warnings, liteBackupWarnings...)
 	shrinkWarnings, shrinkErr := validateNoStorageShrink(oldObj, newObj)
 	warnings = append(warnings, shrinkWarnings...)
 	if shrinkErr != nil {
@@ -108,6 +111,16 @@ func (v *MultigresClusterValidator) ValidateDelete(
 func (v *MultigresClusterValidator) validate(
 	ctx context.Context,
 	obj runtime.Object,
+) (admission.Warnings, error) {
+	return v.validateUpdate(ctx, nil, obj)
+}
+
+// validateUpdate validates obj; oldObj, when set, is the stored object, whose
+// existing sidecar configuration errors are tolerated (see
+// resolver.ValidateClusterLogicUpdate).
+func (v *MultigresClusterValidator) validateUpdate(
+	ctx context.Context,
+	oldObj, obj runtime.Object,
 ) (admission.Warnings, error) {
 	start := time.Now()
 	ctx, span := monitoring.StartChildSpan(ctx, "Webhook.Validate")
@@ -148,7 +161,7 @@ func (v *MultigresClusterValidator) validate(
 	// 3. Deep Logic Validation (Safety Checks)
 	{
 		_, childSpan := monitoring.StartChildSpan(ctx, "Webhook.ValidateLogic")
-		if warnings, err := v.validateLogic(ctx, cluster); err != nil {
+		if warnings, err := v.validateLogic(ctx, oldObj, cluster); err != nil {
 			monitoring.RecordSpanError(childSpan, err)
 			childSpan.End()
 			monitoring.RecordWebhookRequest("VALIDATE", "MultigresCluster", err, time.Since(start))
@@ -178,11 +191,13 @@ func (v *MultigresClusterValidator) validateTemplatesExist(
 
 func (v *MultigresClusterValidator) validateLogic(
 	ctx context.Context,
+	oldObj runtime.Object,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (admission.Warnings, error) {
+	old, _ := oldObj.(*multigresv1alpha1.MultigresCluster)
 	// Create an ephemeral resolver for validation
 	res := resolver.NewResolver(v.Client, cluster.Namespace)
-	return res.ValidateClusterLogic(ctx, cluster)
+	return res.ValidateClusterLogicUpdate(ctx, old, cluster)
 }
 
 // validateNoStorageShrink compares pool storage sizes between old and new cluster
@@ -411,9 +426,10 @@ func (v *TemplateValidator) validateWrite(ctx context.Context, obj runtime.Objec
 
 // validateTemplateContent validates what a template can guarantee on its own,
 // where the CRD schema cannot express it: a ShardTemplate's pool name map
-// keys and postgresConfig parameters, and a CellTemplate's gateway buffer
-// intra-field rules and resource requirements (resources merge whole-block,
-// so a self-inconsistent block is wrong no matter what consumers add).
+// keys, pgBackRest sidecar resource requirements and postgresConfig
+// parameters, and a CellTemplate's gateway buffer intra-field rules and
+// resource requirements (resources merge whole-block, so a self-inconsistent
+// block is wrong no matter what consumers add).
 // Cross-field buffer checks that depend on fields a consuming cluster may
 // supply are left to the resolved-config paths (cluster dry-run and
 // validateCellTemplateConsumers).
@@ -424,8 +440,14 @@ func (v *TemplateValidator) validateTemplateContent(obj runtime.Object) error {
 		if !ok {
 			return nil
 		}
-		for poolName := range tpl.Spec.Pools {
+		for poolName, pool := range tpl.Spec.Pools {
 			if err := resolver.ValidatePoolName(poolName); err != nil {
+				return err
+			}
+			if err := resolver.ValidateContainerResources(
+				pool.PgBackRestResources,
+				fmt.Sprintf("ShardTemplate '%s' pool '%s' pgbackrest", tpl.Name, poolName),
+			); err != nil {
 				return err
 			}
 		}

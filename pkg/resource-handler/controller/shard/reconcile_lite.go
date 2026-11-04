@@ -138,7 +138,8 @@ func (r *ShardReconciler) reconcileLite(
 		return ctrl.Result{}, err
 	}
 
-	if err := r.ensureLitePod(ctx, shard, poolName, cellName, poolSpec); err != nil {
+	unanswered, err := r.ensureLitePod(ctx, shard, poolName, cellName, poolSpec)
+	if err != nil {
 		monitoring.RecordSpanError(span, err)
 		r.Recorder.Eventf(shard, "Warning", "FailedApply", "Failed to reconcile Lite pod: %v", err)
 		return ctrl.Result{}, err
@@ -148,14 +149,16 @@ func (r *ShardReconciler) reconcileLite(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if wait > 0 {
-		return ctrl.Result{RequeueAfter: wait}, nil
+	primary := meta.IsStatusConditionTrue(
+		shard.Status.Conditions, multigresv1alpha1.ConditionPrimary,
+	)
+	requeue := liteRequeue(wait, primary, pvcWait)
+	if unanswered && requeue == 0 {
+		// Nothing else brings the shard back, so it comes back when its
+		// question may be asked again.
+		requeue = r.liteUnanswered.untilDue(client.ObjectKeyFromObject(shard), r.now())
 	}
-
-	if !meta.IsStatusConditionTrue(shard.Status.Conditions, multigresv1alpha1.ConditionPrimary) {
-		return ctrl.Result{RequeueAfter: litePrimaryRequeue}, nil
-	}
-	return ctrl.Result{RequeueAfter: pvcWait}, nil
+	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
 // reconcileLitePVCMetadata removes the GC marker from the data PVC before
@@ -209,9 +212,10 @@ func litePool(
 
 // registerLiteDatabase writes the shard's database record to the global
 // topology with RegisterDatabaseFromSpec, built from the shard: its cells, the
-// backup location from spec.backup and the durability policy. In lite mode the
-// Shard owns this record because its resolved backup and pool cells may differ
-// from the cluster defaults, and the cluster controller skips it. It reports
+// backup location from spec.sidecarBackupLocation (the one the sidecar renders)
+// and the durability policy. In lite mode the Shard owns this record because
+// its pool cells may differ from the cluster defaults, and the cluster
+// controller skips it. It reports
 // false when the topology server cannot be reached yet, so the caller requeues
 // as the data-plane phase does.
 func (r *ShardReconciler) registerLiteDatabase(
@@ -240,7 +244,7 @@ func (r *ShardReconciler) registerLiteDatabase(
 	}
 	if err := topo.RegisterDatabaseFromSpec(
 		ctx, store, r.Recorder, shard, dbConfig, topo.CollectCells(shard),
-		shard.Spec.Backup, shard.Spec.DurabilityPolicy,
+		shard.Spec.SidecarBackupLocation, shard.Spec.DurabilityPolicy,
 	); err != nil {
 		if isLiteTopoUnavailable(err) {
 			logger.Info("Topology server unavailable; requeueing", "error", err.Error())
@@ -294,7 +298,23 @@ func (r *ShardReconciler) recoverLitePod(
 	} else if pod.Status.Phase != corev1.PodFailed && pod.Status.Phase != corev1.PodSucceeded {
 		return nil
 	}
-	return r.ensureLitePod(ctx, shard, poolName, cellName, poolSpec)
+	// The caller comes back when topology does, and asks again then about
+	// a replacement that got no answer.
+	_, err := r.ensureLitePod(ctx, shard, poolName, cellName, poolSpec)
+	return err
+}
+
+// liteRequeue is when a Lite shard is reconciled again without an event: for
+// a reload still in progress, for a pod that is not primary yet, or for its
+// data PVC, in that order of precedence. Zero means none of them applies.
+func liteRequeue(reloadWait time.Duration, primary bool, pvcWait time.Duration) time.Duration {
+	switch {
+	case reloadWait > 0:
+		return reloadWait
+	case !primary:
+		return litePrimaryRequeue
+	}
+	return pvcWait
 }
 
 // ensureLiteDataPVC creates or expands the Lite pod's data PVC. It never
@@ -352,7 +372,7 @@ func (r *ShardReconciler) ensureLiteDataPVC(
 	if len(poolSpec.Storage.AccessModes) == 0 {
 		pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOncePod}
 	}
-	if err := r.Create(ctx, pvc); err != nil && !apierrors.IsAlreadyExists(err) {
+	if err := r.createUnderQuota(ctx, shard, pvc); err != nil && !apierrors.IsAlreadyExists(err) {
 		return 0, fmt.Errorf("failed to create PVC %s: %w", name, err)
 	}
 	log.FromContext(ctx).Info("Created Lite data PVC", "pvc", name)
@@ -362,19 +382,24 @@ func (r *ShardReconciler) ensureLiteDataPVC(
 // ensureLitePod creates the Lite pod when it is missing and deletes it when it
 // is terminal, its spec-hash no longer matches, or its data PVC requires a
 // filesystem resize. The next reconcile creates it again. There is no
-// disruption preflight and no drain: the pod is the shard's only pooler, so
-// there is no cohort to protect.
+// health preflight and no drain: the pod is the shard's only pooler, so
+// there is no cohort to protect. The one check before the delete is that the
+// API server accepts the pod that will be created in its place. When the
+// API server does not answer that question, the pod is kept and unanswered
+// is true: the delete would be an outage, and a question that was not
+// answered is no reason for one. A question that cannot be asked at all
+// does not keep the pod (see replacementProceeds).
 func (r *ShardReconciler) ensureLitePod(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	poolName, cellName string,
 	poolSpec multigresv1alpha1.PoolSpec,
-) error {
+) (unanswered bool, err error) {
 	logger := log.FromContext(ctx)
 
 	desired, err := r.buildLitePod(shard, poolName, cellName, poolSpec)
 	if err != nil {
-		return fmt.Errorf("failed to build Lite pod: %w", err)
+		return false, fmt.Errorf("failed to build Lite pod: %w", err)
 	}
 
 	existing := &corev1.Pod{}
@@ -382,36 +407,37 @@ func (r *ShardReconciler) ensureLitePod(
 	if apierrors.IsNotFound(err) {
 		// The shard's only pooler would start on storage that is going away.
 		if claim, err := r.claimPodVolumes(ctx, shard, desired); err != nil {
-			return err
+			return false, err
 		} else if claim != "" {
 			logger.Info("Not creating the Lite pod while a PVC it mounts is being deleted",
 				"pvc", claim)
-			return nil
+			return false, nil
 		}
-		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create pod %s: %w", desired.Name, err)
+		if err := r.createUnderQuota(ctx, shard, desired); err != nil &&
+			!apierrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("failed to create pod %s: %w", desired.Name, err)
 		}
 		logger.Info("Created Lite pod", "pod", desired.Name)
 		r.Recorder.Eventf(shard, "Normal", "PodCreated", "Created pod %s", desired.Name)
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return fmt.Errorf("failed to get pod %s: %w", desired.Name, err)
+		return false, fmt.Errorf("failed to get pod %s: %w", desired.Name, err)
 	}
 
 	// A pod that is already terminating is replaced once it is gone; its
 	// deletion requeues the shard.
 	if !existing.DeletionTimestamp.IsZero() {
-		return nil
+		return false, nil
 	}
 	// The pod's own references, not the desired pod's: those are what hold a
 	// PVC being deleted, and its data, in place. See terminating_pvc.go.
 	if claim, err := podTerminatingClaim(ctx, r.disruptionReader(), existing); err != nil {
-		return err
+		return false, err
 	} else if claim != "" {
 		logger.Info("Leaving the Lite pod alone while a PVC it mounts is being deleted",
 			"pvc", claim)
-		return nil
+		return false, nil
 	}
 	reason := "apply a spec change"
 	if existing.Status.Phase == corev1.PodFailed || existing.Status.Phase == corev1.PodSucceeded {
@@ -421,7 +447,7 @@ func (r *ShardReconciler) ensureLitePod(
 		// Wait for a replacement to finish mounting its volume before another
 		// resize restart, as the regular pool path waits for healthy pods.
 		if !isPodReady(existing) {
-			return nil
+			return false, nil
 		}
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, 0)
 		pvc := &corev1.PersistentVolumeClaim{}
@@ -431,17 +457,27 @@ func (r *ShardReconciler) ensureLitePod(
 			pvc,
 		); err != nil {
 			if apierrors.IsNotFound(err) {
-				return nil
+				return false, nil
 			}
-			return fmt.Errorf("failed to get PVC %s for filesystem resize: %w", pvcName, err)
+			return false, fmt.Errorf("failed to get PVC %s for filesystem resize: %w", pvcName, err)
 		}
 		if !pvcNeedsFilesystemResize(
 			map[string]*corev1.PersistentVolumeClaim{pvcName: pvc},
 			pvcName,
 		) {
-			return nil
+			return false, nil
 		}
 		reason = "complete data PVC filesystem expansion"
+	}
+
+	// The pod is the shard's only one, so it is deleted only for a
+	// replacement the API server says it will take.
+	verdict, err := r.judgeReplacement(ctx, shard, existing, desired)
+	if err != nil {
+		return false, err
+	}
+	if !replacementProceeds(verdict, shard, existing.Name, true) {
+		return verdict == replacementUnanswered, nil
 	}
 
 	logger.Info(
@@ -456,7 +492,7 @@ func (r *ShardReconciler) ensureLitePod(
 		existing,
 		client.Preconditions{UID: &existing.UID},
 	); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete pod %s: %w", existing.Name, err)
+		return false, fmt.Errorf("failed to delete pod %s: %w", existing.Name, err)
 	}
 	r.Recorder.Eventf(
 		shard,
@@ -466,7 +502,7 @@ func (r *ShardReconciler) ensureLitePod(
 		existing.Name,
 		reason,
 	)
-	return nil
+	return false, nil
 }
 
 // reconcileLiteReload uses the same verified ReloadConfig path as a full shard,

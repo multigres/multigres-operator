@@ -497,6 +497,34 @@ func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
 	assertPoolIdentity("multipooler after source mutation", got.Multipooler, 1000, 2002)
 }
 
+func TestMergePoolSpec_PgBackRestResources(t *testing.T) {
+	base := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+	}
+	if got := mergePoolSpec(
+		base,
+		multigresv1alpha1.PoolSpec{},
+	); !got.PgBackRestResources.Requests.Cpu().
+		Equal(resource.MustParse("1")) {
+		t.Errorf("an empty override dropped the base: %v", got.PgBackRestResources)
+	}
+	override := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+		},
+	}
+	got := mergePoolSpec(base, override)
+	if !got.PgBackRestResources.Limits.Memory().Equal(resource.MustParse("2Gi")) {
+		t.Errorf("override not applied: %v", got.PgBackRestResources)
+	}
+	override.PgBackRestResources.Limits[corev1.ResourceMemory] = resource.MustParse("9Gi")
+	if !got.PgBackRestResources.Limits.Memory().Equal(resource.MustParse("2Gi")) {
+		t.Errorf("merge shares the override's map: %v", got.PgBackRestResources)
+	}
+}
+
 func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
 	t.Parallel()
 
@@ -1657,5 +1685,32 @@ func TestResolveShard_LiteMode(t *testing.T) {
 				t.Errorf("replicasPerCell = %v, want %d", pool.ReplicasPerCell, tc.wantPoolReplicas)
 			}
 		})
+	}
+}
+
+// A pool whose pgbackrestResources block has no entry, however it was
+// written, resolves to no block: an empty-map block clears what it overrides
+// and then leaves nothing for a child resource's apply to carry.
+func TestDefaultPoolSpec_EmptyPgBackRestResourcesIsNoBlock(t *testing.T) {
+	base := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+	}
+	for name, cleared := range map[string]corev1.ResourceRequirements{
+		"empty limits":   {Limits: corev1.ResourceList{}},
+		"empty requests": {Requests: corev1.ResourceList{}},
+		"empty claims":   {Claims: []corev1.ResourceClaim{}},
+	} {
+		got := mergePoolSpec(base, multigresv1alpha1.PoolSpec{PgBackRestResources: cleared})
+		defaultPoolSpec(&got)
+		if !isResourcesZero(got.PgBackRestResources) {
+			t.Errorf("%s: resolved to %#v, want no block", name, got.PgBackRestResources)
+		}
+	}
+	kept := base
+	defaultPoolSpec(&kept)
+	if !kept.PgBackRestResources.Requests.Cpu().Equal(resource.MustParse("1")) {
+		t.Errorf("a block with entries was changed: %v", kept.PgBackRestResources)
 	}
 }

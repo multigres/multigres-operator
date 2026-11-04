@@ -1055,7 +1055,7 @@ This means the operator sees a pod that is `NOT_SERVING` but has no way to disti
 
 ### Gap 7: pgBackRest TLS Certificate Handling
 
-**Problem**: The multipooler's pgBackRest server requires TLS certificates for inter-node communication. Specifically, when a **standby** takes a backup, it connects to the pgBackRest TLS server running on the **primary** via `pg2-host-type=tls`, passing `--pg2-host-cert-file`, `--pg2-host-key-file`, and `--pg2-host-ca-file`. This requires server cert/key on the primary and matching client cert/key + CA cert on the standby. Without TLS certs provisioned, standby-initiated backups fail. In our current kind setup, this isn't an issue because we only run single-replica shards (primary takes its own backup locally), but it is a **blocker for multi-replica production deployments**.
+**Problem**: The pgBackRest server (run by the `pgbackrestd` sidecar) requires TLS certificates for inter-node communication. Specifically, when a **standby** takes a backup, it connects to the pgBackRest TLS server running on the **primary** via `pg2-host-type=tls`, passing `--pg2-host-cert-file`, `--pg2-host-key-file`, and `--pg2-host-ca-file`. This requires server cert/key on the primary and matching client cert/key + CA cert on the standby. Without TLS certs provisioned, standby-initiated backups fail. In our current kind setup, this isn't an issue because we only run single-replica shards (primary takes its own backup locally), but it is a **blocker for multi-replica production deployments**.
 
 **Recommended owner**: **Operator**
 
@@ -1078,8 +1078,8 @@ The generic `pkg/cert` module (previously `pkg/webhook/cert/`) is now fully oper
 
 - **Expected cert files on disk**: `pgbackrest.crt`, `pgbackrest.key`, `ca.crt` in a configurable `CertDir`
 - **Auth model**: `tls-server-auth=pgbackrest=*` — pgBackRest authorizes by Common Name. Any cert with CN `pgbackrest` is accepted. This means **all pods in a shard can share the same cert** — per-pod certs are not required.
-- **ExtKeyUsage**: `ServerAuth + ClientAuth` (line 127 of upstream `tls.go`). Both sides (pgctld server on primary, multipooler client on standby) use the same cert for mutual TLS.
-- **Command-line flags**: multipooler accepts `--pgbackrest-cert-file`, `--pgbackrest-key-file`, `--pgbackrest-ca-file`; pgctld reads from `CertDir` config.
+- **ExtKeyUsage**: `ServerAuth + ClientAuth` (line 127 of upstream `tls.go`). Both sides (the sidecar's server on the primary, its client on the standby) use the same cert for mutual TLS.
+- **Command-line flags**: the `pgbackrestd` sidecar reads the directory from `--tls-cert-dir`; multipooler and pgctld take no certificate flags.
 
 **Current state: ✅ Fully Implemented**
 
@@ -1100,7 +1100,7 @@ The operator now fully supports pgBackRest TLS certificates with a dual-mode des
 Both modes use a unified volume mounting strategy:
 - The operator creates a `projected` volume referencing the CA Secret and the TLS Secret.
 - The TLS Secret items (`tls.crt` and `tls.key`) are explicitly renamed in the projection to `pgbackrest.crt` and `pgbackrest.key`.
-- This renaming is necessary because pgctld strictly expects these specific filenames, while cert-manager outputs `tls.crt`/`tls.key`. By using projected volumes, the operator provides seamless cert-manager compatibility without requiring users to manually rename keys.
+- This renaming is necessary because pgbackrestd strictly expects these specific filenames, while cert-manager outputs `tls.crt`/`tls.key`. By using projected volumes, the operator provides seamless cert-manager compatibility without requiring users to manually rename keys.
 
 **CRD Additions**:
 - `spec.backup.pgbackrestTLS.secretName` (optional) — reference to a user-provided TLS Secret. If unset, operator auto-generates.

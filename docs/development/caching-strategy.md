@@ -75,6 +75,7 @@ Since ConfigMaps are generally lower volume and lower security risk than Secrets
 | **Pod** | All Namespaces | `managed-by=multigres` | OOM prevention; operator only manages its own pool pods. |
 | **Pod** | Operator NS | **NONE (All)** | Self-discovery. |
 | **ConfigMap** | All Namespaces | **NONE (All)** | User Configs (postgresql.conf). |
+| **ResourceQuota** | All Namespaces | **NONE (All)**, reduced to limits and usage | The shard controller retries an over-quota create when a quota gains room. A transform drops labels, annotations and managedFields. |
 
 ### Laptop-Mode Cache Scoping
 

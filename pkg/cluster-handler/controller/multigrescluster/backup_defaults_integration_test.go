@@ -41,8 +41,9 @@ func TestBackupPrefixesWithoutWebhook(t *testing.T) {
 						Backup: &multigresv1alpha1.BackupConfig{
 							Type: multigresv1alpha1.BackupTypeS3,
 							S3: &multigresv1alpha1.S3BackupConfig{
-								Bucket: "shared",
-								Region: "us-east-1",
+								Bucket:            "shared",
+								Region:            "us-east-1",
+								CredentialsSecret: "s3-creds",
 							},
 						},
 					},
@@ -92,6 +93,9 @@ func TestBackupPrefixesWithoutWebhook(t *testing.T) {
 					group := &groups.Items[0]
 					return group.Spec.Backup != nil && group.Spec.Backup.S3 != nil &&
 						group.Spec.Backup.S3.KeyPrefix == want &&
+						group.Spec.SidecarBackupLocation != nil &&
+						group.Spec.SidecarBackupLocation.S3 != nil &&
+						group.Spec.SidecarBackupLocation.S3.KeyPrefix == want &&
 						len(group.Spec.Shards) == 1 &&
 						group.Spec.Shards[0].Backup.S3.KeyPrefix == want
 				}, testTimeout, 100*time.Millisecond)
