@@ -221,8 +221,8 @@ func TestWriteKubeconfigFile(t *testing.T) {
 	}
 }
 
-// TestSetUpClient tests that t.Fatal is called correctly.
-func TestSetUpClient(t *testing.T) {
+// TestSetUpClient_Internal tests that t.Fatal is called correctly.
+func TestSetUpClient_Internal(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
@@ -231,7 +231,7 @@ func TestSetUpClient(t *testing.T) {
 	}{
 		"success - valid config and scheme": {
 			setupFunc: func(t testing.TB) (*rest.Config, *runtime.Scheme) {
-				cfg := SetUpEnvtest(t)
+				cfg := &rest.Config{Host: "https://127.0.0.1:1"}
 				scheme := runtime.NewScheme()
 				return cfg, scheme
 			},
@@ -253,10 +253,14 @@ func TestSetUpClient(t *testing.T) {
 			mock := &mockTB{TB: t}
 			cfg, scheme := tc.setupFunc(mock)
 
-			SetUpClient(mock, cfg, scheme)
+			client := SetUpClient(mock, cfg, scheme)
 
 			if mock.fatalCalled != tc.wantFatal {
 				t.Errorf("fatalCalled = %v, want %v", mock.fatalCalled, tc.wantFatal)
+			}
+
+			if !tc.wantFatal && client == nil {
+				t.Error("SetUpClient() returned nil on success")
 			}
 		})
 	}
