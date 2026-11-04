@@ -16,23 +16,31 @@ import (
 func TestSetClusterInfo(t *testing.T) {
 	t.Cleanup(func() { clusterInfo.Reset() })
 
-	SetClusterInfo("test-cluster", "default", "Healthy", true)
+	SetClusterInfo("test-cluster", "default", "Healthy", "distributed", true)
 
-	val := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true")
+	val := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true", "distributed")
 	if val != 1 {
 		t.Errorf("expected clusterInfo gauge to be 1, got %f", val)
 	}
 
 	// Phase change should clean up old label set, initialized stays true
-	SetClusterInfo("test-cluster", "default", "Degraded", true)
+	SetClusterInfo("test-cluster", "default", "Degraded", "distributed", true)
 
-	val = gaugeValue(t, clusterInfo, "test-cluster", "default", "Degraded", "true")
+	val = gaugeValue(t, clusterInfo, "test-cluster", "default", "Degraded", "true", "distributed")
 	if val != 1 {
 		t.Errorf("expected clusterInfo gauge for Degraded to be 1, got %f", val)
 	}
 
 	// Old phase must have been cleaned up (value 0)
-	oldVal := gaugeValue(t, clusterInfo, "test-cluster", "default", "Healthy", "true")
+	oldVal := gaugeValue(
+		t,
+		clusterInfo,
+		"test-cluster",
+		"default",
+		"Healthy",
+		"true",
+		"distributed",
+	)
 	if oldVal != 0 {
 		t.Error("old phase label set should have been cleaned up")
 	}
@@ -63,9 +71,9 @@ func TestForgetCluster(t *testing.T) {
 		clusterShardsTotal.Reset()
 	})
 
-	SetClusterInfo("gone", "default", "Progressing", true)
+	SetClusterInfo("gone", "default", "Progressing", "distributed", true)
 	SetClusterTopology("gone", "default", 3, 6)
-	SetClusterInfo("kept", "default", "Healthy", true)
+	SetClusterInfo("kept", "default", "Healthy", "lite", true)
 	SetClusterTopology("kept", "default", 1, 2)
 
 	ForgetCluster("gone", "default")
@@ -78,7 +86,7 @@ func TestForgetCluster(t *testing.T) {
 			t.Errorf("expected only the kept cluster's series to remain, got %d series", n)
 		}
 	}
-	if val := gaugeValue(t, clusterInfo, "kept", "default", "Healthy", "true"); val != 1 {
+	if val := gaugeValue(t, clusterInfo, "kept", "default", "Healthy", "true", "lite"); val != 1 {
 		t.Errorf("expected kept cluster's clusterInfo to be 1, got %f", val)
 	}
 }
@@ -327,7 +335,7 @@ func TestForgetShard(t *testing.T) {
 		populate("cluster-1", "shard-10", "default")
 		// Same shard name in another namespace.
 		populate("cluster-1", "shard-1", "other")
-		SetClusterInfo("cluster-1", "default", "Ready", true)
+		SetClusterInfo("cluster-1", "default", "Ready", "distributed", true)
 		SetClusterTopology("cluster-1", "default", 1, 4)
 		SetCellGatewayReplicas("zone-a", "default", 2, 2)
 		SetTopoServerReplicas("topo-1", "default", 3, 3)
