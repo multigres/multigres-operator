@@ -37,6 +37,47 @@ func TestDefaultsFromEnv(t *testing.T) {
 	})
 }
 
+func TestPgBackRestdImage(t *testing.T) {
+	if CompiledDefaults().PgBackRestd != "" {
+		t.Errorf("default sets must not carry pgbackrestd, got %s", CompiledDefaults().PgBackRestd)
+	}
+	t.Setenv("MULTIGRES_IMAGE_PGBACKRESTD", "custom/multigres:v9")
+	if set, overrides := DefaultsFromEnv(); set.PgBackRestd != "" || len(overrides) != 0 {
+		t.Errorf(
+			"an environment variable must not set an independent pgbackrestd default: %v",
+			overrides,
+		)
+	}
+
+	if FromSpec(multigresv1alpha1.ClusterImages{PgBackRestd: "x"}).PgBackRestd != "x" {
+		t.Error("FromSpec drops pgbackrestd")
+	}
+
+	// Revision identifies the default set, which never carries pgbackrestd, so
+	// existing acknowledgedRevision values stay valid.
+	changed := CompiledDefaults()
+	changed.PgBackRestd = "other/multigres:v1"
+	if Revision(changed) != Revision(CompiledDefaults()) {
+		t.Error("revision must ignore pgbackrestd")
+	}
+
+	spec := multigresv1alpha1.ClusterImages{}
+	Complete(&spec, CompiledDefaults())
+	if spec.PgBackRestd != "" {
+		t.Errorf("Complete must not fill pgbackrestd: %q", spec.PgBackRestd)
+	}
+	DerivePgBackRestd(&spec)
+	if spec.PgBackRestd != spec.Multipooler || spec.Multipooler == "" {
+		t.Errorf("DerivePgBackRestd = %q, want multipooler %q", spec.PgBackRestd, spec.Multipooler)
+	}
+
+	explicit := multigresv1alpha1.ClusterImages{Multipooler: "m", PgBackRestd: "x"}
+	DerivePgBackRestd(&explicit)
+	if explicit.PgBackRestd != "x" {
+		t.Errorf("explicit pgbackrestd overwritten: %q", explicit.PgBackRestd)
+	}
+}
+
 func TestRevision(t *testing.T) {
 	base := CompiledDefaults()
 	rev := Revision(base)

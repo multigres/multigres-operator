@@ -155,6 +155,7 @@ func TestShardReconciliation(t *testing.T) {
 					TableGroupName: "default",
 					ShardName:      "0",
 					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
 						Multiorch:   "ghcr.io/multigres/multigres:main",
 						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
@@ -410,6 +411,7 @@ func TestShardReconciliation(t *testing.T) {
 						Key:  shardcontroller.PostgresInitSecretsFileName,
 					},
 					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
 						Multiorch:   "ghcr.io/multigres/multigres:main",
 						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
@@ -573,6 +575,7 @@ func TestShardReconciliation(t *testing.T) {
 						WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 					},
 					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
 						Multiorch:   "ghcr.io/multigres/multigres:main",
 						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
@@ -734,6 +737,7 @@ func TestShardReconciliation(t *testing.T) {
 					TableGroupName: "default",
 					ShardName:      "0",
 					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
 						Multiorch:   "ghcr.io/multigres/multigres:main",
 						Multipooler: "ghcr.io/multigres/multigres:main",
 						Postgres:    "postgres:17",
@@ -1183,8 +1187,10 @@ func TestShardReconciliation(t *testing.T) {
 						filteredResources = append(filteredResources, pvc)
 					}
 
-					// Shared backup PVC is per-shard, not per-pod or per-cell.
-					if tc.shard.Spec.Backup != nil && tc.shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeFilesystem && !backupPVCAdded {
+					// Shared backup PVC is per-shard, not per-pod or per-cell. The
+					// sidecar's default location is a filesystem repository, so
+					// a shard with no backup config still gets one.
+					if loc := tc.shard.Spec.SidecarBackupLocation; (loc == nil || loc.Type == multigresv1alpha1.BackupTypeFilesystem) && !backupPVCAdded {
 						backupPVC, err := shardcontroller.BuildSharedBackupPVC(tc.shard, shardcontroller.ShouldDeleteShardLevelPVCOnRemoval(tc.shard), mgr.GetScheme())
 						if err != nil {
 							t.Fatalf("Failed to build backup pvc: %v", err)
@@ -1320,6 +1326,7 @@ func TestReconcileDeletions(t *testing.T) {
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
 				Multiorch:   "ghcr.io/multigres/multigres:main",
 				Multipooler: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",
@@ -1465,6 +1472,7 @@ func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
 				Multiorch:   "ghcr.io/multigres/multigres:main",
 				Multipooler: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",
@@ -1604,6 +1612,7 @@ func testReloadVsRestartRollout(
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
 				Multiorch:   "ghcr.io/multigres/multigres:main",
 				Multipooler: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",
@@ -2032,6 +2041,7 @@ func newMetricsCleanupShard(name, shardName string) *multigresv1alpha1.Shard {
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
 				Multiorch:   "ghcr.io/multigres/multigres:main",
 				Multipooler: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",
@@ -2092,8 +2102,10 @@ func TestShardMetricsCleanupAfterDeletion(t *testing.T) {
 		namespace = "default"
 		cluster   = "test-cluster"
 	)
-	gone := []string{"metrics-cleanup-gone-0", "metrics-cleanup-gone-1", "metrics-cleanup-gone-2",
-		"metrics-cleanup-gone-3"}
+	gone := []string{
+		"metrics-cleanup-gone-0", "metrics-cleanup-gone-1", "metrics-cleanup-gone-2",
+		"metrics-cleanup-gone-3",
+	}
 	kept := []string{"metrics-cleanup-kept-0", "metrics-cleanup-kept-1"}
 	all := append(append([]string{}, gone...), kept...)
 	t.Cleanup(func() {
@@ -2181,6 +2193,7 @@ func gatingTestShard(name, clusterName string) *multigresv1alpha1.Shard {
 				Cells: []multigresv1alpha1.CellName{"zone1"},
 			},
 			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
 				Multiorch:   "ghcr.io/multigres/multigres:main",
 				Multipooler: "ghcr.io/multigres/multigres:main",
 				Postgres:    "postgres:17",

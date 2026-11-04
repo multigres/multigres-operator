@@ -275,6 +275,9 @@ func TestBuildShardPodDisruptionBudget(t *testing.T) {
 			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "postgres",
 			TableGroupName: "default",
 			ShardName:      "0-inf",

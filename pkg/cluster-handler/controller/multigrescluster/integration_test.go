@@ -587,6 +587,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Images: multigresv1alpha1.ShardImages{
 							Multiorch:        "orch:latest",
 							Multipooler:      "pooler:latest",
+							PgBackRestd:      "pooler:latest",
 							Postgres:         "postgres:15",
 							ImagePullPolicy:  corev1.PullAlways,
 							ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull-secret"}},
@@ -629,6 +630,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
+							Type:       multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+						},
+						SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 							Type:       multigresv1alpha1.BackupTypeFilesystem,
 							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
 						},
@@ -957,6 +962,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Images: multigresv1alpha1.ShardImages{
 							Multiorch:       resolver.DefaultMultiorchImage,
 							Multipooler:     resolver.DefaultMultipoolerImage,
+							PgBackRestd:     resolver.DefaultMultipoolerImage,
 							Postgres:        resolver.DefaultPostgresImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
@@ -1003,6 +1009,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
+							Type:       multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+						},
+						SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 							Type:       multigresv1alpha1.BackupTypeFilesystem,
 							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
 						},
@@ -1326,6 +1336,7 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 						Images: multigresv1alpha1.ShardImages{
 							Multiorch:       resolver.DefaultMultiorchImage,
 							Multipooler:     resolver.DefaultMultipoolerImage,
+							PgBackRestd:     resolver.DefaultMultipoolerImage,
 							Postgres:        resolver.DefaultPostgresImage,
 							ImagePullPolicy: resolver.DefaultImagePullPolicy,
 						},
@@ -1372,6 +1383,10 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 							WhenScaled:  multigresv1alpha1.DeletePVCRetentionPolicy,
 						},
 						Backup: &multigresv1alpha1.BackupConfig{
+							Type:       multigresv1alpha1.BackupTypeFilesystem,
+							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
+						},
+						SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 							Type:       multigresv1alpha1.BackupTypeFilesystem,
 							Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: resolver.DefaultBackupPath, Storage: multigresv1alpha1.StorageSpec{Size: resolver.DefaultBackupStorageSize}},
 						},

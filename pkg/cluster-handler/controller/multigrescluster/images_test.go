@@ -78,6 +78,13 @@ func olderApplied() multigresv1alpha1.ComponentImages {
 	}
 }
 
+// withPgBackRestd is the set as it appears in status.images.effective, which
+// alone carries the sidecar image, derived from the set's multipooler.
+func withPgBackRestd(set multigresv1alpha1.ComponentImages) multigresv1alpha1.ComponentImages {
+	set.PgBackRestd = set.Multipooler
+	return set
+}
+
 func mustJSON(t *testing.T, set multigresv1alpha1.ComponentImages) string {
 	t.Helper()
 	raw, err := json.Marshal(set)
@@ -95,6 +102,7 @@ func clusterImages(set multigresv1alpha1.ComponentImages) multigresv1alpha1.Clus
 		Multiorch:     set.Multiorch,
 		Multipooler:   set.Multipooler,
 		Multigateway:  set.Multigateway,
+		PgBackRestd:   set.PgBackRestd,
 	}
 }
 
@@ -168,7 +176,9 @@ func TestResolveImages(t *testing.T) {
 			t.Errorf("expected current default, got %s", cluster.Spec.Images.Postgres)
 		}
 		if cluster.Status.Images.Source != multigresv1alpha1.ImageSourceDefaults ||
-			cluster.Status.Images.Effective != testImagesConfig(images.UpdateImmediate).Defaults {
+			cluster.Status.Images.Effective != withPgBackRestd(
+				testImagesConfig(images.UpdateImmediate).Defaults,
+			) {
 			t.Errorf("unexpected effective image status: %+v", cluster.Status.Images)
 		}
 		if cond := pendingCond(cluster); cond == nil || cond.Status != metav1.ConditionFalse {
@@ -207,6 +217,111 @@ func TestResolveImages(t *testing.T) {
 		if cond == nil || cond.Status != metav1.ConditionTrue ||
 			cond.Reason != multigresv1alpha1.ReasonAwaitingAcknowledgement {
 			t.Errorf("expected ImageRolloutPending=True/AwaitingAcknowledgement, got %+v", cond)
+		}
+	})
+
+	t.Run(
+		"lazy record without pgbackrestd resolves it to the record's multipooler",
+		func(t *testing.T) {
+			// The record holds an older multipooler while the defaults moved on:
+			// pgbackrestd must follow the held multipooler, not the new default.
+			old := olderApplied()
+			cluster := newCluster(map[string]string{
+				metadata.AnnotationAppliedImages: mustJSON(t, old),
+			}, nil)
+			r := newHarness(t, images.UpdateLazy, cluster)
+
+			if err := r.resolveImages(context.Background(), cluster); err != nil {
+				t.Fatal(err)
+			}
+			if cluster.Spec.Images.PgBackRestd != old.Multipooler {
+				t.Errorf("pgbackrestd = %q, want record multipooler %q",
+					cluster.Spec.Images.PgBackRestd, old.Multipooler)
+			}
+			if cond := pendingCond(cluster); cond == nil || cond.Status != metav1.ConditionTrue {
+				t.Errorf("expected ImageRolloutPending=True while held, got %+v", cond)
+			}
+			if got := cluster.Annotations[metadata.AnnotationAppliedImages]; got != mustJSON(
+				t,
+				old,
+			) {
+				t.Errorf("record was rewritten: %s", got)
+			}
+		},
+	)
+
+	t.Run(
+		"operator upgrade moving multipooler moves pgbackrestd in the same step",
+		func(t *testing.T) {
+			cluster := newCluster(map[string]string{
+				metadata.AnnotationAppliedImages: mustJSON(t, olderApplied()),
+			}, nil)
+			cluster.Spec.ImageUpdatePolicy = &multigresv1alpha1.ImageUpdatePolicy{
+				AcknowledgedRevision: images.Revision(testImagesConfig(images.UpdateLazy).Defaults),
+			}
+			r := newHarness(t, images.UpdateLazy, cluster)
+
+			if err := r.resolveImages(context.Background(), cluster); err != nil {
+				t.Fatal(err)
+			}
+			want := testImagesConfig(images.UpdateLazy).Defaults.Multipooler
+			if cluster.Spec.Images.Multipooler != want || cluster.Spec.Images.PgBackRestd != want {
+				t.Errorf("multipooler=%q pgbackrestd=%q, want both %q",
+					cluster.Spec.Images.Multipooler, cluster.Spec.Images.PgBackRestd, want)
+			}
+		},
+	)
+
+	t.Run("immediate default set derives pgbackrestd from its multipooler", func(t *testing.T) {
+		cluster := newCluster(nil, nil)
+		r := newHarness(t, images.UpdateImmediate, cluster)
+
+		if err := r.resolveImages(context.Background(), cluster); err != nil {
+			t.Fatal(err)
+		}
+		want := testImagesConfig(images.UpdateImmediate).Defaults.Multipooler
+		if cluster.Spec.Images.PgBackRestd != want ||
+			cluster.Status.Images.Effective.PgBackRestd != want {
+			t.Errorf("spec=%q effective=%q, want %q", cluster.Spec.Images.PgBackRestd,
+				cluster.Status.Images.Effective.PgBackRestd, want)
+		}
+		if cluster.Status.Images.Applied.PgBackRestd != "" {
+			t.Errorf("applied set must not carry pgbackrestd, got %q",
+				cluster.Status.Images.Applied.PgBackRestd)
+		}
+	})
+
+	t.Run("explicit pgbackrestd wins and is not rewritten by the set", func(t *testing.T) {
+		cluster := newCluster(nil, nil)
+		cluster.Spec.Images.PgBackRestd = "custom/multigres:v9"
+		r := newHarness(t, images.UpdateImmediate, cluster)
+
+		if err := r.resolveImages(context.Background(), cluster); err != nil {
+			t.Fatal(err)
+		}
+		if cluster.Spec.Images.PgBackRestd != "custom/multigres:v9" ||
+			cluster.Status.Images.Effective.PgBackRestd != "custom/multigres:v9" {
+			t.Errorf("explicit value lost: spec=%q effective=%q", cluster.Spec.Images.PgBackRestd,
+				cluster.Status.Images.Effective.PgBackRestd)
+		}
+	})
+
+	t.Run("fully pinned cluster follows its pinned multipooler, not defaults", func(t *testing.T) {
+		cluster := newCluster(nil, nil)
+		pinned := olderApplied()
+		cluster.Spec.Images = clusterImages(pinned)
+		r := newHarness(t, images.UpdateImmediate, cluster)
+
+		if err := r.resolveImages(context.Background(), cluster); err != nil {
+			t.Fatal(err)
+		}
+		if cluster.Spec.Images.PgBackRestd != pinned.Multipooler ||
+			cluster.Status.Images.Effective.PgBackRestd != pinned.Multipooler {
+			t.Errorf("pgbackrestd not derived from pin: spec=%q effective=%q",
+				cluster.Spec.Images.PgBackRestd, cluster.Status.Images.Effective.PgBackRestd)
+		}
+		if cluster.Status.Images.Source != multigresv1alpha1.ImageSourceExplicit {
+			t.Errorf("source = %q, want explicit", cluster.Status.Images.Source)
 		}
 	})
 
@@ -390,7 +505,9 @@ func TestResolveImages(t *testing.T) {
 			t.Fatalf("pin transition emitted image activity: logs=%d", sink.entries)
 		}
 		if got := cluster.Status.Images; got.Source != multigresv1alpha1.ImageSourceExplicit ||
-			got.Effective != pinned || got.Applied != (multigresv1alpha1.ComponentImages{}) ||
+			got.Effective != withPgBackRestd(
+				pinned,
+			) || got.Applied != (multigresv1alpha1.ComponentImages{}) ||
 			got.AppliedRevision != "" || got.Available != (multigresv1alpha1.ComponentImages{}) ||
 			got.AvailableRevision != "" || got.UpdateStrategy != "" {
 			t.Fatalf("unexpected fully pinned status: %+v", got)
@@ -507,7 +624,8 @@ func TestResolveImages(t *testing.T) {
 		if err := r.resolveImages(context.Background(), cluster); err != nil {
 			t.Fatal(err)
 		}
-		current := testImagesConfig(images.UpdateLazy).Defaults
+		defaults := testImagesConfig(images.UpdateLazy).Defaults
+		current := withPgBackRestd(defaults)
 		if got := images.FromSpec(cluster.Spec.Images); got != current {
 			t.Fatalf("full unpin resolved %+v, want current defaults %+v", got, current)
 		}
@@ -519,7 +637,8 @@ func TestResolveImages(t *testing.T) {
 		if err := r.Get(context.Background(), key, stored); err != nil {
 			t.Fatal(err)
 		}
-		wantAnnotation := mustJSON(t, current)
+		// The record never carries the derived sidecar image.
+		wantAnnotation := mustJSON(t, defaults)
 		if got := stored.Annotations[metadata.AnnotationAppliedImages]; got != wantAnnotation {
 			t.Fatalf("full unpin recorded %q, want current defaults", got)
 		}

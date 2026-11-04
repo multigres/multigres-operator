@@ -45,6 +45,17 @@ rules:
   - patch
   - update
 - apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - admissionregistration.k8s.io
   resourceNames:
   - multigres-operator-mutating-webhook-configuration

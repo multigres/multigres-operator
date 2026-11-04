@@ -66,6 +66,9 @@ func topoMoveShard(topo multigresv1alpha1.GlobalTopoServerRef) *multigresv1alpha
 			TableGroupName:   "tg",
 			ShardName:        "s1",
 			GlobalTopoServer: topo,
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				topoMovePool: topoMovePoolSpec(),
 			},
