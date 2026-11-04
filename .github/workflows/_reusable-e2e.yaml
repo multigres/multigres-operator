@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: Git ref to check out (defaults to the triggering ref)
+        description: Git ref to check out (defaults to the triggering commit SHA)
         default: ''
         required: false
         type: string
@@ -81,7 +81,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - name: Install Go
