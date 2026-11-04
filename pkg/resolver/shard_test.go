@@ -1,7 +1,9 @@
 package resolver
 
 import (
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -55,6 +57,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -89,6 +92,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -122,6 +126,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -164,6 +169,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 						RunAsUser:  ptr.To(int64(1000)),
 						RunAsGroup: ptr.To(int64(3001)),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -203,6 +209,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -239,6 +246,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -275,6 +283,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 		},
@@ -306,6 +315,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 					Multipooler: multigresv1alpha1.ContainerConfig{
 						Resources: DefaultResourcesPooler(),
 					},
+					PgBackRestResources: DefaultResourcesPgBackRest(),
 				},
 			},
 			wantPVCPolicy: &multigresv1alpha1.PVCDeletionPolicy{
@@ -495,6 +505,34 @@ func TestMergePoolSpec_RuntimeIdentity(t *testing.T) {
 	*override.Multipooler.RunAsGroup = 9999
 	assertPoolIdentity("postgres after source mutation", got.Postgres, 1000, 2001)
 	assertPoolIdentity("multipooler after source mutation", got.Multipooler, 1000, 2002)
+}
+
+func TestMergePoolSpec_PgBackRestResources(t *testing.T) {
+	base := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		},
+	}
+	if got := mergePoolSpec(
+		base,
+		multigresv1alpha1.PoolSpec{},
+	); !got.PgBackRestResources.Requests.Cpu().
+		Equal(resource.MustParse("1")) {
+		t.Errorf("an empty override dropped the base: %v", got.PgBackRestResources)
+	}
+	override := multigresv1alpha1.PoolSpec{
+		PgBackRestResources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+		},
+	}
+	got := mergePoolSpec(base, override)
+	if !got.PgBackRestResources.Limits.Memory().Equal(resource.MustParse("2Gi")) {
+		t.Errorf("override not applied: %v", got.PgBackRestResources)
+	}
+	override.PgBackRestResources.Limits[corev1.ResourceMemory] = resource.MustParse("9Gi")
+	if !got.PgBackRestResources.Limits.Memory().Equal(resource.MustParse("2Gi")) {
+		t.Errorf("merge shares the override's map: %v", got.PgBackRestResources)
+	}
 }
 
 func TestMergeShardConfig_RuntimeIdentityPartialOverride(t *testing.T) {
@@ -1657,5 +1695,97 @@ func TestResolveShard_LiteMode(t *testing.T) {
 				t.Errorf("replicasPerCell = %v, want %d", pool.ReplicasPerCell, tc.wantPoolReplicas)
 			}
 		})
+	}
+}
+
+// The sidecar's resources resolve by the rule the postgres and multipooler
+// resources follow. An absent block, which is what a bare `{}` decodes to,
+// inherits and is then defaulted. A block with any member set, even to an
+// empty map (`{limits: {}}`), replaces what it would inherit as a whole and
+// is not defaulted: the container runs with no requests or limits. The empty
+// members are kept, because the defaulting webhook writes the resolved pool
+// back into the MultigresCluster and the next resolution must still see the
+// block as set.
+func TestDefaultPoolSpec_PgBackRestResourcesFollowTheContainerRule(t *testing.T) {
+	entries := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+	}
+	base := multigresv1alpha1.PoolSpec{
+		Postgres:            multigresv1alpha1.ContainerConfig{Resources: entries},
+		Multipooler:         multigresv1alpha1.ContainerConfig{Resources: entries},
+		PgBackRestResources: entries,
+	}
+	// resolve merges block over the base as all three containers' resources
+	// and defaults the result.
+	resolve := func(base multigresv1alpha1.PoolSpec, block corev1.ResourceRequirements,
+	) multigresv1alpha1.PoolSpec {
+		got := mergePoolSpec(base, multigresv1alpha1.PoolSpec{
+			Postgres:            multigresv1alpha1.ContainerConfig{Resources: block},
+			Multipooler:         multigresv1alpha1.ContainerConfig{Resources: block},
+			PgBackRestResources: block,
+		})
+		defaultPoolSpec(&got)
+		return got
+	}
+
+	var decoded multigresv1alpha1.PoolSpec
+	if err := json.Unmarshal([]byte(`{"pgbackrestResources": {}}`), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !isResourcesZero(decoded.PgBackRestResources) {
+		t.Fatalf("a bare {} decoded to %#v, want the zero value", decoded.PgBackRestResources)
+	}
+
+	// Absent, or a bare {}: nothing to inherit gives the defaults, and a
+	// base is inherited.
+	got := resolve(multigresv1alpha1.PoolSpec{}, corev1.ResourceRequirements{})
+	if !reflect.DeepEqual(got.PgBackRestResources, DefaultResourcesPgBackRest()) {
+		t.Errorf("absent block resolved to %#v, want the defaults", got.PgBackRestResources)
+	}
+	if !reflect.DeepEqual(got.Postgres.Resources, DefaultResourcesPostgres()) ||
+		!reflect.DeepEqual(got.Multipooler.Resources, DefaultResourcesPooler()) {
+		t.Errorf("absent postgres or multipooler resources were not defaulted: %#v", got)
+	}
+	got = resolve(base, corev1.ResourceRequirements{})
+	if !reflect.DeepEqual(got.PgBackRestResources, entries) {
+		t.Errorf("absent block did not inherit: %#v", got.PgBackRestResources)
+	}
+
+	// A block set to empty members: no requests, no limits, kept as written,
+	// over a base and over nothing, and the same for all three containers.
+	for name, emptied := range map[string]corev1.ResourceRequirements{
+		"empty limits":   {Limits: corev1.ResourceList{}},
+		"empty requests": {Requests: corev1.ResourceList{}},
+		"empty claims":   {Claims: []corev1.ResourceClaim{}},
+	} {
+		for _, from := range []multigresv1alpha1.PoolSpec{base, {}} {
+			got := resolve(from, emptied)
+			for container, res := range map[string]corev1.ResourceRequirements{
+				"pgbackrest":  got.PgBackRestResources,
+				"postgres":    got.Postgres.Resources,
+				"multipooler": got.Multipooler.Resources,
+			} {
+				if !reflect.DeepEqual(res, emptied) {
+					t.Errorf("%s, %s: resolved to %#v, want the block as written",
+						name, container, res)
+				}
+				if len(res.Requests) != 0 || len(res.Limits) != 0 {
+					t.Errorf("%s, %s: has requests or limits: %#v", name, container, res)
+				}
+			}
+		}
+	}
+
+	// A block with entries replaces the base as a whole: the base's requests
+	// are not kept next to the block's limits.
+	limitsOnly := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")},
+	}
+	got = resolve(base, limitsOnly)
+	if !reflect.DeepEqual(got.PgBackRestResources, limitsOnly) ||
+		!reflect.DeepEqual(got.Postgres.Resources, limitsOnly) {
+		t.Errorf("a limits-only block kept inherited requests: %#v, %#v",
+			got.PgBackRestResources, got.Postgres.Resources)
 	}
 }

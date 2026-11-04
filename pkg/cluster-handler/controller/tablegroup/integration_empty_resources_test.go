@@ -141,7 +141,7 @@ func requireClusterShard(
 
 // TestEmptyResourcesBlocksReachShard writes each empty resources shape (such
 // as `{limits: {}}`) into a TableGroup whose shard had entries for multiorch,
-// postgres and multipooler, and requires the TableGroup controller's Shard
+// postgres, multipooler and the pgBackRest sidecar, and requires the TableGroup controller's Shard
 // apply to drop the blocks. An apply that sent `resources: {}` over a block
 // that had entries is rejected by the API server, which would leave the Shard
 // with the old values. Each shape is followed by a return to entries.
@@ -170,6 +170,7 @@ func TestEmptyResourcesBlocksReachShard(t *testing.T) {
 				Multipooler: multigresv1alpha1.ContainerConfig{
 					Resources: testutil.PopulatedResources(),
 				},
+				PgBackRestResources: testutil.PopulatedResources(),
 			},
 			// A container config with another field set still reaches
 			// the apply when its resources block is omitted.
@@ -193,6 +194,7 @@ func TestEmptyResourcesBlocksReachShard(t *testing.T) {
 		{"spec", "shards", 0, "multiorch", "resources"},
 		{"spec", "shards", 0, "pools", "primary", "postgres", "resources"},
 		{"spec", "shards", 0, "pools", "primary", "multipooler", "resources"},
+		{"spec", "shards", 0, "pools", "primary", "pgbackrestResources"},
 		{"spec", "shards", 0, "pools", "replica", "postgres", "resources"},
 		{"spec", "shards", 0, "pools", "replica", "multipooler", "resources"},
 	}
@@ -208,6 +210,7 @@ func TestEmptyResourcesBlocksReachShard(t *testing.T) {
 					spec.Multiorch.Resources,
 					spec.Pools["primary"].Postgres.Resources,
 					spec.Pools["primary"].Multipooler.Resources,
+					spec.Pools["primary"].PgBackRestResources,
 					spec.Pools["replica"].Postgres.Resources,
 					spec.Pools["replica"].Multipooler.Resources,
 				} {

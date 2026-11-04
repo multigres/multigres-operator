@@ -26,6 +26,101 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
 
+// observeRefusedShard keeps the readiness gate of a refused shard's pool
+// pods current. Nothing is created, replaced or drained for a refused shard,
+// but its pods keep running and serving, and the gate is what Kubernetes and
+// the shard's PodDisruptionBudget read: left alone it would hold the verdict
+// of the last pass before the refusal, so a pod that has stopped serving
+// since would stay in its Service and count toward the budget. The posture
+// is observed and published as for an accepted shard, on the same schedule,
+// and so is the backup verdict, which would otherwise keep saying what the
+// last pass before the refusal found.
+//
+// A Lite shard's pod has no readiness gate, and a shard without pool pods
+// has nothing to observe, so neither opens a topology connection. Wherever
+// the backups cannot be looked at, here or for want of topology, a pooler
+// client or a registered primary, a verdict of True is replaced by Unknown
+// (see backupUnobserved).
+func (r *ShardReconciler) observeRefusedShard(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	rendered renderedConfig,
+) (ctrl.Result, error) {
+	if shard.Spec.Mode == multigresv1alpha1.ModeLite {
+		return ctrl.Result{}, r.backupUnobserved(ctx, shard,
+			"The Lite pod of a shard whose configuration is refused is not asked for its backups")
+	}
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(shard.Namespace), client.MatchingLabels{
+		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
+		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
+		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
+		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+		metadata.LabelAppComponent:        PoolComponentName,
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list pool pods of a refused shard: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return ctrl.Result{}, r.backupUnobserved(ctx, shard,
+			"The shard has no pool pod to ask for its backups")
+	}
+
+	logger := log.FromContext(ctx)
+	store, err := r.topoStore(ctx, shard)
+	if err != nil {
+		logger.Error(err, "Failed to get topo store, cannot observe the refused shard's pods")
+		if err := r.backupUnobserved(ctx, shard,
+			fmt.Sprintf("Failed to open the topology store: %v", err)); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: topoUnavailableRequeueDelay}, nil
+	}
+	defer func() { _ = store.Close() }()
+
+	if r.PoolerClients == nil {
+		return ctrl.Result{}, r.backupUnobserved(ctx, shard,
+			"No multipooler RPC client is configured")
+	}
+	rpcClient, err := r.PoolerClients.ClientFor(ctx, shard)
+	if err != nil {
+		// No observation is possible, and a missing one fails closed. The
+		// backup verdict from before the refusal is not kept either: the
+		// pods may have stopped taking backups since.
+		logger.V(1).Info("Multipooler RPC client is unavailable", "error", err)
+		if err := r.reconcilePoolerReadiness(ctx, shard, nil); err != nil {
+			return ctrl.Result{}, err
+		}
+		setBackupUnknownUnlessFalse(
+			shard,
+			fmt.Sprintf("Failed to build multipooler RPC client: %v", err),
+		)
+		if err := r.applyBackupStatus(ctx, shard, false); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: poolerClientRetryDelay}, nil
+	}
+	retryAfter, err := r.reconcilePosture(ctx, store, shard, rpcClient)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.updateStatus(ctx, shard, rendered); err != nil {
+		return ctrl.Result{}, fmt.Errorf("update status after data-plane observation: %w", err)
+	}
+	// The pods still take backups, or have stopped, whatever the spec says,
+	// so their backups are checked as an accepted shard's are.
+	asked, err := r.reconcileBackupHealth(ctx, store, rpcClient, shard)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !asked {
+		if err := r.backupUnobserved(ctx, shard,
+			"The shard has no registered primary to ask for its backups"); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	return ctrl.Result{RequeueAfter: retryAfter}, nil
+}
+
 // reconcileDataPlane opens a topo connection and runs all data-plane phases:
 // PodRoles update, drain state machine, and backup health evaluation.
 // Database registration is handled by the MultigresCluster controller.
@@ -200,51 +295,11 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 	}
 
-	// Phase: Evaluate backup health, and publish it with applyBackupStatus,
-	// apart from the status applied above.
+	// Phase: Evaluate backup health, and publish it apart from the status
+	// applied above.
 	if rpcClient != nil {
-		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileBackupHealth")
-		result, err := backuphealth.Evaluate(ctx, store, rpcClient, shard)
-		if err != nil {
-			monitoring.RecordSpanError(childSpan, err)
-			childSpan.End()
-			logger.Error(err, "Failed to evaluate backup health")
-			r.Recorder.Eventf(
-				shard,
-				"Warning",
-				"BackupCheckFailed",
-				"Failed to check backup health: %v",
-				err,
-			)
-			setBackupUnknownUnlessFalse(
-				shard,
-				fmt.Sprintf("Failed to check backup health: %v", err),
-			)
-			if patchErr := r.applyBackupStatus(ctx, shard, false); patchErr != nil {
-				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
-			}
-		} else if result != nil {
-			prevHealthy := status.IsConditionTrue(
-				shard.Status.Conditions,
-				backuphealth.ConditionHealthy,
-			)
-			backuphealth.Apply(shard, result)
-
-			if result.Healthy && !prevHealthy {
-				r.Recorder.Event(shard, "Normal", "BackupHealthy", result.Message)
-			} else if !result.Healthy && prevHealthy {
-				r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
-			}
-
-			if err := r.applyBackupStatus(ctx, shard, true); err != nil {
-				monitoring.RecordSpanError(childSpan, err)
-				childSpan.End()
-				logger.Error(err, "Failed to update shard backup status")
-				return ctrl.Result{}, err
-			}
-			childSpan.End()
-		} else {
-			childSpan.End()
+		if _, err := r.reconcileBackupHealth(ctx, store, rpcClient, shard); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -573,6 +628,92 @@ func setPostureUnknownUnlessFalse(
 	})
 }
 
+// reconcileBackupHealth asks the shard's primary for its backups and
+// publishes the verdict with applyBackupStatus. A listing that fails makes
+// the verdict Unknown unless it was already False, and leaves the last
+// backup's time and type as the last successful listing wrote them. A shard
+// with no primary registered is not asked: asked is false and its verdict is
+// left to the caller.
+//
+// The warning for a failed listing is emitted when the failure is a new one,
+// not for every pass that fails the same way: a shard whose primary cannot
+// list backups is reconciled on a requeue for as long as that lasts. A
+// verdict of False is kept through such a failure, so the stored condition
+// does not say whether the failure was reported; the last one reported is
+// kept in memory per shard (backupCheckWarned). A new process reports a
+// standing failure once more.
+func (r *ShardReconciler) reconcileBackupHealth(
+	ctx context.Context,
+	store topoclient.Store,
+	rpcClient rpcclient.MultipoolerClient,
+	shard *multigresv1alpha1.Shard,
+) (asked bool, err error) {
+	logger := log.FromContext(ctx)
+	_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileBackupHealth")
+	defer childSpan.End()
+	result, err := backuphealth.Evaluate(ctx, store, rpcClient, shard)
+	if err != nil {
+		monitoring.RecordSpanError(childSpan, err)
+		logger.Error(err, "Failed to evaluate backup health")
+		message := fmt.Sprintf("Failed to check backup health: %v", err)
+		before := meta.FindStatusCondition(shard.Status.Conditions, backuphealth.ConditionHealthy)
+		warned := r.noteBackupCheckFailure(shard.Namespace, shard.Name, message)
+		stored := before != nil && before.Status == metav1.ConditionUnknown &&
+			before.Message == message
+		if !stored && !warned {
+			r.Recorder.Event(shard, "Warning", "BackupCheckFailed", message)
+		}
+		setBackupUnknownUnlessFalse(shard, message)
+		if patchErr := r.applyBackupStatus(ctx, shard, false); patchErr != nil {
+			return true, fmt.Errorf("update unavailable backup status: %w", patchErr)
+		}
+		return true, nil
+	}
+	r.noteBackupCheckFailure(shard.Namespace, shard.Name, "")
+	if result == nil {
+		return false, nil
+	}
+	prevHealthy := status.IsConditionTrue(
+		shard.Status.Conditions,
+		backuphealth.ConditionHealthy,
+	)
+	backuphealth.Apply(shard, result)
+
+	if result.Healthy && !prevHealthy {
+		r.Recorder.Event(shard, "Normal", "BackupHealthy", result.Message)
+	} else if !result.Healthy && prevHealthy {
+		r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
+	}
+
+	if err := r.applyBackupStatus(ctx, shard, true); err != nil {
+		monitoring.RecordSpanError(childSpan, err)
+		logger.Error(err, "Failed to update shard backup status")
+		return true, err
+	}
+	return true, nil
+}
+
+// backupUnobserved replaces a BackupHealthy verdict of True with Unknown for
+// a pass that could not look at the shard's backups, and stores it. True is
+// a statement about backups somebody listed. A shard whose configuration is
+// refused keeps its pods, and they take backups or stop taking them whatever
+// the spec says, so a True from the last pass that could look would stand
+// for as long as the refusal does. False and Unknown already say that the
+// backups are not known to be good, and a shard that never had a verdict is
+// given none, so a pass that changes nothing writes nothing. The last
+// backup's time and type are left as the last listing wrote them.
+func (r *ShardReconciler) backupUnobserved(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	message string,
+) error {
+	if !status.IsConditionTrue(shard.Status.Conditions, backuphealth.ConditionHealthy) {
+		return nil
+	}
+	setBackupUnknownUnlessFalse(shard, message)
+	return r.applyBackupStatus(ctx, shard, false)
+}
+
 func setBackupUnknownUnlessFalse(shard *multigresv1alpha1.Shard, message string) {
 	if status.IsConditionFalse(shard.Status.Conditions, backuphealth.ConditionHealthy) {
 		return
@@ -669,8 +810,8 @@ func (r *ShardReconciler) recordNotConverged(
 }
 
 // now returns the reconciler's clock, defaulting to time.Now so production
-// code never has to set Clock. Tests inject Clock to drive
-// recordNotConverged's elapsed-time math deterministically.
+// code never has to set Clock. Everything timed against the reconciler's
+// own records reads it; see Clock.
 func (r *ShardReconciler) now() time.Time {
 	if r.Clock != nil {
 		return r.Clock()
@@ -678,7 +819,8 @@ func (r *ShardReconciler) now() time.Time {
 	return time.Now()
 }
 
-// forgetStrikes drops namespace/name's entry from both strike maps. Called on
+// forgetStrikes drops namespace/name's entry from both strike maps and from
+// the record of reported backup check failures. Called on
 // a Shard's deletion and not-found paths so a shard deleted mid-backoff, in
 // either counter, does not leak its entry for the life of the process.
 func (r *ShardReconciler) forgetStrikes(namespace, name string) {
@@ -691,6 +833,31 @@ func (r *ShardReconciler) forgetStrikes(namespace, name string) {
 	r.notConvergedMu.Lock()
 	delete(r.notConvergedSince, key)
 	r.notConvergedMu.Unlock()
+
+	r.backupCheckMu.Lock()
+	delete(r.backupCheckWarned, key)
+	r.backupCheckMu.Unlock()
+}
+
+// noteBackupCheckFailure records message as the shard's last backup check
+// failure and reports whether it was that already. An empty message is a
+// check that worked, and leaves no record.
+func (r *ShardReconciler) noteBackupCheckFailure(namespace, name, message string) (same bool) {
+	key := fmt.Sprintf("%s/%s", namespace, name)
+	r.backupCheckMu.Lock()
+	defer r.backupCheckMu.Unlock()
+	if message == "" {
+		delete(r.backupCheckWarned, key)
+		return false
+	}
+	if r.backupCheckWarned[key] == message {
+		return true
+	}
+	if r.backupCheckWarned == nil {
+		r.backupCheckWarned = map[string]string{}
+	}
+	r.backupCheckWarned[key] = message
+	return false
 }
 
 // reconcileDrainState iterates pods with drain annotations and runs the
@@ -798,7 +965,7 @@ func (r *ShardReconciler) isDrainStale(
 	}
 
 	// Pod is within replica range — check if its spec still matches desired.
-	return !podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme)
+	return !r.poolPodNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index)
 }
 
 // topoStore returns a topology store, using the custom factory if set, otherwise the default.

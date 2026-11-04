@@ -176,6 +176,17 @@ func (r *ShardReconciler) reconcileQuarantineRemediation(
 			continue
 		}
 
+		// Remediation deletes the pod and its data so that both are created
+		// again. With a pod the API server rejects, the data would be gone
+		// and nothing would come back. The wipe cannot be undone, so it also
+		// waits for an answer when the API server gave none. The shard is
+		// reconciled again while a pod is quarantined, which asks again.
+		if verdict, err := r.poolReplacementVerdict(ctx, shard, pod); err != nil {
+			return false, err
+		} else if !replacementProceeds(verdict, shard, pod.Name, true) {
+			continue
+		}
+
 		if err := r.wipeQuarantinedPod(ctx, shard, pod, q.Reason); err != nil {
 			return false, err
 		}

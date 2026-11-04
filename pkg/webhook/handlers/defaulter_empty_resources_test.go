@@ -67,10 +67,11 @@ func TestDefaulterKeepsEmptyResourcesBlocks(t *testing.T) {
 								"spec": map[string]any{
 									"multiorch": map[string]any{"resources": shape},
 									"pools": map[string]any{"default": map[string]any{
-										"type":        "readWrite",
-										"cells":       []any{"zone-a"},
-										"postgres":    map[string]any{"resources": shape},
-										"multipooler": map[string]any{"resources": shape},
+										"type":                "readWrite",
+										"cells":               []any{"zone-a"},
+										"postgres":            map[string]any{"resources": shape},
+										"multipooler":         map[string]any{"resources": shape},
+										"pgbackrestResources": shape,
 									}},
 								},
 							}},
@@ -119,6 +120,7 @@ func TestDefaulterKeepsEmptyResourcesBlocks(t *testing.T) {
 				append(slices.Clone(shard), "multiorch", "resources"),
 				append(slices.Clone(shard), "pools", "default", "postgres", "resources"),
 				append(slices.Clone(shard), "pools", "default", "multipooler", "resources"),
+				append(slices.Clone(shard), "pools", "default", "pgbackrestResources"),
 			} {
 				if got := jsonAt(stored, path); !reflect.DeepEqual(got, any(shape)) {
 					t.Errorf("mode %q, %s: admitted %v = %v, want %v", mode, name, path, got, shape)

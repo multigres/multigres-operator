@@ -6,8 +6,11 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
+	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -18,6 +21,7 @@ import (
 func cachedKinds() []client.Object {
 	return []client.Object{
 		&corev1.Secret{}, &appsv1.StatefulSet{}, &corev1.Service{}, &corev1.Pod{},
+		&corev1.ServiceAccount{},
 	}
 }
 
@@ -123,6 +127,107 @@ func TestLaptopNamespaceTakesPrecedenceOverWatchAllowlist(t *testing.T) {
 	for _, obj := range cachedKinds() {
 		if !reflect.DeepEqual(namespacesFor(t, got, obj), namespacesFor(t, want, obj)) {
 			t.Errorf("%T cache escaped the laptop namespace", obj)
+		}
+	}
+}
+
+// The shard reconciler reads the shared backup PVC through the informer cache
+// and decides what to apply from the operator's server-side-apply ownership in
+// its managedFields. A transform that strips managedFields would make every
+// claim look unowned there, so the operator would re-send fields the API server
+// refuses to change on a live claim and wedge the shard reconcile, with every
+// test that reads through a direct client still green.
+func TestNewKeepsManagedFields(t *testing.T) {
+	for _, laptop := range []string{"", "dev"} {
+		opts := New("op", laptop)
+		if opts.DefaultTransform != nil {
+			t.Errorf("namespace %q: DefaultTransform is set, it may strip managedFields", laptop)
+		}
+		for obj, byObj := range opts.ByObject {
+			// The operator never applies a LimitRange, so nothing reads
+			// its managedFields.
+			if _, limits := obj.(*corev1.LimitRange); limits {
+				continue
+			}
+			if byObj.Transform != nil {
+				t.Errorf("namespace %q: ByObject[%T].Transform is set, it may strip managedFields",
+					laptop, obj)
+			}
+		}
+	}
+}
+
+// No ResourceQuota is cached: what the operator knows about a quota is the
+// API server's answer to a create.
+func TestNewCachesNoResourceQuota(t *testing.T) {
+	for name, opts := range map[string]cache.Options{
+		"cluster-wide": New("op", ""),
+		"allowlist":    New("op", "", "a,b"),
+		"laptop":       New("op", "dev"),
+	} {
+		for obj := range opts.ByObject {
+			if _, quota := obj.(*corev1.ResourceQuota); quota {
+				t.Errorf("%s: ByObject has an entry for ResourceQuota", name)
+			}
+		}
+	}
+}
+
+// The cache keeps a LimitRange's identity and nothing else, in every
+// namespace Shards are reconciled in: the shard controller uses the event of
+// one, and reads none.
+func TestNewCachesLimitRangeIdentityOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		opts       cache.Options
+		namespaces []string
+	}{
+		"cluster-wide": {New("op", ""), []string{cache.AllNamespaces}},
+		"allowlist":    {New("op", "", "a,b"), []string{"op", "a", "b"}},
+		"laptop":       {New("op", "dev"), []string{"dev"}},
+	} {
+		var entry *cache.ByObject
+		for obj, byObj := range tc.opts.ByObject {
+			if _, limits := obj.(*corev1.LimitRange); limits {
+				entry = &byObj
+			}
+		}
+		if entry == nil {
+			t.Fatalf("%s: no ByObject entry for LimitRange", name)
+		}
+		if len(entry.Namespaces) != len(tc.namespaces) {
+			t.Errorf("%s: namespaces = %v, want %v", name, entry.Namespaces, tc.namespaces)
+		}
+		for _, namespace := range tc.namespaces {
+			if cfg, ok := entry.Namespaces[namespace]; !ok || cfg.LabelSelector != nil {
+				t.Errorf("%s: namespace %q = %v (present %v), want unfiltered",
+					name, namespace, cfg, ok)
+			}
+		}
+		full := &corev1.LimitRange{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "l", Namespace: "ns", UID: "uid", ResourceVersion: "7",
+				Labels:        map[string]string{"team": "a"},
+				ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl"}},
+			},
+			Spec: corev1.LimitRangeSpec{Limits: []corev1.LimitRangeItem{{
+				Type: corev1.LimitTypeContainer,
+				Max:  corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")},
+			}}},
+		}
+		got, err := entry.Transform(full.DeepCopy())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		want := &corev1.LimitRange{ObjectMeta: metav1.ObjectMeta{
+			Name: "l", Namespace: "ns", UID: "uid", ResourceVersion: "7",
+		}}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: cached LimitRange = %+v, want %+v", name, got, want)
+		}
+		tombstone := toolscache.DeletedFinalStateUnknown{Key: "ns/l", Obj: full}
+		if got, err := entry.Transform(tombstone); err != nil ||
+			!reflect.DeepEqual(got, tombstone) {
+			t.Errorf("%s: tombstone = %+v, %v", name, got, err)
 		}
 	}
 }

@@ -3,7 +3,9 @@ package multigrescluster
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -136,6 +138,17 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 		allCellNames = append(allCellNames, string(c.Name))
 	}
 
+	// While the shard ServiceAccount is not applied, the TableGroups keep the
+	// repository their sidecars use (see applyTableGroup), and each
+	// database's record keeps it with them.
+	var held map[multigresv1alpha1.DatabaseName]heldBackupLocation
+	if shardAccountUnverified(ctx) && cluster.Spec.Mode != multigresv1alpha1.ModeLite {
+		var err error
+		if held, err = r.heldBackupLocations(ctx, cluster); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Register all databases.
 	for _, dbConfig := range cluster.Spec.Databases {
 		// Lite's Shard owns this record because its resolved backup and pool
@@ -144,9 +157,28 @@ func (r *MultigresClusterReconciler) reconcileTopology(
 			continue
 		}
 		dbBackup := multigresv1alpha1.MergeBackupConfig(dbConfig.Backup, cluster.Spec.Backup)
+		var opts []topo.RegisterDatabaseOption
+		if shardAccountUnverified(ctx) {
+			// A record that exists keeps its location. One that has to be
+			// created, because it was lost or the global topology moved,
+			// gets the location the database's TableGroups hold, not the
+			// spec's: multipooler compares it with the sidecar's. A database
+			// whose TableGroups predate the sidecar has none to give, and
+			// its record is left to the pass that applies the account. A
+			// database without TableGroups has no pods, and is registered
+			// from the spec.
+			opts = append(opts, topo.KeepBackupLocation())
+			if location, ok := held[dbConfig.Name]; ok {
+				if location.backup == nil {
+					opts = append(opts, topo.ExistingOnly())
+				} else {
+					dbBackup = location.backup
+				}
+			}
+		}
 		if err := topo.RegisterDatabaseFromSpec(
 			topoCtx, store, r.Recorder, cluster, dbConfig, allCellNames, dbBackup,
-			cluster.Spec.DurabilityPolicy,
+			cluster.Spec.DurabilityPolicy, opts...,
 		); err != nil {
 			if topo.IsTopoUnavailable(err) {
 				return r.handleTopoUnavailable(cluster, logger)
@@ -377,4 +409,38 @@ func (r *MultigresClusterReconciler) handleTopoUnavailable(
 		return ctrl.Result{RequeueAfter: topoUnavailableRequeueDelay}, nil
 	}
 	return ctrl.Result{}, fmt.Errorf("topology server unavailable")
+}
+
+// heldBackupLocation is the backup location the existing TableGroups of one
+// database were given. backup is nil when they have none: TableGroups from
+// before the sidecar.
+type heldBackupLocation struct {
+	backup *multigresv1alpha1.BackupConfig
+}
+
+// heldBackupLocations returns, for each database of the cluster that has a
+// TableGroup, the sidecar backup location of its TableGroups, read from the
+// cache. The TableGroups of a database carry one location, the database's;
+// the first in name order is taken.
+func (r *MultigresClusterReconciler) heldBackupLocations(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) (map[multigresv1alpha1.DatabaseName]heldBackupLocation, error) {
+	existing := &multigresv1alpha1.TableGroupList{}
+	if err := r.List(ctx, existing, client.InNamespace(cluster.Namespace),
+		client.MatchingLabels{"multigres.com/cluster": cluster.Name}); err != nil {
+		return nil, fmt.Errorf("failed to list tablegroups for their backup location: %w", err)
+	}
+	slices.SortFunc(existing.Items, func(a, b multigresv1alpha1.TableGroup) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	held := map[multigresv1alpha1.DatabaseName]heldBackupLocation{}
+	for i := range existing.Items {
+		tg := &existing.Items[i]
+		if location, ok := held[tg.Spec.DatabaseName]; ok && location.backup != nil {
+			continue
+		}
+		held[tg.Spec.DatabaseName] = heldBackupLocation{backup: tg.Spec.SidecarBackupLocation}
+	}
+	return held, nil
 }

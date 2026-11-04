@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/multigres/multigres/go/common/topoclient"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -15,6 +17,47 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/topology"
 )
+
+// RegisterDatabaseOption changes how RegisterDatabaseFromSpec writes a
+// database's record.
+type RegisterDatabaseOption func(*registerDatabaseOptions)
+
+type registerDatabaseOptions struct {
+	keepBackupLocation bool
+	existingOnly       bool
+}
+
+// KeepBackupLocation leaves the backup location of a database that is
+// already registered as it is, and updates the rest of its record. Multipooler
+// reads the location from the record and refuses a sidecar started with
+// another, so the record must not move to a repository before the sidecars
+// do. A database that is not registered yet gets the location given.
+func KeepBackupLocation() RegisterDatabaseOption {
+	return func(o *registerDatabaseOptions) { o.keepBackupLocation = true }
+}
+
+// ExistingOnly updates the record of a database that is registered and
+// creates none for one that is not. It is for a caller that has no backup
+// location it could give a new record without contradicting the pods the
+// database already has.
+func ExistingOnly() RegisterDatabaseOption {
+	return func(o *registerDatabaseOptions) { o.existingOnly = true }
+}
+
+// setS3TLS records in the topology's S3 location how the sidecar verifies
+// the endpoint's certificate: the path of the CA bundle in the sidecar's
+// container, or that verification is off. Multipooler compares the record
+// with what the sidecar was started with, these two settings included, and
+// refuses a sidecar that differs, so a location with a CA or without
+// verification must say so here. At most one of the two is set: multigres
+// rejects a location with both.
+func setS3TLS(s3 *clustermetadatapb.S3Backup, config *multigresv1alpha1.S3BackupConfig) {
+	if config.SkipsTLSVerification() {
+		s3.SkipTlsVerify = true
+	} else if config.CA != nil {
+		s3.CaFile = multigresv1alpha1.S3CAFilePath
+	}
+}
 
 // RegisterDatabaseFromSpec registers a database in the topology using
 // the cluster spec. It collects cells from all pools across all shards
@@ -28,9 +71,14 @@ func RegisterDatabaseFromSpec(
 	allCellNames []string,
 	backup *multigresv1alpha1.BackupConfig,
 	clusterDurabilityPolicy string,
+	opts ...RegisterDatabaseOption,
 ) error {
 	logger := log.FromContext(ctx)
 	dbName := string(dbConfig.Name)
+	var options registerDatabaseOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 
 	durabilityPolicy := string(dbConfig.DurabilityPolicy)
 	if durabilityPolicy == "" {
@@ -51,20 +99,16 @@ func RegisterDatabaseFromSpec(
 	requireInitialRepoEncryption := backup != nil && backup.Encryption != nil
 
 	if backup != nil && backup.Type == multigresv1alpha1.BackupTypeS3 && backup.S3 != nil {
-		prefix := backup.S3.KeyPrefix
-		if prefix == "/" {
-			prefix = "" // pgBackRest adds the leading slash to the repository path.
+		s3 := &clustermetadatapb.S3Backup{
+			Bucket:            backup.S3.Bucket,
+			Region:            backup.S3.Region,
+			Endpoint:          backup.S3.Endpoint,
+			KeyPrefix:         backup.S3.RepositoryKeyPrefix(),
+			UseEnvCredentials: backup.S3.UseEnvCredentials,
 		}
+		setS3TLS(s3, backup.S3)
 		dbMetadata.BackupLocation = &clustermetadatapb.BackupLocation{
-			Location: &clustermetadatapb.BackupLocation_S3{
-				S3: &clustermetadatapb.S3Backup{
-					Bucket:            backup.S3.Bucket,
-					Region:            backup.S3.Region,
-					Endpoint:          backup.S3.Endpoint,
-					KeyPrefix:         prefix,
-					UseEnvCredentials: backup.S3.UseEnvCredentials,
-				},
-			},
+			Location:                     &clustermetadatapb.BackupLocation_S3{S3: s3},
 			RequireInitialRepoEncryption: requireInitialRepoEncryption,
 		}
 	} else {
@@ -83,16 +127,44 @@ func RegisterDatabaseFromSpec(
 		}
 	}
 
+	update := func() error {
+		return store.UpdateDatabaseFields(
+			ctx,
+			dbName,
+			func(existing *clustermetadatapb.Database) error {
+				// The store calls this with an empty record for a database
+				// that is not registered, and stores what it is left with.
+				// That is also what it does when the record is deleted
+				// after CreateDatabase found it, and when it retries after
+				// a concurrent write, so every call starts from dbMetadata
+				// as it was built and a missing record is written whole:
+				// name included, and with the location given, since there
+				// is none to keep.
+				missing := existing.GetName() == ""
+				if options.existingOnly && missing {
+					return &topoclient.TopoError{Code: topoclient.NoUpdateNeeded}
+				}
+				desired, _ := proto.Clone(dbMetadata).(*clustermetadatapb.Database)
+				if options.keepBackupLocation && !missing {
+					desired.BackupLocation = existing.BackupLocation
+				}
+				if missing {
+					existing.Name = desired.Name
+				}
+				return updateDatabaseMetadata(existing, desired)
+			},
+		)
+	}
+	if options.existingOnly {
+		if err := update(); err != nil {
+			return fmt.Errorf("updating existing database %s in topology: %w", dbName, err)
+		}
+		return nil
+	}
 	if err := store.CreateDatabase(ctx, dbName, dbMetadata); err != nil {
 		var topoErr topoclient.TopoError
 		if isNodeExists(err, &topoErr) {
-			if err := store.UpdateDatabaseFields(
-				ctx,
-				dbName,
-				func(existing *clustermetadatapb.Database) error {
-					return updateDatabaseMetadata(existing, dbMetadata)
-				},
-			); err != nil {
+			if err := update(); err != nil {
 				return fmt.Errorf("updating existing database %s in topology: %w", dbName, err)
 			}
 			logger.V(1).Info("Reconciled database in topology", "database", dbName)

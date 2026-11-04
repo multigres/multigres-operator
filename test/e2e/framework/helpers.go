@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
@@ -796,4 +797,65 @@ func MustMarshal(v any) []byte {
 		panic(fmt.Sprintf("json.Marshal: %v", err))
 	}
 	return data
+}
+
+// CreateStaticRWXVolume creates a ReadWriteMany PersistentVolume of class
+// "e2e-rwx" for a claim in namespace ns, and removes it with the test. A Kind
+// cluster has one node, so a hostPath on it is enough for every pod to mount
+// the same RWX claim without a provisioner in the e2e infrastructure.
+func (c *Cluster) CreateStaticRWXVolume(t testing.TB, ns string) {
+	t.Helper()
+	name := "e2e-rwx-" + ns
+	hostPath := "/var/local/multigres-e2e-rwx/" + ns
+	node := c.Name + "-control-plane"
+	for _, args := range [][]string{{"mkdir", "-p", hostPath}, {"chmod", "0777", hostPath}} {
+		// #nosec G204 -- Fixed executables; arguments are test-controlled names, no shell expansion on the host.
+		out, err := exec.Command("docker", append([]string{"exec", node}, args...)...).
+			CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s static RWX hostPath: %v\n%s", args[0], err, out)
+		}
+	}
+	_, err := c.Clientset.CoreV1().PersistentVolumes().Create(
+		context.Background(),
+		&corev1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: corev1.PersistentVolumeSpec{
+				Capacity: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("1Gi"),
+				},
+				AccessModes: []corev1.PersistentVolumeAccessMode{
+					corev1.ReadWriteMany,
+				},
+				PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
+				StorageClassName:              "e2e-rwx",
+				NodeAffinity: &corev1.VolumeNodeAffinity{
+					Required: &corev1.NodeSelector{
+						NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+							MatchExpressions: []corev1.NodeSelectorRequirement{{
+								Key:      "node-role.kubernetes.io/control-plane",
+								Operator: corev1.NodeSelectorOpExists,
+							}},
+						}},
+					},
+				},
+				PersistentVolumeSource: corev1.PersistentVolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: hostPath,
+						Type: ptr.To(corev1.HostPathDirectoryOrCreate),
+					},
+				},
+			},
+		},
+		metav1.CreateOptions{},
+	)
+	if err != nil {
+		t.Fatalf("create static RWX volume: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.Clientset.CoreV1().PersistentVolumes().Delete(
+			context.Background(), name, metav1.DeleteOptions{})
+		// #nosec G204 -- Fixed executables; arguments are test-controlled names, no shell expansion on the host.
+		_ = exec.Command("docker", "exec", node, "rm", "-rf", hostPath).Run()
+	})
 }

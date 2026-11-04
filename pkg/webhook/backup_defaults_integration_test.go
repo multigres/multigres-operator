@@ -30,8 +30,9 @@ func TestWebhook_BackupPrefixAllocation(t *testing.T) {
 					Backup: &multigresv1alpha1.BackupConfig{
 						Type: multigresv1alpha1.BackupTypeS3,
 						S3: &multigresv1alpha1.S3BackupConfig{
-							Bucket: "shared",
-							Region: "us-east-1",
+							Bucket:            "shared",
+							Region:            "us-east-1",
+							CredentialsSecret: "s3-credentials",
 						},
 					},
 				},

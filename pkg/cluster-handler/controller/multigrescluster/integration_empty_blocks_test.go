@@ -68,7 +68,7 @@ func TestEmptyPointerBlocksReachChildren(t *testing.T) {
 		// A storage block that asks for nothing can also hold an empty
 		// access mode list, which encodes as {} just the same.
 		{[]any{"spec", "backup", "filesystem"}, map[string]any{
-			"path":    "/data/backups",
+			"path":    "/backups",
 			"storage": map[string]any{"size": "5Gi", "accessModes": []any{"ReadWriteOnce"}},
 		}, map[string]any{"storage": map[string]any{"accessModes": []any{}}}},
 		{
@@ -92,7 +92,7 @@ func TestEmptyPointerBlocksReachChildren(t *testing.T) {
 			},
 			Backup: &multigresv1alpha1.BackupConfig{
 				Type:       multigresv1alpha1.BackupTypeFilesystem,
-				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/data/backups"},
+				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups"},
 			},
 			Cells: []multigresv1alpha1.CellConfig{{
 				Name:   "zone-a",
@@ -176,11 +176,20 @@ func TestEmptyPointerBlocksReachChildren(t *testing.T) {
 		if backup == nil || backup.Filesystem == nil {
 			return nil, fmt.Errorf("TableGroup backup has no filesystem block: %+v", backup)
 		}
-		filesystem := backup.Filesystem.Path == "/data/backups" &&
-			backup.Filesystem.Storage.Size == "5Gi"
-		if !filesystem && (backup.Filesystem.Path != "/backups" ||
-			!reflect.ValueOf(backup.Filesystem.Storage).IsZero()) {
+		// The pgBackRest sidecar mounts the backup volume at /backups and a
+		// cluster naming another path is refused, so the path is the same
+		// set or emptied and the storage block tells the two apart.
+		filesystem := backup.Filesystem.Storage.Size == "5Gi"
+		if backup.Filesystem.Path != "/backups" ||
+			(!filesystem && !reflect.ValueOf(backup.Filesystem.Storage).IsZero()) {
 			return nil, fmt.Errorf("TableGroup backup filesystem %+v", backup.Filesystem)
+		}
+		// The sidecar's location is applied with the same blocks.
+		location := tgs.Items[0].Spec.SidecarBackupLocation
+		if location == nil || !reflect.DeepEqual(location.Filesystem, backup.Filesystem) ||
+			!reflect.DeepEqual(location.PgBackRestTLS, backup.PgBackRestTLS) {
+			return nil, fmt.Errorf("TableGroup sidecar backup location %+v, backup %+v",
+				location, backup)
 		}
 		return map[string]bool{
 			"TableGroup observability":        tgs.Items[0].Spec.Observability != nil,

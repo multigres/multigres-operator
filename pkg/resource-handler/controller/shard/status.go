@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -125,9 +126,25 @@ func (r *ShardReconciler) updateStatus(
 
 	// Update conditions
 	r.setConditions(shard, pools.totalPods, pools.readyPods)
-	if err := r.setStorageSpecIgnoredCondition(ctx, shard); err != nil {
+	claims, err := r.setStorageSpecIgnoredCondition(ctx, shard)
+	if err != nil {
 		return err
 	}
+	if pools.seen.wanted != nil {
+		pools.seen.seeClaims(claims)
+	}
+	r.nameQuotaWaits(shard, pools.seen)
+	r.setBackupRepositoryCondition(shard)
+	clearStalePodTemplateRefusal(shard)
+	// A pass that replaces no pod asks the API server nothing, so the
+	// refusal on record is looked at here: its pod may be gone, or
+	// acceptable now for a reason outside the spec.
+	if refusedPod(shard) != "" {
+		if desiredFrom, ok := withConfigHashes(shard, rendered); ok {
+			r.reexamineRecordedRefusal(ctx, shard, desiredFrom)
+		}
+	}
+	applyRefusalPhase(shard)
 
 	shard.Status.ObservedGeneration = shard.Generation
 
@@ -212,6 +229,9 @@ func (r *ShardReconciler) patchStatus(
 type poolStatus struct {
 	totalPods, readyPods int32
 	poolDegraded         bool
+	// seen is what the lists read for this status say about the pods and
+	// claims a quota wait may name.
+	seen quotaObjectsSeen
 
 	// configInProgress is true while the rendered config has not yet converged
 	// onto every live pod (content drift) or a pod already carrying the desired
@@ -239,6 +259,8 @@ func (r *ShardReconciler) updatePoolsStatus(
 	clusterName := shard.Labels[metadata.LabelMultigresCluster]
 
 	var ps poolStatus
+	// Only a Shard with a quota wait has a name in status to check.
+	waitsOnQuota := r.quotaWaiting.waiting(client.ObjectKeyFromObject(shard))
 
 	// Track whether every live pod carries the desired config hashes, and whether
 	// a pod that already carries them is crash-looping (config that Postgres
@@ -272,7 +294,18 @@ func (r *ShardReconciler) updatePoolsStatus(
 				return poolStatus{}, fmt.Errorf("failed to list pods for status: %w", err)
 			}
 
-			var cellReady int32
+			replicas := DefaultPoolReplicas
+			if poolSpec.ReplicasPerCell != nil {
+				replicas = *poolSpec.ReplicasPerCell
+			}
+
+			// cellReady counts the ready pods the spec asks for, the ones
+			// below the replica count. A ready pod beyond it, left by a
+			// lowered count or created as a maintenance surge, is on its
+			// way out and must not stand in for a desired pod that is
+			// missing: the shard would report every pod ready while one
+			// waits to be created. liveReady counts every ready pod.
+			var cellReady, liveReady int32
 			var livePods []corev1.Pod
 			for i := range podList.Items {
 				pod := &podList.Items[i]
@@ -316,16 +349,18 @@ func (r *ShardReconciler) updatePoolsStatus(
 				// Check if pod is ready
 				for _, cond := range pod.Status.Conditions {
 					if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
-						cellReady++
+						liveReady++
+						if index, ok := resolvePodIndex(pod.Name); ok && index < int(replicas) {
+							cellReady++
+						}
 						break
 					}
 				}
 			}
 
 			// Emit a warning explicitly if the cell pool should have replicas but is empty
-			replicas := DefaultPoolReplicas
-			if poolSpec.ReplicasPerCell != nil {
-				replicas = *poolSpec.ReplicasPerCell
+			if waitsOnQuota {
+				ps.seen.see(shard, string(poolName), cellName, replicas, podList.Items)
 			}
 			if replicas > 0 && cellReady == 0 {
 				r.Recorder.Eventf(
@@ -339,7 +374,7 @@ func (r *ShardReconciler) updatePoolsStatus(
 			}
 
 			// Nodes are listed lazily so a fully Ready shard never touches them.
-			if !nodesListed && len(livePods) > int(cellReady) {
+			if !nodesListed && len(livePods) > int(liveReady) {
 				nodesListed = true
 				nodeList := &corev1.NodeList{}
 				if err := r.List(ctx, nodeList); err != nil {
@@ -489,6 +524,24 @@ func cellSetToSlice(cellsSet map[multigresv1alpha1.CellName]bool) []multigresv1a
 	}
 	slices.Sort(cells)
 	return cells
+}
+
+// nameQuotaWaits adds the Shard's quota waits to the message of the
+// Available condition that setConditions wrote. A create that a
+// ResourceQuota turns down leaves a pod missing with nothing on the Shard to
+// say why: its events are rate limited per object and are dropped once the
+// Shard's earlier ones have used the budget. The wait is known from the
+// passes before this one, and its text is the same on every pass until the
+// wait changes, so naming it costs one status write when it starts and one
+// when it ends. seen is what this status update listed, against which the
+// object named is checked.
+func (r *ShardReconciler) nameQuotaWaits(shard *multigresv1alpha1.Shard, seen quotaObjectsSeen) {
+	waits := r.quotaWaiting.describe(client.ObjectKeyFromObject(shard), shard.Generation, seen)
+	available := meta.FindStatusCondition(shard.Status.Conditions, "Available")
+	if len(waits) == 0 || available == nil {
+		return
+	}
+	available.Message += "; " + strings.Join(waits, "; ")
 }
 
 // setConditions creates status conditions based on observed state.

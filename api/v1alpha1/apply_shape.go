@@ -60,6 +60,7 @@ func (s *TableGroupSpec) ForApply() TableGroupSpec {
 	}
 	out.PVCDeletionPolicy = emptyToNil(out.PVCDeletionPolicy)
 	out.Backup = out.Backup.shapeForApply()
+	out.SidecarBackupLocation = out.SidecarBackupLocation.shapeForApply()
 	out.InternalTLS = emptyToNil(out.InternalTLS)
 	out.Observability = emptyToNil(out.Observability)
 	out.TopologyPruning = emptyToNil(out.TopologyPruning)
@@ -74,6 +75,7 @@ func (s *ShardSpec) ForApply() ShardSpec {
 	out.GatewayClusterViews = emptyToNil(out.GatewayClusterViews)
 	out.PVCDeletionPolicy = emptyToNil(out.PVCDeletionPolicy)
 	out.Backup = out.Backup.shapeForApply()
+	out.SidecarBackupLocation = out.SidecarBackupLocation.shapeForApply()
 	out.InternalTLS = emptyToNil(out.InternalTLS)
 	out.Observability = emptyToNil(out.Observability)
 	out.TopologyPruning = emptyToNil(out.TopologyPruning)
@@ -120,6 +122,11 @@ func (b *BackupConfig) shapeForApply() *BackupConfig {
 		return nil
 	}
 	b.PgBackRestTLS = emptyToNil(b.PgBackRestTLS)
+	if b.S3 != nil {
+		// A CA reference names a Secret or a ConfigMap; one that names
+		// neither is refused by the CRD, and says nothing.
+		b.S3.CA = emptyToNil(b.S3.CA)
+	}
 	if b.Filesystem != nil && len(b.Filesystem.Storage.AccessModes) == 0 {
 		// Every reader treats an empty access mode list as unset, and the
 		// storage block is omitzero, so a block left with nothing in it is
@@ -197,6 +204,7 @@ func (m *MultiorchSpec) shapeForApply() {
 func (p *PoolSpec) shapeForApply() {
 	NormalizeResources(&p.Postgres.Resources)
 	NormalizeResources(&p.Multipooler.Resources)
+	NormalizeResources(&p.PgBackRestResources)
 	p.Affinity = affinityForApply(p.Affinity)
 	p.PVCDeletionPolicy = emptyToNil(p.PVCDeletionPolicy)
 }

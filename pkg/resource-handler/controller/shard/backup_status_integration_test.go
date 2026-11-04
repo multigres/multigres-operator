@@ -67,6 +67,7 @@ func TestBackupStatus(t *testing.T) {
 				Images: multigresv1alpha1.ShardImages{
 					Multiorch:   "ghcr.io/multigres/multigres:main",
 					Multipooler: "ghcr.io/multigres/multigres:main",
+					PgBackRestd: "ghcr.io/multigres/multigres:main",
 					Postgres:    "postgres:17",
 				},
 				GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{

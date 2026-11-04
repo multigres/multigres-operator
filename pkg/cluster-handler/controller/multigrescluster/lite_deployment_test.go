@@ -29,7 +29,10 @@ func TestLiteGlobalServiceSelectsOnlyItsOwnPod(t *testing.T) {
 			Namespace: "test",
 			Labels:    map[string]string{"multigres.com/cluster": "lite"},
 		},
-		Spec: multigresv1alpha1.ShardSpec{Mode: multigresv1alpha1.ModeLite},
+		Spec: multigresv1alpha1.ShardSpec{
+			Mode:   multigresv1alpha1.ModeLite,
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
+		},
 	}
 	pod, err := shard.BuildLitePod(sh, "default", "zone-a", pool, scheme)
 	if err != nil {

@@ -46,6 +46,7 @@ import (
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,resourceNames=multigres-operator.multigres.com,verbs=list
 
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 
 // ============================================================================
 // MultigresClusterSpec Spec (User-editable API)
@@ -150,6 +151,13 @@ type MultigresClusterSpec struct {
 	// +optional
 	Backup *BackupConfig `json:"backup,omitempty"`
 
+	// ShardServiceAccount is the ServiceAccount the operator creates for every
+	// shard pod of this cluster, owned by the MultigresCluster. When unset,
+	// shard pods run as the ServiceAccount named by an S3 backup config's
+	// serviceAccountName, or the namespace default.
+	// +optional
+	ShardServiceAccount *ShardServiceAccountSpec `json:"shardServiceAccount,omitempty"`
+
 	// ExternalGateway controls external exposure of the global multigateway Service.
 	// When nil or enabled: false, the Service remains ClusterIP.
 	// +optional
@@ -246,6 +254,28 @@ const ModeDistributed = "distributed"
 // Images Config Section Specs
 // ============================================================================
 
+// ShardServiceAccountSpec describes the ServiceAccount created for shard pods.
+// Annotations in the spec are owned by the operator once applied: removing one
+// from the spec removes it from the ServiceAccount, so platform writers must
+// not manage the same keys.
+type ShardServiceAccountSpec struct {
+	// Name is the name of the ServiceAccount.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	// +kubebuilder:validation:XValidation:rule="self != 'default'",message="name must not be 'default': the operator would take over the namespace's shared ServiceAccount"
+	Name string `json:"name"`
+
+	// Annotations are set on the ServiceAccount, for example an IRSA role ARN.
+	// The operator owns these keys once applied: removing a key from this map
+	// removes it from the ServiceAccount, even if another writer set it first,
+	// and it is not restored to the previous value. Platform writers must not
+	// manage the same keys, or the two will overwrite each other on every
+	// reconcile.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
 // ClusterImages defines the container images for all components in the cluster.
 type ClusterImages struct {
 	// ImagePullPolicy overrides the default image pull policy.
@@ -270,6 +300,10 @@ type ClusterImages struct {
 	MultiadminWeb ImageRef `json:"multiadminWeb,omitempty"`
 	// +optional
 	Postgres ImageRef `json:"postgres,omitempty"`
+	// +optional
+	// PgBackRestd is the pgBackRest sidecar image. Unset, it is the Multipooler
+	// image of the same resolved set, so it never moves independently of it.
+	PgBackRestd ImageRef `json:"pgbackrestd,omitempty"`
 }
 
 // ImageUpdatePolicy controls when a cluster adopts a changed operator-default
@@ -310,6 +344,10 @@ type ComponentImages struct {
 	MultiadminWeb ImageRef `json:"multiadminWeb,omitempty"`
 	// +optional
 	Postgres ImageRef `json:"postgres,omitempty"`
+	// +optional
+	// PgBackRestd is set only in the effective set, derived from Multipooler;
+	// default and applied sets never carry it.
+	PgBackRestd ImageRef `json:"pgbackrestd,omitempty"`
 }
 
 // ImageSource describes how the effective component images were selected.
@@ -715,6 +753,67 @@ const (
 	// ConditionImageRolloutPending indicates whether a newer operator-default
 	// image set is available that this cluster has not adopted yet.
 	ConditionImageRolloutPending = "ImageRolloutPending"
+
+	// ConditionShardServiceAccountReady indicates whether the shard
+	// ServiceAccount named by spec.shardServiceAccount is applied. Absent when
+	// the cluster does not use one.
+	ConditionShardServiceAccountReady = "ShardServiceAccountReady"
+
+	// ConditionS3TLSVerified is False while a backup location of the
+	// cluster is configured with verifyTLS: false, so that its pgBackRest
+	// sidecars talk to the S3 endpoint without verifying its certificate.
+	// Absent when every S3 location is verified.
+	ConditionS3TLSVerified = "S3TLSVerified"
+
+	// ReasonS3TLSVerificationDisabled is the reason of a False
+	// ConditionS3TLSVerified.
+	ReasonS3TLSVerificationDisabled = "VerificationDisabled"
+
+	// ReasonBackupRepositoryResolved indicates every backup location resolves
+	// to the repository the configuration asks for.
+	ReasonBackupRepositoryResolved = "Resolved"
+
+	// ReasonBackupRepositoryFilesystemFallback indicates an S3 backup is
+	// configured but a backup location resolves to the local filesystem.
+	ReasonBackupRepositoryFilesystemFallback = "FilesystemFallback"
+
+	// ReasonBackupRepositoryMissingKeyPrefix indicates an S3 location has no
+	// key prefix although the cluster was allocated one.
+	ReasonBackupRepositoryMissingKeyPrefix = "MissingKeyPrefix"
+
+	// ReasonBackupRepositoryOverrideNotApplied indicates a tablegroup or shard
+	// backup block sets a type, encryption, the pgBackRest TLS secret or an S3
+	// bucket, endpoint or region that differs from the location the sidecar
+	// serves.
+	ReasonBackupRepositoryOverrideNotApplied = "OverrideNotApplied"
+
+	// ReasonBackupRepositorySidecarNotConfigured indicates a Shard whose spec
+	// carries no pgBackRest sidecar image, so no sidecar can serve its
+	// repository until the cluster controller writes one.
+	ReasonBackupRepositorySidecarNotConfigured = "SidecarNotConfigured"
+
+	// ReasonBackupRepositoryUnsupportedEndpoint indicates an S3 location
+	// whose endpoint is neither a host[:port] nor an https URL.
+	ReasonBackupRepositoryUnsupportedEndpoint = "UnsupportedEndpoint"
+
+	// ReasonBackupRepositoryUnsupportedCredentials indicates an S3 location
+	// with no credential source the sidecar can use.
+	ReasonBackupRepositoryUnsupportedCredentials = "UnsupportedCredentials"
+
+	// ReasonBackupRepositoryUnsupportedPath indicates a filesystem location
+	// outside the directory the sidecar mounts the backup volume at.
+	ReasonBackupRepositoryUnsupportedPath = "UnsupportedPath"
+
+	// ReasonShardServiceAccountApplied indicates the account is applied.
+	ReasonShardServiceAccountApplied = "Applied"
+
+	// ReasonShardServiceAccountConflict indicates the account is controlled by
+	// another owner.
+	ReasonShardServiceAccountConflict = "Conflict"
+
+	// ReasonShardServiceAccountApplyFailed indicates applying the account
+	// failed for a reason other than an owner conflict.
+	ReasonShardServiceAccountApplyFailed = "ApplyFailed"
 
 	// ReasonAwaitingAcknowledgement indicates a new default image set is
 	// available and the cluster is holding its current set until

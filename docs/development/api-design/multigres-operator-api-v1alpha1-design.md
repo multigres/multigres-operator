@@ -430,7 +430,7 @@ spec:
     # s3:
     #   bucket: "my-backups"
     #   region: "us-east-1"
-    #   endpoint: "http://minio:9000"  # optional, for S3-compatible stores
+    #   endpoint: "https://minio:9000"  # optional, for S3-compatible stores
     #   keyPrefix: "my-cluster"        # optional
     #   useEnvCredentials: true         # optional, for static creds from credentialsSecret
     #   credentialsSecret: "aws-creds" # optional

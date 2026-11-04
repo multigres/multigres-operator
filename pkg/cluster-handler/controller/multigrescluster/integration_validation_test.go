@@ -62,6 +62,122 @@ func TestMultigresCluster_Validation(t *testing.T) {
 		}
 	})
 
+	// The API server refuses an S3 block whose TLS settings the sidecar
+	// would refuse to start with, and one whose CA names no source or two.
+	t.Run("S3 TLS settings", func(t *testing.T) {
+		t.Parallel()
+		k8sClient, _ := setupIntegration(t)
+		for name, tc := range map[string]struct {
+			s3      func(*multigresv1alpha1.S3BackupConfig)
+			wantErr string
+		}{
+			"a CA with verification off": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						Secret: &multigresv1alpha1.S3CAKeyReference{Name: "ca"},
+					}
+					c.VerifyTLS = ptr.To(false)
+				},
+				wantErr: "ca and verifyTLS: false are mutually exclusive",
+			},
+			"a CA with no source": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{}
+				},
+				wantErr: "exactly one of secret and configMap must be set",
+			},
+			"a CA with two sources": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						Secret:    &multigresv1alpha1.S3CAKeyReference{Name: "ca"},
+						ConfigMap: &multigresv1alpha1.S3CAKeyReference{Name: "ca"},
+					}
+				},
+				wantErr: "exactly one of secret and configMap must be set",
+			},
+			// Names and keys no Secret or ConfigMap can have: no object
+			// created later could make such a reference work.
+			"a CA object name in upper case": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						Secret: &multigresv1alpha1.S3CAKeyReference{Name: "CorpCA"},
+					}
+				},
+				wantErr: "name",
+			},
+			"a CA object name with a slash": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						ConfigMap: &multigresv1alpha1.S3CAKeyReference{Name: "other/ca"},
+					}
+				},
+				wantErr: "name",
+			},
+			"a CA key that is one dot": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						ConfigMap: &multigresv1alpha1.S3CAKeyReference{Name: "ca", Key: "."},
+					}
+				},
+				wantErr: "must be a key a Secret or ConfigMap can have",
+			},
+			"a CA key that starts with two dots": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						Secret: &multigresv1alpha1.S3CAKeyReference{Name: "ca", Key: "..data"},
+					}
+				},
+				wantErr: "must be a key a Secret or ConfigMap can have",
+			},
+			"a CA object name with dots and a key with one": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						Secret: &multigresv1alpha1.S3CAKeyReference{
+							Name: "corp.ca-2026", Key: ".bundle.pem",
+						},
+					}
+				},
+			},
+			"a CA with verification on": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) {
+					c.CA = &multigresv1alpha1.S3CAReference{
+						ConfigMap: &multigresv1alpha1.S3CAKeyReference{Name: "ca", Key: "tls.crt"},
+					}
+					c.VerifyTLS = ptr.To(true)
+				},
+			},
+			"verification off": {
+				s3: func(c *multigresv1alpha1.S3BackupConfig) { c.VerifyTLS = ptr.To(false) },
+			},
+		} {
+			s3 := &multigresv1alpha1.S3BackupConfig{
+				Bucket: "b", Region: "r", CredentialsSecret: "s3-creds",
+			}
+			tc.s3(s3)
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "s3-tls-", Namespace: testNamespace,
+				},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Backup: &multigresv1alpha1.BackupConfig{
+						Type: multigresv1alpha1.BackupTypeS3, S3: s3,
+					},
+				},
+			}
+			setTestPostgresPasswordSecretRef(cluster)
+			err := k8sClient.Create(t.Context(), cluster)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Errorf("%s: %v", name, err)
+				}
+				continue
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("%s: want an error containing %q, got %v", name, tc.wantErr, err)
+			}
+		}
+	})
+
 	t.Run("Multiple Databases (Should Fail)", func(t *testing.T) {
 		t.Parallel()
 		k8sClient, _ := setupIntegration(t)

@@ -22,8 +22,8 @@ const (
 )
 
 // BuildLitePod creates the only pod of a Lite shard. It carries the same
-// pgctld sidecar, exporter, volumes and metadata as the first pod BuildPoolPod
-// builds for the pool, with three differences: the main container runs
+// pgBackRest and pgctld sidecars, exporter, volumes and metadata as the first
+// pod BuildPoolPod builds for the pool, with three differences: the main container runs
 // minigres instead of multipooler, so the pod also serves the cell's gateway
 // and carries the gateway-role label the cell's gateway Service selects on;
 // there is no readiness gate, because the data-plane phase that maintains it
@@ -35,8 +35,12 @@ func BuildLitePod(
 	cellName string,
 	poolSpec multigresv1alpha1.PoolSpec,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) (*corev1.Pod, error) {
 	if err := validatePoolRuntimeIdentity(poolSpec); err != nil {
+		return nil, err
+	}
+	if err := validateSidecarLocation(shard); err != nil {
 		return nil, err
 	}
 
@@ -98,10 +102,9 @@ func BuildLitePod(
 			SecurityContext:               buildPoolPodSecurityContext(poolSpec),
 			TerminationGracePeriodSeconds: ptr.To(defaultTerminationGracePeriod),
 			// pgctld is the native sidecar so it outlives minigres on pod
-			// termination, as it outlives multipooler in a pool pod.
-			InitContainers: []corev1.Container{
-				buildPgctldSidecar(shard, poolSpec),
-			},
+			// termination, as it outlives multipooler in a pool pod. The
+			// pgBackRest sidecar starts first, as in a pool pod.
+			InitContainers: buildPoolInitContainers(shard, poolSpec, newPodConfig(opts)),
 			Containers: []corev1.Container{
 				buildLiteContainer(shard, poolSpec, poolName, cellName, serviceID),
 				buildPostgresExporterContainer(shard),
@@ -113,11 +116,7 @@ func BuildLitePod(
 		},
 	}
 
-	if shard.Spec.Backup != nil &&
-		shard.Spec.Backup.S3 != nil &&
-		shard.Spec.Backup.S3.ServiceAccountName != "" {
-		pod.Spec.ServiceAccountName = shard.Spec.Backup.S3.ServiceAccountName
-	}
+	applyPgBackRestPodSpec(shard, pod)
 
 	pod.Annotations[metadata.AnnotationSpecHash] = ComputeSpecHash(pod)
 
@@ -135,7 +134,7 @@ func (r *ShardReconciler) buildLitePod(
 	poolName, cellName string,
 	poolSpec multigresv1alpha1.PoolSpec,
 ) (*corev1.Pod, error) {
-	pod, err := BuildLitePod(shard, poolName, cellName, poolSpec, r.Scheme)
+	pod, err := BuildLitePod(shard, poolName, cellName, poolSpec, r.Scheme, r.podOptions()...)
 	if err != nil {
 		return nil, err
 	}

@@ -1,17 +1,27 @@
 package shard
 
 import (
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/pem"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/multigres/multigres/go/common/rpcclient"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/cert"
+	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -338,4 +348,233 @@ func TestLegacyCellBackupPVCNameMatchesTheCellScopedBuilder(t *testing.T) {
 	require.Equal(t,
 		"backup-data-cccccccccccccccccccccccccccccccccccccccc---664dd5fd",
 		legacyCellBackupPVCName(long, "zone-a"))
+}
+
+// A shard whose sidecar location is refused reconciles nothing, except that
+// it lets go of the PVCs its spec says to keep: they are garbage-collected
+// with the shard while it owns them, so a Retain set on a shard that cannot
+// be repaired has to arrive before the shard is deleted. A refused shard
+// never takes ownership, which is what would make a claim deletable.
+func TestRefusedShardStillReleasesPVCsForRetain(t *testing.T) {
+	ctx := t.Context()
+	scheme := reloadTestScheme(t)
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, policyv1.AddToScheme(scheme))
+	shard := newTestShard()
+	pool := newTestPoolSpec()
+	pool.Cells = []multigresv1alpha1.CellName{"z1"}
+	shard.Spec.Pools = map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"main": pool}
+	refused := &multigresv1alpha1.BackupConfig{
+		Type:       multigresv1alpha1.BackupTypeFilesystem,
+		Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/data/x"},
+	}
+	shard.Spec.SidecarBackupLocation = refused
+	shard.Spec.Backup = refused.DeepCopy()
+	require.Error(t, validateSidecarLocation(shard), "the fixture must be a refused shard")
+	del := &multigresv1alpha1.PVCDeletionPolicy{
+		WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
+	}
+	retain := &multigresv1alpha1.PVCDeletionPolicy{
+		WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+	}
+	shard.Spec.PVCDeletionPolicy = del
+	data, err := BuildPoolDataPVC(shard, "main", "z1", pool, 0, true, scheme)
+	require.NoError(t, err)
+	backup, err := BuildSharedBackupPVC(shard, true, scheme)
+	require.NoError(t, err)
+	password := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "multigres-admin-password", Namespace: shard.Namespace},
+		Data:       map[string][]byte{PostgresPasswordSecretKey: []byte("pw")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, data, backup, password).
+		WithStatusSubresource(shard).Build()
+	r := &ShardReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(100), APIReader: c,
+	}
+	owned := func() map[string]bool {
+		t.Helper()
+		current := &multigresv1alpha1.Shard{}
+		require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(shard), current))
+		out := map[string]bool{}
+		for _, pvc := range []*corev1.PersistentVolumeClaim{data, backup} {
+			got := &corev1.PersistentVolumeClaim{}
+			require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(pvc), got))
+			out[pvc.Name] = metav1.IsControlledBy(got, current)
+		}
+		return out
+	}
+	setPolicy := func(policy *multigresv1alpha1.PVCDeletionPolicy) {
+		t.Helper()
+		current := &multigresv1alpha1.Shard{}
+		require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(shard), current))
+		current.Spec.PVCDeletionPolicy = policy
+		require.NoError(t, c.Update(ctx, current))
+		_, err := r.Reconcile(ctx, ctrlRequest(shard))
+		require.NoError(t, err)
+		require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(shard), current))
+		require.True(t, meta.IsStatusConditionFalse(current.Status.Conditions,
+			multigresv1alpha1.ConditionBackupRepositoryValid), "the shard must be refused")
+	}
+	both := map[string]bool{data.Name: true, backup.Name: true}
+	neither := map[string]bool{data.Name: false, backup.Name: false}
+
+	setPolicy(del)
+	require.Equal(t, both, owned())
+	setPolicy(retain)
+	require.Equal(t, neither, owned(), "a refused shard kept PVCs its spec says to retain")
+	setPolicy(del)
+	require.Equal(t, neither, owned(), "a refused shard took ownership of PVCs")
+}
+
+// A refused shard's pods keep running, so what they depend on keeps being
+// reconciled: the pgBackRest certificate they mount, and the readiness gate
+// Kubernetes and the PodDisruptionBudget read. The gate of a pod that can no
+// longer be observed must not stay at the last verdict from before the
+// refusal.
+func TestRefusedShardKeepsCertificatesAndReadinessCurrent(t *testing.T) {
+	ctx := t.Context()
+	scheme := reloadTestScheme(t)
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, policyv1.AddToScheme(scheme))
+	shard := newTestShard()
+	pool := newTestPoolSpec()
+	pool.Cells = []multigresv1alpha1.CellName{"cell1"}
+	shard.Spec.Pools = map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"main": pool}
+	accepted := shard.DeepCopy()
+	filesystemBackups(accepted)
+	pod, err := BuildPoolPod(accepted, "main", "cell1", pool, 0, scheme)
+	require.NoError(t, err)
+	pod.Status.Conditions = []corev1.PodCondition{{
+		Type: PoolerDataReadyCondition, Status: corev1.ConditionTrue, Reason: "Serving",
+	}}
+	refused := &multigresv1alpha1.BackupConfig{
+		Type:       multigresv1alpha1.BackupTypeFilesystem,
+		Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/data/x"},
+	}
+	shard.Spec.SidecarBackupLocation = refused
+	shard.Spec.Backup = refused.DeepCopy()
+	require.Error(t, validateSidecarLocation(shard), "the fixture must be a refused shard")
+	password := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "multigres-admin-password", Namespace: shard.Namespace},
+		Data:       map[string][]byte{PostgresPasswordSecretKey: []byte("pw")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, password).
+		WithStatusSubresource(shard, pod).Build()
+	r := &ShardReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(100), APIReader: c,
+		PoolerClients:   poolerclient.Static(rpcclient.NewFakeClient()),
+		CreateTopoStore: newMemoryTopoFactory(),
+	}
+
+	result, err := r.Reconcile(ctx, ctrlRequest(shard))
+	require.NoError(t, err)
+
+	current := &multigresv1alpha1.Shard{}
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(shard), current))
+	require.True(t, meta.IsStatusConditionFalse(current.Status.Conditions,
+		multigresv1alpha1.ConditionBackupRepositoryValid), "the shard must be refused")
+
+	got := &corev1.Pod{}
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(pod), got))
+	gate := findPoolerReadinessCondition(got.Status.Conditions)
+	require.NotNil(t, gate)
+	require.Equal(t, corev1.ConditionFalse, gate.Status,
+		"a pooler that is not registered in topology stayed ready on a refused shard")
+	require.Positive(t, result.RequeueAfter, "the unobserved pod is looked at again")
+
+	require.NoError(t, c.Get(ctx, client.ObjectKey{
+		Namespace: shard.Namespace, Name: shard.Name + "-pgbackrest-tls",
+	}, &corev1.Secret{}), "the certificate of a refused shard is not reconciled")
+
+	pods := &corev1.PodList{}
+	require.NoError(t, c.List(ctx, pods, client.InNamespace(shard.Namespace)))
+	require.Len(t, pods.Items, 1, "a refused shard creates nothing")
+}
+
+// A Shard written by an operator from before the sidecar has a backup block,
+// no sidecar image and no sidecar location. When its cluster cannot be
+// accepted it stays that way, refused, and its pods keep running and keep
+// mounting the certificate that operator generated. That certificate is
+// renewed from the backup block's TLS selection, and no pod is replaced for
+// it.
+func TestRefusedShardFromBeforeTheSidecarRenewsItsCertificate(t *testing.T) {
+	ctx := t.Context()
+	scheme := reloadTestScheme(t)
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, policyv1.AddToScheme(scheme))
+	shard := newTestShard()
+	pool := newTestPoolSpec()
+	pool.Cells = []multigresv1alpha1.CellName{"cell1"}
+	shard.Spec.Pools = map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"main": pool}
+	current := shard.DeepCopy()
+	filesystemBackups(current)
+	pod, err := BuildPoolPod(current, "main", "cell1", pool, 0, scheme)
+	require.NoError(t, err)
+	pod.UID = "pod-from-before"
+
+	shard.Spec.Images.PgBackRestd = ""
+	shard.Spec.SidecarBackupLocation = nil
+	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+		Type:       multigresv1alpha1.BackupTypeFilesystem,
+		Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/backups"},
+	}
+	require.Error(t, validateSidecarLocation(shard), "the fixture must be a refused shard")
+	password := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "multigres-admin-password", Namespace: shard.Namespace},
+		Data:       map[string][]byte{PostgresPasswordSecretKey: []byte("pw")},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod, password).
+		WithStatusSubresource(shard, pod).Build()
+	r := &ShardReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(100), APIReader: c,
+		PoolerClients:   poolerclient.Static(rpcclient.NewFakeClient()),
+		CreateTopoStore: newMemoryTopoFactory(),
+	}
+
+	// The certificate as the earlier operator left it, with ten days to go.
+	seed := shard.DeepCopy()
+	seed.Spec.SidecarBackupLocation = seed.Spec.Backup
+	require.NoError(t, r.reconcilePgBackRestCerts(ctx, seed))
+	caKey := client.ObjectKey{Namespace: shard.Namespace, Name: shard.Name + "-pgbackrest-ca"}
+	tlsKey := client.ObjectKey{Namespace: shard.Namespace, Name: shard.Name + "-pgbackrest-tls"}
+	caSecret, tlsSecret := &corev1.Secret{}, &corev1.Secret{}
+	require.NoError(t, c.Get(ctx, caKey, caSecret))
+	require.NoError(t, c.Get(ctx, tlsKey, tlsSecret))
+	ca, err := cert.ParseCA(caSecret.Data["ca.crt"], caSecret.Data["ca.key"])
+	require.NoError(t, err)
+	notAfter := func(certPEM []byte) time.Time {
+		t.Helper()
+		block, _ := pem.Decode(certPEM)
+		require.NotNil(t, block)
+		parsed, err := x509.ParseCertificate(block.Bytes)
+		require.NoError(t, err)
+		return parsed.NotAfter
+	}
+	block, _ := pem.Decode(tlsSecret.Data["tls.crt"])
+	require.NotNil(t, block)
+	template, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	template.NotAfter = time.Now().Add(10 * 24 * time.Hour)
+	der, err := x509.CreateCertificate(
+		rand.Reader, template, ca.Cert, template.PublicKey, ca.Key)
+	require.NoError(t, err)
+	tlsSecret.Data["tls.crt"] = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	require.NoError(t, c.Update(ctx, tlsSecret))
+	require.Less(t, time.Until(notAfter(tlsSecret.Data["tls.crt"])), cert.RotationThreshold)
+
+	_, err = r.Reconcile(ctx, ctrlRequest(shard))
+	require.NoError(t, err)
+
+	stored := &multigresv1alpha1.Shard{}
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(shard), stored))
+	require.True(t, meta.IsStatusConditionFalse(stored.Status.Conditions,
+		multigresv1alpha1.ConditionBackupRepositoryValid), "the shard must be refused")
+	require.NoError(t, c.Get(ctx, tlsKey, tlsSecret))
+	require.Greater(t, time.Until(notAfter(tlsSecret.Data["tls.crt"])), 300*24*time.Hour,
+		"the certificate the running pods mount was not renewed")
+	pods := &corev1.PodList{}
+	require.NoError(t, c.List(ctx, pods, client.InNamespace(shard.Namespace)))
+	require.Len(t, pods.Items, 1)
+	require.Equal(t, pod.UID, pods.Items[0].UID, "the pod was replaced")
+	require.Empty(t, pods.Items[0].Annotations[metadata.AnnotationDrainState])
 }

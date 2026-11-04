@@ -146,3 +146,45 @@ func TestSurgeActionNotesItsDrift(t *testing.T) {
 		t.Fatalf("RollingUpdate = %+v (%v), want 1 drifted pod in pool primary", condition, ok)
 	}
 }
+
+// TestSurgeActionCountsDriftWithTheOperatorsPodOptions requests maintenance
+// for a pod that is current under a sandbox mode other than the default. The
+// pass ends at the surge for that pool/cell, and what it notes for the
+// RollingUpdate condition must come from the pod the operator would build,
+// with its own options: built without them, the desired pod differs from
+// every running one and each would be counted as drifted.
+func TestSurgeActionCountsDriftWithTheOperatorsPodOptions(t *testing.T) {
+	scheme := maintenanceSurgeTestScheme(t)
+	shard := maintenanceSurgeTestShard()
+	poolName, cellName := "primary", "zone-a"
+	pool := shard.Spec.Pools[multigresv1alpha1.PoolName(poolName)]
+	target, err := BuildPoolPod(shard, poolName, cellName, pool, 0, scheme,
+		WithSandboxMode(SandboxAuto))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.Annotations[metadata.AnnotationMaintenanceRequested] = "true"
+	setReady(target, true)
+	r := &ShardReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithStatusSubresource(&corev1.Pod{}).
+			WithObjects(shard, target).
+			Build(),
+		Scheme:            scheme,
+		Recorder:          record.NewFakeRecorder(10),
+		PgBackRestSandbox: SandboxAuto,
+	}
+	rollout := &shardRolloutTracker{}
+	err = r.reconcilePoolPods(t.Context(), shard, poolName, cellName, pool, rollout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rollout.HasSurgeStarted(cellName) {
+		t.Fatal("precondition: the pool/cell did not create a maintenance surge")
+	}
+	noted := rollout.pools[poolName]
+	if noted == nil || noted.drifted != 0 {
+		t.Fatalf("noted %+v for a pod that is current under the operator's sandbox mode", noted)
+	}
+}

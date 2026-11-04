@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -28,14 +29,28 @@ const repeatedRefusalRequeue = 30 * time.Second
 // drain, and short against a spec that keeps it from ever starting.
 const defaultUnregisteredPodGrace = 2 * time.Minute
 
+// disruptionBlockedLogEvery bounds how often one pod's blocked disruption is
+// logged. The preflight reruns every disruptionRecoveryRequeue, so logging each
+// pass would flood the log, yet it must repeat so a long stall stays visible.
+const disruptionBlockedLogEvery = 5 * time.Minute
+
 // listDisruptionPods reads from the API server so a new reconcile cannot miss
 // a drain annotation that a previous reconcile just wrote through the cache.
 func (r *ShardReconciler) listDisruptionPods(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) (*corev1.PodList, error) {
+	return listShardPoolPods(ctx, r.disruptionReader(), shard)
+}
+
+// listShardPoolPods lists the shard's pool pods through reader.
+func listShardPoolPods(
+	ctx context.Context,
+	reader client.Reader,
+	shard *multigresv1alpha1.Shard,
+) (*corev1.PodList, error) {
 	pods := &corev1.PodList{}
-	err := r.disruptionReader().List(ctx, pods, client.InNamespace(shard.Namespace),
+	err := reader.List(ctx, pods, client.InNamespace(shard.Namespace),
 		client.MatchingLabels(map[string]string{
 			metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
 			metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
@@ -78,7 +93,12 @@ func (r *ShardReconciler) canStartDisruption(
 		}
 		return false, err
 	}
-	return r.disruptionAllowed(shard, preflight, target), nil
+	if err := r.disruptionCheck(shard, preflight, target); err != nil {
+		r.logDisruptionBlocked(ctx, shard, target, err)
+		r.recordDisruptionBlocked(shard, target.Name, err.Error())
+		return false, nil
+	}
+	return true, nil
 }
 
 // mayBeUnregistered reports whether pod, read fresh, has been scheduled for
@@ -210,18 +230,6 @@ func (r *ShardReconciler) disruptionCheck(
 	return preflight.observation.Check(shard, disruptionTarget)
 }
 
-func (r *ShardReconciler) disruptionAllowed(
-	shard *multigresv1alpha1.Shard,
-	preflight *disruptionPreflight,
-	target *corev1.Pod,
-) bool {
-	if err := r.disruptionCheck(shard, preflight, target); err != nil {
-		r.recordDisruptionBlocked(shard, target.Name, err.Error())
-		return false
-	}
-	return true
-}
-
 func (r *ShardReconciler) recordDisruptionBlocked(
 	shard *multigresv1alpha1.Shard,
 	target string,
@@ -239,6 +247,37 @@ func (r *ShardReconciler) recordDisruptionBlocked(
 		"Waiting for shard recovery before removing %s: %s", target, reason)
 }
 
+func (r *ShardReconciler) logDisruptionBlocked(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	target *corev1.Pod,
+	reason error,
+) {
+	key := client.ObjectKeyFromObject(target).String()
+	now := r.now()
+	r.disruptionLogMu.Lock()
+	if last, ok := r.disruptionLoggedAt[key]; ok && now.Sub(last) < disruptionBlockedLogEvery {
+		r.disruptionLogMu.Unlock()
+		return
+	}
+	if r.disruptionLoggedAt == nil {
+		r.disruptionLoggedAt = make(map[string]time.Time)
+	}
+	// An entry past the interval no longer holds a line back, and its pod
+	// may be gone for good, so the map keeps only the pods blocked lately.
+	for pod, last := range r.disruptionLoggedAt {
+		if now.Sub(last) >= disruptionBlockedLogEvery {
+			delete(r.disruptionLoggedAt, pod)
+		}
+	}
+	r.disruptionLoggedAt[key] = now
+	r.disruptionLogMu.Unlock()
+	log.FromContext(ctx).Info("Disruption blocked, waiting for shard recovery",
+		"shard", client.ObjectKeyFromObject(shard).String(),
+		"pod", target.Name,
+		"reason", reason.Error())
+}
+
 // selectShardScaleDownPod ranks removable pods across pool/cell boundaries.
 // Active surges in other cells are retained by their maintenance workflow;
 // released local surges are already present in localExtras.
@@ -251,10 +290,25 @@ func (r *ShardReconciler) selectShardScaleDownPod(
 	if err != nil {
 		return nil, fmt.Errorf("list shard scale-down candidates: %w", err)
 	}
-	candidates := map[string]*corev1.Pod{}
+	candidates := scaleDownCandidates(shard, pods)
 	for _, pod := range localExtras {
 		candidates[pod.Name] = pod
 	}
+	ordered := make([]*corev1.Pod, 0, len(candidates))
+	for _, name := range slices.Sorted(maps.Keys(candidates)) {
+		ordered = append(ordered, candidates[name])
+	}
+	return r.selectPodToDrain(ctx, ordered, shard), nil
+}
+
+// scaleDownCandidates are the shard's pods beyond their pool/cell's replica
+// count, by name. A maintenance surge pod is past the count on purpose and
+// is not one.
+func scaleDownCandidates(
+	shard *multigresv1alpha1.Shard,
+	pods *corev1.PodList,
+) map[string]*corev1.Pod {
+	candidates := map[string]*corev1.Pod{}
 	groups := map[string]map[string]*corev1.Pod{}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
@@ -276,14 +330,5 @@ func (r *ShardReconciler) selectShardScaleDownPod(
 			}
 		}
 	}
-	names := make([]string, 0, len(candidates))
-	for name := range candidates {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	ordered := make([]*corev1.Pod, 0, len(names))
-	for _, name := range names {
-		ordered = append(ordered, candidates[name])
-	}
-	return r.selectPodToDrain(ctx, ordered, shard), nil
+	return candidates
 }

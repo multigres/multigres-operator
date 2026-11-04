@@ -38,8 +38,12 @@ func deleteHeld(t *testing.T, c client.Client, obj client.Object) {
 }
 
 func filesystemBackups(shard *multigresv1alpha1.Shard) *multigresv1alpha1.Shard {
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeFilesystem,
+	}
+	// A shard whose own backup config is S3 is refused with this location.
+	if shard.Spec.Backup.ConfiguresS3() {
+		shard.Spec.Backup = nil
 	}
 	return shard
 }
@@ -389,14 +393,14 @@ func TestEnsureLitePodLeavesPodOnTerminatingPVC(t *testing.T) {
 
 			target := map[string]*corev1.PersistentVolumeClaim{"data": data, "backup": backup}[which]
 			deleteHeld(t, c, target)
-			require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
+			require.NoError(t, litePodErr(r.ensureLitePod(t.Context(), shard, "main", "z1", pool)))
 			current := &corev1.Pod{}
 			require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(pod), current))
 			require.Equal(t, pod.UID, current.UID, "a drifted pod is not replaced")
 
 			// Nor is a missing one created.
 			require.NoError(t, c.Delete(t.Context(), current))
-			require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
+			require.NoError(t, litePodErr(r.ensureLitePod(t.Context(), shard, "main", "z1", pool)))
 			err = c.Get(t.Context(), client.ObjectKeyFromObject(pod), current)
 			require.True(t, apierrors.IsNotFound(err), "no pod is created: %v", err)
 		})
@@ -411,7 +415,7 @@ func TestEnsureLitePodLeavesPodOnTerminatingPVC(t *testing.T) {
 		pod.Annotations[metadata.AnnotationSpecHash] = "drifted"
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
-		require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
+		require.NoError(t, litePodErr(r.ensureLitePod(t.Context(), shard, "main", "z1", pool)))
 		err = c.Get(t.Context(), client.ObjectKeyFromObject(pod), &corev1.Pod{})
 		require.True(t, apierrors.IsNotFound(err), "drifted pod deleted: %v", err)
 	})
@@ -483,16 +487,19 @@ func TestEnsureLitePodChecksExistingPodVolumes(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 	deleteHeld(t, c, backup)
 
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeS3,
-		S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "backups"},
+		S3: &multigresv1alpha1.S3BackupConfig{
+			Bucket:            "backups",
+			CredentialsSecret: "s3-credentials",
+		},
 	}
 	desired, err := BuildLitePod(shard, "main", "z1", pool, scheme)
 	require.NoError(t, err)
 	require.NotEqual(t, pod.Annotations[metadata.AnnotationSpecHash],
 		desired.Annotations[metadata.AnnotationSpecHash], "the switch to S3 drifts the pod")
 
-	require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
+	require.NoError(t, litePodErr(r.ensureLitePod(t.Context(), shard, "main", "z1", pool)))
 	current := &corev1.Pod{}
 	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(pod), current))
 	require.Equal(t, pod.UID, current.UID)

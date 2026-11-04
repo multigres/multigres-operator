@@ -15,6 +15,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -98,6 +99,13 @@ func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) c
 		defaultNamespaces = map[string]cache.Config{laptopNamespace: {}}
 	}
 
+	// LimitRanges carry no label of ours, so they are cached unfiltered
+	// wherever Shards are reconciled.
+	limitRangeNamespaces := defaultNamespaces
+	if limitRangeNamespaces == nil {
+		limitRangeNamespaces = map[string]cache.Config{cache.AllNamespaces: unfilteredConfig}
+	}
+
 	return cache.Options{
 		DefaultNamespaces: defaultNamespaces,
 		ByObject: map[client.Object]cache.ByObject{
@@ -109,9 +117,40 @@ func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) c
 			&appsv1.StatefulSet{}: {Namespaces: hybrid},
 			&corev1.Service{}:     {Namespaces: hybrid},
 			&corev1.Pod{}:         {Namespaces: hybrid},
+			// SERVICEACCOUNTS: the shard ServiceAccount the operator applies
+			// carries the managed-by label, and Owns() would otherwise cache
+			// every account in the cluster. A conflicting account lacks the
+			// label, so the conflict check reads through the APIReader.
+			&corev1.ServiceAccount{}: {Namespaces: hybrid},
+			// LIMITRANGES: the shard controller watches them only for the
+			// event, to ask the API server again about a pod it refused, and
+			// reads nothing of one, so the cache keeps its identity alone.
+			&corev1.LimitRange{}: {
+				Namespaces: limitRangeNamespaces,
+				Transform:  keepLimitRangeIdentity,
+			},
 			// CONFIGMAPS are deliberately absent, so they fall back to
 			// DefaultNamespaces (unfiltered): users supply their own unlabelled
 			// ConfigMaps for postgresql.conf and the operator has to hash them.
 		},
 	}
+}
+
+// keepLimitRangeIdentity reduces a cached LimitRange to its identity. Nothing
+// reads a LimitRange from the cache: its events are what the shard controller
+// uses.
+func keepLimitRangeIdentity(obj any) (any, error) {
+	limits, ok := obj.(*corev1.LimitRange)
+	if !ok {
+		return obj, nil
+	}
+	return &corev1.LimitRange{
+		TypeMeta: limits.TypeMeta,
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            limits.Name,
+			Namespace:       limits.Namespace,
+			UID:             limits.UID,
+			ResourceVersion: limits.ResourceVersion,
+		},
+	}, nil
 }

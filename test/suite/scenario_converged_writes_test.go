@@ -3,7 +3,6 @@ package suite
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -59,28 +58,9 @@ func TestConvergedPassesDoNotWrite(t *testing.T) {
 			if len(ops) > 0 {
 				t.Errorf("converged passes wrote %d times:\n  %s", len(ops), opSummary(ops))
 			}
-			var backupClaim []string
-			recorded := slices.DeleteFunc(events, func(e string) bool {
-				if strings.Contains(e, " Applied: Applied PersistentVolumeClaim backup-data-") {
-					backupClaim = append(backupClaim, e)
-					return true
-				}
-				return false
-			})
-			if len(recorded) > 0 {
-				t.Errorf("converged passes recorded events:\n  %s", strings.Join(recorded, "\n  "))
+			if len(events) > 0 {
+				t.Errorf("converged passes recorded events:\n  %s", strings.Join(events, "\n  "))
 			}
-			// The Shard controller records Applied for the shared backup
-			// claim on every pass that reaches it, whether or not the apply
-			// changed the claim. The pin retires when that event is recorded
-			// only for an apply that changed something, as every other child
-			// apply's is.
-			c.KnownDefect("converged-backup-claim-applied-event", func() error {
-				if len(backupClaim) > 0 {
-					return fmt.Errorf("backup claim Applied on converged passes: %v", backupClaim)
-				}
-				return nil
-			})
 		})
 	}
 }

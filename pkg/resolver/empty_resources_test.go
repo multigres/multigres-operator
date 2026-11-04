@@ -66,6 +66,7 @@ func TestResolveShard_EmptyResources(t *testing.T) {
 							Multipooler: multigresv1alpha1.ContainerConfig{
 								Resources: *shape.DeepCopy(),
 							},
+							PgBackRestResources: *shape.DeepCopy(),
 						},
 					},
 				},
@@ -85,6 +86,11 @@ func TestResolveShard_EmptyResources(t *testing.T) {
 				t,
 				prefix+"multipooler",
 				got.Pools["default"].Multipooler.Resources,
+			)
+			requireResolvedEmpty(
+				t,
+				prefix+"pgbackrest",
+				got.Pools["default"].PgBackRestResources,
 			)
 		}
 	}

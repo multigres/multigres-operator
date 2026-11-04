@@ -3,6 +3,7 @@ package topo_test
 import (
 	"context"
 	"errors"
+	"path"
 	"reflect"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 
@@ -1084,4 +1086,130 @@ func TestPruneCells(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 	})
+}
+
+// A record whose S3 location says how the endpoint is verified is stored
+// with that setting, read back with it, and not written again by a second
+// registration of the same spec. A change of the setting is written.
+func TestRegisterDatabaseFromSpec_S3TLSRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	_, factory := memorytopo.NewServerAndFactory(ctx, "zone-a")
+	store := topoclient.NewWithFactory(factory, "", []string{""}, topoclient.NewDefaultTopoConfig())
+	t.Cleanup(func() { _ = store.Close() })
+	backup := func(mutate func(*multigresv1alpha1.S3BackupConfig)) *multigresv1alpha1.BackupConfig {
+		cfg := &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeS3,
+			S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "b", Region: "r"},
+		}
+		mutate(cfg.S3)
+		return cfg
+	}
+	withCA := backup(func(c *multigresv1alpha1.S3BackupConfig) {
+		c.CA = &multigresv1alpha1.S3CAReference{
+			Secret: &multigresv1alpha1.S3CAKeyReference{Name: "ca"},
+		}
+	})
+	unverified := backup(func(c *multigresv1alpha1.S3BackupConfig) {
+		off := false
+		c.VerifyTLS = &off
+	})
+	register := func(cfg *multigresv1alpha1.BackupConfig) (events int, s3 *clustermetadatapb.S3Backup) {
+		t.Helper()
+		recorder := record.NewFakeRecorder(10)
+		require.NoError(t, topo.RegisterDatabaseFromSpec(
+			ctx, store, recorder, &multigresv1alpha1.MultigresCluster{},
+			multigresv1alpha1.DatabaseConfig{Name: "postgres"}, []string{"zone-a"}, cfg, "",
+		))
+		db, err := store.GetDatabase(ctx, "postgres")
+		require.NoError(t, err)
+		return len(recorder.Events), db.GetBackupLocation().GetS3()
+	}
+
+	_, first := register(withCA)
+	require.Equal(t, multigresv1alpha1.S3CAFilePath, first.GetCaFile())
+	require.False(t, first.GetSkipTlsVerify())
+	require.Empty(t, first.ProtoReflect().GetUnknown())
+	conn, err := store.ConnForCell(ctx, topoclient.GlobalCell)
+	require.NoError(t, err)
+	version := func() string {
+		t.Helper()
+		_, v, err := conn.Get(ctx, path.Join(
+			topoclient.DatabasesPath, "postgres", topoclient.DatabaseFile))
+		require.NoError(t, err)
+		return v.String()
+	}
+	stored := version()
+	_, again := register(withCA)
+	require.True(t, proto.Equal(first, again))
+	require.Equal(t, stored, version(), "an unchanged location was written again")
+
+	_, off := register(unverified)
+	require.True(t, off.GetSkipTlsVerify())
+	require.Empty(t, off.GetCaFile())
+	require.NotEqual(t, stored, version(), "a changed setting was not written")
+}
+
+// A database record can be deleted after CreateDatabase reported that it
+// exists and before the update reads it: the store then hands the update an
+// empty record and stores what the update leaves. The record written must be
+// whole, with its name and the location given, also for a caller that keeps
+// the location of an existing record, since there is none to keep. A second
+// call of the update, as after a concurrent write, starts from the same
+// desired record.
+func TestRegisterDatabaseFromSpec_RecordDeletedBetweenCreateAndUpdate(t *testing.T) {
+	backup := &multigresv1alpha1.BackupConfig{
+		Type: multigresv1alpha1.BackupTypeS3,
+		S3: &multigresv1alpha1.S3BackupConfig{
+			Bucket: "held", Region: "r", KeyPrefix: "p",
+			CA: &multigresv1alpha1.S3CAReference{
+				Secret: &multigresv1alpha1.S3CAKeyReference{Name: "ca"},
+			},
+		},
+	}
+	for name, opts := range map[string][]topo.RegisterDatabaseOption{
+		"keeping the location of an existing record": {topo.KeepBackupLocation()},
+		"from the spec": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			_, factory := memorytopo.NewServerAndFactory(ctx, "zone-a")
+			real := topoclient.NewWithFactory(
+				factory, "", []string{""}, topoclient.NewDefaultTopoConfig())
+			t.Cleanup(func() { _ = real.Close() })
+			updates := 0
+			store := &mockTopologyStore{
+				Store: real,
+				// The record exists when the create is tried, and is gone
+				// by the time the update reads it.
+				createDatabaseFunc: func(context.Context, string, *clustermetadatapb.Database) error {
+					return topoclient.NewError(topoclient.NodeExists, "node exists")
+				},
+				updateDatabaseFieldsFunc: func(
+					ctx context.Context, dbName string,
+					updater func(*clustermetadatapb.Database) error,
+				) error {
+					// A first attempt that lost to a concurrent write: the
+					// store calls the updater again with what it read then.
+					updates++
+					require.NoError(t, updater(&clustermetadatapb.Database{}))
+					return real.UpdateDatabaseFields(ctx, dbName, updater)
+				},
+			}
+			require.NoError(t, topo.RegisterDatabaseFromSpec(
+				ctx, store, record.NewFakeRecorder(10), &multigresv1alpha1.MultigresCluster{},
+				multigresv1alpha1.DatabaseConfig{Name: "postgres"}, []string{"zone-a"}, backup, "",
+				opts...,
+			))
+			require.Equal(t, 1, updates)
+			db, err := real.GetDatabase(ctx, "postgres")
+			require.NoError(t, err)
+			require.Equal(t, "postgres", db.GetName())
+			require.Equal(t, []string{"zone-a"}, db.GetCells())
+			s3 := db.GetBackupLocation().GetS3()
+			require.NotNil(t, s3, "the record was written without the location given")
+			require.Equal(t, "held", s3.GetBucket())
+			require.Equal(t, multigresv1alpha1.S3CAFilePath, s3.GetCaFile())
+			require.NotNil(t, db.GetBootstrapDurabilityPolicy())
+		})
+	}
 }

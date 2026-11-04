@@ -154,6 +154,12 @@ const (
 	// was first requested. Used to detect failover timeouts.
 	AnnotationDrainRequestedAt = "drain.multigres.com/requested-at"
 
+	// AnnotationRetryCreates, set or changed on a pod of a shard, makes the
+	// operator send at once the creates of that shard that a ResourceQuota
+	// turned down, instead of when their waits end. Any non-empty value; a
+	// timestamp is the usual one.
+	AnnotationRetryCreates = "multigres.com/retry-creates"
+
 	// AnnotationMaintenanceRequested asks the operator to provision enough
 	// same-cell capacity for this pod to be voluntarily evicted. Maintenance
 	// automation must wait for AnnotationMaintenanceReady before calling the

@@ -343,6 +343,7 @@ func TestUpdateStatus_PoolPodsNotFound(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"pool1": {
 					Cells: []multigresv1alpha1.CellName{"cell1"},
@@ -386,6 +387,9 @@ func TestReconcile_PatchError(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
 						Multiorch: multigresv1alpha1.MultiorchSpec{
@@ -409,6 +413,9 @@ func TestReconcile_PatchError(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
 					},
@@ -429,6 +436,9 @@ func TestReconcile_PatchError(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
 					},
@@ -458,6 +468,9 @@ func TestReconcile_PatchError(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
 					},
@@ -481,6 +494,9 @@ func TestReconcile_PatchError(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						DatabaseName:   "testdb",
 						TableGroupName: "default",
 					},
@@ -550,6 +566,9 @@ func TestReconcile_PostgresSecretError(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			PostgresPasswordSecretRef: multigresv1alpha1.PostgresPasswordSecretRef{
@@ -668,6 +687,9 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 					Namespace: "default",
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					Multiorch: multigresv1alpha1.MultiorchSpec{
 						Cells: []multigresv1alpha1.CellName{}, // Empty
 					},
@@ -693,6 +715,9 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 						Namespace: "default",
 					},
 					Spec: multigresv1alpha1.ShardSpec{
+						Images: multigresv1alpha1.ShardImages{
+							PgBackRestd: "registry/multigres@sha256:abc",
+						},
 						Multiorch: multigresv1alpha1.MultiorchSpec{
 							Cells: []multigresv1alpha1.CellName{"zone1"},
 						},
@@ -763,6 +788,7 @@ func TestUpdateStatus_GetError(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"pool1": {
 					Cells: []multigresv1alpha1.CellName{"cell1"},
@@ -844,6 +870,7 @@ func TestUpdateStatus_FieldOwner(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{PgBackRestd: "registry/multigres@sha256:abc"},
 			Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"pool1": {
 					Cells: []multigresv1alpha1.CellName{"cell1"},
@@ -906,6 +933,9 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "postgres",
 			TableGroupName: "default",
 			ShardName:      "0-inf",
@@ -1310,6 +1340,9 @@ func TestCleanupDrainedPod_PVCDeletion(t *testing.T) {
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "shard0",
@@ -1486,6 +1519,9 @@ func TestHandleExternalDeletion(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -1693,7 +1729,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					PgBackRestTLS: &multigresv1alpha1.PgBackRestTLSConfig{
 						SecretName: "my-tls-secret", // #nosec G101 -- Secret object name, not a credential
 					},
@@ -1730,7 +1766,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					PgBackRestTLS: &multigresv1alpha1.PgBackRestTLSConfig{
 						SecretName: "missing-secret",
 					},
@@ -1762,7 +1798,7 @@ func TestReconcilePgBackRestCerts(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					PgBackRestTLS: &multigresv1alpha1.PgBackRestTLSConfig{
 						SecretName: "partial-secret",
 					},
@@ -1833,7 +1869,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 				},
 			},
@@ -1867,7 +1903,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
 						SecretName: "my-cipher-secret", // #nosec G101 -- Secret object name, not a credential
@@ -1911,7 +1947,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
 						SecretName: "missing-cipher-secret",
@@ -1944,7 +1980,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{
 						SecretName: "partial-cipher-secret",
@@ -1984,7 +2020,7 @@ func TestReconcileBackupCipherSecret(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type:       multigresv1alpha1.BackupTypeFilesystem,
 					Encryption: &multigresv1alpha1.BackupEncryptionConfig{},
 				},
@@ -2018,6 +2054,9 @@ func TestCreateMissingResources(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -2886,6 +2925,9 @@ func TestHandleRollingUpdates(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -3230,6 +3272,9 @@ func TestHandleRollingUpdates_RolloutTrackerBlocksSameShardPass(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -3305,6 +3350,9 @@ func TestIsShardHealthy_MissingPodCountsAsUnhealthy(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -3366,6 +3414,9 @@ func sharedBackupPVCTestShard() *multigresv1alpha1.Shard {
 			Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -3385,7 +3436,7 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeS3,
 				},
 			},
@@ -3563,10 +3614,13 @@ func TestBuildSharedBackupPVC_Variants(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "db",
 				TableGroupName: "tg",
 				ShardName:      "s1",
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
 						Storage: multigresv1alpha1.StorageSpec{
@@ -3601,10 +3655,13 @@ func TestBuildSharedBackupPVC_Variants(t *testing.T) {
 				Labels: map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "db",
 				TableGroupName: "tg",
 				ShardName:      "s1",
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type:       multigresv1alpha1.BackupTypeFilesystem,
 					Filesystem: nil,
 				},
@@ -3636,6 +3693,9 @@ func TestCleanupDrainedPod_ErrorPaths(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -3779,6 +3839,9 @@ func TestReconcilePoolPods_ErrorPaths(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -3858,6 +3921,9 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4031,9 +4097,12 @@ func TestReconcile_BackupCertsError(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
-			Backup: &multigresv1alpha1.BackupConfig{
+			SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 				PgBackRestTLS: &multigresv1alpha1.PgBackRestTLSConfig{
 					SecretName: "nonexistent-tls-secret",
 				},
@@ -4095,10 +4164,13 @@ func TestBuildSharedBackupPVC_InvalidStorageSize(t *testing.T) {
 			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
-			Backup: &multigresv1alpha1.BackupConfig{
+			SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 				Type: multigresv1alpha1.BackupTypeFilesystem,
 				Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
 					Storage: multigresv1alpha1.StorageSpec{
@@ -4131,6 +4203,9 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4295,6 +4370,9 @@ func TestCreateMissingResources_PodBuildError(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4357,6 +4435,9 @@ func TestCreateMissingResources_ExternalDeletionError(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4425,6 +4506,9 @@ func TestHandleScaleDown_ExternalDeletionSetsActionTaken(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4479,6 +4563,9 @@ func TestHandleRollingUpdates_SkipsUpToDatePods(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4582,10 +4669,13 @@ func TestReconcileSharedBackupPVC_BuildErrorAndNilReturn(t *testing.T) {
 				Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "db",
 				TableGroupName: "tg",
 				ShardName:      "s1",
-				Backup: &multigresv1alpha1.BackupConfig{
+				SidecarBackupLocation: &multigresv1alpha1.BackupConfig{
 					Type: multigresv1alpha1.BackupTypeFilesystem,
 					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
 						Storage: multigresv1alpha1.StorageSpec{
@@ -4629,6 +4719,9 @@ func TestReconcile_Deletion(t *testing.T) {
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "shard0",
@@ -4678,6 +4771,9 @@ func TestReconcileShardPDB_Error(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4715,6 +4811,9 @@ func TestUpdateStatus_ProgressingPhase(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4781,6 +4880,9 @@ func TestUpdatePoolsStatus_PoolEmptyEvent(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4832,6 +4934,9 @@ func TestReconcilePool_PoolPodsError(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -4906,6 +5011,9 @@ func TestUpdateStatus_HealthyPhase(t *testing.T) {
 					Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 				},
 				Spec: multigresv1alpha1.ShardSpec{
+					Images: multigresv1alpha1.ShardImages{
+						PgBackRestd: "registry/multigres@sha256:abc",
+					},
 					DatabaseName:   "db",
 					TableGroupName: "tg",
 					ShardName:      "s1",
@@ -5033,6 +5141,9 @@ func TestUpdatePoolsStatus_TerminatingPodExcluded(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -5099,6 +5210,9 @@ func TestIsDrainStale(t *testing.T) {
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -5219,6 +5333,9 @@ func TestUpdatePoolsStatus_DrainAnnotationExcludedFromReady(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -5284,6 +5401,9 @@ func TestUpdatePoolsStatus_DegradedOnCrashLoop(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -5475,6 +5595,9 @@ func TestUpdatePoolsStatus_ConfigApplyFailing(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -5576,6 +5699,9 @@ func TestUpdateStatus_DegradedOnMultiorchCrashLoop(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -6141,6 +6267,9 @@ func TestReconcilePoolPods_AdditionalErrorPaths(t *testing.T) {
 			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",
@@ -6236,6 +6365,9 @@ func TestUpdatePoolsStatus_ReloadPending(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "db",
 			TableGroupName: "tg",
 			ShardName:      "s1",

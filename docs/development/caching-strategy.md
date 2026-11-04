@@ -75,6 +75,7 @@ Since ConfigMaps are generally lower volume and lower security risk than Secrets
 | **Pod** | All Namespaces | `managed-by=multigres` | OOM prevention; operator only manages its own pool pods. |
 | **Pod** | Operator NS | **NONE (All)** | Self-discovery. |
 | **ConfigMap** | All Namespaces | **NONE (All)** | User Configs (postgresql.conf). |
+| **LimitRange** | All Namespaces | **NONE (All)**, reduced to identity | The shard controller asks the API server again about a refused pod when a LimitRange changes. It reads none, so a transform keeps only name, namespace, UID and resourceVersion. |
 
 ### Laptop-Mode Cache Scoping
 

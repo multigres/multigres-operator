@@ -6,6 +6,7 @@ import (
 	"time"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
@@ -1653,6 +1654,110 @@ func TestMultigresClusterValidator_ValidateUpdate(t *testing.T) {
 	})
 }
 
+func TestMultigresClusterValidator_SidecarEnvCredentials(t *testing.T) {
+	t.Parallel()
+	fakeClient := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(
+		&multigresv1alpha1.CoreTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.ShardTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+	).
+		Build()
+	validator := NewMultigresClusterValidator(fakeClient)
+
+	cluster := func() *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type: multigresv1alpha1.BackupTypeS3,
+					S3: &multigresv1alpha1.S3BackupConfig{
+						Bucket: "b", Region: "r", UseEnvCredentials: true,
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("create is rejected", func(t *testing.T) {
+		t.Parallel()
+		_, err := validator.ValidateCreate(t.Context(), cluster())
+		if err == nil || !strings.Contains(err.Error(), "credential source") {
+			t.Fatalf("want rejection, got %v", err)
+		}
+	})
+	t.Run("switching to env credentials is rejected", func(t *testing.T) {
+		t.Parallel()
+		old := cluster()
+		old.Spec.Backup.S3.UseEnvCredentials = false
+		old.Spec.Backup.S3.ServiceAccountName = "irsa"
+		_, err := validator.ValidateUpdate(t.Context(), old, cluster())
+		if err == nil || !strings.Contains(err.Error(), "credential source") {
+			t.Fatalf("want rejection, got %v", err)
+		}
+	})
+	// A persisted object that already violates the rule must stay writable,
+	// or the operator's own updates and finalizer removal would be refused and
+	// the cluster could neither reconcile nor be deleted.
+	t.Run("an already persisted violation stays writable", func(t *testing.T) {
+		t.Parallel()
+		old, updated := cluster(), cluster()
+		updated.Finalizers = []string{"multigres.com/test"}
+		warnings, err := validator.ValidateUpdate(t.Context(), old, updated)
+		if err != nil {
+			t.Fatalf("persisted violation blocked an update: %v", err)
+		}
+		if len(warnings) == 0 || !strings.Contains(warnings[0], "credential source") {
+			t.Fatalf("want a warning naming the problem, got %v", warnings)
+		}
+	})
+}
+
+func TestMultigresClusterValidator_SidecarPathPersistedViolationStaysWritable(t *testing.T) {
+	t.Parallel()
+	fakeClient := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(
+		&multigresv1alpha1.CoreTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.ShardTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+	).
+		Build()
+	validator := NewMultigresClusterValidator(fakeClient)
+	cluster := func() *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Backup: &multigresv1alpha1.BackupConfig{
+					Type:       multigresv1alpha1.BackupTypeFilesystem,
+					Filesystem: &multigresv1alpha1.FilesystemBackupConfig{Path: "/data/bk"},
+				},
+			},
+		}
+	}
+	if _, err := validator.ValidateCreate(t.Context(), cluster()); err == nil {
+		t.Fatal("create with a bad path must be rejected")
+	}
+	updated := cluster()
+	updated.Finalizers = []string{"multigres.com/test"}
+	warnings, err := validator.ValidateUpdate(t.Context(), cluster(), updated)
+	if err != nil {
+		t.Fatalf("persisted path violation blocked an update: %v", err)
+	}
+	if len(warnings) == 0 || !strings.Contains(warnings[0], "/data/bk") {
+		t.Fatalf("want a warning naming the path, got %v", warnings)
+	}
+}
+
 func TestValidatePostgresConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1739,5 +1844,178 @@ func TestTemplateValidator_ShardTemplatePostgresConfig(t *testing.T) {
 	if _, err := validator.ValidateUpdate(t.Context(), valid, bad); err == nil ||
 		!strings.Contains(err.Error(), "unknown parameter") {
 		t.Errorf("expected unknown-parameter error, got %v", err)
+	}
+}
+
+// The backup repository rules reach a cluster through the validating webhook:
+// a create or a change that introduces one is rejected, and a stored cluster
+// that already has it stays writable with a warning, so the operator's own
+// updates and finalizer removal are not refused.
+func TestMultigresClusterValidator_BackupRepository(t *testing.T) {
+	t.Parallel()
+	fakeClient := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(
+		&multigresv1alpha1.CoreTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.CellTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+		&multigresv1alpha1.ShardTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: "default"},
+		},
+	).
+		Build()
+	validator := NewMultigresClusterValidator(fakeClient)
+
+	s3 := func() *multigresv1alpha1.BackupConfig {
+		return &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeS3,
+			S3: &multigresv1alpha1.S3BackupConfig{
+				Bucket: "b", Region: "r", KeyPrefix: "prod", CredentialsSecret: "keys",
+			},
+		}
+	}
+	cluster := func(
+		database, shard *multigresv1alpha1.BackupConfig,
+	) *multigresv1alpha1.MultigresCluster {
+		return &multigresv1alpha1.MultigresCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "default"},
+			Spec: multigresv1alpha1.MultigresClusterSpec{
+				Cells: []multigresv1alpha1.CellConfig{{Name: "zone-1"}},
+				Databases: []multigresv1alpha1.DatabaseConfig{{
+					Name: "postgres", Default: true, Backup: database,
+					TableGroups: []multigresv1alpha1.TableGroupConfig{{
+						Name: "default", Default: true,
+						Shards: []multigresv1alpha1.ShardConfig{{
+							Name: "0-inf", Backup: shard,
+							Spec: &multigresv1alpha1.ShardInlineSpec{
+								Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+									"default": {
+										Type:    "readWrite",
+										Cells:   []multigresv1alpha1.CellName{"zone-1"},
+										Storage: multigresv1alpha1.StorageSpec{Class: "standard"},
+									},
+								},
+							},
+						}},
+					}},
+				}},
+			},
+		}
+	}
+	ownCipher := s3()
+	ownCipher.Encryption = &multigresv1alpha1.BackupEncryptionConfig{SecretName: "own-cipher"}
+	ownPrefix := s3()
+	ownPrefix.S3.KeyPrefix = "own-prefix"
+
+	for name, tc := range map[string]struct {
+		refused *multigresv1alpha1.MultigresCluster
+		wantErr string
+	}{
+		"S3 only in a shard block": {
+			refused: cluster(nil, s3()),
+			wantErr: "resolves to the local filesystem",
+		},
+		"a shard block with a cipher the database lacks": {
+			refused: cluster(s3(), ownCipher),
+			wantErr: "encryption.secretName",
+		},
+		"a shard block with a key prefix the database does not use": {
+			refused: cluster(s3(), ownPrefix),
+			wantErr: `s3.keyPrefix to "own-prefix"`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := validator.ValidateCreate(t.Context(), tc.refused.DeepCopy())
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("create: want rejection naming %q, got %v", tc.wantErr, err)
+			}
+			_, err = validator.ValidateUpdate(
+				t.Context(), cluster(s3(), nil), tc.refused.DeepCopy(),
+			)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("introducing it: want rejection naming %q, got %v", tc.wantErr, err)
+			}
+			updated := tc.refused.DeepCopy()
+			updated.Finalizers = []string{"multigres.com/test"}
+			warnings, err := validator.ValidateUpdate(t.Context(), tc.refused.DeepCopy(), updated)
+			if err != nil {
+				t.Fatalf("a stored violation blocked an update: %v", err)
+			}
+			if len(warnings) == 0 || !strings.Contains(warnings[0], tc.wantErr) {
+				t.Fatalf("want a warning naming %q, got %v", tc.wantErr, warnings)
+			}
+		})
+	}
+
+	if _, err := validator.ValidateCreate(t.Context(), cluster(s3(), s3())); err != nil {
+		t.Fatalf("a shard block that repeats the database's must be accepted: %v", err)
+	}
+
+	// The reconcile gate pauses controllers, not admission: an image set can
+	// be written to a gated cluster, in a gated namespace or not, which is
+	// what staging a coordinated image migration needs.
+	gated := cluster(s3(), nil)
+	gated.Labels = map[string]string{features.ReconcileLabel: features.Disabled}
+	edited := gated.DeepCopy()
+	edited.Spec.Images.Postgres = "example.com/postgres:next"
+	if _, err := validator.ValidateUpdate(t.Context(), gated, edited); err != nil {
+		t.Fatalf("an image edit to a gated cluster must be admitted: %v", err)
+	}
+}
+
+// A ShardTemplate's pgbackrestResources block reaches a pool whole, so one
+// whose limit is below its request is wrong whatever cluster uses it.
+func TestTemplateValidator_ShardTemplatePgBackRestResources(t *testing.T) {
+	t.Parallel()
+	v := NewTemplateValidator(
+		fake.NewClientBuilder().WithScheme(setupScheme()).Build(), "ShardTemplate",
+	)
+	template := func(request, limit string) *multigresv1alpha1.ShardTemplate {
+		return &multigresv1alpha1.ShardTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "default"},
+			Spec: multigresv1alpha1.ShardTemplateSpec{
+				Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+					"default": {
+						Type: "readWrite",
+						PgBackRestResources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceMemory: apiresource.MustParse(request),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: apiresource.MustParse(limit),
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+	const want = "ShardTemplate 'shared' pool 'default' pgbackrest: " +
+		"resource memory limit (1Gi) must be >= request (2Gi)"
+	if _, err := v.ValidateCreate(t.Context(), template("2Gi", "1Gi")); err == nil ||
+		!strings.Contains(err.Error(), want) {
+		t.Errorf("create: want %q, got %v", want, err)
+	}
+	if _, err := v.ValidateUpdate(
+		t.Context(), template("1Gi", "2Gi"), template("2Gi", "1Gi"),
+	); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("update: want %q, got %v", want, err)
+	}
+	if _, err := v.ValidateCreate(t.Context(), template("1Gi", "2Gi")); err != nil {
+		t.Errorf("a valid block must be accepted: %v", err)
+	}
+
+	// The template path applies the container rules, not only the comparison.
+	misspelled := template("1Gi", "2Gi")
+	pool := misspelled.Spec.Pools["default"]
+	pool.PgBackRestResources = corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{"memroy": apiresource.MustParse("1Gi")},
+	}
+	misspelled.Spec.Pools["default"] = pool
+	if _, err := v.ValidateCreate(t.Context(), misspelled); err == nil ||
+		!strings.Contains(err.Error(), `"memroy" is not a resource a container can request`) {
+		t.Errorf("a misspelled resource name must be rejected, got %v", err)
 	}
 }

@@ -111,6 +111,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 											Multipooler: multigresv1alpha1.ContainerConfig{
 												Resources: testutil.PopulatedResources(),
 											},
+											PgBackRestResources: testutil.PopulatedResources(),
 										},
 									},
 								},
@@ -127,6 +128,8 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 					"pools", "default", "postgres", "resources"),
 				"shard.multipooler": appendPath(shardOverrides,
 					"pools", "default", "multipooler", "resources"),
+				"shard.pgbackrest": appendPath(shardOverrides,
+					"pools", "default", "pgbackrestResources"),
 			},
 			children: func(ctx context.Context, c client.Client, clusterName string) (
 				map[string]corev1.ResourceRequirements, error,
@@ -159,6 +162,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 					"TableGroup multiorch":   shard.Multiorch.Resources,
 					"TableGroup postgres":    shard.Pools["default"].Postgres.Resources,
 					"TableGroup multipooler": shard.Pools["default"].Multipooler.Resources,
+					"TableGroup pgbackrest":  shard.Pools["default"].PgBackRestResources,
 					"Cell multigateway":      cells.Items[0].Spec.Multigateway.Resources,
 					"TopoServer etcd":        topos.Items[0].Spec.Etcd.Resources,
 				}, nil
@@ -268,6 +272,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 											Postgres: multigresv1alpha1.ContainerConfig{
 												Resources: testutil.PopulatedResources(),
 											},
+											PgBackRestResources: testutil.PopulatedResources(),
 										},
 									},
 								},
@@ -281,6 +286,8 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 				"shard.multiorch":   appendPath(shardOverrides, "multiorch", "resources"),
 				"shard.postgres": appendPath(shardOverrides,
 					"pools", "default", "postgres", "resources"),
+				"shard.pgbackrest": appendPath(shardOverrides,
+					"pools", "default", "pgbackrestResources"),
 			},
 			children: func(ctx context.Context, c client.Client, clusterName string) (
 				map[string]corev1.ResourceRequirements, error,
@@ -303,9 +310,10 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 				}
 				shard := tgs.Items[0].Spec.Shards[0]
 				return map[string]corev1.ResourceRequirements{
-					"TableGroup multiorch": shard.Multiorch.Resources,
-					"TableGroup postgres":  shard.Pools["default"].Postgres.Resources,
-					"Cell multigateway":    cells.Items[0].Spec.Multigateway.Resources,
+					"TableGroup multiorch":  shard.Multiorch.Resources,
+					"TableGroup postgres":   shard.Pools["default"].Postgres.Resources,
+					"TableGroup pgbackrest": shard.Pools["default"].PgBackRestResources,
+					"Cell multigateway":     cells.Items[0].Spec.Multigateway.Resources,
 				}, nil
 			},
 		},

@@ -2,9 +2,11 @@ package multigrescluster
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -96,7 +98,18 @@ type MultigresClusterReconciler struct {
 		database string,
 	) ([]multiadmin.TableGroup, error)
 
+	// Now overrides the clock, for testing.
+	Now func() time.Time
+
 	synced ownership.SyncedEvents
+
+	// accountConflicts holds, per cluster, the refused apply to a shard
+	// ServiceAccount the informer does not hold (accountConflict), until the
+	// time to apply again.
+	accountConflicts sync.Map
+	// accountReports holds, per cluster, the reason and message of the last
+	// shard ServiceAccount failure reported (see reportShardServiceAccount).
+	accountReports sync.Map
 }
 
 // Reconcile resolves templates, reconciles child resources (Cells, TableGroups, TopoServer),
@@ -111,6 +124,7 @@ type MultigresClusterReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 func (r *MultigresClusterReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
@@ -139,6 +153,8 @@ func (r *MultigresClusterReconciler) Reconcile(
 			}
 			monitoring.ForgetCluster(req.Name, req.Namespace)
 			r.synced.Forget(req.NamespacedName)
+			r.accountConflicts.Delete(req.NamespacedName)
+			r.accountReports.Delete(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)
@@ -308,6 +324,17 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
+	// Not fatal: a conflicting account must not stop cells and the rest from
+	// converging. The error is returned after status is written. What it
+	// does stop is the account's name reaching a TableGroup; see
+	// applyTableGroup.
+	accountBefore := shardServiceAccountCondition(cluster)
+	saErr := r.syncShardServiceAccount(ctx, cluster)
+	var notCreated *[]string
+	if saErr != nil {
+		ctx, notCreated = withShardAccountUnverified(ctx)
+	}
+
 	var pendingCells, pendingDBs bool
 
 	{
@@ -330,7 +357,22 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
-	{
+	// A refusal stops topology and TableGroups below, not the reconcile:
+	// status is still written, with the refusal in the condition and the phase.
+	repoErr := r.syncBackupRepositoryCondition(cluster)
+	syncS3TLSCondition(cluster)
+	// A failure to carry Retain is returned after status is written, so that
+	// the refusal it happened under is reported and not only this error.
+	var retainErr error
+	if repoErr != nil {
+		if retainErr = r.retainPVCsWhileRefused(ctx, cluster, res); retainErr != nil {
+			l.Error(retainErr, "Failed to keep the PVCs of a refused cluster")
+			r.Recorder.Eventf(cluster, "Warning", "FailedApply",
+				"Failed to apply the PVC deletion policy of a refused cluster: %v", retainErr)
+		}
+	}
+
+	if repoErr == nil {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileTopology")
 		result, err := r.reconcileTopology(ctx, cluster, res, pendingCells)
 		if err != nil {
@@ -352,7 +394,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 		}
 	}
 
-	{
+	if repoErr == nil {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileDatabases")
 		var err error
 		pendingDBs, err = r.reconcileDatabases(ctx, cluster, res)
@@ -374,6 +416,11 @@ func (r *MultigresClusterReconciler) Reconcile(
 
 	cluster.Status.ResolvedTemplates = collectResolvedTemplates(cluster)
 
+	// Before the status write, which stores the condition this completes.
+	if saErr != nil {
+		r.reportShardServiceAccount(ctx, cluster, accountBefore, *notCreated, saErr)
+	}
+
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.UpdateStatus")
 		if err := r.updateStatus(ctx, cluster); err != nil {
@@ -392,7 +439,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 	// Skipped while cells or databases are still being deleted: the cluster is
 	// not settled.
 	var retireResult ctrl.Result
-	if !pendingCells && !pendingDBs {
+	if !pendingCells && !pendingDBs && repoErr == nil {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.RetireManagedGlobalTopo")
 		var err error
 		retireResult, err = r.retireManagedGlobalTopo(ctx, cluster, res)
@@ -426,17 +473,48 @@ func (r *MultigresClusterReconciler) Reconcile(
 		totalShards,
 	)
 
+	// An account another object controls is not retried on the work queue's
+	// backoff: an apply cannot succeed until the account changes. The pass
+	// goes on, and its result is given the time to apply again.
+	var accountConflict *accountConflictError
+	if saErr != nil && !stderrors.As(saErr, &accountConflict) {
+		return ctrl.Result{}, saErr
+	}
+	recheck := func(result ctrl.Result) ctrl.Result {
+		if accountConflict == nil || accountConflict.recheckAt.IsZero() {
+			return result
+		}
+		wait := max(accountConflict.recheckAt.Sub(r.now()), time.Second)
+		if result.RequeueAfter == 0 || result.RequeueAfter > wait {
+			result.RequeueAfter = wait
+		}
+		return result
+	}
+	if retainErr != nil {
+		return ctrl.Result{}, retainErr
+	}
+
 	if pendingCells || pendingDBs {
 		l.V(1).Info("Pending graceful deletions, requeueing",
 			"duration", time.Since(start).String())
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
+	// The refusal is in the BackupRepositoryValid condition, the Degraded
+	// phase and one event. Only an edit to the cluster clears it, and that
+	// edit starts the next reconcile, so returning the error would only retry
+	// with backoff and log the same refusal each time.
+	if repoErr != nil {
+		l.Info("Backup repository configuration is refused; "+
+			"topology and TableGroups were not reconciled", "reason", repoErr.Error())
+		return recheck(ctrl.Result{}), nil
+	}
+
 	l.V(1).Info("reconcile complete", "duration", time.Since(start).String())
-	if r.synced.Completed(cluster) {
+	if accountConflict == nil && r.synced.Completed(cluster) {
 		r.Recorder.Event(cluster, "Normal", "Synced", "Successfully reconciled MultigresCluster")
 	}
-	return retireResult, nil
+	return recheck(retireResult), nil
 }
 
 func (r *MultigresClusterReconciler) ensureClusterFinalizer(
@@ -631,6 +709,13 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(), &multigresv1alpha1.MultigresCluster{},
+		ShardServiceAccountNameIndex, ShardServiceAccountNames,
+	); err != nil {
+		return fmt.Errorf("failed to index clusters by shard service account: %w", err)
+	}
+
 	dynamicEvents := make(chan event.GenericEvent)
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.MultigresCluster{},
@@ -649,6 +734,11 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Owns(&multigresv1alpha1.TopoServer{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ServiceAccount{}).
+		Watches(
+			&corev1.ServiceAccount{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueAccountWaiters),
+		).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(
 			&multigresv1alpha1.CoreTemplate{},

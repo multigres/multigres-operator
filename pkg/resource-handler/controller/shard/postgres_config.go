@@ -85,12 +85,20 @@ func (r *ShardReconciler) reconcilePostgresConfig(
 		return err
 	}
 
+	stampConfigHashes(shard, cfg)
+	return nil
+}
+
+// stampConfigHashes puts on the in-memory shard everything of the rendered
+// config that the pod builders read from it. It is the one place that does,
+// so that a pod built ahead of reconcilePostgresConfig from a stamped copy
+// (see withConfigHashes) is the pod built after it.
+func stampConfigHashes(shard *multigresv1alpha1.Shard, cfg renderedConfig) {
 	if shard.Annotations == nil {
 		shard.Annotations = make(map[string]string)
 	}
 	shard.Annotations[metadata.AnnotationPostgresConfigHash] = cfg.restartHash
 	shard.Annotations[metadata.AnnotationPostgresReloadHash] = cfg.reloadHash
-	return nil
 }
 
 // renderPostgresConfig renders the effective postgresql.conf for a shard and

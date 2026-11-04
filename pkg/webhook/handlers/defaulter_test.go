@@ -213,15 +213,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 														Multipooler: multigresv1alpha1.ContainerConfig{
 															Resources: resolver.DefaultResourcesPooler(),
 														},
-													},
-												},
-											},
-											Backup: &multigresv1alpha1.BackupConfig{
-												Type: multigresv1alpha1.BackupTypeFilesystem,
-												Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
-													Path: resolver.DefaultBackupPath,
-													Storage: multigresv1alpha1.StorageSpec{
-														Size: resolver.DefaultBackupStorageSize,
+														PgBackRestResources: resolver.DefaultResourcesPgBackRest(),
 													},
 												},
 											},
@@ -512,15 +504,7 @@ func TestMultigresClusterDefaulter_Handle(t *testing.T) {
 													Multipooler: multigresv1alpha1.ContainerConfig{
 														Resources: resolver.DefaultResourcesPooler(),
 													},
-												},
-											},
-										},
-										Backup: &multigresv1alpha1.BackupConfig{
-											Type: multigresv1alpha1.BackupTypeFilesystem,
-											Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
-												Path: resolver.DefaultBackupPath,
-												Storage: multigresv1alpha1.StorageSpec{
-													Size: resolver.DefaultBackupStorageSize,
+													PgBackRestResources: resolver.DefaultResourcesPgBackRest(),
 												},
 											},
 										},

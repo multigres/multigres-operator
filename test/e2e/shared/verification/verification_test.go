@@ -4,15 +4,12 @@ package verification_test
 
 import (
 	"context"
-	"fmt"
-	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
-	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -37,7 +34,7 @@ func TestResourceVerification(t *testing.T) {
 
 func testMultiCellFilesystemBackup(t *testing.T) {
 	ns := cluster.CreateNamespace(t)
-	createStaticRWXVolume(t, ns)
+	cluster.CreateStaticRWXVolume(t, ns)
 	c, err := cluster.CRClient()
 	if err != nil {
 		t.Fatalf("create CR client: %v", err)
@@ -143,63 +140,6 @@ func testMultiCellFilesystemBackup(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("timed out waiting for bootstrap to elect a primary: %v", err)
-	}
-}
-
-// createStaticRWXVolume supplies the claim used by this test. A Kind cluster
-// has one node, so a hostPath volume is enough to verify that two poolers can
-// mount the same RWX claim without adding a provisioner to e2e infrastructure.
-func createStaticRWXVolume(t *testing.T, namespace string) {
-	t.Helper()
-
-	name := fmt.Sprintf("e2e-rwx-%s", namespace)
-	hostPath := "/var/local/multigres-e2e-rwx/" + namespace
-	prepareStaticRWXHostPath(t, hostPath)
-
-	_, err := cluster.Clientset.CoreV1().PersistentVolumes().Create(context.Background(), &corev1.PersistentVolume{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: corev1.PersistentVolumeSpec{
-			Capacity: corev1.ResourceList{
-				corev1.ResourceStorage: apiresource.MustParse("1Gi"),
-			},
-			AccessModes:                   []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
-			PersistentVolumeReclaimPolicy: corev1.PersistentVolumeReclaimRetain,
-			StorageClassName:              "e2e-rwx",
-			NodeAffinity: &corev1.VolumeNodeAffinity{
-				Required: &corev1.NodeSelector{
-					NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-						MatchExpressions: []corev1.NodeSelectorRequirement{{
-							Key:      "node-role.kubernetes.io/control-plane",
-							Operator: corev1.NodeSelectorOpExists,
-						}},
-					}},
-				},
-			},
-			PersistentVolumeSource: corev1.PersistentVolumeSource{
-				HostPath: &corev1.HostPathVolumeSource{
-					Path: hostPath,
-					Type: ptr.To(corev1.HostPathDirectoryOrCreate),
-				},
-			},
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatalf("create static RWX volume: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cluster.Clientset.CoreV1().PersistentVolumes().Delete(context.Background(), name, metav1.DeleteOptions{})
-	})
-}
-
-func prepareStaticRWXHostPath(t *testing.T, path string) {
-	t.Helper()
-
-	node := cluster.Name + "-control-plane"
-	for _, args := range [][]string{{"mkdir", "-p", path}, {"chmod", "0777", path}} {
-		output, err := exec.CommandContext(context.Background(), "docker", append([]string{"exec", node}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("%s static RWX hostPath: %v\n%s", args[0], err, output)
-		}
 	}
 }
 

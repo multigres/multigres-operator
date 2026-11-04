@@ -334,6 +334,21 @@ func (r *MultigresClusterReconciler) applyTableGroup(
 	cluster *multigresv1alpha1.MultigresCluster,
 	desired, current *multigresv1alpha1.TableGroup,
 ) error {
+	// The account the spec names is not this cluster's to use until its apply
+	// has succeeded: it may be controlled by another cluster or workload, with
+	// that owner's cloud identity on it. Publishing the name would start this
+	// cluster's pods under it. So an existing TableGroup keeps the name it
+	// has, and with it the backup repository its sidecars use (see
+	// keepBackupSelection), with everything else of the spec still applied,
+	// and a TableGroup that does not exist yet is not created.
+	if shardAccountUnverified(ctx) {
+		if current == nil {
+			noteTableGroupNotCreated(ctx, desired.Name)
+			return nil
+		}
+		desired.Spec.ShardServiceAccountName = current.Spec.ShardServiceAccountName
+		keepBackupSelection(desired, current)
+	}
 	hash := tableGroupHash(desired)
 	if current != nil && current.Annotations[metadata.AnnotationSpecHash] == hash {
 		return nil
@@ -354,6 +369,56 @@ func (r *MultigresClusterReconciler) applyTableGroup(
 	}
 	r.Recorder.Eventf(cluster, "Normal", "Applied", "Applied TableGroup %s", desired.Name)
 	return nil
+}
+
+// keepBackupSelection gives desired the backup configuration current has: the
+// sidecar's location, and the backup blocks of the TableGroup and of each
+// shard current also has. A repository and the ServiceAccount that reads and
+// writes it are chosen together, in the spec and by an S3 block's own
+// serviceAccountName, which a pod falls back to. While the account the spec
+// names is not applied, the account a TableGroup keeps is the one for the
+// repository it has: the spec's repository published without its account
+// would roll the pods onto storage they cannot reach, or under an account
+// that belongs to another owner.
+//
+// A TableGroup written before the sidecar has no location yet. It keeps
+// that too, and stays without a sidecar image, so that its Shards go on
+// waiting for the cluster controller as they do during an upgrade.
+func keepBackupSelection(desired, current *multigresv1alpha1.TableGroup) {
+	desired.Spec.Backup = current.Spec.Backup.DeepCopy()
+	desired.Spec.SidecarBackupLocation = current.Spec.SidecarBackupLocation.DeepCopy()
+	if current.Spec.SidecarBackupLocation == nil {
+		desired.Spec.Images.PgBackRestd = current.Spec.Images.PgBackRestd
+	}
+	kept := make(map[string]*multigresv1alpha1.BackupConfig, len(current.Spec.Shards))
+	for i := range current.Spec.Shards {
+		kept[current.Spec.Shards[i].Name] = current.Spec.Shards[i].Backup
+	}
+	for i := range desired.Spec.Shards {
+		if backup, ok := kept[desired.Spec.Shards[i].Name]; ok {
+			desired.Spec.Shards[i].Backup = backup.DeepCopy()
+		}
+	}
+}
+
+type shardAccountUnverifiedKey struct{}
+
+// withShardAccountUnverified marks a reconcile whose shard ServiceAccount
+// could not be applied. notCreated collects the TableGroups the reconcile
+// does not create for that reason.
+func withShardAccountUnverified(ctx context.Context) (_ context.Context, notCreated *[]string) {
+	notCreated = new([]string)
+	return context.WithValue(ctx, shardAccountUnverifiedKey{}, notCreated), notCreated
+}
+
+func shardAccountUnverified(ctx context.Context) bool {
+	return ctx.Value(shardAccountUnverifiedKey{}) != nil
+}
+
+func noteTableGroupNotCreated(ctx context.Context, tableGroup string) {
+	if notCreated, ok := ctx.Value(shardAccountUnverifiedKey{}).(*[]string); ok {
+		*notCreated = append(*notCreated, tableGroup)
+	}
 }
 
 // tableGroupHash hashes every field applyTableGroup manages on a TableGroup:

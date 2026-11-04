@@ -114,6 +114,10 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 		Suite.Scheme,
 	)
 	c.NoError(err, "build orphan tablegroup")
+	// The cluster controller fills the sidecar image in from its resolved image
+	// set; this hand-built cluster never ran that step, and a shard without it
+	// is refused until it does.
+	orphanTG.Spec.Images.PgBackRestd = "registry.example/multigres:orphan"
 
 	// The orphan TableGroup and its Shard are created gated, so no controller
 	// acts on either until the test releases them, which makes the order the

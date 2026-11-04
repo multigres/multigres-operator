@@ -2,12 +2,16 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	admissionv1 "k8s.io/api/admission/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
@@ -57,6 +61,15 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 	// 1. Static Defaulting (Pull Policy, System Catalog)
 	// Component images are resolved at reconcile time from operator
 	// configuration and never persisted into the spec.
+	// Defaulting fills an absent spec.backup with the filesystem default,
+	// after which it cannot be told from a filesystem block the user wrote.
+	// This makes Default depend on seeing the request as it was submitted:
+	// called a second time on its own output, the filled-in block reads as
+	// type filesystem written by the user, and dropStaleShardBackupCopies
+	// removes S3 shard blocks for it. The API server calls a mutating
+	// webhook once per request unless its reinvocationPolicy is IfNeeded, so
+	// this webhook's configuration must keep the default, Never.
+	submittedBackup := cluster.Spec.Backup.DeepCopy()
 	if _, err := d.Resolver.PopulateClusterDefaults(ctx, cluster); err != nil {
 		return fmt.Errorf("failed to populate cluster defaults: %w", err)
 	}
@@ -204,6 +217,12 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 		allCellNames = append(allCellNames, cell.Name)
 	}
 
+	dropStaleShardBackupCopies(ctx, cluster, submittedBackup)
+
+	// A shard's backup block is left as written. The controllers merge the
+	// cluster, database, tablegroup and shard blocks themselves, and a copy
+	// of the merged result stored here would keep the values of the day it
+	// was made: a later edit above it would be overridden by the copy.
 	for i := range cluster.Spec.Databases {
 		dbBackup := multigresv1alpha1.MergeBackupConfig(
 			cluster.Spec.Databases[i].Backup,
@@ -251,7 +270,6 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 						Pools:             resolved.Pools,
 						PVCDeletionPolicy: pvcPolicy,
 					}
-					shard.Backup = resolved.Backup
 				}
 			}
 		}
@@ -267,4 +285,145 @@ func (d *MultigresClusterDefaulter) Default(ctx context.Context, obj runtime.Obj
 	monitoring.RecordWebhookRequest("DEFAULT", "MultigresCluster", nil, time.Since(start))
 	logger.V(1).Info("defaulting webhook complete", "duration", time.Since(start).String())
 	return nil
+}
+
+// dropStaleShardBackupCopies removes, on an update, a shard backup block that
+// only repeated what the shard inherited in the stored object, when the
+// update changes a level above it so that the block now disagrees.
+//
+// Stored clusters can carry the merged backup config in every shard block,
+// written there by defaulting. Such a block keeps the values of the day it
+// was written. After an edit of the bucket, region, endpoint or TLS secret at
+// cluster or database level, a distributed cluster would be refused for an
+// override the database location does not carry, and a Lite cluster, where
+// the shard's block is the location, would keep writing backups to the old
+// place with nothing reporting it. Without the block the shard inherits the
+// edited values, which is what the block said before the edit.
+//
+// Three things must all hold, or the block is left for validation to judge:
+//
+//   - The update does not touch the block. A block the user adds or edits in
+//     this update is what they are asking for, whatever it says.
+//   - Merged over what the shard inherited in the stored object, the block
+//     changes nothing. A block that did change something is an override.
+//   - Against the levels above it in the incoming object, the block now asks
+//     for something else: an override a distributed cluster's database
+//     location would not apply, or any difference in a Lite cluster.
+//
+// A block that someone wrote by hand to repeat the levels above it cannot be
+// told from a defaulted one and is removed the same way.
+//
+// An S3 block that the levels above it no longer resolve to gets a rule of
+// its own, because removing it moves the shard's backups from S3 to the
+// cluster's own volume. It is removed only when a level above it says type
+// filesystem in this update and did not in the stored object: that is a
+// location stated by the user, and the block the update leaves alone does
+// not outrank it, whatever it added before. In every other case it stays.
+// Deleting the S3 block above it states no location, also when a filesystem
+// block that stood further up now shows through. A Lite shard then keeps
+// its block and stays on S3; a distributed cluster is refused by validation
+// until someone says which location is meant.
+//
+// The levels are compared as the update submitted them, with submittedBackup
+// for spec.backup: defaulting has by now filled an absent spec.backup with
+// the filesystem default, which would read as a filesystem block written in
+// place of a deleted S3 one. A stored spec.backup always has a type for the
+// same reason, so at that level only the change from S3 to filesystem
+// counts: a filesystem block sent over the stored default is what every
+// update sends that writes the stored object back.
+func dropStaleShardBackupCopies(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	submittedBackup *multigresv1alpha1.BackupConfig,
+) {
+	req, err := admission.RequestFromContext(ctx)
+	if err != nil || req.Operation != admissionv1.Update || len(req.OldObject.Raw) == 0 {
+		return
+	}
+	old := &multigresv1alpha1.MultigresCluster{}
+	if err := json.Unmarshal(req.OldObject.Raw, old); err != nil {
+		return
+	}
+	type shardKey struct {
+		db multigresv1alpha1.DatabaseName
+		tg multigresv1alpha1.TableGroupName
+		sh multigresv1alpha1.ShardName
+	}
+	// stored is each stored shard's block, the merged config of the levels
+	// above it, and the blocks of those levels: cluster, database, tablegroup.
+	type storedShard struct {
+		block, inherited *multigresv1alpha1.BackupConfig
+		above            [3]*multigresv1alpha1.BackupConfig
+	}
+	stored := map[shardKey]storedShard{}
+	for _, db := range old.Spec.Databases {
+		dbBackup := multigresv1alpha1.MergeBackupConfig(db.Backup, old.Spec.Backup)
+		for _, tg := range db.TableGroups {
+			tgBackup := multigresv1alpha1.MergeBackupConfig(tg.Backup, dbBackup)
+			for _, shard := range tg.Shards {
+				stored[shardKey{db.Name, tg.Name, shard.Name}] = storedShard{
+					block:     shard.Backup,
+					inherited: tgBackup,
+					above: [3]*multigresv1alpha1.BackupConfig{
+						old.Spec.Backup,
+						db.Backup,
+						tg.Backup,
+					},
+				}
+			}
+		}
+	}
+	lite := cluster.Spec.Mode == multigresv1alpha1.ModeLite
+	// adds reports whether block changes anything when merged over inherited.
+	adds := func(block, inherited *multigresv1alpha1.BackupConfig) bool {
+		return !apiequality.Semantic.DeepEqual(
+			resolver.InheritedShardBackup(multigresv1alpha1.MergeBackupConfig(block, inherited)),
+			resolver.InheritedShardBackup(inherited),
+		)
+	}
+	// saysFilesystem reports whether a backup block states the filesystem
+	// type. No block at all resolves to the filesystem without stating it.
+	saysFilesystem := func(config *multigresv1alpha1.BackupConfig) bool {
+		return config != nil && config.Type == multigresv1alpha1.BackupTypeFilesystem
+	}
+	for i := range cluster.Spec.Databases {
+		db := &cluster.Spec.Databases[i]
+		location := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
+		for j := range db.TableGroups {
+			tg := &db.TableGroups[j]
+			inherited := multigresv1alpha1.MergeBackupConfig(tg.Backup, location)
+			for k := range tg.Shards {
+				shard := &tg.Shards[k]
+				was, known := stored[shardKey{db.Name, tg.Name, shard.Name}]
+				if shard.Backup == nil || !known ||
+					!apiequality.Semantic.DeepEqual(shard.Backup, was.block) {
+					continue
+				}
+				if shard.Backup.Type == multigresv1alpha1.BackupTypeS3 &&
+					!inherited.ResolvesToS3() {
+					// Removing the block would take the shard off S3.
+					submitted := [3]*multigresv1alpha1.BackupConfig{
+						submittedBackup, db.Backup, tg.Backup,
+					}
+					for level, block := range submitted {
+						if saysFilesystem(block) && !saysFilesystem(was.above[level]) {
+							shard.Backup = nil
+							break
+						}
+					}
+					continue
+				}
+				if adds(was.block, was.inherited) {
+					continue
+				}
+				stale := adds(shard.Backup, inherited)
+				if !lite {
+					stale = multigresv1alpha1.UnappliedBackupOverride(shard.Backup, location) != nil
+				}
+				if stale {
+					shard.Backup = nil
+				}
+			}
+		}
+	}
 }

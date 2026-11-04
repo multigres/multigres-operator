@@ -95,7 +95,41 @@ func (r *ShardReconciler) reconcilePoolPods(
 		rollout,
 	)
 	if err != nil {
-		return err
+		// A surge's pod or claim that a quota turns down is a create that
+		// waits for room, like a desired pod's in createMissingResources:
+		// the pod that holds the room may be one beyond a replica count,
+		// here or in a cell reconciled after this one, and ending the pass
+		// would keep every pass from reaching it. So the failure is carried
+		// to the end of the pass, and the cells after this one are still
+		// reconciled. Without its surge no create, rolling update or
+		// maintenance grant in this cell may disrupt its last ready member,
+		// so of this cell's own steps only the scale-down goes on: the
+		// surge takes the first place past the replica count, and a pod
+		// past that place is one more holder of the room the surge waits
+		// for.
+		if !quotaExceeded(err) {
+			return err
+		}
+		extra, extraErr := r.shardHasScaleDownExtra(ctx, shard, rollout)
+		if extraErr != nil {
+			return extraErr
+		}
+		if !extra {
+			return err
+		}
+		log.FromContext(ctx).Info(
+			"Could not create maintenance surge; scaling the shard down first",
+			"pool", poolName, "cell", cellName, "error", err.Error())
+		rollout.deferCreateFailure(err)
+		// This pool/cell does not reach handleRollingUpdates either, and
+		// its drift belongs in the shard's RollingUpdate condition.
+		drifted, draining := r.poolCellRollout(
+			shard, poolName, cellName, poolSpec, existingPods, replicas)
+		rollout.notePool(poolName, drifted, draining || drifted > 0)
+		_, _, scaleErr := r.handleScaleDown(
+			ctx, shard, poolName, poolSpec, existingPods, replicas, replicas+1, false, rollout,
+		)
+		return scaleErr
 	}
 	if surgeAction {
 		// The pass ends here for this pool/cell, but its drift still belongs
@@ -179,7 +213,7 @@ func (r *ShardReconciler) poolCellRollout(
 			pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
 			continue
 		}
-		if podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i), r.Scheme) {
+		if r.poolPodNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i)) {
 			drifted++
 		}
 	}
@@ -222,12 +256,29 @@ func (r *ShardReconciler) createMissingResources(
 			if buildErr != nil {
 				return 0, false, fmt.Errorf("failed to build PVC %s: %w", pvcName, buildErr)
 			}
-			if createErr := r.Create(
+			if createErr := r.createUnderQuota(
 				ctx,
+				shard,
 				desiredPVC,
 			); createErr != nil &&
 				!errors.IsAlreadyExists(createErr) {
-				return 0, false, fmt.Errorf("failed to create PVC %s: %w", pvcName, createErr)
+				createErr = fmt.Errorf("failed to create PVC %s: %w", pvcName, createErr)
+				// A claim counts against a quota like a pod does, and a
+				// pod beyond the replica count holds one. Other failures of
+				// a claim's create end the pass.
+				if !quotaExceeded(createErr) {
+					return 0, false, createErr
+				}
+				if extra, err := r.shardHasScaleDownExtra(ctx, shard, disruptions); err != nil {
+					return 0, false, err
+				} else if !extra {
+					return 0, false, createErr
+				}
+				logger.Info("Could not create pool PVC; scaling the shard down first",
+					"pvc", pvcName, "error", createErr.Error())
+				disruptions.deferCreateFailure(createErr)
+				// Its pod would be created to wait for a claim that is not there.
+				continue
 			}
 			logger.Info("Created missing pool PVC", "pvc", pvcName)
 		} else {
@@ -265,6 +316,7 @@ func (r *ShardReconciler) createMissingResources(
 				poolSpec,
 				int(i),
 				r.Scheme,
+				r.podOptions()...,
 			)
 			if buildErr != nil {
 				return 0, false, fmt.Errorf("failed to build pod %s: %w", podName, buildErr)
@@ -278,12 +330,35 @@ func (r *ShardReconciler) createMissingResources(
 					"pod", podName, "pvc", claim)
 				continue
 			}
-			if createErr := r.Create(
+			if createErr := r.createUnderQuota(
 				ctx,
+				shard,
 				desiredPod,
 			); createErr != nil &&
 				!errors.IsAlreadyExists(createErr) {
-				return 0, false, fmt.Errorf("failed to create pod %s: %w", podName, createErr)
+				createErr = fmt.Errorf("failed to create pod %s: %w", podName, createErr)
+				// Only a quota's answer waits for room. Any other failure
+				// ends the pass, as it does for a claim.
+				if !quotaExceeded(createErr) {
+					return 0, false, createErr
+				}
+				if extra, err := r.shardHasScaleDownExtra(ctx, shard, disruptions); err != nil {
+					return 0, false, err
+				} else if !extra {
+					return 0, false, createErr
+				}
+				// The shard holds a pod beyond its pool/cell's replica
+				// count, in this pool/cell or another, and the create fails
+				// for want of the room that pod takes: a namespace at its
+				// quota whose owner lowered replicasPerCell to make room.
+				// Ending the pass here would keep the pod that has to go, so
+				// the failure is carried to the end of the pass and
+				// scale-down goes on, here and in the pools reconciled after
+				// this one.
+				logger.Info("Could not create pool pod; scaling the shard down first",
+					"pod", podName, "error", createErr.Error())
+				disruptions.deferCreateFailure(createErr)
+				continue
 			}
 			logger.Info("Created missing pool pod", "pod", podName)
 			r.Recorder.Eventf(
@@ -317,6 +392,11 @@ func (r *ShardReconciler) createMissingResources(
 				continue
 			}
 			if !actionTaken {
+				if ok, err := r.poolReplacementAccepted(ctx, shard, pod); err != nil {
+					return 0, false, err
+				} else if !ok {
+					continue
+				}
 				logger.Info(
 					"Deleting terminal pool pod for recreation",
 					"pod",
@@ -349,7 +429,7 @@ func (r *ShardReconciler) createMissingResources(
 		}
 
 		// Check if it's drifted
-		isDrifted := podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i), r.Scheme)
+		isDrifted := r.poolPodNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i))
 		if isDrifted {
 			driftedCount++
 		}
@@ -385,11 +465,13 @@ func (r *ShardReconciler) createMissingResources(
 				} else if !allowed {
 					continue
 				}
-				if err := r.initiateDrain(ctx, pod); err != nil {
+				if started, err := r.drainForReplacement(ctx, shard, pod); err != nil {
 					return 0, false, fmt.Errorf(
 						"failed to drain pod %s for filesystem resize: %w",
 						pod.Name, err,
 					)
+				} else if !started {
+					continue
 				}
 				logger.Info(
 					"Draining pod for PVC filesystem expansion",
@@ -429,6 +511,27 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
+// shardHasScaleDownExtra reports whether any pool/cell of the shard has a
+// pod beyond its replica count, which scale-down removes. It is asked when a
+// create fails, and the pods are listed once per pass, from the cache: the
+// answer only decides whether the pass goes on, and a fleet whose creates
+// all fail must not add a live list per Shard to them.
+func (r *ShardReconciler) shardHasScaleDownExtra(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	tracker *shardRolloutTracker,
+) (bool, error) {
+	if tracker.extraKnown {
+		return tracker.extra, nil
+	}
+	pods, err := listShardPoolPods(ctx, r.Client, shard)
+	if err != nil {
+		return false, fmt.Errorf("list shard scale-down candidates: %w", err)
+	}
+	tracker.extraKnown, tracker.extra = true, len(scaleDownCandidates(shard, pods)) > 0
+	return tracker.extra, nil
+}
+
 // isPoolHealthy returns true if the pool/cell has at least effectiveReplicas
 // pods, and all of them — except extras (index >= effectiveReplicas) and
 // QUARANTINED pods — are Ready, with none draining or terminating.
@@ -440,16 +543,38 @@ func isPodReady(pod *corev1.Pod) bool {
 // disappears from existingPods entirely — there is nothing left for the
 // per-pod checks below to flag as unhealthy. Without it, a pool/cell sitting
 // at zero pods for a slot (deleted, replacement not yet created) would look
-// indistinguishable from a pool that was never touched.
+// indistinguishable from a pool that was never touched. Only pods within
+// effectiveReplicas are counted: a pod beyond it, left by a lowered replica
+// count, must not stand in for a desired pod that is missing.
 func isPoolHealthy(
 	existingPods map[string]*corev1.Pod,
 	effectiveReplicas int32,
 	shard *multigresv1alpha1.Shard,
 ) bool {
-	//nolint:gosec // pod count will never exceed int32 capacity
-	if int32(len(existingPods)) < effectiveReplicas {
+	var desired int32
+	for _, pod := range existingPods {
+		if idx, ok := resolvePodIndex(pod.Name); ok && idx < int(effectiveReplicas) {
+			desired++
+		}
+	}
+	if desired < effectiveReplicas {
 		return false
 	}
+	return existingPoolPodsHealthy(existingPods, effectiveReplicas, shard)
+}
+
+// existingPoolPodsHealthy is isPoolHealthy without the count: it judges the
+// desired pods that exist and says nothing about one that does not. It is
+// the check for removing a pod beyond the replica count, from this pool/cell
+// or another of the shard. Such a pod is not one its pool is meant to have,
+// and it can be what keeps a missing desired pod from being created (it
+// holds the room in a full quota), so waiting for the missing pod before
+// removing it would wait on the removal itself.
+func existingPoolPodsHealthy(
+	existingPods map[string]*corev1.Pod,
+	effectiveReplicas int32,
+	shard *multigresv1alpha1.Shard,
+) bool {
 	for _, pod := range existingPods {
 		if idx, ok := resolvePodIndex(pod.Name); !ok || idx >= int(effectiveReplicas) {
 			continue
@@ -475,6 +600,29 @@ func isPoolHealthy(
 func (r *ShardReconciler) isShardHealthy(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
+) (bool, error) {
+	return r.shardPodsHealthy(ctx, shard, isPoolHealthy)
+}
+
+// isShardHealthyForScaleDown is isShardHealthy for removing a pod beyond its
+// pool/cell's replica count: desired pods may be missing, in any pool/cell
+// (see existingPoolPodsHealthy). Two pools that are each short of a pod and
+// each hold a pod beyond their count would otherwise wait on each other.
+// Whether the cohort stays durable without the pod is the disruption
+// preflight's question, not this one's.
+func (r *ShardReconciler) isShardHealthyForScaleDown(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (bool, error) {
+	return r.shardPodsHealthy(ctx, shard, existingPoolPodsHealthy)
+}
+
+// shardPodsHealthy applies healthy to every declared pool/cell of the shard,
+// and refuses while any pod, including extras, is draining or terminating.
+func (r *ShardReconciler) shardPodsHealthy(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	healthy func(map[string]*corev1.Pod, int32, *multigresv1alpha1.Shard) bool,
 ) (bool, error) {
 	podList, err := r.listDisruptionPods(ctx, shard)
 	if err != nil {
@@ -503,8 +651,7 @@ func (r *ShardReconciler) isShardHealthy(
 			if pool.ReplicasPerCell != nil {
 				replicas = *pool.ReplicasPerCell
 			}
-			group := podsByPoolCell[string(poolName)+"/"+string(cell)]
-			if !isPoolHealthy(group, replicas, shard) {
+			if !healthy(podsByPoolCell[string(poolName)+"/"+string(cell)], replicas, shard) {
 				return false, nil
 			}
 		}
@@ -641,6 +788,26 @@ func (r *ShardReconciler) handleScaleDown(
 			inProgress = true
 			continue
 		}
+		// A drain takes time, and the answer the API server gave when it
+		// started was about the spec and the admission policy of that
+		// moment. A pod whose place stays in the spec is deleted so that
+		// another is created under its name, so the question is asked again
+		// about the pod that would be created now. A refusal is recorded
+		// and the pod stays: it is the only object holding its name, and a
+		// refused create would leave the place empty with nothing in status
+		// saying why.
+		if index, ok := resolvePodIndex(pod.Name); ok && index < int(effectiveReplicas) {
+			accepted, err := r.poolReplacementAccepted(ctx, shard, pod)
+			if err != nil {
+				return actionTaken, inProgress, err
+			}
+			if !accepted {
+				logger.Info("Not deleting drained pod: its replacement is not accepted",
+					"pod", pod.Name)
+				inProgress = true
+				continue
+			}
+		}
 		logger.Info("Cleaning up pod in ready-for-deletion state", "pod", pod.Name)
 		if err := r.cleanupDrainedPod(ctx, shard, pod, poolName, poolSpec, replicas); err != nil {
 			return actionTaken, inProgress, fmt.Errorf(
@@ -667,7 +834,7 @@ func (r *ShardReconciler) handleScaleDown(
 	logger.V(1).
 		Info("Scale-down check", "extraPods", len(extraPods), "actionTaken", actionTaken, "inProgress", inProgress, "desiredReplicas", replicas, "effectiveReplicas", effectiveReplicas)
 	if !actionTaken && !inProgress && !disruptions.HasStarted() && len(extraPods) > 0 {
-		if !isPoolHealthy(existingPods, effectiveReplicas, shard) {
+		if !existingPoolPodsHealthy(existingPods, effectiveReplicas, shard) {
 			logger.Info(
 				"Deferring scale-down: current pool has non-ready pods",
 				"extraPods",
@@ -682,7 +849,7 @@ func (r *ShardReconciler) handleScaleDown(
 			)
 			return actionTaken, inProgress, nil
 		}
-		healthy, err := r.isShardHealthy(ctx, shard)
+		healthy, err := r.isShardHealthyForScaleDown(ctx, shard)
 		if err != nil {
 			return actionTaken, inProgress, err
 		}
@@ -781,6 +948,12 @@ type shardRolloutTracker struct {
 	// summed over the pool's cells, so the final RollingUpdate condition
 	// describes every pool rather than whichever was reconciled last.
 	pools map[string]*poolRolloutState
+	// createFailure is the first failed create of a desired pod or claim
+	// that did not end the pass; see deferCreateFailure.
+	createFailure error
+	// extra is whether the shard has a pod beyond its pool/cell's replica
+	// count, once extraKnown; see shardHasScaleDownExtra.
+	extraKnown, extra bool
 }
 
 // poolRolloutState is one pool's rollout progress in the current pass.
@@ -847,6 +1020,16 @@ func (t *shardRolloutTracker) poolsRollingUpdate() (metav1.Condition, bool) {
 func (t *shardRolloutTracker) block(reason string) {
 	if t.blocked == "" {
 		t.blocked = reason
+	}
+}
+
+// deferCreateFailure records that a desired pod or claim could not be
+// created in a shard that has a pod to scale down. The pass goes on, so that the
+// scale-down can start and its drain can advance, and fails with the first
+// such error at its end.
+func (t *shardRolloutTracker) deferCreateFailure(err error) {
+	if t.createFailure == nil {
+		t.createFailure = err
 	}
 }
 
@@ -933,9 +1116,11 @@ func (r *ShardReconciler) handleRollingUpdates(
 		if len(terminating) > 0 {
 			return nil
 		}
-		if err := r.initiateDrain(ctx, pod); err != nil {
+		if started, err := r.drainForReplacement(ctx, shard, pod); err != nil {
 			return fmt.Errorf("failed to initiate drain for topology-stranded pod %s: %w",
 				pod.Name, err)
+		} else if !started {
+			return nil
 		}
 		rollout.SetStarted()
 		logger.Info("Initiated drain for pod stranded on a previous global topology",
@@ -945,6 +1130,42 @@ func (r *ShardReconciler) handleRollingUpdates(
 			"Normal",
 			"PodUpdated",
 			"Initiated drain for pod %s, stranded on a previous global topology",
+			pod.Name,
+		)
+		return nil
+	}
+
+	// A pod whose pgbackrest sidecar never started cannot turn Ready, so the
+	// health gates below would hold its replacement forever. It never started
+	// postgres either, so draining it costs no availability. One pod per pass,
+	// like the stranded-topology path above.
+	if pod := r.sidecarStuckPod(ctx, shard, existingPods); pod != nil {
+		// This recovery path must retain the same PVC deletion barrier as
+		// topology-stranded and RPC-observed replacements.
+		terminating, err := mountedTerminatingPVCs(ctx, r.disruptionReader(), shard)
+		if err != nil {
+			return fmt.Errorf("check for mounted PVCs being deleted: %w", err)
+		}
+		if len(terminating) > 0 {
+			return nil
+		}
+		if started, err := r.drainForReplacement(ctx, shard, pod); err != nil {
+			return fmt.Errorf(
+				"failed to initiate drain for pod %s with a stuck pgbackrest sidecar: %w",
+				pod.Name,
+				err,
+			)
+		} else if !started {
+			return nil
+		}
+		rollout.SetStarted()
+		logger.Info("Initiated drain for pod whose pgbackrest sidecar never started",
+			"pod", pod.Name)
+		r.Recorder.Eventf(
+			shard,
+			"Normal",
+			"PodUpdated",
+			"Initiated drain for pod %s, whose pgbackrest sidecar never started",
 			pod.Name,
 		)
 		return nil
@@ -978,15 +1199,7 @@ func (r *ShardReconciler) handleRollingUpdates(
 	for _, name := range podNames {
 		pod := existingPods[name]
 		podIdx, _ := resolvePodIndex(pod.Name)
-		if !podNeedsUpdate(
-			pod,
-			shard,
-			poolName,
-			cellName,
-			poolSpec,
-			podIdx,
-			r.Scheme,
-		) {
+		if !r.poolPodNeedsUpdate(pod, shard, poolName, cellName, poolSpec, podIdx) {
 			continue
 		}
 
@@ -1013,8 +1226,10 @@ func (r *ShardReconciler) handleRollingUpdates(
 				!allowed {
 				return err
 			}
-			if err := r.initiateDrain(ctx, pod); err != nil {
+			if started, err := r.drainForReplacement(ctx, shard, pod); err != nil {
 				return fmt.Errorf("failed to initiate drain for drifted pod %s: %w", pod.Name, err)
+			} else if !started {
+				return nil
 			}
 			rollout.SetStarted()
 			logger.Info(
@@ -1057,12 +1272,14 @@ func (r *ShardReconciler) handleRollingUpdates(
 			!allowed {
 			return err
 		}
-		if err := r.initiateDrain(ctx, waitPrimary); err != nil {
+		if started, err := r.drainForReplacement(ctx, shard, waitPrimary); err != nil {
 			return fmt.Errorf(
 				"failed to request drain for primary pod %s: %w",
 				waitPrimary.Name,
 				err,
 			)
+		} else if !started {
+			return nil
 		}
 		rollout.SetStarted()
 		logger.Info("Requested switchover for primary pod rolling update", "pod", waitPrimary.Name)
@@ -1129,7 +1346,7 @@ func (r *ShardReconciler) classifyDesiredPods(
 			continue
 		}
 		switch {
-		case !podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme):
+		case !r.poolPodNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index):
 			c.current = append(c.current, pod)
 		case role == "PRIMARY":
 			if !isPodReady(pod) {
@@ -1316,8 +1533,14 @@ func (r *ShardReconciler) replaceUnreadyDriftedPod(
 			}
 			continue
 		}
-		if err := r.initiateDrain(ctx, pod); err != nil {
+		if isExtra[pod.Name] {
+			if err := r.drainUnreadyExtra(ctx, pod); err != nil {
+				return true, fmt.Errorf("failed to initiate drain for pod %s: %w", pod.Name, err)
+			}
+		} else if started, err := r.drainForReplacement(ctx, shard, pod); err != nil {
 			return true, fmt.Errorf("failed to initiate drain for pod %s: %w", pod.Name, err)
+		} else if !started {
+			continue
 		}
 		rollout.SetStarted()
 		logger.Info("Initiated drain while drifted pods are not Ready", "pod", pod.Name)
@@ -1739,6 +1962,22 @@ func (r *ShardReconciler) cleanupPodPVC(
 	return nil
 }
 
+// poolPodNeedsUpdate reports whether a pool pod differs from the pod the
+// operator would build for its place now. Every decision about drift goes
+// through it, so each compares against the same desired pod: the pod options
+// are part of what is hashed, and a caller that left them out would see every
+// pod as drifted, or a pod stale only for an option as current.
+func (r *ShardReconciler) poolPodNeedsUpdate(
+	existing *corev1.Pod,
+	shard *multigresv1alpha1.Shard,
+	poolName, cellName string,
+	poolSpec multigresv1alpha1.PoolSpec,
+	index int,
+) bool {
+	return podNeedsUpdate(
+		existing, shard, poolName, cellName, poolSpec, index, r.Scheme, r.podOptions()...)
+}
+
 // podNeedsUpdate checks if a pod requires recreation due to spec changes.
 // Since most pod fields are immutable, we rely on the pre-computed spec-hash annotation.
 func podNeedsUpdate(
@@ -1748,6 +1987,7 @@ func podNeedsUpdate(
 	poolSpec multigresv1alpha1.PoolSpec,
 	index int,
 	scheme *runtime.Scheme,
+	opts ...PodOption,
 ) bool {
 	// If it has a deletion timestamp, let it die
 	if !existing.DeletionTimestamp.IsZero() {
@@ -1762,7 +2002,7 @@ func podNeedsUpdate(
 
 	// Compute desired hash by building the ideal pod spec
 	// NOTE: BuildPoolPod doesn't make API calls, it's safe to call frequently.
-	desired, err := BuildPoolPod(shard, poolName, cellName, poolSpec, index, scheme)
+	desired, err := BuildPoolPod(shard, poolName, cellName, poolSpec, index, scheme, opts...)
 	if err != nil {
 		return false // Assume no update needed if we can't build it
 	}

@@ -38,9 +38,17 @@ func (r *MultigresClusterReconciler) reconcileCells(
 
 	activeCellNames := make(map[multigresv1alpha1.CellName]bool, len(cluster.Spec.Cells))
 	existingVersions := make(map[string]string, len(existingCells.Items))
+	existingTopo := make(map[string]multigresv1alpha1.GlobalTopoServerRef, len(existingCells.Items))
 	for i := range existingCells.Items {
 		existingVersions[existingCells.Items[i].Name] = existingCells.Items[i].ResourceVersion
+		existingTopo[existingCells.Items[i].Name] = existingCells.Items[i].Spec.GlobalTopoServer
 	}
+	// A refused cluster registers nothing in topology and leaves its
+	// TableGroups as they are, so its shards stay on the global topology
+	// they are on. Its cells still reconcile, but a cell that exists keeps
+	// the same topology: with the spec's new address its gateways would
+	// move to a topology that holds none of the cluster's databases.
+	refused := resolver.ValidateSidecarConfig(cluster) != nil
 
 	allCellNames := []multigresv1alpha1.CellName{}
 	for _, cellCfg := range cluster.Spec.Cells {
@@ -71,6 +79,10 @@ func (r *MultigresClusterReconciler) reconcileCells(
 		)
 		if err != nil {
 			return false, fmt.Errorf("failed to build cell '%s': %w", cellCfg.Name, err)
+		}
+
+		if serving, exists := existingTopo[desired.Name]; refused && exists {
+			desired.Spec.GlobalTopoServer = serving
 		}
 
 		// Server Side Apply

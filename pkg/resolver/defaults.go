@@ -149,6 +149,25 @@ func DefaultResourcesPooler() corev1.ResourceRequirements {
 	}
 }
 
+// DefaultResourcesPgBackRest returns the default resources for the pgBackRest
+// sidecar container in a pool. Requests are sized so the scheduler accounts
+// for the sidecar. The memory limit contains a runaway backup or restore so it
+// cannot starve a neighbouring project on the node. There is deliberately no
+// CPU limit: pgBackRest compression bursts, and CPU throttling would stretch
+// backup and WAL archive latency without protecting anyone, since CPU requests
+// already guarantee a fair share.
+func DefaultResourcesPgBackRest() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse("1Gi"),
+		},
+	}
+}
+
 // DefaultResourcesAdminWeb returns the default resource requests and limits for the MultiadminWeb deployment.
 func DefaultResourcesAdminWeb() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{

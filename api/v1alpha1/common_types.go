@@ -290,11 +290,17 @@ type FilesystemBackupConfig struct {
 // S3BackupConfig defines S3-compatible backup storage settings.
 // +kubebuilder:validation:XValidation:rule="!(has(self.serviceAccountName) && size(self.serviceAccountName) > 0 && has(self.credentialsSecret) && size(self.credentialsSecret) > 0)",message="serviceAccountName and credentialsSecret are mutually exclusive"
 // +kubebuilder:validation:XValidation:rule="!(has(self.serviceAccountName) && size(self.serviceAccountName) > 0 && has(self.useEnvCredentials) && self.useEnvCredentials)",message="serviceAccountName and useEnvCredentials are mutually exclusive — IRSA credentials are handled automatically"
+// +kubebuilder:validation:XValidation:rule="!(has(self.ca) && has(self.verifyTLS) && !self.verifyTLS)",message="ca and verifyTLS: false are mutually exclusive: a CA has no effect when the certificate is not verified"
 type S3BackupConfig struct {
 	// +kubebuilder:validation:MinLength=1
 	Bucket string `json:"bucket"`
 	// +kubebuilder:validation:MinLength=1
-	Region   string `json:"region"`
+	Region string `json:"region"`
+	// Endpoint is the address of an S3-compatible service, for a store
+	// other than AWS S3: host[:port], which pgBackRest connects to with TLS,
+	// or an https URL. A cluster whose endpoint has another scheme is
+	// refused (BackupRepositoryValid=False, reason UnsupportedEndpoint).
+	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
 	// KeyPrefix is the path below the bucket that holds the pgBackRest repositories.
@@ -317,8 +323,57 @@ type S3BackupConfig struct {
 	// The ServiceAccount must exist in the same namespace and be annotated with
 	// eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
 	// The operator does NOT create this ServiceAccount — the user must create it externally.
+	// spec.shardServiceAccount wins when both are set; this field applies when
+	// spec.shardServiceAccount is unset.
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// CA references a PEM bundle of the certificate authorities that verify
+	// the S3 endpoint's TLS certificate, in place of the system trust store.
+	// It is for an S3-compatible service behind a private CA. The bundle may
+	// hold several certificates, and a self-signed server certificate works
+	// as its own CA. It is mounted read-only into the pgbackrest sidecar
+	// only. It cannot be combined with verifyTLS: false. At a lower level
+	// it replaces a CA or a verifyTLS: false set above.
+	// +optional
+	CA *S3CAReference `json:"ca,omitempty"`
+
+	// VerifyTLS says whether the S3 endpoint's TLS certificate is verified.
+	// It defaults to true. With false, anyone who can intercept the
+	// connection can read and replace backups and WAL; prefer ca for an
+	// endpoint with a private CA. At a lower level, false replaces a CA
+	// set above, and true replaces a false set above and keeps a CA.
+	// +optional
+	VerifyTLS *bool `json:"verifyTLS,omitempty"`
+}
+
+// S3CAReference names the key of a Secret or of a ConfigMap, in the cluster's
+// namespace, that holds a PEM bundle of certificate authorities.
+// +kubebuilder:validation:XValidation:rule="has(self.secret) != has(self.configMap)",message="exactly one of secret and configMap must be set"
+type S3CAReference struct {
+	// Secret references a key of a Secret.
+	// +optional
+	Secret *S3CAKeyReference `json:"secret,omitempty"`
+
+	// ConfigMap references a key of a ConfigMap.
+	// +optional
+	ConfigMap *S3CAKeyReference `json:"configMap,omitempty"`
+}
+
+// S3CAKeyReference is one key of a Secret or ConfigMap.
+type S3CAKeyReference struct {
+	// Name is the name of the Secret or ConfigMap.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Key is the key that holds the PEM bundle. It defaults to ca.crt.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[-._a-zA-Z0-9]+$`
+	// +kubebuilder:validation:XValidation:rule="self != '.' && !self.startsWith('..')",message="must be a key a Secret or ConfigMap can have: not '.', and not starting with '..'"
+	// +optional
+	Key string `json:"key,omitempty"`
 }
 
 // PgBackRestTLSConfig configures TLS for pgBackRest inter-node communication.
@@ -733,6 +788,7 @@ func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {
 			if child.S3.ServiceAccountName != "" {
 				merged.S3.ServiceAccountName = child.S3.ServiceAccountName
 			}
+			merged.S3.inheritTLSTrust(child.S3)
 		}
 	}
 
