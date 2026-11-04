@@ -92,9 +92,11 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(2)),
-					}},
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(2)),
+						},
+					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -108,19 +110,39 @@ func TestCellReconciliation(t *testing.T) {
 			wantResources: []client.Object{
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "test-cell-multigateway", "multigateway", "zone1", "usw1-az1"),
+						Name:      "test-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"test-cell-multigateway",
+							"multigateway",
+							"zone1",
+							"usw1-az1",
+						),
 						OwnerReferences: cellOwnerRefs(t, "test-cell"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(2)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(cellLabels(t, "test-cell-multigateway", "multigateway", "zone1", "usw1-az1")),
+							MatchLabels: metadata.GetSelectorLabels(
+								cellLabels(
+									t,
+									"test-cell-multigateway",
+									"multigateway",
+									"zone1",
+									"usw1-az1",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: cellLabels(t, "test-cell-multigateway", "multigateway", "zone1", "usw1-az1"),
+								Labels: cellLabels(
+									t,
+									"test-cell-multigateway",
+									"multigateway",
+									"zone1",
+									"usw1-az1",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -186,9 +208,15 @@ func TestCellReconciliation(t *testing.T) {
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "test-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "test-cell-multigateway", "multigateway", "zone1", "usw1-az1"),
+						Name:      "test-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"test-cell-multigateway",
+							"multigateway",
+							"zone1",
+							"usw1-az1",
+						),
 						OwnerReferences: cellOwnerRefs(t, "test-cell"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -198,7 +226,15 @@ func TestCellReconciliation(t *testing.T) {
 							tcpServicePort(t, "grpc", 15170),
 							tcpServicePort(t, "postgres", 5432),
 						},
-						Selector: metadata.GetSelectorLabels(cellLabels(t, "test-cell-multigateway", "multigateway", "zone1", "usw1-az1")),
+						Selector: metadata.GetSelectorLabels(
+							cellLabels(
+								t,
+								"test-cell-multigateway",
+								"multigateway",
+								"zone1",
+								"usw1-az1",
+							),
+						),
 					},
 				},
 			},
@@ -224,9 +260,11 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(3)),
-					}},
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(3)),
+						},
+					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -240,19 +278,39 @@ func TestCellReconciliation(t *testing.T) {
 			wantResources: []client.Object{
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "custom-replicas-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "custom-replicas-cell-multigateway", "multigateway", "zone2", "usw1-az2"),
+						Name:      "custom-replicas-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"custom-replicas-cell-multigateway",
+							"multigateway",
+							"zone2",
+							"usw1-az2",
+						),
 						OwnerReferences: cellOwnerRefs(t, "custom-replicas-cell"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(3)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(cellLabels(t, "custom-replicas-cell-multigateway", "multigateway", "zone2", "usw1-az2")),
+							MatchLabels: metadata.GetSelectorLabels(
+								cellLabels(
+									t,
+									"custom-replicas-cell-multigateway",
+									"multigateway",
+									"zone2",
+									"usw1-az2",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: cellLabels(t, "custom-replicas-cell-multigateway", "multigateway", "zone2", "usw1-az2"),
+								Labels: cellLabels(
+									t,
+									"custom-replicas-cell-multigateway",
+									"multigateway",
+									"zone2",
+									"usw1-az2",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -318,9 +376,15 @@ func TestCellReconciliation(t *testing.T) {
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "custom-replicas-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "custom-replicas-cell-multigateway", "multigateway", "zone2", "usw1-az2"),
+						Name:      "custom-replicas-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"custom-replicas-cell-multigateway",
+							"multigateway",
+							"zone2",
+							"usw1-az2",
+						),
 						OwnerReferences: cellOwnerRefs(t, "custom-replicas-cell"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -330,7 +394,15 @@ func TestCellReconciliation(t *testing.T) {
 							tcpServicePort(t, "grpc", 15170),
 							tcpServicePort(t, "postgres", 5432),
 						},
-						Selector: metadata.GetSelectorLabels(cellLabels(t, "custom-replicas-cell-multigateway", "multigateway", "zone2", "usw1-az2")),
+						Selector: metadata.GetSelectorLabels(
+							cellLabels(
+								t,
+								"custom-replicas-cell-multigateway",
+								"multigateway",
+								"zone2",
+								"usw1-az2",
+							),
+						),
 					},
 				},
 			},
@@ -356,9 +428,11 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "custom/multigateway:v1.0.0",
 					},
-					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(2)),
-					}},
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(2)),
+						},
+					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -372,19 +446,39 @@ func TestCellReconciliation(t *testing.T) {
 			wantResources: []client.Object{
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "custom-images-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "custom-images-cell-multigateway", "multigateway", "zone3", "usw1-az3"),
+						Name:      "custom-images-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"custom-images-cell-multigateway",
+							"multigateway",
+							"zone3",
+							"usw1-az3",
+						),
 						OwnerReferences: cellOwnerRefs(t, "custom-images-cell"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(2)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(cellLabels(t, "custom-images-cell-multigateway", "multigateway", "zone3", "usw1-az3")),
+							MatchLabels: metadata.GetSelectorLabels(
+								cellLabels(
+									t,
+									"custom-images-cell-multigateway",
+									"multigateway",
+									"zone3",
+									"usw1-az3",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: cellLabels(t, "custom-images-cell-multigateway", "multigateway", "zone3", "usw1-az3"),
+								Labels: cellLabels(
+									t,
+									"custom-images-cell-multigateway",
+									"multigateway",
+									"zone3",
+									"usw1-az3",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -450,9 +544,15 @@ func TestCellReconciliation(t *testing.T) {
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "custom-images-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "custom-images-cell-multigateway", "multigateway", "zone3", "usw1-az3"),
+						Name:      "custom-images-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"custom-images-cell-multigateway",
+							"multigateway",
+							"zone3",
+							"usw1-az3",
+						),
 						OwnerReferences: cellOwnerRefs(t, "custom-images-cell"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -462,7 +562,15 @@ func TestCellReconciliation(t *testing.T) {
 							tcpServicePort(t, "grpc", 15170),
 							tcpServicePort(t, "postgres", 5432),
 						},
-						Selector: metadata.GetSelectorLabels(cellLabels(t, "custom-images-cell-multigateway", "multigateway", "zone3", "usw1-az3")),
+						Selector: metadata.GetSelectorLabels(
+							cellLabels(
+								t,
+								"custom-images-cell-multigateway",
+								"multigateway",
+								"zone3",
+								"usw1-az3",
+							),
+						),
 					},
 				},
 			},
@@ -488,18 +596,20 @@ func TestCellReconciliation(t *testing.T) {
 					Images: multigresv1alpha1.CellImages{
 						Multigateway: "ghcr.io/multigres/multigres:main",
 					},
-					Multigateway: multigresv1alpha1.MultigatewaySpec{StatelessSpec: multigresv1alpha1.StatelessSpec{
-						Replicas: ptr.To(int32(2)),
-						Affinity: &corev1.Affinity{
-							NodeAffinity: &corev1.NodeAffinity{
-								RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-									NodeSelectorTerms: []corev1.NodeSelectorTerm{
-										{
-											MatchExpressions: []corev1.NodeSelectorRequirement{
-												{
-													Key:      "node-type",
-													Operator: corev1.NodeSelectorOpIn,
-													Values:   []string{"gateway"},
+					Multigateway: multigresv1alpha1.MultigatewaySpec{
+						StatelessSpec: multigresv1alpha1.StatelessSpec{
+							Replicas: ptr.To(int32(2)),
+							Affinity: &corev1.Affinity{
+								NodeAffinity: &corev1.NodeAffinity{
+									RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+										NodeSelectorTerms: []corev1.NodeSelectorTerm{
+											{
+												MatchExpressions: []corev1.NodeSelectorRequirement{
+													{
+														Key:      "node-type",
+														Operator: corev1.NodeSelectorOpIn,
+														Values:   []string{"gateway"},
+													},
 												},
 											},
 										},
@@ -507,7 +617,7 @@ func TestCellReconciliation(t *testing.T) {
 								},
 							},
 						},
-					}},
+					},
 					GlobalTopoServer: multigresv1alpha1.GlobalTopoServerRef{
 						Address:        "global-topo:2379",
 						RootPath:       "/multigres/global",
@@ -521,19 +631,39 @@ func TestCellReconciliation(t *testing.T) {
 			wantResources: []client.Object{
 				&appsv1.Deployment{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "affinity-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "affinity-cell-multigateway", "multigateway", "zone4", "usw1-az4"),
+						Name:      "affinity-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"affinity-cell-multigateway",
+							"multigateway",
+							"zone4",
+							"usw1-az4",
+						),
 						OwnerReferences: cellOwnerRefs(t, "affinity-cell"),
 					},
 					Spec: appsv1.DeploymentSpec{
 						Replicas: ptr.To(int32(2)),
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(cellLabels(t, "affinity-cell-multigateway", "multigateway", "zone4", "usw1-az4")),
+							MatchLabels: metadata.GetSelectorLabels(
+								cellLabels(
+									t,
+									"affinity-cell-multigateway",
+									"multigateway",
+									"zone4",
+									"usw1-az4",
+								),
+							),
 						},
 						Template: corev1.PodTemplateSpec{
 							ObjectMeta: metav1.ObjectMeta{
-								Labels: cellLabels(t, "affinity-cell-multigateway", "multigateway", "zone4", "usw1-az4"),
+								Labels: cellLabels(
+									t,
+									"affinity-cell-multigateway",
+									"multigateway",
+									"zone4",
+									"usw1-az4",
+								),
 								Annotations: map[string]string{
 									"multigres.com/project-ref": "test-cluster",
 								},
@@ -616,9 +746,15 @@ func TestCellReconciliation(t *testing.T) {
 				},
 				&corev1.Service{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:            "affinity-cell-multigateway",
-						Namespace:       "default",
-						Labels:          cellLabels(t, "affinity-cell-multigateway", "multigateway", "zone4", "usw1-az4"),
+						Name:      "affinity-cell-multigateway",
+						Namespace: "default",
+						Labels: cellLabels(
+							t,
+							"affinity-cell-multigateway",
+							"multigateway",
+							"zone4",
+							"usw1-az4",
+						),
 						OwnerReferences: cellOwnerRefs(t, "affinity-cell"),
 					},
 					Spec: corev1.ServiceSpec{
@@ -628,7 +764,15 @@ func TestCellReconciliation(t *testing.T) {
 							tcpServicePort(t, "grpc", 15170),
 							tcpServicePort(t, "postgres", 5432),
 						},
-						Selector: metadata.GetSelectorLabels(cellLabels(t, "affinity-cell-multigateway", "multigateway", "zone4", "usw1-az4")),
+						Selector: metadata.GetSelectorLabels(
+							cellLabels(
+								t,
+								"affinity-cell-multigateway",
+								"multigateway",
+								"zone4",
+								"usw1-az4",
+							),
+						),
 					},
 				},
 			},
@@ -706,8 +850,8 @@ func TestCellReconciliation(t *testing.T) {
 					if deploy.Spec.Selector != nil {
 						deploy.Spec.Selector.MatchLabels["app.kubernetes.io/instance"] = clusterName
 					}
-					if deploy.Spec.Template.ObjectMeta.Labels != nil {
-						deploy.Spec.Template.ObjectMeta.Labels["app.kubernetes.io/instance"] = clusterName
+					if deploy.Spec.Template.Labels != nil {
+						deploy.Spec.Template.Labels["app.kubernetes.io/instance"] = clusterName
 					}
 				}
 				// Update selector if Service
@@ -870,13 +1014,23 @@ func markManagedLocalTopoServerHealthy(
 			}
 			return true, nil
 		}); err != nil {
-		t.Fatalf("Timed out waiting for managed local TopoServer %s/%s: %v", key.Namespace, key.Name, err)
+		t.Fatalf(
+			"Timed out waiting for managed local TopoServer %s/%s: %v",
+			key.Namespace,
+			key.Name,
+			err,
+		)
 	}
 
 	toposerver.Status.Phase = multigresv1alpha1.PhaseHealthy
 	toposerver.Status.ObservedGeneration = toposerver.Generation
 	if err := k8sClient.Status().Update(ctx, toposerver); err != nil {
-		t.Fatalf("Failed to mark managed local TopoServer %s/%s healthy: %v", key.Namespace, key.Name, err)
+		t.Fatalf(
+			"Failed to mark managed local TopoServer %s/%s healthy: %v",
+			key.Namespace,
+			key.Name,
+			err,
+		)
 	}
 }
 
@@ -915,7 +1069,12 @@ func tcpPort(t testing.TB, name string, port int32) corev1.ContainerPort {
 // tcpServicePort creates a TCP service port with named target
 func tcpServicePort(t testing.TB, name string, port int32) corev1.ServicePort {
 	t.Helper()
-	return corev1.ServicePort{Name: name, Port: port, TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP}
+	return corev1.ServicePort{
+		Name:       name,
+		Port:       port,
+		TargetPort: intstr.FromString(name),
+		Protocol:   corev1.ProtocolTCP,
+	}
 }
 
 // TestCellReconcileGatingObjectLevel pins that the reconcile-disabled label on
