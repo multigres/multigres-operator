@@ -2074,3 +2074,29 @@ func TestBuildPoolServiceID(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildMultipoolerContainer_TableGroupID(t *testing.T) {
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "default"},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName: "postgres", TableGroupName: "commerce", ShardName: "0-80",
+		},
+	}
+	pool := multigresv1alpha1.PoolSpec{Cells: []multigresv1alpha1.CellName{"zone1"}}
+	idArgs := func() []string {
+		var out []string
+		for _, a := range buildMultipoolerContainer(shard, pool, "primary", "zone1", "id").Args {
+			if strings.HasPrefix(a, "--tablegroup-id") {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+	if got := idArgs(); got != nil {
+		t.Errorf("shard without a catalog id: got %v, want no flag", got)
+	}
+	shard.Annotations = map[string]string{multigresv1alpha1.AnnotationTableGroupID: "7"}
+	if got := idArgs(); len(got) != 1 || got[0] != "--tablegroup-id=7" {
+		t.Errorf("got %v, want [--tablegroup-id=7]", got)
+	}
+}
