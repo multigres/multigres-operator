@@ -102,8 +102,9 @@ jobs:
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build-and-release.yaml" \
             --cert-identity "$identity" --signer-digest "$GITHUB_SHA" \
             --source-ref refs/heads/main --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+          # skopeo v1.22.3; pin a release tag digest, not `latest` (old digests disappear)
           docker run --rm -v "$PWD:/work" \
-            quay.io/skopeo/stable@sha256:62da3f53e4b72219741bfa6681e092d30391a880b6346d20bf064778f7caa3c5 \
+            quay.io/skopeo/stable@sha256:2681eccb8b02c495b013c2669cbf7f41d5c0b0b0e644e7c69bd3ea9bcb20641f \
             copy --all --preserve-digests "docker://$image@$digest" oci-archive:/work/operator.tar
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Build OCI archive without publishing
@@ -248,8 +249,9 @@ jobs:
         run: |
           image="ghcr.io/${REPOSITORY,,}"
           candidate="$image:candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          # skopeo v1.22.3; pin a release tag digest, not `latest` (old digests disappear)
           docker run --rm -v "$PWD:/work" -v "$HOME/.docker:/auth:ro" \
-            quay.io/skopeo/stable@sha256:62da3f53e4b72219741bfa6681e092d30391a880b6346d20bf064778f7caa3c5 \
+            quay.io/skopeo/stable@sha256:2681eccb8b02c495b013c2669cbf7f41d5c0b0b0e644e7c69bd3ea9bcb20641f \
             copy --all --preserve-digests --authfile /auth/config.json \
             oci-archive:/work/operator.tar "docker://$candidate"
           digest=$(docker buildx imagetools inspect "$candidate" --format '{{json .Manifest}}' | jq -er .digest)
