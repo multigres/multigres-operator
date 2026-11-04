@@ -1423,16 +1423,8 @@ func TestCollectResolvedTemplates(t *testing.T) {
 			},
 		}
 
-		rt := collectResolvedTemplates(cluster)
-
-		if len(rt.CoreTemplates) != 0 {
-			t.Errorf("CoreTemplates should be empty, got %v", rt.CoreTemplates)
-		}
-		if len(rt.CellTemplates) != 0 {
-			t.Errorf("CellTemplates should be empty, got %v", rt.CellTemplates)
-		}
-		if len(rt.ShardTemplates) != 0 {
-			t.Errorf("ShardTemplates should be empty, got %v", rt.ShardTemplates)
+		if rt := collectResolvedTemplates(cluster); rt != nil {
+			t.Errorf("want nil ResolvedTemplates for a cluster that names no template, got %+v", rt)
 		}
 	})
 

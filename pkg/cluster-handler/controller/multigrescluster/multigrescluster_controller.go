@@ -798,6 +798,16 @@ func collectResolvedTemplates(
 	}
 	slices.Sort(rt.ShardTemplates)
 
+	// Nil rather than an empty struct when nothing is referenced. Status is
+	// server-side applied, and applying resolvedTemplates as {} after this
+	// manager owned a list inside it stores null, which the CRD's object type
+	// rejects: every later status write then fails, so a cluster that drops
+	// its last template reference never reports status again. Omitting the
+	// field releases it instead. referencesTemplate treats nil as "enqueue on
+	// any template", which costs a no-op reconcile and is never wrong.
+	if len(rt.CoreTemplates)+len(rt.CellTemplates)+len(rt.ShardTemplates) == 0 {
+		return nil
+	}
 	return rt
 }
 
