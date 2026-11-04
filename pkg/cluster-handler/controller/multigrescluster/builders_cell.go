@@ -30,6 +30,14 @@ func BuildCell(
 			metadata.AnnotationProjectRef: projectRef,
 		}
 	}
+	// The Cell's gateways execute tablegroup DDL only when the operator acts
+	// on the catalog for this cluster.
+	if dynamicTableGroupsEnabled(cluster) {
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[multigresv1alpha1.AnnotationDynamicTableGroups] = "true"
+	}
 
 	cellCR := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{
