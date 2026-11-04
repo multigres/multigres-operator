@@ -38,7 +38,7 @@ func deleteHeld(t *testing.T, c client.Client, obj client.Object) {
 }
 
 func filesystemBackups(shard *multigresv1alpha1.Shard) *multigresv1alpha1.Shard {
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeFilesystem,
 	}
 	return shard
@@ -483,9 +483,12 @@ func TestEnsureLitePodChecksExistingPodVolumes(t *testing.T) {
 	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 	deleteHeld(t, c, backup)
 
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeS3,
-		S3:   &multigresv1alpha1.S3BackupConfig{Bucket: "backups"},
+		S3: &multigresv1alpha1.S3BackupConfig{
+			Bucket:            "backups",
+			CredentialsSecret: "s3-credentials",
+		},
 	}
 	desired, err := BuildLitePod(shard, "main", "z1", pool, scheme)
 	require.NoError(t, err)

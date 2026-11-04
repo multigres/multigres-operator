@@ -129,7 +129,7 @@ const (
 	PgBackRestCipherKeyDataKey = "keys.json"
 
 	// PgBackRestCipherKeyFilePath is the full path to the mounted cipher key
-	// file, passed to multipooler via --pgbackrest-cipher-key-file.
+	// file, passed to the pgBackRest sidecar via --cipher-key-file.
 	PgBackRestCipherKeyFilePath = PgBackRestCipherKeyMountPath + "/" + PgBackRestCipherKeyDataKey
 	// ShardTLSVolumeName is the volume for the generated shard-side mTLS Secret.
 	ShardTLSVolumeName = "tls-certs"
@@ -398,16 +398,6 @@ func buildPgctldSidecar(
 		"--http-port=15400",
 	}
 
-	if shard.Spec.Backup != nil {
-		// pgBackRest TLS cert dir and port (enables the pgBackRest TLS server).
-		// Backup type/path/S3 config is resolved by multipooler from the etcd
-		// topology Database record, not via pgctld CLI flags.
-		args = append(args,
-			fmt.Sprintf("--pgbackrest-cert-dir=%s", PgBackRestCertMountPath),
-			fmt.Sprintf("--pgbackrest-port=%d", PgBackRestPort),
-		)
-	}
-
 	env := []corev1.EnvVar{
 		{
 			Name:  "PGDATA",
@@ -431,7 +421,6 @@ func buildPgctldSidecar(
 		Name:  "POSTGRES_INITDB_EXTRA_CONF",
 		Value: PostgresConfigFilePath,
 	})
-	env = append(env, s3EnvVars(shard.Spec.Backup)...)
 	if otelVars := buildRuntimeOTELEnvVars(shard, "pgctld"); len(otelVars) > 0 {
 		env = append(env, otelVars...)
 	}
@@ -440,10 +429,6 @@ func buildPgctldSidecar(
 		{
 			Name:      DataVolumeName,
 			MountPath: DataMountPath,
-		},
-		{
-			Name:      BackupVolumeName,
-			MountPath: BackupMountPath,
 		},
 		{
 			Name:      SocketDirVolumeName,
@@ -460,13 +445,7 @@ func buildPgctldSidecar(
 			MountPath: PostgresConfigMountPath,
 			ReadOnly:  true,
 		},
-	}
-	if shard.Spec.Backup != nil {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      PgBackRestCertVolumeName,
-			MountPath: PgBackRestCertMountPath,
-			ReadOnly:  true,
-		})
+		pgbackrestWALSocketMount(),
 	}
 	if initSecretsConfigured(shard) {
 		volumeMounts = append(volumeMounts, postgresInitSecretsVolumeMount())
@@ -584,6 +563,22 @@ const (
 // Runs as a regular (non-sidecar) container so it receives SIGTERM before
 // pgctld and can call pgctld.Stop() during its graceful shutdown; see
 // docs/development/pod-management-design.md §6 for the full rationale.
+// shardScopeArgs are the flags that scope a process to one shard. multipooler
+// and pgbackrestd both take them, so they come from one place and cannot drift.
+// A dynamic tablegroup's processes carry its catalog id, which is what CREATE
+// TABLEGROUP's completion check keys on. It is emitted only for dynamic shards,
+// so other shards keep their args and images without the flag keep starting.
+func shardScopeArgs(shard *multigresv1alpha1.Shard) []string {
+	args := []string{
+		"--table-group=" + string(shard.Spec.TableGroupName),
+		"--shard=" + string(shard.Spec.ShardName),
+	}
+	if id := multigresv1alpha1.TableGroupIDOf(shard); id > 0 {
+		args = append(args, "--tablegroup-id="+strconv.FormatInt(id, 10))
+	}
+	return args
+}
+
 func buildMultipoolerContainer(
 	shard *multigresv1alpha1.Shard,
 	pool multigresv1alpha1.PoolSpec,
@@ -607,33 +602,20 @@ func buildMultipoolerContainer(
 		topoGlobalRootFlag + shard.Spec.GlobalTopoServer.RootPath,
 		"--cell=" + cellName,
 		"--database=" + string(shard.Spec.DatabaseName),
-		"--table-group=" + string(shard.Spec.TableGroupName),
-		"--shard=" + string(shard.Spec.ShardName),
-		"--service-id=" + serviceID,
+	}
+	args = append(args, shardScopeArgs(shard)...)
+	args = append(args,
+		"--service-id="+serviceID,
 		"--pgctld-addr=localhost:15470",
 		"--pg-port=5432",
-		"--log-level=" + string(shard.Spec.LogLevels.Multipooler),
+		"--log-level="+string(shard.Spec.LogLevels.Multipooler),
 		// Without this flag, multipooler's default gRPC keepalive enforcement policy
 		// rejects pings sent with no active RPC stream, and tears down the connection
 		// after a few strikes
 		"--grpc-server-keepalive-enforcement-policy-permit-without-stream=true",
-	}
+	)
 
-	// A dynamic tablegroup's poolers register with its catalog id, which is
-	// what CREATE TABLEGROUP's completion check keys on.
-	// Emitted only for dynamic shards, so other shards keep their args and
-	// pooler images without the flag keep starting.
-	if id := multigresv1alpha1.TableGroupIDOf(shard); id > 0 {
-		args = append(args, "--tablegroup-id="+strconv.FormatInt(id, 10))
-	}
-
-	if shard.Spec.Backup != nil {
-		args = append(args,
-			"--pgbackrest-cert-file="+PgBackRestCertMountPath+"/pgbackrest.crt",
-			"--pgbackrest-key-file="+PgBackRestCertMountPath+"/pgbackrest.key",
-			"--pgbackrest-ca-file="+PgBackRestCertMountPath+"/ca.crt",
-		)
-	}
+	args = append(args, pgbackrestSocketArgs()...)
 	if shardTLSConfigured(shard) {
 		args = append(args,
 			"--grpc-cert", ShardTLSCertFile,
@@ -644,12 +626,6 @@ func buildMultipoolerContainer(
 	}
 	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
 		args = append(args, multigresv1alpha1.TopoClientTLSArgs()...)
-	}
-
-	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
-		args = append(args,
-			"--pgbackrest-cipher-key-file="+PgBackRestCipherKeyFilePath,
-		)
 	}
 
 	c := corev1.Container{
@@ -697,7 +673,6 @@ func buildMultipoolerContainer(
 		pgUserEnvVar(shard.Spec.PostgresSuperuser),
 		pgPasswordFileEnvVar(),
 	}
-	env = append(env, s3EnvVars(shard.Spec.Backup)...)
 	if otelVars := buildRuntimeOTELEnvVars(shard, "multipooler"); len(otelVars) > 0 {
 		env = append(env, otelVars...)
 	}
@@ -709,28 +684,11 @@ func buildMultipoolerContainer(
 			MountPath: PoolerDirMountPath,
 		},
 		{
-			Name:      BackupVolumeName,
-			MountPath: BackupMountPath,
-		},
-		{
 			Name:      SocketDirVolumeName,
 			MountPath: SocketDirMountPath,
 		},
 		postgresPasswordVolumeMount(),
-	}
-	if shard.Spec.Backup != nil {
-		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
-			Name:      PgBackRestCertVolumeName,
-			MountPath: PgBackRestCertMountPath,
-			ReadOnly:  true,
-		})
-	}
-	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
-		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
-			Name:      PgBackRestCipherKeyVolumeName,
-			MountPath: PgBackRestCipherKeyMountPath,
-			ReadOnly:  true,
-		})
+		pgbackrestControlSocketMount(),
 	}
 
 	if shardTLSConfigured(shard) {
@@ -797,13 +755,7 @@ func buildLiteContainer(
 			"--pg-tls-key-file", litePublicTLSKeyFile,
 		)
 	}
-	if shard.Spec.Backup != nil {
-		args = append(args,
-			"--pgbackrest-cert-file="+PgBackRestCertMountPath+"/pgbackrest.crt",
-			"--pgbackrest-key-file="+PgBackRestCertMountPath+"/pgbackrest.key",
-			"--pgbackrest-ca-file="+PgBackRestCertMountPath+"/ca.crt",
-		)
-	}
+	args = append(args, pgbackrestSocketArgs()...)
 	// Only the external admin server uses TLS. Minigres reaches its local
 	// pooler in memory and rejects the gateway's --multipooler-grpc-* flags.
 	if shardTLSConfigured(shard) {
@@ -816,11 +768,6 @@ func buildLiteContainer(
 	}
 	if multigresv1alpha1.TopoClientTLSConfigured(shard.Spec.GlobalTopoServer) {
 		args = append(args, multigresv1alpha1.TopoClientTLSArgs()...)
-	}
-	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
-		args = append(args,
-			"--pgbackrest-cipher-key-file="+PgBackRestCipherKeyFilePath,
-		)
 	}
 	args = append(args, "--hostname=$(POD_IP)")
 
@@ -878,7 +825,6 @@ func buildLiteContainer(
 		pgUserEnvVar(shard.Spec.PostgresSuperuser),
 		pgPasswordFileEnvVar(),
 	}
-	env = append(env, s3EnvVars(shard.Spec.Backup)...)
 	if otelVars := buildRuntimeOTELEnvVars(shard, "minigres"); len(otelVars) > 0 {
 		env = append(env, otelVars...)
 	}
@@ -890,33 +836,16 @@ func buildLiteContainer(
 			MountPath: PoolerDirMountPath,
 		},
 		{
-			Name:      BackupVolumeName,
-			MountPath: BackupMountPath,
-		},
-		{
 			Name:      SocketDirVolumeName,
 			MountPath: SocketDirMountPath,
 		},
 		postgresPasswordVolumeMount(),
+		pgbackrestControlSocketMount(),
 	}
 	if shard.Spec.CertCommonName != "" {
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
 			Name:      litePublicTLSVolumeName,
 			MountPath: litePublicTLSMountPath,
-			ReadOnly:  true,
-		})
-	}
-	if shard.Spec.Backup != nil {
-		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
-			Name:      PgBackRestCertVolumeName,
-			MountPath: PgBackRestCertMountPath,
-			ReadOnly:  true,
-		})
-	}
-	if shard.Spec.Backup != nil && shard.Spec.Backup.Encryption != nil {
-		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
-			Name:      PgBackRestCipherKeyVolumeName,
-			MountPath: PgBackRestCipherKeyMountPath,
 			ReadOnly:  true,
 		})
 	}
@@ -1092,12 +1021,7 @@ func buildPoolVolumes(shard *multigresv1alpha1.Shard, cellName string) []corev1.
 		volumes = append(volumes, *initSecretsVol)
 	}
 	volumes = append(volumes, buildPostgresMountsVolumes(shard)...)
-	if certVol := buildPgBackRestCertVolume(shard); certVol != nil {
-		volumes = append(volumes, *certVol)
-	}
-	if cipherVol := buildPgBackRestCipherKeyVolume(shard); cipherVol != nil {
-		volumes = append(volumes, *cipherVol)
-	}
+	volumes = append(volumes, buildPgBackRestVolumes(shard)...)
 	if shardTLSConfigured(shard) {
 		volumes = append(volumes, buildShardTLSVolume(
 			shard,
@@ -1127,8 +1051,7 @@ func buildSharedBackupVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 		EmptyDir: &corev1.EmptyDirVolumeSource{},
 	}
 
-	if shard.Spec.Backup != nil &&
-		shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeFilesystem {
+	if sidecarLocation(shard).Type == multigresv1alpha1.BackupTypeFilesystem {
 		source = corev1.VolumeSource{
 			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 				ClaimName: BuildSharedBackupPVCName(shard),
@@ -1146,7 +1069,7 @@ func buildSharedBackupVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 // Returns nil if backup is not configured.
 //
 // Both modes use a projected volume to rename tls.crt → pgbackrest.crt and
-// tls.key → pgbackrest.key, matching upstream pgctld/multipooler expectations.
+// tls.key → pgbackrest.key, the file names pgbackrestd reads from --tls-cert-dir.
 // This makes the user-provided mode directly compatible with cert-manager's
 // standard Secret output (ca.crt, tls.crt, tls.key).
 //
@@ -1154,17 +1077,18 @@ func buildSharedBackupVolume(shard *multigresv1alpha1.Shard) corev1.Volume {
 //   - Auto-generated: projects from two operator-managed Secrets
 //     ({shard}-pgbackrest-ca and {shard}-pgbackrest-tls).
 func buildPgBackRestCertVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
-	if shard.Spec.Backup == nil {
+	backup := shard.Spec.SidecarBackupLocation
+	if backup == nil {
 		return nil
 	}
 
 	defaultMode := int32(0o440)
 
 	// User-provided Secret: project with key renaming for cert-manager compatibility.
-	// Cert-manager outputs ca.crt, tls.crt, tls.key — we rename to match upstream.
-	if shard.Spec.Backup.PgBackRestTLS != nil &&
-		shard.Spec.Backup.PgBackRestTLS.SecretName != "" {
-		secretName := shard.Spec.Backup.PgBackRestTLS.SecretName
+	// Cert-manager outputs ca.crt, tls.crt, tls.key — we rename to the names pgbackrestd reads.
+	if backup.PgBackRestTLS != nil &&
+		backup.PgBackRestTLS.SecretName != "" {
+		secretName := backup.PgBackRestTLS.SecretName
 		return &corev1.Volume{
 			Name: PgBackRestCertVolumeName,
 			VolumeSource: corev1.VolumeSource{
@@ -1190,7 +1114,7 @@ func buildPgBackRestCertVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
 	}
 
 	// Auto-generated: projected volume combining CA and server cert Secrets.
-	// Renames tls.crt → pgbackrest.crt and tls.key → pgbackrest.key to match upstream.
+	// Renames tls.crt → pgbackrest.crt and tls.key → pgbackrest.key, as above.
 	return &corev1.Volume{
 		Name: PgBackRestCertVolumeName,
 		VolumeSource: corev1.VolumeSource{
@@ -1227,11 +1151,12 @@ func buildPgBackRestCertVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
 // buildPgBackRestCipherKeyVolume creates the volume for the pgBackRest backup
 // encryption cipher key file. Returns nil if encryption is not configured.
 func buildPgBackRestCipherKeyVolume(shard *multigresv1alpha1.Shard) *corev1.Volume {
-	if shard.Spec.Backup == nil || shard.Spec.Backup.Encryption == nil {
+	backup := shard.Spec.SidecarBackupLocation
+	if backup == nil || backup.Encryption == nil {
 		return nil
 	}
 
-	secretName := shard.Spec.Backup.Encryption.SecretName
+	secretName := backup.Encryption.SecretName
 
 	// secret must be readable by users.
 	defaultMode := int32(0o444)
@@ -1276,50 +1201,4 @@ func postgresSuperuserOrDefault(user string) string {
 		return "postgres"
 	}
 	return user
-}
-
-// s3EnvVars returns the AWS environment variables needed for S3 backup.
-// Returns nil if backup is not configured for S3.
-func s3EnvVars(backup *multigresv1alpha1.BackupConfig) []corev1.EnvVar {
-	if backup == nil ||
-		backup.Type != multigresv1alpha1.BackupTypeS3 ||
-		backup.S3 == nil {
-		return nil
-	}
-
-	var envs []corev1.EnvVar
-
-	if backup.S3.Region != "" {
-		envs = append(envs, corev1.EnvVar{
-			Name:  "AWS_REGION",
-			Value: backup.S3.Region,
-		})
-	}
-
-	if backup.S3.CredentialsSecret != "" {
-		envs = append(envs, corev1.EnvVar{
-			Name: "AWS_ACCESS_KEY_ID",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: backup.S3.CredentialsSecret,
-					},
-					Key: "AWS_ACCESS_KEY_ID",
-				},
-			},
-		})
-		envs = append(envs, corev1.EnvVar{
-			Name: "AWS_SECRET_ACCESS_KEY",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: backup.S3.CredentialsSecret,
-					},
-					Key: "AWS_SECRET_ACCESS_KEY",
-				},
-			},
-		})
-	}
-
-	return envs
 }

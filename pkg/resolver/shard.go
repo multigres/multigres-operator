@@ -326,6 +326,9 @@ func mergePoolSpec(
 	if override.Multipooler.RunAsGroup != nil {
 		out.Multipooler.RunAsGroup = ptr.To(*override.Multipooler.RunAsGroup)
 	}
+	if !isResourcesZero(override.PgBackRestResources) {
+		out.PgBackRestResources = *override.PgBackRestResources.DeepCopy()
+	}
 	if override.Affinity != nil {
 		out.Affinity = override.Affinity.DeepCopy()
 	}

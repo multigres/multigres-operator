@@ -28,6 +28,11 @@ const repeatedRefusalRequeue = 30 * time.Second
 // drain, and short against a spec that keeps it from ever starting.
 const defaultUnregisteredPodGrace = 2 * time.Minute
 
+// disruptionBlockedLogEvery bounds how often one pod's blocked disruption is
+// logged. The preflight reruns every disruptionRecoveryRequeue, so logging each
+// pass would flood the log, yet it must repeat so a long stall stays visible.
+const disruptionBlockedLogEvery = 5 * time.Minute
+
 // listDisruptionPods reads from the API server so a new reconcile cannot miss
 // a drain annotation that a previous reconcile just wrote through the cache.
 func (r *ShardReconciler) listDisruptionPods(
@@ -77,6 +82,9 @@ func (r *ShardReconciler) canStartDisruption(
 			r.recordDisruptionBlocked(shard, "", unobservable)
 		}
 		return false, err
+	}
+	if err := r.disruptionCheck(shard, preflight, target); err != nil {
+		r.logDisruptionBlocked(ctx, shard, target, err)
 	}
 	return r.disruptionAllowed(shard, preflight, target), nil
 }
@@ -237,6 +245,30 @@ func (r *ShardReconciler) recordDisruptionBlocked(
 	}
 	r.Recorder.Eventf(shard, "Normal", "DisruptionBlocked",
 		"Waiting for shard recovery before removing %s: %s", target, reason)
+}
+
+func (r *ShardReconciler) logDisruptionBlocked(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	target *corev1.Pod,
+	reason error,
+) {
+	key := client.ObjectKeyFromObject(target).String()
+	now := r.now()
+	r.disruptionLogMu.Lock()
+	if last, ok := r.disruptionLoggedAt[key]; ok && now.Sub(last) < disruptionBlockedLogEvery {
+		r.disruptionLogMu.Unlock()
+		return
+	}
+	if r.disruptionLoggedAt == nil {
+		r.disruptionLoggedAt = make(map[string]time.Time)
+	}
+	r.disruptionLoggedAt[key] = now
+	r.disruptionLogMu.Unlock()
+	log.FromContext(ctx).Info("Disruption blocked, waiting for shard recovery",
+		"shard", client.ObjectKeyFromObject(shard).String(),
+		"pod", target.Name,
+		"reason", reason.Error())
 }
 
 // selectShardScaleDownPod ranks removable pods across pool/cell boundaries.

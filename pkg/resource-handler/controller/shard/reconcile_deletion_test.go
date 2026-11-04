@@ -54,6 +54,9 @@ func TestHandleDeletion(t *testing.T) {
 			Labels:            shardLabels,
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "shard0",
@@ -640,6 +643,9 @@ func TestHandlePendingDeletion(t *testing.T) {
 			},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "shard-0",
@@ -1047,6 +1053,9 @@ func TestShardDeletionLifecycle_ForgetsMetrics(t *testing.T) {
 				Labels:            labels,
 			},
 			Spec: multigresv1alpha1.ShardSpec{
+				Images: multigresv1alpha1.ShardImages{
+					PgBackRestd: "registry/multigres@sha256:abc",
+				},
 				DatabaseName:   "testdb",
 				TableGroupName: "default",
 				ShardName:      "shard0",

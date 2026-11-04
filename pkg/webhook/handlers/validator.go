@@ -72,7 +72,7 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 			}
 		}
 	}
-	warnings, err := v.validate(ctx, newObj)
+	warnings, err := v.validateUpdate(ctx, oldObj, newObj)
 	if err != nil {
 		return warnings, err
 	}
@@ -97,6 +97,16 @@ func (v *MultigresClusterValidator) ValidateDelete(
 func (v *MultigresClusterValidator) validate(
 	ctx context.Context,
 	obj runtime.Object,
+) (admission.Warnings, error) {
+	return v.validateUpdate(ctx, nil, obj)
+}
+
+// validateUpdate validates obj; oldObj, when set, is the stored object, whose
+// existing sidecar configuration errors are tolerated (see
+// resolver.ValidateClusterLogicUpdate).
+func (v *MultigresClusterValidator) validateUpdate(
+	ctx context.Context,
+	oldObj, obj runtime.Object,
 ) (admission.Warnings, error) {
 	start := time.Now()
 	ctx, span := monitoring.StartChildSpan(ctx, "Webhook.Validate")
@@ -137,7 +147,7 @@ func (v *MultigresClusterValidator) validate(
 	// 3. Deep Logic Validation (Safety Checks)
 	{
 		_, childSpan := monitoring.StartChildSpan(ctx, "Webhook.ValidateLogic")
-		if warnings, err := v.validateLogic(ctx, cluster); err != nil {
+		if warnings, err := v.validateLogic(ctx, oldObj, cluster); err != nil {
 			monitoring.RecordSpanError(childSpan, err)
 			childSpan.End()
 			monitoring.RecordWebhookRequest("VALIDATE", "MultigresCluster", err, time.Since(start))
@@ -167,11 +177,13 @@ func (v *MultigresClusterValidator) validateTemplatesExist(
 
 func (v *MultigresClusterValidator) validateLogic(
 	ctx context.Context,
+	oldObj runtime.Object,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (admission.Warnings, error) {
+	old, _ := oldObj.(*multigresv1alpha1.MultigresCluster)
 	// Create an ephemeral resolver for validation
 	res := resolver.NewResolver(v.Client, cluster.Namespace)
-	return res.ValidateClusterLogic(ctx, cluster)
+	return res.ValidateClusterLogicUpdate(ctx, old, cluster)
 }
 
 // validateNoStorageShrink compares pool storage sizes between old and new cluster

@@ -307,6 +307,8 @@ type S3BackupConfig struct {
 	// The ServiceAccount must exist in the same namespace and be annotated with
 	// eks.amazonaws.com/role-arn pointing to an IAM role with S3 permissions.
 	// The operator does NOT create this ServiceAccount — the user must create it externally.
+	// spec.shardServiceAccount wins when both are set; this field applies when
+	// spec.shardServiceAccount is unset.
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 }

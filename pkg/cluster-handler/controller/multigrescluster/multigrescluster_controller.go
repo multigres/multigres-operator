@@ -108,6 +108,7 @@ type MultigresClusterReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 func (r *MultigresClusterReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
@@ -303,6 +304,10 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
+	// Not fatal: a conflicting account must not stop cells and the rest from
+	// converging. The error is returned after status is written.
+	saErr := r.syncShardServiceAccount(ctx, cluster)
+
 	var pendingCells, pendingDBs bool
 
 	{
@@ -420,6 +425,10 @@ func (r *MultigresClusterReconciler) Reconcile(
 		len(cluster.Status.Cells),
 		totalShards,
 	)
+
+	if saErr != nil {
+		return ctrl.Result{}, saErr
+	}
 
 	if pendingCells || pendingDBs {
 		l.V(1).Info("Pending graceful deletions, requeueing",
@@ -635,6 +644,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Owns(&multigresv1alpha1.TopoServer{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(
 			&multigresv1alpha1.CoreTemplate{},
