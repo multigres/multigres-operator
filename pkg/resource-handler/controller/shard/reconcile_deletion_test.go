@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -10,12 +11,15 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
@@ -504,7 +508,168 @@ func TestHandlePendingDeletion(t *testing.T) {
 		metadata.LabelMultigresDatabase:   "testdb",
 		metadata.LabelMultigresTableGroup: "default",
 		metadata.LabelMultigresShard:      "shard-0",
+		metadata.LabelAppComponent:        PoolComponentName,
+		metadata.LabelAppManagedBy:        metadata.ManagedByMultigres,
 	}
+
+	t.Run("Unmanaged pod with the shard's labels — not drained", func(t *testing.T) {
+		t.Parallel()
+		shard := baseShard.DeepCopy()
+
+		// Someone else's pod that happens to carry the pool's labels. The
+		// cache never held it, and an uncached read must not adopt it.
+		strangerLabels := maps.Clone(pendingPodLabels)
+		delete(strangerLabels, metadata.LabelAppManagedBy)
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "stranger",
+				Namespace: "default",
+				Labels:    strangerLabels,
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "app", Image: "app"}},
+			},
+		}
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(shard, pod).
+			WithStatusSubresource(&multigresv1alpha1.Shard{}).
+			Build()
+		r := &ShardReconciler{
+			Client:          c,
+			APIReader:       c,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		if _, err := r.handlePendingDeletion(t.Context(), shard); err != nil {
+			t.Fatalf("handlePendingDeletion: %v", err)
+		}
+		got := &corev1.Pod{}
+		if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), got); err != nil {
+			t.Fatalf("unmanaged pod was deleted: %v", err)
+		}
+		if v := got.Annotations[metadata.AnnotationDrainState]; v != "" {
+			t.Errorf("unmanaged pod was put through the drain: %s", v)
+		}
+	})
+
+	t.Run("Only a multiorch pod — sets ReadyForDeletion, leaves it alone", func(t *testing.T) {
+		t.Parallel()
+		shard := baseShard.DeepCopy()
+
+		// Multiorch pods carry the shard's labels too, but their Deployment
+		// replaces any one deleted, so draining them would never end.
+		multiorchLabels := maps.Clone(pendingPodLabels)
+		multiorchLabels[metadata.LabelAppComponent] = MultiorchComponentName
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pending-shard-multiorch-0",
+				Namespace: "default",
+				Labels:    multiorchLabels,
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "multiorch", Image: "multiorch"}},
+			},
+		}
+
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(shard, pod).
+			WithStatusSubresource(&multigresv1alpha1.Shard{}).
+			Build()
+		r := &ShardReconciler{
+			Client:          c,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		if _, err := r.handlePendingDeletion(t.Context(), shard); err != nil {
+			t.Fatalf("handlePendingDeletion: %v", err)
+		}
+		updated := &multigresv1alpha1.Shard{}
+		if err := c.Get(t.Context(), client.ObjectKeyFromObject(shard), updated); err != nil {
+			t.Fatal(err)
+		}
+		if !meta.IsStatusConditionTrue(
+			updated.Status.Conditions, multigresv1alpha1.ConditionReadyForDeletion,
+		) {
+			t.Error("want ReadyForDeletion with no pool pods left")
+		}
+		got := &corev1.Pod{}
+		if err := c.Get(t.Context(), client.ObjectKeyFromObject(pod), got); err != nil {
+			t.Fatalf("multiorch pod was deleted: %v", err)
+		}
+		if v := got.Annotations[metadata.AnnotationDrainState]; v != "" {
+			t.Errorf("multiorch pod was put through the drain: %s", v)
+		}
+	})
+
+	t.Run("Pool pod not yet in the cache — does not report ready", func(t *testing.T) {
+		t.Parallel()
+		shard := baseShard.DeepCopy()
+
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pending-shard-pool-0",
+				Namespace: "default",
+				Labels:    pendingPodLabels,
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "pg", Image: "postgres:16"}},
+			},
+		}
+		// One API server holding the Shard and its pod, and a cached client
+		// over it whose pod lists have not caught up. Writes go through to
+		// the server either way, as they do in production.
+		server := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(shard, pod).
+			WithStatusSubresource(&multigresv1alpha1.Shard{}).
+			Build()
+		cached := interceptor.NewClient(server, interceptor.Funcs{
+			List: func(
+				ctx context.Context,
+				c client.WithWatch,
+				list client.ObjectList,
+				opts ...client.ListOption,
+			) error {
+				if err := c.List(ctx, list, opts...); err != nil {
+					return err
+				}
+				if pods, ok := list.(*corev1.PodList); ok {
+					pods.Items = nil
+				}
+				return nil
+			},
+		})
+		r := &ShardReconciler{
+			Client:          cached,
+			APIReader:       server,
+			Scheme:          scheme,
+			Recorder:        record.NewFakeRecorder(10),
+			CreateTopoStore: newMemoryTopoFactory(),
+		}
+
+		res, err := r.handlePendingDeletion(t.Context(), shard)
+		if err != nil {
+			t.Fatalf("handlePendingDeletion: %v", err)
+		}
+		if res.RequeueAfter == 0 {
+			t.Error("want a requeue while a pool pod exists on the server")
+		}
+		updated := &multigresv1alpha1.Shard{}
+		if err := server.Get(t.Context(), client.ObjectKeyFromObject(shard), updated); err != nil {
+			t.Fatal(err)
+		}
+		if meta.IsStatusConditionTrue(
+			updated.Status.Conditions, multigresv1alpha1.ConditionReadyForDeletion,
+		) {
+			t.Error("reported ReadyForDeletion off a cache that had not seen the pod")
+		}
+	})
 
 	t.Run("No pods — sets ReadyForDeletion immediately", func(t *testing.T) {
 		t.Parallel()

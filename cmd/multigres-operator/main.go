@@ -550,10 +550,11 @@ func main() {
 	}
 
 	if err = (&tablegroupcontroller.TableGroupReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
-		Gate:     gate,
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("tablegroup-controller"),
+		APIReader: mgr.GetAPIReader(),
+		Gate:      gate,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TableGroup")
 		os.Exit(1)

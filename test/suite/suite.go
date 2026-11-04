@@ -222,9 +222,12 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	}
 
 	tableGroup := &tablegroupcontroller.TableGroupReconciler{
-		Client:   s.Ops.For("tablegroup", base),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("tablegroup-controller"),
+		// Shard lists through the cached client are subject to lag, which a
+		// case arms to model an informer that has not caught up.
+		Client:    s.Ops.For("tablegroup", lag.wrap(base, &ShardList{})),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("tablegroup-controller"),
+		APIReader: mgr.GetAPIReader(),
 	}
 	if err := tableGroup.SetupWithManagerReconciler(
 		mgr, s.Reconciles.Wrap("tablegroup", tableGroup), opts,
@@ -258,7 +261,8 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	}
 
 	shard := &shardcontroller.ShardReconciler{
-		Client:          s.Ops.For("shard", base),
+		// Pod lists through the cached client are subject to lag, as above.
+		Client:          s.Ops.For("shard", lag.wrap(base, &corev1.PodList{})),
 		Scheme:          mgr.GetScheme(),
 		Recorder:        mgr.GetEventRecorderFor("shard-controller"),
 		APIReader:       mgr.GetAPIReader(),

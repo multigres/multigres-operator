@@ -228,9 +228,44 @@ func shardPVCShouldBeCleaned(
 	return ShouldDeletePVCOnShardRemoval(shard, poolSpec)
 }
 
+// listPendingDeletionPods lists the pods a pending-deletion drain must empty:
+// this shard's operator-managed pool pods, read from the API server.
+//
+// From the API server because an empty list reports ReadyForDeletion, and an
+// informer cache that has not yet observed the shard's pods also lists empty,
+// which would let the parent delete the shard with every pod undrained.
+//
+// Pool pods only: multiorch pods carry the same shard labels but are
+// stateless and owned by a Deployment that replaces any one deleted, so
+// draining them could only end by catching a gap between replacements; they
+// go with the Shard by garbage collection. Operator-managed only: the cache
+// holds only pods labelled managed-by this operator, and an uncached read
+// must not start draining and deleting someone else's pod that happens to
+// carry the shard's labels.
+func (r *ShardReconciler) listPendingDeletionPods(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (*corev1.PodList, error) {
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	pods := &corev1.PodList{}
+	err := reader.List(ctx, pods, client.InNamespace(shard.Namespace),
+		client.MatchingLabels{
+			metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
+			metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
+			metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
+			metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+			metadata.LabelAppComponent:        PoolComponentName,
+			metadata.LabelAppManagedBy:        metadata.ManagedByMultigres,
+		})
+	return pods, err
+}
+
 // handlePendingDeletion handles graceful shard deletion. When a shard is marked
-// with the PendingDeletion annotation, this method drains all pods via the drain
-// state machine. Once all pods are drained (or gone), it sets the
+// with the PendingDeletion annotation, this method drains its pool pods via the
+// drain state machine. Once they are all drained (or gone), it sets the
 // ReadyForDeletion condition so the TableGroup controller can safely delete
 // the Shard CR.
 func (r *ShardReconciler) handlePendingDeletion(
@@ -240,20 +275,8 @@ func (r *ShardReconciler) handlePendingDeletion(
 	logger := log.FromContext(ctx)
 	logger.Info("Handling PendingDeletion")
 
-	// List all pods belonging to this shard.
-	lbls := map[string]string{
-		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
-		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
-		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
-		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
-	}
-	podList := &corev1.PodList{}
-	if err := r.List(
-		ctx,
-		podList,
-		client.InNamespace(shard.Namespace),
-		client.MatchingLabels(lbls),
-	); err != nil {
+	podList, err := r.listPendingDeletionPods(ctx, shard)
+	if err != nil {
 		logger.Error(err, "Failed to list pods for PendingDeletion")
 		return ctrl.Result{}, fmt.Errorf("failed to list pods for pending deletion: %w", err)
 	}
