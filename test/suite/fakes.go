@@ -232,9 +232,16 @@ func (p *poolerSim) tick(ctx context.Context) {
 	); err != nil {
 		return
 	}
+	// One group per shard on one topology. Two TableGroups in a namespace
+	// share a topology but are separate shards, each with its own primary;
+	// grouping by topology alone elects one leader across both, so every pod
+	// of the other shard never sees a primary and its Shard requeues forever
+	// on "No primary in podRoles". reconcilePodRoles scopes roles by the same
+	// four labels, so this key matches production.
 	type group struct {
-		ns   string
-		topo topoKey
+		ns                                   string
+		topo                                 topoKey
+		cluster, database, tableGroup, shard string
 	}
 	groups := map[group][]*corev1.Pod{}
 	for i := range pods.Items {
@@ -246,15 +253,24 @@ func (p *poolerSim) tick(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		g := group{ns: pod.Namespace, topo: k}
+		g := group{
+			ns:         pod.Namespace,
+			topo:       k,
+			cluster:    pod.Labels[metadata.LabelMultigresCluster],
+			database:   pod.Labels[metadata.LabelMultigresDatabase],
+			tableGroup: pod.Labels[metadata.LabelMultigresTableGroup],
+			shard:      pod.Labels[metadata.LabelMultigresShard],
+		}
 		groups[g] = append(groups[g], pod)
 	}
 	for g, pods := range groups {
-		p.tickTopology(ctx, g.ns, g.topo, pods)
+		p.tickShard(ctx, g.ns, g.topo, pods)
 	}
 }
 
-func (p *poolerSim) tickTopology(
+// tickShard elects one primary among the pods of one shard and registers
+// each with that shard's topology.
+func (p *poolerSim) tickShard(
 	ctx context.Context,
 	ns string,
 	k topoKey,
