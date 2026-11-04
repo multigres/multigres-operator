@@ -102,6 +102,27 @@ func (r *CellReconciler) Reconcile(
 		return ctrl.Result{}, nil
 	}
 
+	// A Cell reaching here is not pending deletion, so a ReadyForDeletion
+	// condition is left over from a drain that MultigresClusterReconciler
+	// cancelled by putting the Cell back into spec. It is cleared, and the
+	// clear persisted, before this pass recreates anything the drain removed.
+	// That ordering is what keeps a stored True truthful: whenever the
+	// condition reads True, nothing the drain deleted has come back, so a
+	// cluster that removes this Cell again and acts on the leftover True
+	// deletes it in the state a fresh drain would have produced.
+	if meta.FindStatusCondition(
+		cell.Status.Conditions,
+		multigresv1alpha1.ConditionReadyForDeletion,
+	) != nil {
+		meta.RemoveStatusCondition(
+			&cell.Status.Conditions,
+			multigresv1alpha1.ConditionReadyForDeletion,
+		)
+		if err := r.applyStatus(ctx, cell, ""); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to clear ReadyForDeletion on Cell: %w", err)
+		}
+	}
+
 	// Reconcile managed local TopoServer, when configured.
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "Cell.ReconcileLocalTopoServer")
@@ -456,27 +477,45 @@ func (r *CellReconciler) deleteLocalTopoServerIfExists(
 	return true, nil
 }
 
+// patchReadyForDeletionCondition writes the drain's answer, conditioned on the
+// resourceVersion the drain read. The drain judged a Cell carrying
+// AnnotationPendingDeletion; if MultigresClusterReconciler cancelled that
+// stamp meanwhile, the write conflicts instead of landing on a Cell that is
+// back in service, and the retry reads the cancellation. Every stored
+// ReadyForDeletion therefore belongs to an annotated version, so any later,
+// un-annotated version a reconcile reads already shows it and clears it.
 func (r *CellReconciler) patchReadyForDeletionCondition(
 	ctx context.Context,
 	cell *multigresv1alpha1.Cell,
 	condition metav1.Condition,
 ) error {
 	meta.SetStatusCondition(&cell.Status.Conditions, condition)
-	patchObj := &multigresv1alpha1.Cell{
+	if err := r.applyStatus(ctx, cell, cell.ResourceVersion); err != nil {
+		return fmt.Errorf("failed to patch ReadyForDeletion on Cell: %w", err)
+	}
+	return nil
+}
+
+// applyStatus applies cell's whole in-memory status under this controller's
+// field manager, so a condition dropped from it is removed from the object. A
+// non-empty resourceVersion makes the apply conditional on it.
+func (r *CellReconciler) applyStatus(
+	ctx context.Context,
+	cell *multigresv1alpha1.Cell,
+	resourceVersion string,
+) error {
+	return ownership.ApplyStatus(ctx, r.Client, &multigresv1alpha1.Cell{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: multigresv1alpha1.GroupVersion.String(),
 			Kind:       "Cell",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cell.Name,
-			Namespace: cell.Namespace,
+			Name:            cell.Name,
+			Namespace:       cell.Namespace,
+			ResourceVersion: resourceVersion,
 		},
 		Status: cell.Status,
-	}
-	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerCell); err != nil {
-		return fmt.Errorf("failed to patch ReadyForDeletion on Cell: %w", err)
-	}
-	return nil
+	}, ownership.ManagerCell)
 }
 
 func (r *CellReconciler) patchLocalTopoServerWaitingStatus(
@@ -735,7 +774,9 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 // happens to trigger: an owned TopoServer, Deployment or Service update or a
 // Lite pod change (those watches are not filtered by this predicate), or a
 // requeue the Cell scheduled because it was not yet Healthy. A Healthy Cell
-// schedules none, so for a settled Cell that can be never.
+// schedules none, so for a settled Cell that can be never. Removal of the
+// annotation, when MultigresClusterReconciler cancels a drain, has to get
+// through for the same reason.
 func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(event.CreateEvent) bool {

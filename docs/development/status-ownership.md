@@ -38,6 +38,8 @@ The Pod readiness condition `multigres.com/pooler-data-ready` is a Gate: it feed
 
 The TableGroup drain (`handlePendingDeletion`) reads each child Shard's `ReadyForDeletion` condition from the informer cache, which can lag. That is safe only because the Shard writes the condition `True` once and never back to `False`: a stale read can only show it absent or `False`, which delays the drain by one requeue and never deletes a Shard early. A writer that could clear it would make the cached read unsafe, and the read would have to go to the API server.
 
+The Cell's `ReadyForDeletion` is the exception: the Cell controller clears it when MultigresCluster cancels a drain by putting the Cell back into spec. Three rules keep the cluster's cached read safe. The drain writes the condition conditioned on the `resourceVersion` it read, so the condition is only ever stored on a version that still carries the pending-deletion stamp, and every un-annotated version a later reconcile reads already shows it. The Cell controller clears it, and persists the clear, before it recreates anything the drain removed, so a stored `True` always describes a Cell whose drain postcondition still holds, even one left over from a cancelled drain. And `reconcileCells` deletes with a `{UID, ResourceVersion}` precondition taken from the read that showed the stamp and the condition together, so a Cell that has changed since (cancelled, cleared, stamped again) is not deleted on the strength of a stale read; the conflict requeues the cluster.
+
 ## Enforcement
 
 Every `test/suite` case checks ownership in cleanup (`newCase` registers `requireOwnership`). The invariant (`test/suite/ownership_invariant.go`) lists the five CR kinds and every Pod in the case namespace and fails on:
