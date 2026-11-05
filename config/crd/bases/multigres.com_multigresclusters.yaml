@@ -197,8 +197,9 @@ spec:
                   rule: has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption)
                     || self.encryption == oldSelf.encryption)
               cells:
-                description: Cells defines the list of cells (failure domains) in
-                  the cluster.
+                description: |-
+                  Cells defines the list of cells (failure domains) in the cluster.
+                  Cells can be appended but never removed or renamed.
                 items:
                   description: CellConfig defines a cell in the cluster.
                   properties:
@@ -2782,9 +2783,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
-                x-kubernetes-validations:
-                - message: Cells cannot be removed or renamed (Append-Only)
-                  rule: oldSelf.all(c, c.name in self.map(x, x.name))
               certCommonName:
                 description: |-
                   CertCommonName is the DNS name used as the Common Name and SAN for the
@@ -12443,6 +12441,10 @@ spec:
             - postgresPasswordSecretRef
             type: object
             x-kubernetes-validations:
+            - fieldPath: .cells
+              message: Cells cannot be removed or renamed (Append-Only)
+              rule: '!has(oldSelf.cells) || oldSelf.cells.all(c, has(self.cells) &&
+                self.cells.exists(x, x.name == c.name))'
             - message: topoTLS is immutable and can only be set when the cluster is
                 created
               rule: has(self.topoTLS) == has(oldSelf.topoTLS) && (!has(self.topoTLS)

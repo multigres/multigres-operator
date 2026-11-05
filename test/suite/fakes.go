@@ -21,9 +21,15 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
-// defaultSimCell is the cell every fixture uses. The topo store needs its cells
-// declared up front, so a test using a different cell name needs this widened.
-const defaultSimCell = "zone-a"
+// defaultSimCell is the cell every fixture uses, and secondSimCell the one a
+// test appends to grow a cluster. The topo store needs its cells declared up
+// front, so a test using any other cell name needs simCells widened.
+const (
+	defaultSimCell = "zone-a"
+	secondSimCell  = "zone-b"
+)
+
+var simCells = []string{defaultSimCell, secondSimCell}
 
 // topoRegistry hands out one in-memory topology store per topology server,
 // identified by address and root path, the same pair a multipooler is started
@@ -60,7 +66,7 @@ func (r *topoRegistry) Store(k topoKey) topoclient.Store {
 	if s, ok := r.stores[k]; ok {
 		return s
 	}
-	store, factory := memorytopo.NewServerAndFactory(r.ctx, defaultSimCell)
+	store, factory := memorytopo.NewServerAndFactory(r.ctx, simCells...)
 	r.stores[k] = store
 	r.facts[k] = factory
 	return store

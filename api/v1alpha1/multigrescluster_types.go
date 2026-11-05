@@ -51,6 +51,16 @@ import (
 // MultigresClusterSpec Spec (User-editable API)
 // ============================================================================
 
+// The append-only rule for cells sits on the spec rather than on the cells
+// field because the API server evaluates a transition rule only when its field
+// is present in both the old and the new object. A rule on cells never runs
+// for an update that drops the field: a JSON patch removing it, or a manifest
+// or typed client that omits it, which is what every omitempty empty list
+// becomes. Dropping a list that names no cell is allowed, since it removes
+// nothing and a typed client cannot write a cluster stored with cells: [] any
+// other way.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.cells) || oldSelf.cells.all(c, has(self.cells) && self.cells.exists(x, x.name == c.name))",message="Cells cannot be removed or renamed (Append-Only)",fieldPath=".cells"
+
 // MultigresClusterSpec defines the desired state of MultigresCluster.
 //
 // topoTLS is immutable after creation. Enabling it switches the etcd client and
@@ -108,11 +118,11 @@ type MultigresClusterSpec struct {
 	MultiadminWeb *MultiadminWebConfig `json:"multiadminWeb,omitempty"`
 
 	// Cells defines the list of cells (failure domains) in the cluster.
+	// Cells can be appended but never removed or renamed.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=50
-	// +kubebuilder:validation:XValidation:rule="oldSelf.all(c, c.name in self.map(x, x.name))",message="Cells cannot be removed or renamed (Append-Only)"
 	Cells []CellConfig `json:"cells,omitempty"`
 
 	// Databases defines the logical databases, table groups, and sharding.

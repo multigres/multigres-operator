@@ -20,6 +20,7 @@ import (
 	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/scale/scheme"
 	"k8s.io/utils/ptr"
@@ -510,6 +511,61 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 			t.Fatalf("Expected appending a cell to succeed, got: %v", err)
 		}
 	})
+
+	// A transition rule on spec.cells itself is skipped whenever the new
+	// object has no spec.cells, so each way of dropping the field is checked
+	// through the full admission chain. The append-only rule must be what
+	// rejects it, not a later webhook check that happens to fail on a cluster
+	// left without cells.
+	drops := []struct {
+		name  string
+		write func(*multigresv1alpha1.MultigresCluster) error
+	}{
+		{"Should Reject Removing spec.cells", func(c *multigresv1alpha1.MultigresCluster) error {
+			return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
+				[]byte(`[{"op":"remove","path":"/spec/cells"}]`)))
+		}},
+		{"Should Reject Emptying spec.cells", func(c *multigresv1alpha1.MultigresCluster) error {
+			return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
+				[]byte(`[{"op":"replace","path":"/spec/cells","value":[]}]`)))
+		}},
+		{
+			"Should Reject an Update Without spec.cells",
+			func(c *multigresv1alpha1.MultigresCluster) error {
+				c.Spec.Cells = nil
+				return k8sClient.Update(ctx, c)
+			},
+		},
+	}
+	for i, drop := range drops {
+		t.Run(drop.name, func(t *testing.T) {
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("cell-drop-test-%d", i),
+					Namespace: testNamespace,
+				},
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					Cells: []multigresv1alpha1.CellConfig{{Name: "cell-a", ZoneID: "use1-az1"}},
+				},
+			}
+			setTestPostgresPasswordSecretRef(cluster)
+			if err := k8sClient.Create(ctx, cluster); err != nil {
+				t.Fatalf("Failed to create cluster: %v", err)
+			}
+
+			fetched := &multigresv1alpha1.MultigresCluster{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), fetched); err != nil {
+				t.Fatalf("Failed to get cluster: %v", err)
+			}
+			err := drop.write(fetched)
+			if err == nil {
+				t.Fatal("Expected error dropping spec.cells, got nil")
+			}
+			if !strings.Contains(err.Error(), "Append-Only") {
+				t.Fatalf("Expected 'Append-Only' in error, got: %v", err)
+			}
+		})
+	}
 }
 
 // ============================================================================
