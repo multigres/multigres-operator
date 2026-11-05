@@ -91,7 +91,8 @@ func TestLiteExistingPVCExpandsInPlace(t *testing.T) {
 			pvc.Status.Capacity = corev1.ResourceList{
 				corev1.ResourceStorage: resource.MustParse("10Gi"),
 			}
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pvc).Build()
+			class := makeExpandable(pvc)
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pvc, class).Build()
 			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 			pool.Storage.Size = size
 			wait, err := r.ensureLiteDataPVC(t.Context(), shard, "main", "z1", pool)
@@ -159,7 +160,8 @@ func TestLiteFilesystemResizeReplacesReadyPod(t *testing.T) {
 					Status: tt.condition,
 				}}
 			}
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, pvc).Build()
+			class := makeExpandable(pvc)
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, pvc, class).Build()
 			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 			pool.Storage.Size = "20Gi"
 			wait, err := r.ensureLiteDataPVC(ctx, shard, "main", "z1", pool)

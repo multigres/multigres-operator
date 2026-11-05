@@ -12,6 +12,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -319,7 +320,13 @@ func (r *ShardReconciler) Reconcile(
 		)
 		return ctrl.Result{}, err
 	}
-	if isMissingStorageClassDependency(storageClasses.backupDependency) {
+	backupGated, err := r.backupStorageClassGated(ctx, shard, storageClasses)
+	if err != nil {
+		monitoring.RecordSpanError(span, err)
+		logger.Error(err, "Failed to check the shared backup PVC")
+		return ctrl.Result{}, err
+	}
+	if backupGated {
 		r.Recorder.Event(shard, "Warning", storageClassNotFoundReason, storageClasses.message)
 		logger.Info(
 			"StorageClass dependency missing for shared backup PVC; requeueing",
@@ -734,6 +741,10 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueFromPostgresConfigMap),
+		).
+		Watches(
+			&storagev1.StorageClass{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueFromStorageClass),
 		)
 
 	return r.Gate.Wire(b, mgr, func() client.ObjectList {

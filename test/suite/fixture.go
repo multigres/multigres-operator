@@ -1,10 +1,12 @@
 package suite
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -84,6 +86,39 @@ func (c *C) newCluster(name string, with ...func(*MultigresClusterSpec)) *Multig
 	}
 	c.NoError(c.Create(cluster), "create MultigresCluster")
 	return cluster
+}
+
+// expandableStorageClass creates a StorageClass with AllowVolumeExpansion set
+// and returns its name. See storageClass.
+func (c *C) expandableStorageClass(suffix string) string {
+	c.Helper()
+	return c.storageClass(suffix, true).Name
+}
+
+// storageClass creates a StorageClass with AllowVolumeExpansion set as given,
+// named after the case's namespace so concurrently-running tests never collide
+// on the same cluster-scoped object.
+//
+// A PVC can only be grown when its class allows expansion (the
+// PersistentVolumeClaimResize admission plugin refuses it otherwise), and a
+// PVC's class cannot be changed after creation, so a test that grows storage
+// has to reference the class from the moment the cluster is created.
+func (c *C) storageClass(suffix string, allowExpansion bool) *storagev1.StorageClass {
+	c.Helper()
+	sc := &storagev1.StorageClass{
+		ObjectMeta:           metav1.ObjectMeta{Name: c.NS + "-" + suffix},
+		Provisioner:          "multigres-test/no-op",
+		AllowVolumeExpansion: &allowExpansion,
+	}
+	c.NoError(c.Create(sc), "create StorageClass %s", sc.Name)
+	// Cluster-scoped, so the per-test namespace delete does not reach it and
+	// every run would otherwise leave one behind in the shared envtest API
+	// server for the life of the package. context.Background rather than
+	// c.Context, which is already cancelled by the time cleanups run.
+	c.Cleanup(func() {
+		_ = c.Client().Delete(context.Background(), sc)
+	})
+	return sc
 }
 
 // WaitForClusterHealthy blocks until the cluster reports PhaseHealthy.

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -60,13 +59,6 @@ func lifecycleShardRef(clusterName string) *Shard {
 	}
 }
 
-// lifecycleStorageClassName is the StorageClass lifecycleCluster's pool
-// references, distinct per namespace so concurrently-running instances of
-// this test never collide on the same cluster-scoped object.
-func lifecycleStorageClassName(ns string) string {
-	return ns + "-lifecycle-expandable"
-}
-
 // lifecycleCluster creates the same MultigresCluster MinimalCluster does
 // (one cell, one database, one table group, one shard), plus a StorageClass
 // with AllowVolumeExpansion set and the pool's Storage.Class pointed at it.
@@ -94,21 +86,7 @@ func lifecycleStorageClassName(ns string) string {
 func (c *C) lifecycleCluster(clusterName string) *MultigresCluster {
 	c.Helper()
 
-	scName := lifecycleStorageClassName(c.NS)
-	allowExpansion := true
-	sc := &storagev1.StorageClass{
-		ObjectMeta:           metav1.ObjectMeta{Name: scName},
-		Provisioner:          "multigres-test/no-op",
-		AllowVolumeExpansion: &allowExpansion,
-	}
-	c.NoError(c.Create(sc), "create StorageClass %s", scName)
-	// Cluster-scoped, so the per-test namespace delete does not reach it and
-	// every run would otherwise leave one behind in the shared envtest API
-	// server for the life of the package. context.Background rather than
-	// c.Context, which is already cancelled by the time cleanups run.
-	c.Cleanup(func() {
-		_ = c.Client().Delete(context.Background(), sc)
-	})
+	scName := c.expandableStorageClass("lifecycle-expandable")
 
 	return c.newCluster(clusterName, func(s *MultigresClusterSpec) {
 		s.Databases = []DatabaseConfig{{

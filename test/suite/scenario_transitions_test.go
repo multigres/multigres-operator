@@ -222,41 +222,36 @@ func testPVCDeletionPolicyRoundTrip(t *testing.T) {
 		"PVCs differ across the round trip")
 }
 
-// testBackupRoundTrip takes Backup out to an explicit backup storage size and
-// back. It is the subtest that found a defect, and the pin below is the
-// finding rather than an aside.
+// testBackupRoundTrip takes Backup out to an explicit, smaller backup storage
+// size and back.
 //
 // Backup's only consequence any watch in this suite can see is the shared
 // backup PVC's storage request (pool_pvc.go). The rest of what the field
 // feeds is the topology store, faked in memory here (fakes.go), or needs a
 // Secret the caller precreates (reconcile_shared_infra.go). So the round trip
-// is driven through that size, and the size is where the operator breaks.
+// is driven through that size.
 //
 // Which size, measured against this harness rather than assumed, because once
 // the PVC is bound and the data-plane fake has copied its request into
-// status.capacity (datasim.go) every candidate is refused for a different
-// reason:
+// status.capacity (datasim.go) every candidate meets a different rule:
 //
-//   - smaller, 5Gi against the resolver's 10Gi default, is refused by PVC
-//     validation: "spec.resources.requests.storage: Forbidden: field can not
-//     be less than status.capacity". That rule is unconditional in Kubernetes,
-//     so any user of the operator can reach it.
+//   - smaller, 5Gi against the resolver's 10Gi default, is a request the API
+//     server refuses unconditionally ("field can not be less than
+//     status.capacity"), so any user of the operator can reach it. The
+//     operator has to keep the PVC at 10Gi, carry on reconciling, and say on
+//     the Shard that the edit is being ignored.
 //   - larger, 20Gi, is refused by the PersistentVolumeClaimResize admission
-//     plugin: "only dynamically provisioned pvc can be resized and the
-//     storageclass that provisions the pvc must support resize", because this
-//     suite creates no StorageClass. A real cluster whose class sets
-//     allowVolumeExpansion would accept it, so that refusal is an artifact of
-//     the fixture and is deliberately not what gets pinned here.
+//     plugin unless the PVC's StorageClass allows expansion, and
+//     MinimalCluster's PVCs have no class. TestBackupStorageShrink covers
+//     growth both with and without one.
 //   - equal but written in another unit, 10240Mi, is canonicalised back to
-//     10Gi by the API server and bumps no resourceVersion, so it is invisible
-//     rather than illegal.
+//     10Gi by the API server and bumps no resourceVersion, so it is invisible.
 //
 // The shrink is therefore the transition worth driving: legal on the
-// MultigresCluster, propagated all the way to the PVC apply, and refused
-// there.
+// MultigresCluster, propagated all the way to the Shard, and not applicable
+// to the PVC.
 func testBackupRoundTrip(t *testing.T) {
 	c := newCase(t)
-	ns := c.NS
 	cluster := c.MinimalCluster("backup")
 	c.WaitForClusterHealthy(cluster)
 	c.RequireQuiescent(5*time.Second, 30*time.Second)
@@ -266,86 +261,12 @@ func testBackupRoundTrip(t *testing.T) {
 	original := cluster.Spec.Backup.DeepCopy()
 
 	c.updateCluster(cluster, func(c *MultigresCluster) {
-		c.Spec.Backup = &multigresv1alpha1.BackupConfig{
-			Type: multigresv1alpha1.BackupTypeFilesystem,
-			Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
-				Storage: multigresv1alpha1.StorageSpec{Size: "5Gi"},
-			},
-		}
+		c.Spec.Backup = filesystemBackup("5Gi", "")
 	})
 
-	// The defect: the refused PVC apply returns an error from Reconcile
-	// (shard_controller.go), so everything after that block is skipped for as
-	// long as the field stays lowered, the postgres ConfigMap render, the pool
-	// pods, PDB sizing and reconcilePVCOwnerRefs, and controller-runtime
-	// retries forever. The status update is NOT skipped: updateStatus runs
-	// early in Reconcile, deliberately, so a wedged shard keeps reporting a
-	// current observedGeneration and phase. That is what makes this defect
-	// silent, and it is why a triage that looks for a stale status will not
-	// find one. A user who lowers this field wedges
-	// the shard's whole reconcile loop, with no clamping, no rejection at
-	// admission, and no condition on the Shard saying why.
-	//
-	// Pinned as non-quiescence rather than as a missing PVC event, because a
-	// missing event is what the API server's refusal guarantees on every run
-	// forever: no operator change could ever retire that pin, and a pin that
-	// cannot expire is a suppression. This one expires the day the operator
-	// clamps the value, because then the namespace goes quiet and quiescent
-	// returns nil.
-	//
-	// Two neighbouring fixes do not expire it through quiescence, and the
-	// difference is worth knowing before trusting this pin as a tracker. An
-	// admission refusal fails the test earlier, at the update call, so the
-	// suite still goes red but by another route. A fix that gives up and
-	// records a terminal condition only after retrying past this horizon's
-	// activity budget leaves the pin green, so that one has to be noticed by a
-	// human reading this comment rather than by the pin flipping.
-	//
-	// What this pin rests on, measured 2026-09-18 rather than assumed, because
-	// it used to rest on something weaker than it looked. The wedged pass makes
-	// several accepted no-op writes (both pg_hba and exporter-queries
-	// ConfigMaps, the multiorch Deployment and Service, a Shard status patch)
-	// before it reaches the refused PVC apply, so before the recorder counted
-	// rejected writes, this pin observed non-quiescence only through those
-	// earlier writes. Reordering updateStatus, a refactor with no behavioural
-	// intent, would have flipped it to "appears fixed" with the defect fully
-	// present. The recorder now counts the refused apply itself, which is the
-	// one signal the defect cannot occur without, so that particular
-	// reordering can no longer fool it.
-	//
-	// It is not yet true that the rejection alone carries the pin. Counting
-	// only rejected writes, the same wedge measured non-quiescent on one run
-	// and quiet on the next, 12 refused applies being right at the edge of a
-	// 5s window inside an 11s horizon as the retry backoff spreads them out.
-	// So the margin still comes from the signals combined. Widening the
-	// horizon is not the fix (see below); if this pin ever needs to stand on
-	// the rejection by itself, count refused reconcile passes directly rather
-	// than inferring them from a quiet window.
-	//
-	// The horizon is short on purpose. controller-runtime retries a failing
-	// Reconcile with exponential backoff, so the gap between failing passes
-	// grows without bound and a long enough horizon would let the backoff
-	// itself supply the quiet window while the shard is still wedged.
-	// Calibrated both ways on this harness, three runs each: measured from
-	// immediately after a legal spec write this goes quiet in about 5.3s,
-	// measured from immediately after this write it never goes quiet inside
-	// 11s, over 12 failing reconcile passes.
-	c.KnownDefect("MGO-BACKUP-PVC-SHRINK-WEDGES-SHARD-RECONCILE", func() error {
-		err := c.TryQuiescent(5*time.Second, 11*time.Second)
-		// A lost watch voids the measurement instead of observing the
-		// defect, and a non-nil error here is read as the defect still
-		// being present, which would hold this pin green on an unrelated
-		// failure.
-		c.True(err == nil || !strings.Contains(err.Error(), "is void"),
-			"quiescence over %s is void, so it is no evidence either way: %v", ns, err)
-		return err
-	})
-
-	// Where the value actually got to, as an executable claim rather than a
-	// comment, because the mechanism is easy to misread: it does reach the
-	// Shard, so the PVC is applied from the size the user asked for and the
-	// refusal happens at the API server. A fix aimed at the resolver's backup
-	// defaulting would land on code that is behaving correctly.
+	// Where the value got to, as an executable claim: it reaches the Shard, so
+	// the size the PVC is built from is the one the user asked for, and it is
+	// the shard controller that has to decline to apply it.
 	c.Eventually(15*time.Second, "the lowered size to reach every Shard", func() error {
 		for name, size := range c.shardBackupSizes() {
 			if size != "5Gi" {
@@ -354,23 +275,29 @@ func testBackupRoundTrip(t *testing.T) {
 		}
 		return nil
 	})
+	c.waitForStorageSpecIgnored(true, "backup-data-")
+
+	// Quiescence counts writes the API server refuses, so a shard retrying a
+	// rejected PVC apply cannot pass this. The PVC keeping its size is the
+	// other half: the request was not applied, nor was anything else in the
+	// PVC's spec disturbed.
+	c.RequireQuiescent(5*time.Second, 30*time.Second)
+	c.Check().EqDiff(pvcsBefore, c.pvcRequests(), "PVCs changed while the shrink was ignored")
 
 	c.updateCluster(cluster, func(c *MultigresCluster) {
 		c.Spec.Backup = nil
 	})
 
-	// The gate that makes the closing assertion mean something. The namespace
-	// is not quiet when the unset lands, so silence afterwards would be
-	// ambiguous between the operator having processed it and the retry backoff
-	// having merely grown past the window. The resolved size returning to
-	// where it started is positive evidence that the unset propagated back
-	// down to where the PVC is applied from. It is a wait, not the assertion.
+	// The gate that makes the closing assertion mean something: the resolved
+	// size returning to where it started is positive evidence that the unset
+	// propagated back down to where the PVC is applied from.
 	c.Eventually(30*time.Second, "the unset to reach every Shard", func() error {
 		if got := c.shardBackupSizes(); !maps.Equal(got, sizesBefore) {
 			return fmt.Errorf("resolved backup sizes are %v, want %v", got, sizesBefore)
 		}
 		return nil
 	})
+	c.waitForStorageSpecIgnored(false, "")
 
 	// The round trip's assertion: once the cluster is back to the
 	// configuration it started in, a converged operator has nothing left to

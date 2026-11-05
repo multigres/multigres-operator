@@ -65,6 +65,9 @@ func (r *ShardReconciler) updateLiteStatus(
 	shard.Status.OrchReady = false
 
 	r.setConditions(shard, 1, readyPods)
+	if err := r.setStorageSpecIgnoredCondition(ctx, shard); err != nil {
+		return err
+	}
 	meta.SetStatusCondition(
 		&shard.Status.Conditions,
 		r.litePrimaryCondition(ctx, shard, cellName, pod),

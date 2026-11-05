@@ -21,6 +21,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -49,6 +50,7 @@ func TestSetupWithManager(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(
@@ -127,6 +129,7 @@ func TestShardReconciliation(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	tests := map[string]struct {
 		shard         *multigresv1alpha1.Shard
@@ -1273,6 +1276,7 @@ func TestReconcileDeletions(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(
@@ -1415,6 +1419,7 @@ func TestShardReconciliation_DanglingPostgresInitSecretsRef(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(
@@ -1562,6 +1567,7 @@ func testReloadVsRestartRollout(
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
@@ -2062,6 +2068,7 @@ func TestShardMetricsCleanupAfterDeletion(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(
@@ -2211,6 +2218,7 @@ func TestReconcileGatingObjectLevel(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
@@ -2326,6 +2334,7 @@ func TestReconcileGatingBlocksDeletion(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),

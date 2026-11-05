@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -681,6 +682,7 @@ func TestUpdateStatus_Multiorch(t *testing.T) {
 			scheme := runtime.NewScheme()
 			_ = multigresv1alpha1.AddToScheme(scheme)
 			_ = appsv1.AddToScheme(scheme)
+			_ = corev1.AddToScheme(scheme)
 
 			// Use custom shard if provided, otherwise use default
 			shard := tc.customShard
@@ -5661,6 +5663,7 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	shard := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{
@@ -5669,117 +5672,108 @@ func TestExpandPVCIfNeeded(t *testing.T) {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 	}
+	// The API server only accepts a larger request on a bound PVC whose
+	// StorageClass allows expansion, so the PVCs here are built that way
+	// unless a case is about one of those preconditions.
+	classes := []client.Object{
+		&storagev1.StorageClass{
+			ObjectMeta:           metav1.ObjectMeta{Name: "expandable"},
+			Provisioner:          "test",
+			AllowVolumeExpansion: ptr.To(true),
+		},
+		&storagev1.StorageClass{
+			ObjectMeta:  metav1.ObjectMeta{Name: "fixed"},
+			Provisioner: "test",
+		},
+	}
+	storage := func(size string) corev1.ResourceList {
+		return corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(size)}
+	}
 
-	t.Run("no-op when sizes are equal", func(t *testing.T) {
-		pvc := &corev1.PersistentVolumeClaim{
-			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-0", Namespace: "default"},
-			Spec: corev1.PersistentVolumeClaimSpec{
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: resource.MustParse("10Gi"),
-					},
+	tests := map[string]struct {
+		class    string
+		phase    corev1.PersistentVolumeClaimPhase
+		requests corev1.ResourceList
+		spec     string
+		want     string
+		event    string
+	}{
+		"no-op when sizes are equal": {
+			class: "expandable", phase: corev1.ClaimBound,
+			requests: storage("10Gi"), spec: "10Gi", want: "10Gi",
+		},
+		"patches PVC when desired is larger": {
+			class: "expandable", phase: corev1.ClaimBound,
+			requests: storage("10Gi"), spec: "20Gi", want: "20Gi", event: "PVCExpanded",
+		},
+		"no-op when desired is smaller": {
+			class: "expandable", phase: corev1.ClaimBound,
+			requests: storage("20Gi"), spec: "10Gi", want: "20Gi",
+		},
+		"handles nil requests map": {
+			class: "expandable", phase: corev1.ClaimBound,
+			requests: nil, spec: "5Gi", want: "5Gi", event: "PVCExpanded",
+		},
+		"keeps request when the class does not allow expansion": {
+			class: "fixed", phase: corev1.ClaimBound,
+			requests: storage("10Gi"), spec: "20Gi", want: "10Gi",
+		},
+		"keeps request when the class does not exist": {
+			class: "missing", phase: corev1.ClaimBound,
+			requests: storage("10Gi"), spec: "20Gi", want: "10Gi",
+		},
+		"keeps request when the PVC has no class": {
+			phase:    corev1.ClaimBound,
+			requests: storage("10Gi"), spec: "20Gi", want: "10Gi",
+		},
+		"keeps request when the PVC is not bound": {
+			class: "expandable", phase: corev1.ClaimPending,
+			requests: storage("10Gi"), spec: "20Gi", want: "10Gi",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			pvc := &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "default"},
+				Spec: corev1.PersistentVolumeClaimSpec{
+					Resources: corev1.VolumeResourceRequirements{Requests: tc.requests},
 				},
-			},
-		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+				Status: corev1.PersistentVolumeClaimStatus{Phase: tc.phase},
+			}
+			if tc.class != "" {
+				pvc.Spec.StorageClassName = ptr.To(tc.class)
+			}
+			c := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(append([]client.Object{shard.DeepCopy(), pvc}, classes...)...).
+				Build()
+			recorder := record.NewFakeRecorder(10)
+			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
 
-		poolSpec := multigresv1alpha1.PoolSpec{
-			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
-		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+			poolSpec := multigresv1alpha1.PoolSpec{
+				Storage: multigresv1alpha1.StorageSpec{Size: tc.spec},
+			}
+			if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		got := &corev1.PersistentVolumeClaim{}
-		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-0", Namespace: "default"}, got)
-		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("10Gi")) != 0 {
-			t.Errorf("expected 10Gi, got %s", current.String())
-		}
-	})
-
-	t.Run("patches PVC when desired is larger", func(t *testing.T) {
-		pvc := &corev1.PersistentVolumeClaim{
-			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-1", Namespace: "default"},
-			Spec: corev1.PersistentVolumeClaimSpec{
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: resource.MustParse("10Gi"),
-					},
-				},
-			},
-		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
-		recorder := record.NewFakeRecorder(10)
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
-
-		poolSpec := multigresv1alpha1.PoolSpec{
-			Storage: multigresv1alpha1.StorageSpec{Size: "20Gi"},
-		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		got := &corev1.PersistentVolumeClaim{}
-		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-1", Namespace: "default"}, got)
-		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("20Gi")) != 0 {
-			t.Errorf("expected 20Gi after expansion, got %s", current.String())
-		}
-	})
-
-	t.Run("no-op when desired is smaller", func(t *testing.T) {
-		pvc := &corev1.PersistentVolumeClaim{
-			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-2", Namespace: "default"},
-			Spec: corev1.PersistentVolumeClaimSpec{
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: resource.MustParse("20Gi"),
-					},
-				},
-			},
-		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
-
-		poolSpec := multigresv1alpha1.PoolSpec{
-			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi"},
-		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		got := &corev1.PersistentVolumeClaim{}
-		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-2", Namespace: "default"}, got)
-		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("20Gi")) != 0 {
-			t.Errorf("expected 20Gi unchanged, got %s", current.String())
-		}
-	})
-
-	t.Run("handles nil requests map", func(t *testing.T) {
-		pvc := &corev1.PersistentVolumeClaim{
-			ObjectMeta: metav1.ObjectMeta{Name: "data-pvc-3", Namespace: "default"},
-		}
-		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard.DeepCopy(), pvc).Build()
-		recorder := record.NewFakeRecorder(10)
-		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: recorder}
-
-		poolSpec := multigresv1alpha1.PoolSpec{
-			Storage: multigresv1alpha1.StorageSpec{Size: "5Gi"},
-		}
-		if err := r.expandPVCIfNeeded(t.Context(), shard, pvc, poolSpec); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		got := &corev1.PersistentVolumeClaim{}
-		_ = c.Get(t.Context(), types.NamespacedName{Name: "data-pvc-3", Namespace: "default"}, got)
-		current := got.Spec.Resources.Requests[corev1.ResourceStorage]
-		if current.Cmp(resource.MustParse("5Gi")) != 0 {
-			t.Errorf("expected 5Gi, got %s", current.String())
-		}
-	})
+			got := &corev1.PersistentVolumeClaim{}
+			if err := c.Get(t.Context(), client.ObjectKeyFromObject(pvc), got); err != nil {
+				t.Fatal(err)
+			}
+			current := got.Spec.Resources.Requests[corev1.ResourceStorage]
+			if current.Cmp(resource.MustParse(tc.want)) != 0 {
+				t.Errorf("request = %s, want %s", current.String(), tc.want)
+			}
+			events := drainEvents(recorder)
+			switch {
+			case tc.event == "" && len(events) > 0:
+				t.Errorf("unexpected events %v", events)
+			case tc.event != "" && !containsEventWithReason(events, tc.event):
+				t.Errorf("events %v, want one with reason %s", events, tc.event)
+			}
+		})
+	}
 }
 
 func TestPVCNeedsFilesystemResize(t *testing.T) {

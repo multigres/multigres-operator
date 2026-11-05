@@ -338,6 +338,17 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 		return nil
 	}
 
+	existing := &corev1.PersistentVolumeClaim{}
+	err = r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
+	switch {
+	case err == nil:
+		if err := r.keepUnchangeablePVCFields(ctx, desired, existing); err != nil {
+			return err
+		}
+	case !errors.IsNotFound(err):
+		return fmt.Errorf("failed to get shared backup PVC: %w", err)
+	}
+
 	// Server Side Apply
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
 	if err := r.Patch(
@@ -470,5 +481,30 @@ func (r *ShardReconciler) reconcilePoolHeadlessService(
 		return fmt.Errorf("failed to apply pool headless Service: %w", err)
 	}
 
+	return nil
+}
+
+// keepUnchangeablePVCFields copies onto desired the parts of an existing PVC's
+// spec that the API server would refuse to change: a storage request it cannot
+// apply (see storageRequestFor), and the storage class and access modes, which
+// are fixed at creation. A refused apply fails on every attempt, and since the
+// shared backup PVC is applied before the pools, the PDB and the data plane, it
+// would stall all of them for as long as the spec disagrees with the PVC. The
+// disagreement is reported by the StorageSpecIgnored condition instead.
+func (r *ShardReconciler) keepUnchangeablePVCFields(
+	ctx context.Context,
+	desired, existing *corev1.PersistentVolumeClaim,
+) error {
+	request, _, err := r.storageRequestFor(
+		ctx,
+		existing,
+		desired.Spec.Resources.Requests[corev1.ResourceStorage],
+	)
+	if err != nil {
+		return err
+	}
+	desired.Spec.Resources.Requests[corev1.ResourceStorage] = request
+	desired.Spec.StorageClassName = existing.Spec.StorageClassName
+	desired.Spec.AccessModes = existing.Spec.AccessModes
 	return nil
 }

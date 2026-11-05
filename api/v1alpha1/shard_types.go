@@ -317,6 +317,13 @@ const (
 	// ConditionUpToDate is true when a Lite shard's pod carries the spec-hash
 	// of the pod the operator would build for it now.
 	ConditionUpToDate = "UpToDate"
+
+	// ConditionStorageSpecIgnored is true when an existing PVC of the shard
+	// keeps a storage request, storage class or access mode that differs from
+	// what the spec asks for, because the API server does not allow that
+	// change on an existing claim: a request cannot shrink, and the class and
+	// access modes are fixed at creation.
+	ConditionStorageSpecIgnored = "StorageSpecIgnored"
 )
 
 // ShardStatus defines the observed state of Shard.

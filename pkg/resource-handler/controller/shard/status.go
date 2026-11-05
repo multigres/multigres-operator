@@ -113,6 +113,9 @@ func (r *ShardReconciler) updateStatus(
 
 	// Update conditions
 	r.setConditions(shard, pools.totalPods, pools.readyPods)
+	if err := r.setStorageSpecIgnoredCondition(ctx, shard); err != nil {
+		return err
+	}
 
 	shard.Status.ObservedGeneration = shard.Generation
 

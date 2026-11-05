@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -63,6 +65,38 @@ type storageClassCheck struct {
 	poolDependency   error
 }
 
+// backupStorageClassGated reports whether Reconcile must stop before the
+// shared backup PVC because its StorageClass is missing. The gate exists so
+// the PVC is never created against a class that does not exist. Once the PVC
+// exists its class can no longer change (keepUnchangeablePVCFields keeps it),
+// so a missing class in the spec does not affect it, and stopping here would
+// hold back every later step, including the user's other edits, for a value
+// that is not going to be applied. StorageClassValid and StorageSpecIgnored
+// still report the class.
+func (r *ShardReconciler) backupStorageClassGated(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	check storageClassCheck,
+) (bool, error) {
+	if !isMissingStorageClassDependency(check.backupDependency) {
+		return false, nil
+	}
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := r.Get(
+		ctx,
+		client.ObjectKey{Namespace: shard.Namespace, Name: BuildSharedBackupPVCName(shard)},
+		pvc,
+	)
+	switch {
+	case err == nil:
+		return false, nil
+	case apierrors.IsNotFound(err):
+		return true, nil
+	default:
+		return false, fmt.Errorf("failed to get shared backup PVC: %w", err)
+	}
+}
+
 func backupFilesystemStorageClassName(shard *multigresv1alpha1.Shard) string {
 	if shard.Spec.Backup == nil ||
 		shard.Spec.Backup.Type != multigresv1alpha1.BackupTypeFilesystem {
@@ -98,12 +132,18 @@ func (r *ShardReconciler) validateStorageClassExists(
 // caller publishes the condition once and then gates on the missing-class
 // fields, which is what keeps the condition single-writer.
 //
-// A missing backup class short-circuits before the pools are looked at, so the
-// reported message matches the order in which Reconcile gates on them.
+// Every class is resolved even when an earlier one is missing. The backup gate
+// lets a reconcile through when the backup PVC already exists
+// (backupStorageClassGated), and the pool gate further down must still see a
+// missing pool class then. The message names the missing classes in the order
+// Reconcile gates on them: backup first, then pools by name.
 func (r *ShardReconciler) validateStorageClassDependencies(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) (storageClassCheck, error) {
+	var check storageClassCheck
+	var missing []string
+
 	backupClass := backupFilesystemStorageClassName(shard)
 	if backupClass != "" {
 		exists, err := r.validateStorageClassExists(ctx, backupClass)
@@ -115,15 +155,11 @@ func (r *ShardReconciler) validateStorageClassDependencies(
 			)
 		}
 		if !exists {
-			return storageClassCheck{
-				status: metav1.ConditionFalse,
-				reason: storageClassNotFoundReason,
-				message: fmt.Sprintf(
-					"StorageClass %q not found for shared backup PVCs",
-					backupClass,
-				),
-				backupDependency: &missingStorageClassDependencyError{className: backupClass},
-			}, nil
+			check.backupDependency = &missingStorageClassDependencyError{className: backupClass}
+			missing = append(missing, fmt.Sprintf(
+				"StorageClass %q not found for shared backup PVCs",
+				backupClass,
+			))
 		}
 	}
 
@@ -148,32 +184,32 @@ func (r *ShardReconciler) validateStorageClassDependencies(
 			)
 		}
 		if !exists {
-			return storageClassCheck{
-				status: metav1.ConditionFalse,
-				reason: storageClassNotFoundReason,
-				message: fmt.Sprintf(
-					"StorageClass %q not found for pool %s",
-					poolClass,
-					poolName,
-				),
-				poolDependency: &missingStorageClassDependencyError{className: poolClass},
-			}, nil
+			if check.poolDependency == nil {
+				check.poolDependency = &missingStorageClassDependencyError{className: poolClass}
+			}
+			missing = append(missing, fmt.Sprintf(
+				"StorageClass %q not found for pool %s",
+				poolClass,
+				poolName,
+			))
 		}
 	}
 
-	if backupClass == "" && !hasExplicitPoolClass {
-		return storageClassCheck{
-			status:  metav1.ConditionTrue,
-			reason:  storageClassNotSpecifiedReason,
-			message: "No explicit backup filesystem or pool StorageClass configured; using cluster default",
-		}, nil
+	switch {
+	case len(missing) > 0:
+		check.status = metav1.ConditionFalse
+		check.reason = storageClassNotFoundReason
+		check.message = strings.Join(missing, "; ")
+	case backupClass == "" && !hasExplicitPoolClass:
+		check.status = metav1.ConditionTrue
+		check.reason = storageClassNotSpecifiedReason
+		check.message = "No explicit backup filesystem or pool StorageClass configured; using cluster default"
+	default:
+		check.status = metav1.ConditionTrue
+		check.reason = storageClassFoundReason
+		check.message = "All explicitly configured StorageClasses are present"
 	}
-
-	return storageClassCheck{
-		status:  metav1.ConditionTrue,
-		reason:  storageClassFoundReason,
-		message: "All explicitly configured StorageClasses are present",
-	}, nil
+	return check, nil
 }
 
 // setStorageClassCondition patches the StorageClassValid condition using SSA.

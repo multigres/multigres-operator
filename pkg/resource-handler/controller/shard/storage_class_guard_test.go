@@ -214,7 +214,10 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 		}
 	})
 
-	t.Run("missing backup class wins over a missing pool class", func(t *testing.T) {
+	// The backup gate lets a reconcile through when the backup PVC exists, so
+	// the pool gate must still see a missing pool class behind a missing
+	// backup class.
+	t.Run("a missing backup class does not hide a missing pool class", func(t *testing.T) {
 		shard := &multigresv1alpha1.Shard{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-shard", Namespace: "default"},
 			Spec: multigresv1alpha1.ShardSpec{
@@ -236,8 +239,13 @@ func TestValidateStorageClassDependencies(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if !isMissingStorageClassDependency(check.backupDependency) ||
-			check.poolDependency != nil {
-			t.Fatalf("expected only the backup dependency, got %+v", check)
+			!isMissingStorageClassDependency(check.poolDependency) {
+			t.Fatalf("expected both dependencies, got %+v", check)
+		}
+		want := `StorageClass "missing-backup-sc" not found for shared backup PVCs; ` +
+			`StorageClass "missing-pool-sc" not found for pool primary`
+		if check.message != want {
+			t.Fatalf("message = %q, want %q", check.message, want)
 		}
 	})
 

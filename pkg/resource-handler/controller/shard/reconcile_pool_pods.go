@@ -1198,8 +1198,9 @@ func podNeedsUpdate(
 }
 
 // expandPVCIfNeeded patches an existing PVC's storage request when the desired
-// size (from poolSpec.Storage.Size) exceeds the current PVC spec. This enables
-// in-place volume expansion without pod deletion.
+// size (from poolSpec.Storage.Size) exceeds the current PVC spec and the PVC
+// can be expanded (see storageRequestFor). This enables in-place volume
+// expansion without pod deletion.
 func (r *ShardReconciler) expandPVCIfNeeded(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -1208,14 +1209,13 @@ func (r *ShardReconciler) expandPVCIfNeeded(
 ) error {
 	logger := log.FromContext(ctx)
 
-	storageSize := DefaultDataVolumeSize
-	if poolSpec.Storage.Size != "" {
-		storageSize = poolSpec.Storage.Size
-	}
-
-	desired, err := resource.ParseQuantity(storageSize)
+	want, err := poolStorageRequest(poolSpec)
 	if err != nil {
-		return fmt.Errorf("invalid storage size %q: %w", storageSize, err)
+		return err
+	}
+	desired, _, err := r.storageRequestFor(ctx, pvc, want)
+	if err != nil {
+		return err
 	}
 
 	var current resource.Quantity

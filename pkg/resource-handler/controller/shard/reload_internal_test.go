@@ -12,6 +12,7 @@ import (
 	multipoolermanagerdatapb "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
@@ -37,6 +38,9 @@ func reloadTestScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("add corev1 scheme: %v", err)
+	}
+	if err := storagev1.AddToScheme(s); err != nil {
+		t.Fatalf("add storagev1 scheme: %v", err)
 	}
 	return s
 }

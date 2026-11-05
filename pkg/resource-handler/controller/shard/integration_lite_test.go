@@ -20,6 +20,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -114,6 +115,7 @@ func TestReconcileLite(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),
@@ -332,6 +334,7 @@ func TestLiteStatusReachesAvailableAndPrimary(t *testing.T) {
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
 	_ = policyv1.AddToScheme(scheme)
+	_ = storagev1.AddToScheme(scheme)
 
 	mgr := testutil.SetUpEnvtestManager(t, scheme,
 		testutil.WithCRDPaths(filepath.Join("../../../../", "config", "crd", "bases")),

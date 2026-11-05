@@ -101,17 +101,17 @@ func BuildPoolDataPVC(
 	metadata.AddClusterLabel(labels, clusterName)
 
 	var storageClass *string
-	storageSize := DefaultDataVolumeSize
 	accessModes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
 
 	if poolSpec.Storage.Class != "" {
 		storageClass = &poolSpec.Storage.Class
 	}
-	if poolSpec.Storage.Size != "" {
-		storageSize = poolSpec.Storage.Size
-	}
 	if len(poolSpec.Storage.AccessModes) > 0 {
 		accessModes = poolSpec.Storage.AccessModes
+	}
+	storageSize, err := poolStorageRequest(poolSpec)
+	if err != nil {
+		return nil, err
 	}
 
 	pvc := &corev1.PersistentVolumeClaim{
@@ -124,7 +124,7 @@ func BuildPoolDataPVC(
 			AccessModes: accessModes,
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(storageSize),
+					corev1.ResourceStorage: storageSize,
 				},
 			},
 		},
@@ -141,6 +141,20 @@ func BuildPoolDataPVC(
 	}
 
 	return pvc, nil
+}
+
+// poolStorageRequest is the storage request a pool's data PVCs are built and
+// expanded to.
+func poolStorageRequest(poolSpec multigresv1alpha1.PoolSpec) (resource.Quantity, error) {
+	size := DefaultDataVolumeSize
+	if poolSpec.Storage.Size != "" {
+		size = poolSpec.Storage.Size
+	}
+	qty, err := resource.ParseQuantity(size)
+	if err != nil {
+		return resource.Quantity{}, fmt.Errorf("invalid storage size %q: %w", size, err)
+	}
+	return qty, nil
 }
 
 // BuildSharedBackupPVCName builds the deterministic name for the shard-level shared backup PVC.
