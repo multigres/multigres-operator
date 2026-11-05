@@ -51,9 +51,9 @@ func poolDataPVCNamePrefix(
 }
 
 // isShardBuiltPVC reports whether pvc carries a name the shard's builders
-// produce or once produced, for the pool and cell on its labels: BuildPoolDataPVCName at some
-// index for a PVC with a pool label, and for one without, the shared backup
-// PVC's name or legacyCellBackupPVCName.
+// produce or once produced, for the pool and cell on its labels:
+// BuildPoolDataPVCName at some index for a PVC with a pool label, and for one
+// without, the shared backup PVC's name or legacyCellBackupPVCName.
 //
 // Labels say which shard a PVC claims to belong to, not who made it, so
 // anything acting on a PVC selected by the shard's identity labels alone can

@@ -203,9 +203,9 @@
 //     a pin is a test, and this one needs a Pod-kind impostor against
 //     DataPlaneSim.tickPods, whose write set differs from tickPVCs's and
 //     has not been derived (tickPVCs's is, for
-//     TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs below). Naming it SAFE, as an earlier revision of this block
-//     did, was the error worth correcting: an unexamined site is a gap, and
-//     a gap signed SAFE is worse than one left open.
+//     TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs below).
+//     It is not SAFE either: an unexamined site is a gap, and a gap signed
+//     SAFE is worse than one left open.
 //
 //   - reconcile_pool_pods.go:60   PersistentVolumeClaimList  pool+cell-
 //     scoped. SAFE, but name-keyed rather than read-only, which is the
@@ -437,10 +437,10 @@ func TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer(t *testi
 //     under another name, and no owner at all.
 //   - impostor-data-pvc: a pool data PVC's labels, pool and cell included,
 //     under a name no pod index produces, and no owner at all.
-//   - a-impostor-controlled: controlled by another owner. Named to list first,
-//     because the loop stops at its first error and SetControllerReference
-//     refuses an object with another controller: an attempt to adopt it would
-//     wedge every PVC after it, the shard's own included, as well as fail.
+//   - a-impostor-controlled: controlled by another owner, so
+//     SetControllerReference refuses it. An attempt to adopt it fails every
+//     reconcile pass, and since the loop stops at its first error, also
+//     leaves every PVC listed after it unreconciled.
 //
 // The script opens after RequireQuiescent, so its watch replays the shard's
 // already-settled PVCs as Added events, which the first step permits by name.
