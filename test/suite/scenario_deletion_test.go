@@ -8,7 +8,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -16,6 +15,7 @@ import (
 	multigresclustercontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
 	tablegroupcontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
 	"github.com/multigres/multigres-operator/pkg/features"
+	"github.com/multigres/multigres-operator/pkg/resolver"
 	cellcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	"github.com/multigres/testkit/ctrltest"
 )
@@ -259,8 +259,8 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 		orphanKey.Name)
 }
 
-// TestReadyForDeletionProtocol_OrphanCellDrains asserts that a Cell which falls
-// out of a settled cluster's spec completes its drain handshake: multigrescluster
+// TestReadyForDeletionProtocol_OrphanCellDrains asserts that a Cell a settled
+// cluster's spec does not name completes its drain handshake: multigrescluster
 // stamps AnnotationPendingDeletion on it, the Cell controller's own reconcile
 // answers with ReadyForDeletion, and multigrescluster then deletes it.
 //
@@ -272,41 +272,35 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 // RequeueAfter to RequeueClamp, so a Cell that was still rescheduling itself
 // would rerun within milliseconds and drain regardless of the predicate.
 // Nothing about the Cell's owned TopoServer, Deployment or Service changes
-// when it is orphaned, so the Owns() watches stay silent too. A predicate
-// that drops the annotation leaves the Cell annotated and never ready, and
-// this fails at the deletion wait.
+// when it is orphaned, and the Cell controller does not watch the
+// MultigresCluster, so neither the Owns() watches nor the gate lift below
+// reach it. A predicate that drops the annotation leaves the Cell annotated
+// and never ready, and this fails at the deletion wait.
 //
-// The orphan is produced through the API server the way a user can produce
-// it: the append-only rule on MultigresClusterSpec.Cells
-// (oldSelf.all(c, c.name in self.map(x, x.name))) is a transition rule on an
-// optional field, so the API server skips it when the new object has no
-// spec.cells at all, and a JSON patch removing the field is accepted. If that
-// gap is ever closed, this test fails at the patch below rather than passing
-// vacuously, and needs another route to an orphan Cell.
+// No write a user can make produces an orphan Cell: the API server keeps
+// spec.cells append-only and refuses to drop spec (TestCellsAppendOnly), so a
+// Cell missing from spec exists only out of band, such as one created directly
+// with the cluster's labels and owner. createOrphanCell makes exactly that,
+// for secondSimCell, while the cluster is gated, so the Cell controller
+// settles it while every multigrescluster pass is refused. Lifting the gate is
+// the edit that has multigrescluster notice the orphan.
 //
-// The return trip restores spec.cells after the drain and requires a fresh
-// Cell, under the same name, that carries no PendingDeletion annotation and
-// brings the cluster back to Healthy. envtest runs no garbage collector, so
-// the deleted Cell's Deployment and Service outlive it here; the new Cell has
-// to adopt or replace them, which a real cluster would have collected first.
+// The return trip appends secondSimCell to spec.cells after the drain and
+// requires a fresh Cell, under the same name, that carries no PendingDeletion
+// annotation and brings the cluster back to Healthy. envtest runs no garbage
+// collector, so the deleted Cell's Deployment and Service outlive it here; the
+// new Cell has to adopt or replace them, which a real cluster would have
+// collected first.
 func TestReadyForDeletionProtocol_OrphanCellDrains(t *testing.T) {
 	c := newCase(t)
-	cluster := c.MinimalCluster("scenario-del-cell")
+	cluster := c.newCluster("scenario-del-cell", pinPoolToDefaultCell)
 	c.WaitForClusterHealthy(cluster)
+	clusterKey := client.ObjectKeyFromObject(cluster)
 
-	settled := &MultigresCluster{}
-	c.NoError(c.Get(client.ObjectKeyFromObject(cluster), settled), "get settled cluster")
-	originalCells := settled.Spec.Cells
-	c.Len(originalCells, 1, "want exactly one cell in spec before orphaning it")
-
-	cells := &multigresv1alpha1.CellList{}
-	c.NoError(
-		c.List(cells, client.MatchingLabels{"multigres.com/cluster": cluster.Name}),
-		"list cells",
-	)
-	c.Len(cells.Items, 1, "want exactly one Cell before orphaning it")
-	orphanKey := client.ObjectKeyFromObject(&cells.Items[0])
-	orphanUID := cells.Items[0].UID
+	orphanCfg := CellConfig{Name: secondSimCell, ZoneID: "us-central1-b"}
+	orphan := c.createOrphanCell(cluster, orphanCfg)
+	orphanKey := client.ObjectKeyFromObject(orphan)
+	orphanUID := orphan.UID
 
 	// Quiescence lets every write-triggered reconcile finish; it cannot see
 	// a nil-error requeue that writes nothing, so the Cell's own last pass is
@@ -325,11 +319,7 @@ func TestReadyForDeletionProtocol_OrphanCellDrains(t *testing.T) {
 		lastPass.Err, lastPass.RequestedAfter)
 
 	editAt := time.Now()
-	removeCells := []byte(`[{"op":"remove","path":"/spec/cells"}]`)
-	c.NoError(
-		c.Patch(settled, client.RawPatch(types.JSONPatchType, removeCells)),
-		"remove spec.cells",
-	)
+	c.setReconcileGate(&MultigresCluster{}, clusterKey, false)
 
 	c.Eventually(30*time.Second, "orphaned Cell "+orphanKey.Name+" to drain and be deleted",
 		func() error {
@@ -377,10 +367,10 @@ func TestReadyForDeletionProtocol_OrphanCellDrains(t *testing.T) {
 			return nil
 		})
 
-	// Return trip: putting the cell back must yield a working Cell, not one
-	// that inherits the drain.
+	// Return trip: putting the cell into spec must yield a working Cell, not
+	// one that inherits the drain.
 	c.updateCluster(cluster, func(got *MultigresCluster) {
-		got.Spec.Cells = originalCells
+		got.Spec.Cells = append(got.Spec.Cells, orphanCfg)
 	})
 	c.WaitForClusterHealthy(cluster)
 	c.Eventually(30*time.Second, "Cell "+orphanKey.Name+" to be recreated and Healthy",
@@ -444,17 +434,22 @@ func conditionSetTrue(ev ctrltest.Event, conditionType string) bool {
 }
 
 // TestReadyForDeletionProtocol_CellRestoredMidDrain asserts that a Cell put
-// back into spec after its drain ran, but before multigrescluster deleted it,
+// into spec after its drain ran, but before multigrescluster deleted it,
 // returns to normal service: PendingDeletion is cleared, the ReadyForDeletion
 // the drain set is dropped, the managed local TopoServer the drain deleted is
 // recreated, and the cleared condition is persisted before the TopoServer
 // comes back, so no stored True ever describes a Cell that is no longer
 // drained.
 //
+// The orphan is created out of band by createOrphanCell, for the reasons
+// TestReadyForDeletionProtocol_OrphanCellDrains gives, and the restore is the
+// append of its cell to spec.cells, which is the only way a cell can return to
+// spec.
+//
 // The interleaving is forced with the reconcile gate rather than raced for.
 // Gating the Cell lets multigrescluster stamp it without the Cell draining;
 // gating the cluster then lets the Cell drain without the cluster deleting
-// it, and keeps the restore of spec.cells unseen until the gate lifts. The
+// it, and keeps the append to spec.cells unseen until the gate lifts. The
 // gate is a production mechanism, and lifting it is what an operator does,
 // so every step runs on the real watch and reconcile paths.
 //
@@ -463,40 +458,31 @@ func conditionSetTrue(ev ctrltest.Event, conditionType string) bool {
 // Cell would still look whole.
 func TestReadyForDeletionProtocol_CellRestoredMidDrain(t *testing.T) {
 	c := newCase(t)
-	cluster := c.newCluster("scenario-del-cell-restore", func(spec *MultigresClusterSpec) {
-		spec.Cells[0].Spec = &multigresv1alpha1.CellInlineSpec{
+	cluster := c.newCluster("scenario-del-cell-restore", pinPoolToDefaultCell)
+	c.WaitForClusterHealthy(cluster)
+	clusterKey := client.ObjectKeyFromObject(cluster)
+
+	orphanCfg := CellConfig{
+		Name:   secondSimCell,
+		ZoneID: "us-central1-b",
+		Spec: &multigresv1alpha1.CellInlineSpec{
 			LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
 				Etcd: &multigresv1alpha1.EtcdSpec{Replicas: ptr.To(int32(1))},
 			},
-		}
-	})
-	c.WaitForClusterHealthy(cluster)
-
-	settled := &MultigresCluster{}
-	c.NoError(c.Get(client.ObjectKeyFromObject(cluster), settled), "get settled cluster")
-	originalCells := settled.Spec.Cells
-
-	cells := &multigresv1alpha1.CellList{}
-	c.NoError(
-		c.List(cells, client.MatchingLabels{"multigres.com/cluster": cluster.Name}),
-		"list cells",
-	)
-	c.Len(cells.Items, 1, "want exactly one Cell")
-	cellKey := client.ObjectKeyFromObject(&cells.Items[0])
-	cellUID := cells.Items[0].UID
+		},
+	}
+	orphan := c.createOrphanCell(cluster, orphanCfg)
+	cellKey := client.ObjectKeyFromObject(orphan)
+	cellUID := orphan.UID
 	localTopoKey := client.ObjectKey{
 		Namespace: c.NS,
-		Name:      cellcontroller.BuildLocalTopoServerName(&cells.Items[0]),
+		Name:      cellcontroller.BuildLocalTopoServerName(orphan),
 	}
 	c.NoError(c.Get(localTopoKey, &multigresv1alpha1.TopoServer{}), "get local TopoServer")
 	c.RequireQuiescent(2*time.Second, 30*time.Second)
 
 	c.setReconcileGate(&multigresv1alpha1.Cell{}, cellKey, true)
-	c.NoError(
-		c.Patch(settled, client.RawPatch(types.JSONPatchType,
-			[]byte(`[{"op":"remove","path":"/spec/cells"}]`))),
-		"remove spec.cells",
-	)
+	c.setReconcileGate(&MultigresCluster{}, clusterKey, false)
 	c.Eventually(30*time.Second, "multigrescluster to stamp PendingDeletion", func() error {
 		cell := &multigresv1alpha1.Cell{}
 		if err := c.Get(cellKey, cell); err != nil {
@@ -508,7 +494,6 @@ func TestReadyForDeletionProtocol_CellRestoredMidDrain(t *testing.T) {
 		return nil
 	})
 
-	clusterKey := client.ObjectKeyFromObject(cluster)
 	c.setReconcileGate(&MultigresCluster{}, clusterKey, true)
 	c.waitForGatedPass("multigrescluster", clusterKey)
 	c.setReconcileGate(&multigresv1alpha1.Cell{}, cellKey, false)
@@ -530,7 +515,7 @@ func TestReadyForDeletionProtocol_CellRestoredMidDrain(t *testing.T) {
 		})
 
 	c.updateCluster(cluster, func(got *MultigresCluster) {
-		got.Spec.Cells = originalCells
+		got.Spec.Cells = append(got.Spec.Cells, orphanCfg)
 	})
 	restoredAt := time.Now()
 	c.setReconcileGate(&MultigresCluster{}, clusterKey, false)
@@ -635,4 +620,135 @@ func (c *C) waitForGatedPass(controller string, key client.ObjectKey) {
 			}
 			return fmt.Errorf("no write-free pass since %s", since.Format(time.RFC3339Nano))
 		})
+}
+
+// pinPoolToDefaultCell gives the cluster the default database, table group and
+// shard explicitly, with the pool's cells pinned to defaultSimCell. A pool
+// with no cells spans every cell in spec, so without the pin appending
+// secondSimCell would grow the pool into it, and the suite's data plane does
+// not bring that pool to full strength, leaving the cluster Progressing for
+// reasons unrelated to the Cell under test.
+func pinPoolToDefaultCell(spec *MultigresClusterSpec) {
+	spec.Databases = []DatabaseConfig{{
+		Name:    resolver.DefaultSystemDatabaseName,
+		Default: true,
+		TableGroups: []TableGroupConfig{{
+			Name:    resolver.DefaultSystemTableGroupName,
+			Default: true,
+			Shards: []ShardConfig{{
+				Name: "0-inf",
+				Spec: &ShardInlineSpec{
+					Pools: map[PoolName]PoolSpec{
+						resolver.DefaultPoolName: {
+							Type:  "readWrite",
+							Cells: []CellName{defaultSimCell},
+						},
+					},
+				},
+			}},
+		}},
+	}}
+}
+
+// createOrphanCell creates a Cell for cfg, which the cluster's spec must not
+// name, waits for the Cell controller to bring it to Healthy, and returns it.
+//
+// This is the out-of-band route to an orphan Cell, and the only one the API
+// server leaves: spec.cells is append-only and spec cannot be removed, so no
+// write to the MultigresCluster drops a cell. The Cell is the one
+// reconcileCells would apply if cfg were appended to spec: the same resolver
+// defaults the cluster and resolves cfg, BuildCell builds it with the cluster
+// as owner, and the multigateway image and global topo ref, which
+// multigrescluster resolves in memory and never writes back to the spec, are
+// copied from the cluster's existing Cell. Creating it goes through the suite client, which
+// the suite's lack of admission webhooks lets through.
+//
+// The cluster is gated before the Cell exists and is left gated on return,
+// because an ungated multigrescluster stamps PendingDeletion on the Cell as
+// soon as its cache holds it, before the Cell controller has created anything
+// for a drain to tear down. The caller lifts the gate to have the orphan
+// noticed.
+func (c *C) createOrphanCell(cluster *MultigresCluster, cfg CellConfig) *multigresv1alpha1.Cell {
+	c.Helper()
+	clusterKey := client.ObjectKeyFromObject(cluster)
+	existing := c.onlyCell(cluster)
+
+	c.setReconcileGate(&MultigresCluster{}, clusterKey, true)
+	c.waitForGateCached(&MultigresCluster{}, clusterKey)
+
+	settled := &MultigresCluster{}
+	c.NoError(c.Get(clusterKey, settled), "get gated cluster")
+	allCellNames := []CellName{}
+	for _, named := range settled.Spec.Cells {
+		c.True(named.Name != cfg.Name,
+			"spec.cells already names %s, so its Cell would not be an orphan", cfg.Name)
+		allCellNames = append(allCellNames, named.Name)
+	}
+	allCellNames = append(allCellNames, cfg.Name)
+
+	res := resolver.NewResolver(c.Client(), c.NS)
+	_, err := res.PopulateClusterDefaults(c.Context(), settled)
+	c.NoError(err, "populate cluster defaults")
+	settled.Spec.Images.Multigateway = existing.Spec.Images.Multigateway
+	cfg.CellTemplate = settled.Spec.EffectiveCellTemplate(cfg.CellTemplate)
+	gateway, placement, localTopo, err := res.ResolveCell(c.Context(), settled, &cfg)
+	c.NoError(err, "resolve cell %s", cfg.Name)
+
+	cell, err := multigresclustercontroller.BuildCell(
+		settled,
+		&cfg,
+		gateway,
+		placement,
+		localTopo,
+		existing.Spec.GlobalTopoServer,
+		allCellNames,
+		Suite.Scheme,
+	)
+	c.NoError(err, "build orphan Cell %s", cfg.Name)
+	c.NoError(c.Create(cell), "create orphan Cell %s", cell.Name)
+
+	cellKey := client.ObjectKeyFromObject(cell)
+	c.Eventually(30*time.Second, "orphan Cell "+cell.Name+" to report Healthy", func() error {
+		if err := c.Get(cellKey, cell); err != nil {
+			return err
+		}
+		if cell.Status.Phase != multigresv1alpha1.PhaseHealthy {
+			return fmt.Errorf("phase is %q", cell.Status.Phase)
+		}
+		return nil
+	})
+	c.NoError(c.cellUntouched(cellKey, cell.UID),
+		"orphan Cell %s before the gated cluster was released", cell.Name)
+	return cell
+}
+
+// waitForGateCached blocks until the operator's cache holds the reconcile gate
+// on key and every pass that read key before then has finished. It is the
+// barrier for gating a settled object, where waitForGatedPass cannot work:
+// the gate's event filter drops the label's own update event, and a settled
+// object schedules no requeue, so no gated pass ever runs. Every controller
+// reads through the one manager cache, so once it holds the label each later
+// pass sees it and is refused. A pass that read the object earlier may still
+// be running, and the quiet window waits that out: the multigrescluster
+// controller's real passes always write, so one still in flight would break
+// the quiet.
+//
+// Testkit gap: ctrltest files a pass only when it ends, so there is no view of
+// passes still in flight. With one, this would wait for the passes on key that
+// started before the label was cached to end, instead of for a quiet window.
+func (c *C) waitForGateCached(obj client.Object, key client.ObjectKey) {
+	c.Helper()
+	cache := Suite.Manager("multigres-operator").Mgr.GetCache()
+	c.Eventually(30*time.Second, "the operator's cache to hold the reconcile gate on "+key.String(),
+		func() error {
+			if err := cache.Get(c.Context(), key, obj); err != nil {
+				return err
+			}
+			if obj.GetLabels()[features.ReconcileLabel] != features.Disabled {
+				return fmt.Errorf("cached %s is not gated yet", key)
+			}
+			return nil
+		})
+	c.NoError(c.TryQuiescent(2*time.Second, 30*time.Second),
+		"passes that read %s before the gate was cached to finish", key)
 }
