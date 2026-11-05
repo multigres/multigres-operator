@@ -40,6 +40,10 @@ type Results struct {
 	// WouldDelete is the number of objects that would have been deleted in dry-run.
 	WouldDelete int
 	Skipped     int
+	// InUse is the number of expired objects left in place because something
+	// still uses them. Each one is an orphan label that no longer tells the
+	// truth, and is logged.
+	InUse int
 	// Malformed is the number of objects whose orphan label could not be parsed.
 	Malformed int
 	Errors    int
