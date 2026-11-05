@@ -2,6 +2,8 @@ package shard
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -25,6 +27,15 @@ func BuildPoolDataPVCName(
 	poolName, cellName string,
 	index int,
 ) string {
+	return poolDataPVCNamePrefix(shard, poolName, cellName) + strconv.Itoa(index)
+}
+
+// poolDataPVCNamePrefix is every BuildPoolDataPVCName result for one pool and
+// cell, up to and excluding the pod index.
+func poolDataPVCNamePrefix(
+	shard *multigresv1alpha1.Shard,
+	poolName, cellName string,
+) string {
 	clusterName := shard.Labels["multigres.com/cluster"]
 	baseName := nameutil.JoinWithConstraints(
 		nameutil.PodConstraints,
@@ -36,7 +47,40 @@ func BuildPoolDataPVCName(
 		poolName,
 		cellName,
 	)
-	return fmt.Sprintf("data-%s-%d", baseName, index)
+	return "data-" + baseName + "-"
+}
+
+// isShardBuiltPVC reports whether pvc carries a name the shard's builders
+// produce or once produced, for the pool and cell on its labels: BuildPoolDataPVCName at some
+// index for a PVC with a pool label, and for one without, the shared backup
+// PVC's name or legacyCellBackupPVCName.
+//
+// Labels say which shard a PVC claims to belong to, not who made it, so
+// anything acting on a PVC selected by the shard's identity labels alone can
+// reach a stranger's volume. The name is the strongest provenance available:
+// it is what the shard's pods mount, so a PVC with one of these names is the
+// shard's storage whoever created it, including one retained from a deleted
+// Shard of the same identity, or one a scale up is reclaiming. Pool and cell
+// come from the PVC's labels rather than the spec, so PVCs of pools and cells
+// since removed from the spec still qualify.
+func isShardBuiltPVC(shard *multigresv1alpha1.Shard, pvc *corev1.PersistentVolumeClaim) bool {
+	poolName := pvc.Labels[metadata.LabelMultigresPool]
+	cellName := pvc.Labels[metadata.LabelMultigresCell]
+	if poolName == "" {
+		if pvc.Name == BuildSharedBackupPVCName(shard) {
+			return true
+		}
+		return cellName != "" && pvc.Name == legacyCellBackupPVCName(shard, cellName)
+	}
+	if cellName == "" {
+		return false
+	}
+	suffix, ok := strings.CutPrefix(pvc.Name, poolDataPVCNamePrefix(shard, poolName, cellName))
+	if !ok {
+		return false
+	}
+	index, err := strconv.Atoi(suffix)
+	return err == nil && index >= 0 && strconv.Itoa(index) == suffix
 }
 
 // BuildPoolDataPVC creates a PersistentVolumeClaim for a pool pod's data volume.
@@ -109,6 +153,24 @@ func BuildSharedBackupPVCName(shard *multigresv1alpha1.Shard) string {
 		string(shard.Spec.DatabaseName),
 		string(shard.Spec.TableGroupName),
 		string(shard.Spec.ShardName),
+	)
+}
+
+// legacyCellBackupPVCName is the per-cell backup PVC name of a shard whose
+// filesystem backup repository is cell-scoped rather than shared. Nothing
+// creates or mounts one now, but shards created with a cell-scoped repository
+// still carry them, with a cell label and no pool label, and their ownerRef
+// follows PVCDeletionPolicy like any other PVC the shard made.
+func legacyCellBackupPVCName(shard *multigresv1alpha1.Shard, cellName string) string {
+	clusterName := shard.Labels["multigres.com/cluster"]
+	return nameutil.JoinWithConstraints(
+		nameutil.ServiceConstraints,
+		"backup-data",
+		clusterName,
+		string(shard.Spec.DatabaseName),
+		string(shard.Spec.TableGroupName),
+		string(shard.Spec.ShardName),
+		cellName,
 	)
 }
 

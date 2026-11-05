@@ -67,16 +67,16 @@
 //     these two labels, from any source, is eligible) is flagged in the
 //     report rather than pinned as a KnownDefect.
 //
-//     This is SAFE while shard_controller.go:589 below is a DEFECT on what
-//     looks like the same evidence, an unowned PVC being acted on, and the
-//     two verdicts are worth reading together rather than one at a time.
-//     The difference is documented intent, which is the only thing that can
-//     separate them: :439 says an unowned PVC carrying these labels is
-//     precisely what it exists to sweep, whereas :589's own doc comment
-//     (shard_controller.go:571-574) and its call site
-//     (shard_controller.go:425-426) both say it exists to fix up ownerRefs
-//     on the shard's own PVCs across a mid-lifecycle policy change. Acting
-//     on a stranger is the job in one and an accident in the other.
+//     This is SAFE while reconcilePVCOwnerRefs below needs a provenance
+//     check on what looks like the same evidence, an unowned PVC being acted
+//     on, and the two verdicts are worth reading together rather than one at
+//     a time. The difference is documented intent, which is the only thing
+//     that can separate them: :439 says an unowned PVC carrying these labels
+//     is precisely what it exists to sweep, whereas reconcilePVCOwnerRefs'
+//     own doc comment and its call site in Reconcile both say it exists to
+//     fix up ownerRefs on the shard's own PVCs across a mid-lifecycle policy
+//     change. Acting on a stranger is the job in one and an accident in the
+//     other.
 //
 //   - multigrescluster_controller.go:603  MultigresClusterList, InNamespace
 //     only. Not a label selector (a map function for CoreTemplate/
@@ -97,28 +97,22 @@
 //
 // shard (pkg/resource-handler/controller/shard/):
 //
-//   - shard_controller.go:589 (reconcilePVCOwnerRefs)  PersistentVolumeClaimList
-//     {cluster, database, tablegroup, shard} (no pool, no component). NEW
-//     DEFECT found by this sweep: the selector is the shard's four identity
-//     keys and nothing else, so it cannot tell the shard's own PVC from any
-//     other object carrying the same identity, and the only test applied to
-//     a match before adoption is whether it already carries a ref with this
-//     shard's UID (shard_controller.go:625-631). A PVC belonging to nobody
-//     fails that test, so it is adopted: SetControllerReference + Patch,
-//     whenever the shard's effective PVCDeletionPolicy resolves to Delete.
-//
-//     There is a real ownership check here, and naming it correctly matters
-//     because it bounds the defect. ctrl.SetControllerReference returns
-//     AlreadyOwnedError when the object already carries a different
-//     controller ownerRef (controller-runtime v0.25.0,
-//     pkg/controller/controllerutil/controllerutil.go:97-99), so this code
-//     does not adopt a PVC that already belongs to someone else. What it
-//     adopts is a PVC with no controller owner at all. TESTED below:
-//     TestSelectorImpostorShardOwnerRefReconcileAdoptsUnrelatedPVC.
+//   - shard_controller.go (reconcilePVCOwnerRefs)  PersistentVolumeClaimList
+//     {cluster, database, tablegroup, shard} (no pool, no component). The
+//     selector cannot tell the shard's own PVC from any other carrying the
+//     same identity, and SetControllerReference only refuses a PVC that
+//     already has a controller (AlreadyOwnedError), so a PVC with no
+//     controller would be adopted, and garbage-collected with the Shard,
+//     whenever the effective PVCDeletionPolicy resolves to Delete. FIXED by
+//     a name check rather than a narrower selector: only PVCs carrying a name
+//     the shard's builders produce (isShardBuiltPVC, pool_pvc.go) get or keep
+//     the ownerRef. A component filter would still adopt a stray carrying
+//     the component label too. TESTED below:
+//     TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs.
 //
 //   - reconcile_deletion.go:57   DeploymentList  {cluster, database,
 //     tablegroup, shard}, in the Shard's own handleDeletion. Raw delete, no
-//     owner-ref check. Same family as shard_controller.go:589. Not
+//     owner-ref check. Same family as reconcilePVCOwnerRefs. Not
 //     independently tested given this pass's budget.
 //
 //   - reconcile_deletion.go:90   PodList  same 4-key selector, same
@@ -130,7 +124,7 @@
 //   - reconcile_deletion.go:166 (cleanupShardPVCs)  PersistentVolumeClaimList
 //     same 4-key selector. Every match is marked orphan or deleted with no
 //     owner-ref check, gated only by shardPVCShouldBeCleaned's policy read.
-//     Same family as shard_controller.go:589 at a different lifecycle
+//     Same family as reconcilePVCOwnerRefs at a different lifecycle
 //     point. Not independently tested.
 //
 //   - reconcile_deletion.go:252 (handlePendingDeletion)  PodList  same
@@ -181,11 +175,11 @@
 //     selector. Deletes an unmatched PDB, but only those that also pass
 //     metav1.IsControlledBy(pdb, shard): an explicit owner check right in
 //     the loop. SAFE, and the "done right" counterpart to
-//     shard_controller.go:589.
+//     reconcilePVCOwnerRefs.
 //
 //   - reconcile_pool_pods.go:50   PodList  pool+cell-scoped
 //     (buildPoolLabelsWithCell). DEFECT of the same class as
-//     shard_controller.go:589, and the strongest untested candidate left in
+//     reconcilePVCOwnerRefs, and the strongest untested candidate left in
 //     this inventory. The list populates existingPods
 //     (reconcile_pool_pods.go:69-73), which is then walked by name with no
 //     ownership check at all:
@@ -207,8 +201,8 @@
 //     NOT PINNED in this pass, and recorded here rather than left implied:
 //     a pin is a test, and this one needs a Pod-kind impostor against
 //     DataPlaneSim.tickPods, whose write set differs from tickPVCs's and
-//     has not been derived (see the TestSelectorImpostorShardOwnerRef...
-//     caveat below). Naming it SAFE, as an earlier revision of this block
+//     has not been derived (tickPVCs's is, for
+//     TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs below). Naming it SAFE, as an earlier revision of this block
 //     did, was the error worth correcting: an unexamined site is a gap, and
 //     a gap signed SAFE is worse than one left open.
 //
@@ -241,12 +235,14 @@ package suite
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -267,22 +263,6 @@ import (
 var errLocalTopoDeleted = errors.New(
 	"the cell's own local TopoServer was deleted",
 )
-
-// selectorImpostorNudgeAnnotation is a key no controller's applied payload
-// ever mentions, following the same reasoning as shardProbeAnnotation in
-// scenario_race_test.go: tablegroup's BuildShard sets an annotation map on a Shard
-// only when its TableGroup carries a project-ref annotation
-// (pkg/cluster-handler/controller/tablegroup/builders.go:37-48), which
-// MinimalCluster's fixture never does, so writing this key is a mutation
-// neither manager's SSA apply contends with or reverts.
-//
-// It has to enqueue the Shard to be useful, and it does: the shard
-// controller's For(&Shard{}) (shard_controller.go:693)
-// carries no predicate, so a metadata-only patch is a reconcile trigger. That
-// is the whole reason the key exists, since a converged Shard has nothing left
-// to re-trigger it and reconcilePVCOwnerRefs only looks at an impostor on a
-// pass that actually runs.
-const selectorImpostorNudgeAnnotation = "scenario-selector-impostor-test.multigres.com/nudge"
 
 // externalGlobalTopoCluster creates a MultigresCluster whose global topology is
 // external and whose one cell manages its own local TopoServer: what makes
@@ -439,53 +419,44 @@ func TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer(t *testi
 		"the script's end was not quiet, so something is still writing")
 }
 
-// TestSelectorImpostorShardOwnerRefReconcileAdoptsUnrelatedPVC pins a new
-// defect found by this sweep: reconcilePVCOwnerRefs
-// (shard_controller.go:589) lists PersistentVolumeClaims by the shard's four
-// identity labels alone (cluster, database, tablegroup, shard; no pool, no
-// component), so it cannot tell the shard's own PVC from any other object
-// carrying the same identity, and the only test it applies to a match before
-// adopting it is whether that match already carries a ref with this shard's
-// UID. A PVC belonging to nobody fails that test and is adopted, whenever the
-// shard's effective PVCDeletionPolicy resolves to Delete.
+// TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs drives
+// reconcilePVCOwnerRefs (shard_controller.go) through a PVCDeletionPolicy
+// round trip, Delete to Retain and back, with three stranger PVCs carrying
+// the shard's four identity labels in the namespace, and asserts that the
+// shard's own PVCs follow the policy each way while the strangers are never
+// written to.
 //
-// The bound on the defect is worth stating precisely, because it is what a fix
-// has to be aimed at. There is an ownership check in this path:
-// ctrl.SetControllerReference returns AlreadyOwnedError when the object already
-// carries a different controller ownerRef, so this code does not take a PVC
-// that belongs to someone else. What it takes is a PVC with no controller owner
-// at all. The missing check is not "does this belong to somebody else" but
-// "does this belong to me", and the selector is what cannot answer it.
+// The selector there is the shard's four identity labels alone, so it lists
+// whatever carries them. What keeps a stranger out is the name check before
+// adoption (isShardBuiltPVC, pool_pvc.go): adopting gives the PVC a
+// controller ref to the Shard, and garbage collection then deletes it with
+// the Shard. The strangers cover the shapes that matter:
 //
-// The impostor is a bare PersistentVolumeClaim carrying just those four
-// labels and no pool label, the same shape shard_controller.go's own
-// "shared backup PVC" branch expects, and no owner reference at all: the
-// shape a PVC left behind by some other process, or a since-recreated
-// resource under the same identity, would plausibly have.
+//   - impostor-shared-pvc: the shared backup PVC's labels (no pool label)
+//     under another name, and no owner at all.
+//   - impostor-data-pvc: a pool data PVC's labels, pool and cell included,
+//     under a name no pod index produces, and no owner at all.
+//   - a-impostor-controlled: controlled by another owner. Named to list first,
+//     because the loop stops at its first error and SetControllerReference
+//     refuses an object with another controller: an attempt to adopt it would
+//     wedge every PVC after it, the shard's own included, as well as fail.
 //
-// RequireQuiescent runs before the script's watch opens so the baseline it
-// replays is the shard's own already-settled PVCs (its pool data PVCs and
-// its backup PVC), named explicitly rather than guessed: this suite's own
-// discipline is that an already-populated namespace's replay is the first
-// step's problem to permit, not something to dodge by racing the watch
-// ahead of convergence. Unlike the TopoServer test above, that is available
-// here, because the shard does converge.
+// The script opens after RequireQuiescent, so its watch replays the shard's
+// already-settled PVCs as Added events, which the first step permits by name.
+// Each stranger's create is permitted together with DataPlaneSim's bind
+// (status.accessModes, status.capacity and status.phase in one patch, as the
+// volume provisioner envtest does not run would), and naming status.phase is
+// enough to pick that patch out. The step cannot end until both have arrived
+// for all three, so the bind never trails into a later step or into Finish.
 //
-// The impostor itself is created after the watch opens, and its own
-// creation-then-bind is declared with Before: DataPlaneSim
-// (pkg/ctrltest/datasim.go) binds every PersistentVolumeClaim in the cluster
-// regardless of who it belongs to, as a stand-in for the volume provisioner
-// envtest does not run, and that status patch (status.phase/accessModes/
-// capacity) has to be permitted explicitly or it is indistinguishable from
-// the actual ownerRef adoption this test is pinning. Declaring the pair
-// with Before, rather than waiting for Bound out-of-band first, is what
-// keeps the watch open across the one window where the real defect could
-// otherwise race in unobserved, immediately after creation and before this
-// suite's own fake gets to it.
-func TestSelectorImpostorShardOwnerRefReconcileAdoptsUnrelatedPVC(t *testing.T) {
+// The two policy steps are what make the strangers' silence mean something:
+// each one makes reconcilePVCOwnerRefs run with the strangers already in its
+// list, as the ownerRef change on each of the shard's own PVCs proves, and
+// the closed world fails on any write to a stranger in either direction.
+func TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs(t *testing.T) {
 	c := newCase(t)
 	ns := c.NS
-	c.MinimalCluster("pvc-adopt")
+	cluster := c.MinimalCluster("pvc-adopt")
 
 	shard := c.awaitShard()
 
@@ -494,103 +465,138 @@ func TestSelectorImpostorShardOwnerRefReconcileAdoptsUnrelatedPVC(t *testing.T) 
 	existingPVCs := &corev1.PersistentVolumeClaimList{}
 	c.NoError(c.List(existingPVCs), "list existing PVCs")
 
-	impostor := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "impostor-shared-pvc",
-			Namespace: ns,
-			Labels: map[string]string{
-				metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
-				metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
-				metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
-				metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+	// The shard's own PVCs are the ones it controls under MinimalCluster's
+	// Delete policy. The global topology's etcd PVCs belong to its
+	// StatefulSet and are not the shard's to touch.
+	var own []string
+	var dataTemplate *corev1.PersistentVolumeClaim
+	sawBackup := false
+	for i := range existingPVCs.Items {
+		pvc := &existingPVCs.Items[i]
+		if !metav1.IsControlledBy(pvc, &shard) {
+			continue
+		}
+		own = append(own, pvc.Name)
+		if pvc.Labels[metadata.LabelMultigresPool] == "" {
+			sawBackup = true
+		} else if dataTemplate == nil {
+			dataTemplate = pvc
+		}
+	}
+	c.True(sawBackup, "MinimalCluster's shard controls no shared backup PVC")
+	c.NotNil(dataTemplate, "MinimalCluster's shard controls no pool data PVC")
+
+	identity := map[string]string{
+		metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
+		metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
+		metadata.LabelMultigresTableGroup: string(shard.Spec.TableGroupName),
+		metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
+	}
+	stranger := func(pvcName string, labels map[string]string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pvcName,
+				Namespace: ns,
+				Labels:    maps.Clone(labels),
 			},
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("1Gi"),
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: resource.MustParse("1Gi"),
+					},
 				},
 			},
-		},
+		}
 	}
-
-	allow := make([]ctrltest.Allow, 0, len(existingPVCs.Items)+1)
-	for _, pvc := range existingPVCs.Items {
-		allow = append(allow, ctrltest.Added("PersistentVolumeClaim", pvc.Name))
-	}
-	allow = append(allow, ctrltest.Before(
-		ctrltest.Added("PersistentVolumeClaim", impostor.Name),
-		// Narrowed to status.phase rather than left open: DataPlaneSim's bind
-		// always touches it alongside accessModes/capacity, so naming it is
-		// enough to identify that write and that write only. Left open, this
-		// leaf would also happily absorb the ownerRef adoption this test
-		// exists to catch, since Changed with no paths matches any
-		// modification at all.
-		ctrltest.Changed("PersistentVolumeClaim", impostor.Name, "status.phase"),
-	))
+	sharedImpostor := stranger("impostor-shared-pvc", identity)
+	dataImpostor := stranger("impostor-data-pvc", dataTemplate.Labels)
+	// The owner has to exist: this suite collects garbage, and a PVC whose
+	// owner is missing is deleted.
+	owner := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "someone-else", Namespace: ns}}
+	c.NoError(c.Create(owner), "create the controlled stranger's owner")
+	controlled := stranger("a-impostor-controlled", identity)
+	controlled.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "v1",
+		Kind:       "ConfigMap",
+		Name:       owner.Name,
+		UID:        owner.UID,
+		Controller: ptr.To(true),
+	}}
+	strangers := []*corev1.PersistentVolumeClaim{sharedImpostor, dataImpostor, controlled}
 
 	script := c.NewScript(&corev1.PersistentVolumeClaimList{})
+	script.StepTimeout = 10 * time.Second
 
-	c.KnownDefect(
-		"pkg/resource-handler/controller/shard/shard_controller.go:589 "+
-			"(reconcilePVCOwnerRefs selects on the shard's four identity labels "+
-			"alone, so it adopts any PVC carrying them that has no controller "+
-			"ownerRef, with nothing establishing the PVC is the shard's own)",
+	created := make([]ctrltest.Allow, 0, len(existingPVCs.Items)+len(strangers))
+	for _, pvc := range existingPVCs.Items {
+		created = append(created, ctrltest.Added("PersistentVolumeClaim", pvc.Name))
+	}
+	for _, pvc := range strangers {
+		created = append(created, ctrltest.Before(
+			ctrltest.Added("PersistentVolumeClaim", pvc.Name),
+			ctrltest.Changed("PersistentVolumeClaim", pvc.Name, "status.phase"),
+		))
+	}
+	script.Step(
+		"baseline PVCs replay; the strangers are created, then bound like any "+
+			"other PVC by this suite's data-plane fake",
 		func() error {
-			stepErr := script.TryStep(
-				"baseline PVCs replay; the impostor is created, then bound like "+
-					"any other PVC by this suite's data-plane fake",
-				func() error {
-					if err := c.Create(impostor); err != nil {
-						return err
-					}
-					// The impostor's own creation cannot trigger the shard's
-					// reconcile loop (it carries no owner reference, so
-					// Owns(&PersistentVolumeClaim{}) has nothing to map it back
-					// to), and RequireQuiescent above means nothing else is left
-					// to either: measured empirically, a fully quiesced shard
-					// does not reconcile again on its own. A metadata-only nudge
-					// on the Shard itself is what actually gets
-					// reconcilePVCOwnerRefs to run again and look at the
-					// impostor; this write is on ShardList, not the
-					// PersistentVolumeClaimList this script watches, so it needs
-					// no entry of its own in allow.
-					shardCopy := shard.DeepCopy()
-					patch := client.MergeFrom(shardCopy.DeepCopy())
-					if shardCopy.Annotations == nil {
-						shardCopy.Annotations = map[string]string{}
-					}
-					shardCopy.Annotations[selectorImpostorNudgeAnnotation] = time.Now().
-						UTC().
-						Format(time.RFC3339Nano)
-					return c.Patch(shardCopy, patch)
-				},
-				allow...,
-			)
-			// Run unconditionally, and 10s, for the reasons given at the same
-			// call in the TopoServer test above. Unlike that test this one
-			// needs no sentinel to tell two permitted-set outcomes apart: the
-			// adoption is a modification of the impostor, and the only other
-			// modification anything makes to it is DataPlaneSim's bind, which
-			// the step permits by name and by path. So there is no second
-			// route to a non-nil error through a permitted-set mismatch.
-			//
-			// That is narrower than "no second route at all", and the
-			// difference matters for how much this pin can be trusted. A
-			// TryStep timeout is also a non-nil error, and KnownDefect reads
-			// any non-nil error as the defect still being live, so if the data
-			// plane fake never binds the impostor or a baseline PVC name
-			// drifts, this pin survives the operator fix that should have
-			// retired it. That is the general limitation of pinned steps
-			// stated on TryStep, and this call site is not exempt from it. The
-			// TopoServer test's sentinel-plus-Fatalf discrimination is the
-			// honest pattern if this ever needs to be tightened.
-			finishErr := script.TryFinish(10 * time.Second)
-			if stepErr != nil {
-				return stepErr
+			for _, pvc := range strangers {
+				if err := c.Create(pvc); err != nil {
+					return err
+				}
 			}
-			return finishErr
+			return nil
 		},
+		created...,
 	)
+
+	ownerRefChanged := make([]ctrltest.Allow, 0, len(own))
+	for _, pvcName := range own {
+		ownerRefChanged = append(ownerRefChanged, ctrltest.Changed(
+			"PersistentVolumeClaim", pvcName, "metadata.ownerReferences[0].uid",
+		))
+	}
+	setPolicy := func(policy multigresv1alpha1.PVCRetentionPolicyType) func() error {
+		return func() error {
+			return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				got := &MultigresCluster{}
+				if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
+					return err
+				}
+				got.Spec.PVCDeletionPolicy = &PVCDeletionPolicy{
+					WhenDeleted: policy,
+					WhenScaled:  policy,
+				}
+				return c.Update(got)
+			})
+		}
+	}
+	script.Step(
+		"Retain releases the shard's own PVCs and writes to no stranger",
+		setPolicy(multigresv1alpha1.RetainPVCRetentionPolicy),
+		ownerRefChanged...,
+	)
+	script.Step(
+		"Delete adopts the shard's own PVCs again and writes to no stranger",
+		setPolicy(multigresv1alpha1.DeletePVCRetentionPolicy),
+		ownerRefChanged...,
+	)
+	// Long enough for the shard controller's requeues after the last policy
+	// change, so an adoption a later pass made would land here.
+	script.Finish(10 * time.Second)
+
+	for _, pvcName := range own {
+		got := &corev1.PersistentVolumeClaim{}
+		c.NoError(c.Get(client.ObjectKey{Namespace: ns, Name: pvcName}, got), "get %s", pvcName)
+		c.Check().True(metav1.IsControlledBy(got, &shard),
+			"the shard's own PVC %s is not controlled by it after the round trip", pvcName)
+	}
+	for _, want := range strangers {
+		got := &corev1.PersistentVolumeClaim{}
+		c.NoError(c.Get(client.ObjectKeyFromObject(want), got), "get %s", want.Name)
+		c.Check().EqDiff(want.OwnerReferences, got.OwnerReferences,
+			"stranger PVC %s owner references changed", want.Name)
+	}
 }

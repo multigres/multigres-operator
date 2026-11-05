@@ -622,6 +622,8 @@ func ShouldDeleteShardLevelPVCOnRemoval(shard *multigresv1alpha1.Shard) bool {
 // PVCDeletionPolicy. When policy is Delete, a controller ownerRef is added so
 // Kubernetes GC cascade-deletes PVCs with the Shard. When policy is Retain,
 // any existing controller ownerRef is removed so PVCs survive Shard deletion.
+// Only PVCs the shard's builders name get or keep the ownerRef; see
+// isShardBuiltPVC.
 func (r *ShardReconciler) reconcilePVCOwnerRefs(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -656,22 +658,6 @@ func (r *ShardReconciler) reconcilePVCOwnerRefs(
 			continue
 		}
 
-		// Resolve effective policy for this PVC.
-		poolName := pvc.Labels[metadata.LabelMultigresPool]
-		wantOwnerRef := false
-
-		if poolName != "" {
-			if poolSpec, exists := shard.Spec.Pools[multigresv1alpha1.PoolName(poolName)]; exists {
-				wantOwnerRef = ShouldDeletePVCOnShardRemoval(shard, poolSpec)
-			} else {
-				// Pool removed from spec — fall back to shard-level policy.
-				wantOwnerRef = ShouldDeleteShardLevelPVCOnRemoval(shard)
-			}
-		} else {
-			// Shared backup PVC — use shard-level policy.
-			wantOwnerRef = ShouldDeleteShardLevelPVCOnRemoval(shard)
-		}
-
 		hasOwnerRef := false
 		for _, ref := range pvc.OwnerReferences {
 			if ref.UID == shardUID {
@@ -679,6 +665,14 @@ func (r *ShardReconciler) reconcilePVCOwnerRefs(
 				break
 			}
 		}
+
+		// The selector cannot tell the shard's own PVCs from any other PVC
+		// carrying the same identity labels, and SetControllerReference only
+		// refuses PVCs that already have a controller, so adoption is limited
+		// to the names the shard's builders produce. A PVC without such a name
+		// that carries this Shard's ref anyway is released whatever the
+		// policy: releasing can only leave a volume behind, never delete one.
+		wantOwnerRef := isShardBuiltPVC(shard, pvc) && shardPVCShouldBeCleaned(shard, pvc)
 
 		if wantOwnerRef && !hasOwnerRef {
 			patch := client.MergeFrom(pvc.DeepCopy())
