@@ -22,12 +22,8 @@ func (r *ShardReconciler) listDisruptionPods(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 ) (*corev1.PodList, error) {
-	reader := r.APIReader
-	if reader == nil {
-		reader = r.Client
-	}
 	pods := &corev1.PodList{}
-	err := reader.List(ctx, pods, client.InNamespace(shard.Namespace),
+	err := r.disruptionReader().List(ctx, pods, client.InNamespace(shard.Namespace),
 		client.MatchingLabels(map[string]string{
 			metadata.LabelMultigresCluster:    shard.Labels[metadata.LabelMultigresCluster],
 			metadata.LabelMultigresDatabase:   string(shard.Spec.DatabaseName),
@@ -36,6 +32,15 @@ func (r *ShardReconciler) listDisruptionPods(
 			metadata.LabelAppComponent:        PoolComponentName,
 		}))
 	return pods, err
+}
+
+// disruptionReader is the uncached reader disruption preflights use, so a
+// state written moments ago is not missed.
+func (r *ShardReconciler) disruptionReader() client.Reader {
+	if r.APIReader == nil {
+		return r.Client
+	}
+	return r.APIReader
 }
 
 // canStartDisruption is a fresh preflight, independent of cached Shard status.
@@ -59,6 +64,15 @@ func (r *ShardReconciler) canStartDisruption(
 	pods, err := r.listDisruptionPods(ctx, shard)
 	if err != nil {
 		return false, fmt.Errorf("list ongoing shard disruptions: %w", err)
+	}
+	// Removing a pod that mounts a PVC being deleted moves that PVC one pod
+	// closer to finalizing with its data; see terminating_pvc.go.
+	terminating, err := mountedTerminatingPVCs(ctx, r.disruptionReader(), shard)
+	if err != nil {
+		return false, fmt.Errorf("check for mounted PVCs being deleted: %w", err)
+	}
+	if len(terminating) > 0 {
+		return false, nil
 	}
 	var available []string
 	disruptionTarget := posture.DisruptionTarget{Name: target.Name}

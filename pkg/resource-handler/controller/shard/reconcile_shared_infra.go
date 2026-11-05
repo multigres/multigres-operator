@@ -315,7 +315,11 @@ func (r *ShardReconciler) reconcileBackupCipherSecret(
 	return nil
 }
 
-// reconcileSharedBackupPVC creates or updates the shared backup PVC for a shard.
+// reconcileSharedBackupPVC creates or updates the shared backup PVC for a
+// shard, reclaiming it first if a previous incarnation of the shard left it
+// marked orphan. A PVC being deleted is left alone: an apply would only update
+// a claim that is about to vanish, and the first apply after it is gone, which
+// its deletion event triggers, creates the empty replacement.
 func (r *ShardReconciler) reconcileSharedBackupPVC(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -341,12 +345,28 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 	existing := &corev1.PersistentVolumeClaim{}
 	err = r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	switch {
-	case err == nil:
+	case errors.IsNotFound(err):
+	case err != nil:
+		return fmt.Errorf("failed to get shared backup PVC: %w", err)
+	case pvcutil.IsTerminating(existing):
+		log.FromContext(ctx).Info(
+			"Shared backup PVC is being deleted; not applying it",
+			"pvc", existing.Name,
+		)
+		return nil
+	default:
+		// The apply below never mentions the orphan label, so it would leave
+		// it in place on a PVC back in service, for multigres-gc to delete.
+		terminating, err := r.reclaimPVC(ctx, existing)
+		if err != nil {
+			return fmt.Errorf("failed to reclaim shared backup PVC: %w", err)
+		}
+		if terminating {
+			return nil
+		}
 		if err := r.keepUnchangeablePVCFields(ctx, desired, existing); err != nil {
 			return err
 		}
-	case !errors.IsNotFound(err):
-		return fmt.Errorf("failed to get shared backup PVC: %w", err)
 	}
 
 	// Server Side Apply
@@ -359,18 +379,6 @@ func (r *ShardReconciler) reconcileSharedBackupPVC(
 		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply shared backup PVC: %w", err)
-	}
-
-	// Tearing a Shard down marks this PVC orphan rather than deleting it
-	// (cleanupShardPVCs), and a replacement Shard of the same name reclaims
-	// it. The apply above cannot undo the mark: the payload never mentions
-	// the label, and server-side apply only removes fields this manager
-	// owns, while MarkOrphan wrote it with a merge patch. Left in place,
-	// multigres-gc deletes a backup volume that is back in service. The
-	// apply response is the server's copy of the PVC, so the label is
-	// checked against current state rather than a possibly stale cache.
-	if err := pvcutil.ClearOrphan(ctx, log.FromContext(ctx), r.Client, desired); err != nil {
-		return fmt.Errorf("failed to clear orphan label on shared backup PVC: %w", err)
 	}
 
 	r.Recorder.Eventf(

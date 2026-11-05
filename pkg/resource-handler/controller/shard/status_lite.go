@@ -81,7 +81,16 @@ func (r *ShardReconciler) updateLiteStatus(
 		shard.Status.Conditions,
 		multigresv1alpha1.ConditionPrimary,
 	)
+	terminatingPVCs, err := mountedTerminatingPVCs(ctx, r.Client, shard)
+	if err != nil {
+		return err
+	}
+	r.setPVCTerminatingCondition(shard, terminatingPVCs)
+
 	switch {
+	case len(terminatingPVCs) > 0:
+		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
+		shard.Status.Message = mountedPVCBeingDeletedMessage(terminatingPVCs)
 	case pod != nil && status.IsCrashLooping(pod):
 		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
 		shard.Status.Message = "The Lite pod is crash-looping"

@@ -69,6 +69,12 @@ func (r *ShardReconciler) updateStatus(
 	// render/read error is reported without settling.
 	r.setPostgresConfigStatus(shard, pools.configInProgress, rendered.err)
 
+	terminatingPVCs, err := mountedTerminatingPVCs(ctx, r.Client, shard)
+	if err != nil {
+		return err
+	}
+	r.setPVCTerminatingCondition(shard, terminatingPVCs)
+
 	// Update Phase — Degraded takes priority over Healthy so crash-looping
 	// pods are always surfaced even when the old replica is still serving.
 	postureCondition := meta.FindStatusCondition(
@@ -79,6 +85,9 @@ func (r *ShardReconciler) updateStatus(
 	case status.IsConditionFalse(shard.Status.Conditions, posture.ConditionConsistent):
 		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
 		shard.Status.Message = "Postgres posture inconsistent with topology roles (possible split brain)"
+	case len(terminatingPVCs) > 0:
+		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
+		shard.Status.Message = mountedPVCBeingDeletedMessage(terminatingPVCs)
 	case pools.poolDegraded || orchDegraded:
 		shard.Status.Phase = multigresv1alpha1.PhaseDegraded
 		if pools.poolDegraded {

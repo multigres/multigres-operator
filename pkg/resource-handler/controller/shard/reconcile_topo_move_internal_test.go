@@ -291,6 +291,25 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 		return drainStates(t, c, pods)
 	}
 
+	t.Run("starts no drain while a pod holds a PVC being deleted", func(t *testing.T) {
+		r, c, shard, pods, _ := setup(t, allStranded)
+		pvc, err := BuildPoolDataPVC(
+			shard, topoMovePool, topoMoveCell, topoMovePoolSpec(), 0, true, scheme,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Create(ctx, protected(pvc)); err != nil {
+			t.Fatal(err)
+		}
+		deleteHeld(t, c, pvc)
+		for name, state := range rollAndCollect(t, r, c, shard, pods) {
+			if state != "" {
+				t.Errorf("drain %q started on %s while its data PVC is being deleted", state, name)
+			}
+		}
+	})
+
 	t.Run("drains one stranded pod although the shard is unhealthy", func(t *testing.T) {
 		r, c, shard, pods, _ := setup(t, allStranded)
 		if healthy, err := r.isShardHealthy(ctx, shard); err != nil || healthy {

@@ -170,6 +170,7 @@ func (r *ShardReconciler) createMissingResources(
 	for i := int32(0); i < effectiveReplicas; i++ {
 		podName := BuildPoolPodName(shard, poolName, cellName, int(i))
 		pvcName := BuildPoolDataPVCName(shard, poolName, cellName, int(i))
+		dataTerminating := pvcutil.IsTerminating(existingPVCs[pvcName])
 
 		// Create PVC if missing, or expand if storage.size increased
 		if _, exists := existingPVCs[pvcName]; !exists {
@@ -198,19 +199,22 @@ func (r *ShardReconciler) createMissingResources(
 			// scale-down / drain marked it orphan, clear the label so the
 			// multigres-gc cronjob does not delete storage we are putting back
 			// into service.
-			if err := pvcutil.ClearOrphan(
-				ctx,
-				logger,
-				r.Client,
-				existingPVCs[pvcName],
-			); err != nil {
-				return 0, false, fmt.Errorf(
-					"failed to clear orphan label on PVC %s: %w",
-					pvcName,
-					err,
-				)
+			if !dataTerminating {
+				terminating, err := r.reclaimPVC(ctx, existingPVCs[pvcName])
+				if err != nil {
+					return 0, false, fmt.Errorf(
+						"failed to clear orphan label on PVC %s: %w",
+						pvcName,
+						err,
+					)
+				}
+				dataTerminating = terminating
 			}
-			if err := r.expandPVCIfNeeded(ctx, shard, existingPVCs[pvcName], poolSpec); err != nil {
+			if dataTerminating {
+				// Neither reclaimed nor expanded: it is gone once no pod uses
+				// it, and the branch above then creates its replacement.
+				logger.Info("Pool PVC is being deleted; leaving it alone", "pvc", pvcName)
+			} else if err := r.expandPVCIfNeeded(ctx, shard, existingPVCs[pvcName], poolSpec); err != nil {
 				return 0, false, err
 			}
 		}
@@ -228,6 +232,15 @@ func (r *ShardReconciler) createMissingResources(
 			)
 			if buildErr != nil {
 				return 0, false, fmt.Errorf("failed to build pod %s: %w", podName, buildErr)
+			}
+			// A pod started on a PVC being deleted either cannot schedule or,
+			// once scheduled, holds that PVC and its doomed data in service.
+			if claim, err := r.claimPodVolumes(ctx, desiredPod); err != nil {
+				return 0, false, err
+			} else if claim != "" {
+				logger.Info("Not creating pool pod while a PVC it mounts is being deleted",
+					"pod", podName, "pvc", claim)
+				continue
 			}
 			if createErr := r.Create(
 				ctx,
@@ -252,6 +265,21 @@ func (r *ShardReconciler) createMissingResources(
 		// Handle terminal pods (Failed/Succeeded) — delete for recreation
 		if (pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded) &&
 			pod.DeletionTimestamp.IsZero() {
+			// The pod object still holds its PVCs whatever its phase.
+			claim, err := podTerminatingClaim(ctx, r.disruptionReader(), pod)
+			if err != nil {
+				return 0, false, err
+			}
+			if claim != "" {
+				logger.Info(
+					"Not replacing terminal pool pod while a PVC it mounts is being deleted",
+					"pod",
+					pod.Name,
+					"pvc",
+					claim,
+				)
+				continue
+			}
 			if !actionTaken {
 				logger.Info(
 					"Deleting terminal pool pod for recreation",
@@ -552,6 +580,31 @@ func (r *ShardReconciler) handleScaleDown(
 
 	// Cleanup pods ready for deletion
 	for _, pod := range readyForDeletion {
+		// A drain that started before a PVC it mounts began deleting stops
+		// short of deleting the pod; see terminating_pvc.go.
+		claim, err := podTerminatingClaim(ctx, r.disruptionReader(), pod)
+		if err != nil {
+			return actionTaken, inProgress, err
+		}
+		if claim != "" {
+			// Its own PVC is still released by policy now, so a scale-down
+			// whose pod a person then deletes does not strand it.
+			if err := r.releaseDrainedPodPVC(
+				ctx,
+				shard,
+				pod,
+				poolName,
+				poolSpec,
+				replicas,
+			); err != nil {
+				return actionTaken, inProgress, fmt.Errorf(
+					"failed to release PVC of drained pod %s: %w", pod.Name, err)
+			}
+			logger.Info("Not deleting drained pod while a PVC it mounts is being deleted",
+				"pod", pod.Name, "pvc", claim)
+			inProgress = true
+			continue
+		}
 		logger.Info("Cleaning up pod in ready-for-deletion state", "pod", pod.Name)
 		if err := r.cleanupDrainedPod(ctx, shard, pod, poolName, poolSpec, replicas); err != nil {
 			return actionTaken, inProgress, fmt.Errorf(
@@ -767,6 +820,15 @@ func (r *ShardReconciler) handleRollingUpdates(
 	// replacement to turn Ready, because the first replacement alone cannot
 	// form a quorum and so cannot turn Ready either.
 	if pod := r.topoStrandedPod(ctx, shard, existingPods); pod != nil {
+		// The health gates may be skipped here; keeping a PVC being deleted
+		// in place may not. See terminating_pvc.go.
+		terminating, err := mountedTerminatingPVCs(ctx, r.disruptionReader(), shard)
+		if err != nil {
+			return fmt.Errorf("check for mounted PVCs being deleted: %w", err)
+		}
+		if len(terminating) > 0 {
+			return nil
+		}
 		if err := r.initiateDrain(ctx, pod); err != nil {
 			return fmt.Errorf("failed to initiate drain for topology-stranded pod %s: %w",
 				pod.Name, err)
@@ -1081,6 +1143,25 @@ func (r *ShardReconciler) cleanupDrainedPod(
 	poolSpec multigresv1alpha1.PoolSpec,
 	replicas int32,
 ) error {
+	if err := r.releaseDrainedPodPVC(ctx, shard, pod, poolName, poolSpec, replicas); err != nil {
+		return err
+	}
+	log.FromContext(ctx).Info("Drained pod cleanup complete", "pod", pod.Name)
+	r.Recorder.Eventf(shard, "Normal", "DrainCompleted", "Completed drain for pod %s", pod.Name)
+	return nil
+}
+
+// releaseDrainedPodPVC applies the WhenScaled PVC policy to a drained pod's
+// data PVC: one past the desired replicas is marked orphan, one within them is
+// kept for the pod's replacement. Idempotent.
+func (r *ShardReconciler) releaseDrainedPodPVC(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	pod *corev1.Pod,
+	poolName string,
+	poolSpec multigresv1alpha1.PoolSpec,
+	replicas int32,
+) error {
 	logger := log.FromContext(ctx)
 
 	// Respect the WhenScaled PVC-deletion policy.
@@ -1115,11 +1196,6 @@ func (r *ShardReconciler) cleanupDrainedPod(
 			)
 		}
 	}
-
-	// Record event for completed drain.
-	logger.Info("Drained pod cleanup complete", "pod", pod.Name)
-	r.Recorder.Eventf(shard, "Normal", "DrainCompleted", "Completed drain for pod %s", pod.Name)
-
 	return nil
 }
 

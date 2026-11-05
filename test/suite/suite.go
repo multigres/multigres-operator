@@ -158,6 +158,8 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	poolers = &poolerSim{c: s.Client, rpc: rpc, topo: topo, interval: 500 * time.Millisecond}
 	go poolers.run(ctx)
 
+	go (&pvcProtectionSim{c: s.Client, interval: 250 * time.Millisecond}).run(ctx)
+
 	// Deliberately a bare option struct rather than each controller's
 	// production options. Every controller sets MaxConcurrentReconciles to 20
 	// in its own SetupWithManager and then lets a caller-supplied
@@ -262,7 +264,7 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 
 	shard := &shardcontroller.ShardReconciler{
 		// Pod lists through the cached client are subject to lag, as above.
-		Client:          s.Ops.For("shard", lag.wrap(base, &corev1.PodList{})),
+		Client:          hookedClient{s.Ops.For("shard", lag.wrap(base, &corev1.PodList{}))},
 		Scheme:          mgr.GetScheme(),
 		Recorder:        mgr.GetEventRecorderFor("shard-controller"),
 		APIReader:       mgr.GetAPIReader(),

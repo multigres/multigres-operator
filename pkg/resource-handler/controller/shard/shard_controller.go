@@ -737,6 +737,10 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Watches(
+			&corev1.PersistentVolumeClaim{},
+			handler.EnqueueRequestsFromMapFunc(r.enqueueShardForPVC),
+		).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Watches(
 			&corev1.ConfigMap{},

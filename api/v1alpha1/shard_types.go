@@ -324,6 +324,12 @@ const (
 	// change on an existing claim: a request cannot shrink, and the class and
 	// access modes are fixed at creation.
 	ConditionStorageSpecIgnored = "StorageSpecIgnored"
+
+	// ConditionPVCTerminating is true while a shard pod mounts a PVC that has
+	// been deleted. The PVC, and its data, survive only until the last pod
+	// using it stops, so the shard reports Degraded and does not disrupt or
+	// add pods on it until a person decides what to do with the data.
+	ConditionPVCTerminating = "PVCTerminating"
 )
 
 // ShardStatus defines the observed state of Shard.

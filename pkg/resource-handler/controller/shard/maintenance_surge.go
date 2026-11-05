@@ -11,7 +11,6 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
-	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 const maintenanceAnnotationTrue = "true"
@@ -255,17 +254,28 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 			return fmt.Errorf("create maintenance surge PVC %s: %w", pvcName, err)
 		}
 	} else {
-		if err := pvcutil.ClearOrphan(ctx, logger, r.Client, pvc); err != nil {
+		terminating, err := r.reclaimPVC(ctx, pvc)
+		if err != nil {
 			return fmt.Errorf("clear orphan label on maintenance surge PVC %s: %w", pvcName, err)
 		}
-		if err := r.expandPVCIfNeeded(ctx, shard, pvc, poolSpec); err != nil {
-			return err
+		if !terminating {
+			if err := r.expandPVCIfNeeded(ctx, shard, pvc, poolSpec); err != nil {
+				return err
+			}
 		}
 	}
 
 	pod, err := BuildPoolPod(shard, poolName, cellName, poolSpec, int(index), r.Scheme)
 	if err != nil {
 		return fmt.Errorf("build maintenance surge pod %s: %w", podName, err)
+	}
+	// The surge pod would start on a PVC being deleted; see terminating_pvc.go.
+	if claim, err := r.claimPodVolumes(ctx, pod); err != nil {
+		return err
+	} else if claim != "" {
+		logger.Info("Not creating maintenance surge pod while a PVC it mounts is being deleted",
+			"pod", podName, "pvc", claim)
+		return nil
 	}
 	pod.Annotations[metadata.AnnotationMaintenanceSurge] = maintenanceAnnotationTrue
 	if err := r.Create(ctx, pod); err != nil && !errors.IsAlreadyExists(err) {

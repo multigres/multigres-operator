@@ -3528,8 +3528,8 @@ func TestReconcileSharedBackupPVC(t *testing.T) {
 
 	// A swallowed clear failure would report success with the label still
 	// on the PVC. The SSA payload is a freshly built object with no
-	// ResourceVersion; the clear patches the apply response, which has one,
-	// so that is what tells the two patches apart.
+	// ResourceVersion; the clear patches the PVC as read before the apply,
+	// under its ResourceVersion, so that is what tells the two patches apart.
 	t.Run("error on clear-orphan patch failure", func(t *testing.T) {
 		dead := incarnation("uid-dead", multigresv1alpha1.DeletePVCRetentionPolicy)
 		live := incarnation("uid-live", multigresv1alpha1.DeletePVCRetentionPolicy)

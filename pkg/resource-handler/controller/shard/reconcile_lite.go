@@ -175,7 +175,7 @@ func (r *ShardReconciler) reconcileLitePVCMetadata(
 			return fmt.Errorf("read Lite data PVC metadata: %w", err)
 		}
 	} else if pvc.DeletionTimestamp.IsZero() {
-		if err := pvcutil.ClearOrphan(ctx, log.FromContext(ctx), r.Client, pvc); err != nil {
+		if _, err := r.reclaimPVC(ctx, pvc); err != nil {
 			return fmt.Errorf("clear orphan label on Lite data PVC %s: %w", pvc.Name, err)
 		}
 	}
@@ -310,6 +310,11 @@ func (r *ShardReconciler) ensureLiteDataPVC(
 	name := BuildPoolDataPVCName(shard, poolName, cellName, 0)
 	existing := &corev1.PersistentVolumeClaim{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: shard.Namespace, Name: name}, existing)
+	if err == nil && pvcutil.IsTerminating(existing) {
+		// Neither expanded nor waited on: its deletion finishing enqueues the
+		// shard, and the branch below then creates its replacement.
+		return 0, nil
+	}
 	if err == nil {
 		if err := r.expandPVCIfNeeded(ctx, shard, existing, poolSpec); err != nil {
 			return 0, err
@@ -375,6 +380,14 @@ func (r *ShardReconciler) ensureLitePod(
 	existing := &corev1.Pod{}
 	err = r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	if apierrors.IsNotFound(err) {
+		// The shard's only pooler would start on storage that is going away.
+		if claim, err := r.claimPodVolumes(ctx, desired); err != nil {
+			return err
+		} else if claim != "" {
+			logger.Info("Not creating the Lite pod while a PVC it mounts is being deleted",
+				"pvc", claim)
+			return nil
+		}
 		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create pod %s: %w", desired.Name, err)
 		}
@@ -389,6 +402,15 @@ func (r *ShardReconciler) ensureLitePod(
 	// A pod that is already terminating is replaced once it is gone; its
 	// deletion requeues the shard.
 	if !existing.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	// The pod's own references, not the desired pod's: those are what hold a
+	// PVC being deleted, and its data, in place. See terminating_pvc.go.
+	if claim, err := podTerminatingClaim(ctx, r.disruptionReader(), existing); err != nil {
+		return err
+	} else if claim != "" {
+		logger.Info("Leaving the Lite pod alone while a PVC it mounts is being deleted",
+			"pvc", claim)
 		return nil
 	}
 	reason := "apply a spec change"

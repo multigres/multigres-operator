@@ -239,6 +239,48 @@ func TestReconcileQuarantineRemediation(t *testing.T) {
 		}
 	})
 
+	t.Run("defers while a shard pod mounts a PVC being deleted", func(t *testing.T) {
+		shard := qrShard()
+		markBackupHealthy(shard)
+		badPod := qrPod(shard, 1, old, false)
+		goodPod := qrPod(shard, 0, old, true)
+		goodPod.Spec.Volumes = []corev1.Volume{
+			{
+				Name: "backup",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: "backup-pvc",
+					},
+				},
+			},
+		}
+		backup := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: "backup-pvc", Namespace: qrNS,
+			Labels:     buildPoolLabelsWithCell(shard, qrPool, qrCell),
+			Finalizers: []string{"kubernetes.io/pvc-protection"},
+		}}
+		badPVC := qrPVC(shard, 1)
+		r := qrReconciler(t, shard, badPod, goodPod, badPVC, backup)
+		if err := r.Delete(context.Background(), backup); err != nil {
+			t.Fatal(err)
+		}
+		store := qrStoreWithQuarantined(t, shard, 1)
+
+		acted, err := r.reconcileQuarantineRemediation(context.Background(), store, shard)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if acted {
+			t.Error("expected no remediation while a mounted PVC is being deleted")
+		}
+		if !exists(t, r, &corev1.Pod{}, client.ObjectKeyFromObject(badPod)) {
+			t.Error("quarantined pod must not be deleted")
+		}
+		if !exists(t, r, &corev1.PersistentVolumeClaim{}, client.ObjectKeyFromObject(badPVC)) {
+			t.Error("quarantined pod's data PVC must not be wiped")
+		}
+	})
+
 	t.Run("defers when the pod is too young (stale-record guard)", func(t *testing.T) {
 		shard := qrShard()
 		markBackupHealthy(shard)

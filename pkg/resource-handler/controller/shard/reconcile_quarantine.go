@@ -115,6 +115,20 @@ func (r *ShardReconciler) reconcileQuarantineRemediation(
 		return false, nil
 	}
 
+	// Replacing a pod is a voluntary disruption like any other: never one while
+	// a PVC being deleted is still held in place by the shard's pods.
+	terminating, err := mountedTerminatingPVCs(ctx, r.disruptionReader(), shard)
+	if err != nil {
+		return false, fmt.Errorf("check for mounted PVCs being deleted: %w", err)
+	}
+	if len(terminating) > 0 {
+		logger.Info(
+			"Deferring quarantine remediation: shard pods mount PVCs being deleted",
+			"pvcs", terminating,
+		)
+		return false, nil
+	}
+
 	quarantinedSet := make(map[string]bool, len(quarantined))
 	for _, q := range quarantined {
 		quarantinedSet[q.PodName] = true

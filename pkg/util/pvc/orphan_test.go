@@ -8,6 +8,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -134,4 +135,89 @@ func TestHasOrphanLabel(t *testing.T) {
 	labeled := newPVC("a")
 	labeled.Labels = map[string]string{metadata.LabelOrphan: "x"}
 	require.True(t, HasOrphanLabel(labeled))
+}
+
+// pvcProtection is the finalizer the StorageObjectInUseProtection admission
+// plugin puts on every PVC. The fake client runs no admission, so tests that
+// need a deleted PVC to linger add it themselves.
+const pvcProtection = "kubernetes.io/pvc-protection"
+
+func orphanedPVC(name string) *corev1.PersistentVolumeClaim {
+	pvc := newPVC(name)
+	pvc.Finalizers = []string{pvcProtection}
+	pvc.Labels = map[string]string{
+		metadata.LabelOrphan:       "2026-05-01T00-00-00Z",
+		metadata.LabelAppManagedBy: metadata.ManagedByMultigres,
+	}
+	return pvc
+}
+
+func TestClearOrphan_RefusesTerminatingPVC(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	c := newClient(t, orphanedPVC("a"))
+	require.NoError(t, c.Delete(ctx, newPVC("a")))
+
+	got := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Namespace: "ns1", Name: "a"}, got))
+	require.True(t, IsTerminating(got))
+
+	err := ClearOrphan(ctx, logr.Discard(), c, got)
+	require.ErrorIs(t, err, ErrTerminating)
+
+	after := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(got), after))
+	require.Equal(t, got.ResourceVersion, after.ResourceVersion, "a refused clear must not write")
+}
+
+// A GC deletion that commits between the reconciler's read and its clearing
+// patch must fail the patch, so the reconciler never treats the PVC as
+// reclaimed.
+func TestClearOrphan_LosesToDeletionAfterRead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	c := newClient(t, orphanedPVC("a"))
+
+	read := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Namespace: "ns1", Name: "a"}, read))
+	require.NoError(t, c.Delete(ctx, newPVC("a"), client.Preconditions{
+		ResourceVersion: &read.ResourceVersion,
+	}))
+
+	err := ClearOrphan(ctx, logr.Discard(), c, read)
+	require.True(t, apierrors.IsConflict(err), "want Conflict, got %v", err)
+	require.True(t, HasOrphanLabel(read), "a failed clear must leave the caller's copy as stored")
+
+	stored := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(read), stored))
+	require.True(t, IsTerminating(stored))
+	require.True(t, HasOrphanLabel(stored))
+}
+
+// The reverse order: the clear commits first, so the deletion's
+// resourceVersion precondition, taken before the clear, fails.
+func TestClearOrphan_WinsAgainstDeletionWithStaleVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	c := newClient(t, orphanedPVC("a"))
+
+	listed := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, c.Get(ctx, client.ObjectKey{Namespace: "ns1", Name: "a"}, listed))
+	reclaim := listed.DeepCopy()
+	require.NoError(t, ClearOrphan(ctx, logr.Discard(), c, reclaim))
+
+	err := c.Delete(
+		ctx,
+		newPVC("a"),
+		client.Preconditions{ResourceVersion: &listed.ResourceVersion},
+	)
+	require.True(t, apierrors.IsConflict(err), "want Conflict, got %v", err)
+
+	stored := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(listed), stored))
+	require.False(t, IsTerminating(stored))
+	require.False(t, HasOrphanLabel(stored))
 }

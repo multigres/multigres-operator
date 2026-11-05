@@ -2,6 +2,7 @@ package pvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -71,10 +72,33 @@ func MarkOrphan(
 	return c.Patch(ctx, pvc, patch)
 }
 
+// ErrTerminating is returned by ClearOrphan for a PVC that already has a
+// deletionTimestamp. Such a PVC cannot be put back into service: it disappears,
+// together with its data, as soon as the last pod mounting it stops, and an
+// apply of the same name afterwards creates a new, empty claim.
+var ErrTerminating = errors.New("PVC is being deleted")
+
+// IsTerminating reports whether a PVC has been deleted and is only held in
+// place by finalizers, normally kubernetes.io/pvc-protection while a pod still
+// mounts it.
+func IsTerminating(pvc *corev1.PersistentVolumeClaim) bool {
+	return pvc != nil && !pvc.DeletionTimestamp.IsZero()
+}
+
 // ClearOrphan removes the multigres.com/orphan-since label from a PVC, marking
 // it live again. We call this before reusing a deterministically-named PVC (e.g.
 // when a scaled-down pool scales back up onto the same PVC) so the multigres-gc
 // CronJob does not delete storage that has been put back into service.
+//
+// The patch carries pvc's resourceVersion as a precondition. multigres-gc
+// deletes with the resourceVersion it listed, so whichever write commits first
+// makes the other fail with a Conflict: either the label is cleared and the
+// deletion is refused, or the deletion stands and this returns an error rather
+// than reporting a reclaim of a PVC that is already on its way out. A caller
+// holding a stale copy gets a Conflict too and retries from a fresh read.
+//
+// A PVC that is already being deleted is refused with ErrTerminating, label or
+// not, because the caller is about to depend on storage that will not survive.
 func ClearOrphan(
 	ctx context.Context,
 	logger logr.Logger,
@@ -84,14 +108,23 @@ func ClearOrphan(
 	if pvc == nil {
 		return fmt.Errorf("ClearOrphan: nil PVC")
 	}
-	if _, ok := pvc.Labels[metadata.LabelOrphan]; !ok {
+	if IsTerminating(pvc) {
+		return fmt.Errorf("%w: %s/%s", ErrTerminating, pvc.Namespace, pvc.Name)
+	}
+	since, ok := pvc.Labels[metadata.LabelOrphan]
+	if !ok {
 		return nil
 	}
 
-	patch := client.MergeFrom(pvc.DeepCopy())
+	patch := client.MergeFromWithOptions(pvc.DeepCopy(), client.MergeFromWithOptimisticLock{})
 	delete(pvc.Labels, metadata.LabelOrphan)
+	if err := c.Patch(ctx, pvc, patch); err != nil {
+		// Leave the caller's copy describing the object as it still is.
+		pvc.Labels[metadata.LabelOrphan] = since
+		return err
+	}
 	logger.Info("Cleared orphan label on PVC", "pvc", pvc.Name)
-	return c.Patch(ctx, pvc, patch)
+	return nil
 }
 
 // HasOrphanLabel reports whether a PVC has already been marked orphan.
