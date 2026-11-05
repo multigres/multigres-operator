@@ -7,7 +7,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/multigres/kubedial v0.3.0
 	github.com/multigres/multigres v0.0.0-20261104171132-5542f04ff96f
-	github.com/multigres/testkit v0.6.2
+	github.com/multigres/testkit v0.6.3
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/stretchr/testify v1.12.1
