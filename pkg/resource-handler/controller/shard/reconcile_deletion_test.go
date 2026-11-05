@@ -47,6 +47,7 @@ func TestHandleDeletion(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "test-shard",
 			Namespace:         "default",
+			UID:               "test-shard-uid",
 			DeletionTimestamp: &metav1.Time{Time: metav1.Now().Time},
 			Finalizers:        []string{"kubernetes.io/test"},
 			Labels:            shardLabels,
@@ -462,18 +463,50 @@ func TestHandleDeletion(t *testing.T) {
 
 	// Strangers carry the shard's identity labels without a name the shard's
 	// builders produce. Neither teardown path may delete or orphan them,
-	// including one controlled by another owner.
-	for _, churning := range []bool{false, true} {
+	// including one controlled by another owner, and one that already carries
+	// this Shard's ref must be released rather than left for garbage
+	// collection to delete with the Shard. The shard's own PVCs, the backup
+	// and a data PVC of a pool no longer in the spec, are deleted or
+	// orphaned under Delete and released under Retain.
+	for _, tc := range []struct {
+		policy   multigresv1alpha1.PVCRetentionPolicyType
+		churning bool
+	}{
+		{multigresv1alpha1.DeletePVCRetentionPolicy, false},
+		{multigresv1alpha1.DeletePVCRetentionPolicy, true},
+		{multigresv1alpha1.RetainPVCRetentionPolicy, false},
+		{multigresv1alpha1.RetainPVCRetentionPolicy, true},
+	} {
 		t.Run(
-			fmt.Sprintf("labelled stranger PVCs survive teardown (cluster deleting=%v)", churning),
+			fmt.Sprintf(
+				"teardown touches only the shard's own PVCs (policy=%s, cluster deleting=%v)",
+				tc.policy,
+				tc.churning,
+			),
 			func(t *testing.T) {
 				t.Parallel()
 
 				shard := baseShard.DeepCopy()
 				shard.Spec.PVCDeletionPolicy = &multigresv1alpha1.PVCDeletionPolicy{
-					WhenDeleted: multigresv1alpha1.DeletePVCRetentionPolicy,
+					WhenDeleted: tc.policy,
 				}
-				own := buildDeletionTestBackupPVC(t, shard, scheme)
+				// Built with the Shard's ref whatever the policy: under Retain
+				// that is a ref a normal reconcile has not released yet.
+				backup := buildDeletionTestBackupPVC(t, shard, scheme)
+				data, err := BuildPoolDataPVC(
+					shard,
+					"gone",
+					"z1",
+					newTestPoolSpec(),
+					0,
+					true,
+					scheme,
+				)
+				if err != nil {
+					t.Fatalf("build data PVC: %v", err)
+				}
+				own := []*corev1.PersistentVolumeClaim{backup, data}
+
 				unowned := buildDeletionTestBackupPVC(t, shard, scheme)
 				unowned.Name = "impostor-shared-pvc"
 				unowned.OwnerReferences = nil
@@ -486,8 +519,15 @@ func TestHandleDeletion(t *testing.T) {
 					UID:        "someone-else-uid",
 					Controller: new(true),
 				}}
-				objs := []client.Object{shard, own, unowned, controlled}
-				if churning {
+				adopted := buildDeletionTestBackupPVC(t, shard, scheme)
+				adopted.Name = "adopted-stranger"
+				strangers := []*corev1.PersistentVolumeClaim{unowned, controlled, adopted}
+
+				objs := []client.Object{shard}
+				for _, pvc := range append(slices.Clone(own), strangers...) {
+					objs = append(objs, pvc)
+				}
+				if tc.churning {
 					objs = append(objs, &multigresv1alpha1.MultigresCluster{
 						ObjectMeta: metav1.ObjectMeta{
 							Name:              "test-cluster",
@@ -513,20 +553,32 @@ func TestHandleDeletion(t *testing.T) {
 					t.Fatalf("handleDeletion returned error: %v", err)
 				}
 
-				got := &corev1.PersistentVolumeClaim{}
-				err := c.Get(context.Background(), client.ObjectKeyFromObject(own), got)
-				if churning && !apierrors.IsNotFound(err) {
-					t.Errorf("the shard's own PVC should be deleted, got err=%v", err)
-				}
-				if !churning {
+				deleteOwn := tc.policy == multigresv1alpha1.DeletePVCRetentionPolicy
+				for _, pvc := range own {
+					got := &corev1.PersistentVolumeClaim{}
+					err := c.Get(context.Background(), client.ObjectKeyFromObject(pvc), got)
+					if deleteOwn && tc.churning {
+						if !apierrors.IsNotFound(err) {
+							t.Errorf("own PVC %s should be deleted, got err=%v", pvc.Name, err)
+						}
+						continue
+					}
 					if err != nil {
-						t.Fatalf("get own PVC: %v", err)
+						t.Fatalf("get own PVC %s: %v", pvc.Name, err)
 					}
-					if _, ok := got.Labels[metadata.LabelOrphan]; !ok {
-						t.Error("the shard's own PVC should be orphaned")
+					if _, ok := got.Labels[metadata.LabelOrphan]; ok != deleteOwn {
+						t.Errorf(
+							"own PVC %s orphan label present=%v, want %v",
+							pvc.Name,
+							ok,
+							deleteOwn,
+						)
+					}
+					if metav1.IsControlledBy(got, shard) {
+						t.Errorf("own PVC %s still carries the Shard's ref", pvc.Name)
 					}
 				}
-				for _, stranger := range []*corev1.PersistentVolumeClaim{unowned, controlled} {
+				for _, stranger := range strangers {
 					got := &corev1.PersistentVolumeClaim{}
 					if err := c.Get(
 						context.Background(),
@@ -538,9 +590,13 @@ func TestHandleDeletion(t *testing.T) {
 					if _, ok := got.Labels[metadata.LabelOrphan]; ok {
 						t.Errorf("stranger %s was marked orphan", stranger.Name)
 					}
-					if len(got.OwnerReferences) != len(stranger.OwnerReferences) {
-						t.Errorf("stranger %s owner references changed: %v",
-							stranger.Name, got.OwnerReferences)
+					want := stranger.OwnerReferences
+					if stranger == adopted {
+						want = nil
+					}
+					if len(got.OwnerReferences) != len(want) {
+						t.Errorf("stranger %s owner references = %v, want %v",
+							stranger.Name, got.OwnerReferences, want)
 					}
 				}
 			},

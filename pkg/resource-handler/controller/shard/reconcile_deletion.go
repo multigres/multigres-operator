@@ -195,6 +195,13 @@ func (r *ShardReconciler) cleanupShardPVCs(
 	for i := range pvcList.Items {
 		pvc := &pvcList.Items[i]
 		if !shardPVCShouldBeCleaned(shard, pvc) {
+			// Garbage collection deletes whatever still carries this Shard's
+			// ref once the Shard is gone, so a PVC kept here is released:
+			// one under a Retain policy whose ref a normal reconcile has not
+			// removed yet, or a stranger adopted before the name check.
+			if err := r.releasePVCFromShard(ctx, shard, pvc); err != nil {
+				return err
+			}
 			continue
 		}
 		if churning {
@@ -209,6 +216,31 @@ func (r *ShardReconciler) cleanupShardPVCs(
 		}
 		logger.Info("Marked PVC orphan on Shard deletion", "pvc", pvc.Name)
 	}
+	return nil
+}
+
+// releasePVCFromShard removes every ownerRef to this Shard from pvc, so that
+// garbage collection does not delete it with the Shard.
+func (r *ShardReconciler) releasePVCFromShard(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	pvc *corev1.PersistentVolumeClaim,
+) error {
+	shardUID := shard.GetUID()
+	if !slices.ContainsFunc(pvc.OwnerReferences, func(ref metav1.OwnerReference) bool {
+		return ref.UID == shardUID
+	}) {
+		return nil
+	}
+	patch := client.MergeFrom(pvc.DeepCopy())
+	pvc.OwnerReferences = slices.DeleteFunc(
+		slices.Clone(pvc.OwnerReferences),
+		func(ref metav1.OwnerReference) bool { return ref.UID == shardUID },
+	)
+	if err := r.Patch(ctx, pvc, patch); err != nil {
+		return fmt.Errorf("failed to remove Shard ownerRef from PVC %s: %w", pvc.Name, err)
+	}
+	log.FromContext(ctx).Info("Removed Shard ownerRef from PVC", "pvc", pvc.Name)
 	return nil
 }
 

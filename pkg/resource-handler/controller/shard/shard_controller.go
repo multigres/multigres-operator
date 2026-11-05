@@ -13,7 +13,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 
@@ -683,18 +682,9 @@ func (r *ShardReconciler) reconcilePVCOwnerRefs(
 			}
 			logger.Info("Added ownerRef to PVC for Delete policy", "pvc", pvc.Name)
 		} else if !wantOwnerRef && hasOwnerRef {
-			patch := client.MergeFrom(pvc.DeepCopy())
-			filtered := make([]metav1.OwnerReference, 0, len(pvc.OwnerReferences))
-			for _, ref := range pvc.OwnerReferences {
-				if ref.UID != shardUID {
-					filtered = append(filtered, ref)
-				}
+			if err := r.releasePVCFromShard(ctx, shard, pvc); err != nil {
+				return err
 			}
-			pvc.OwnerReferences = filtered
-			if err := r.Patch(ctx, pvc, patch); err != nil {
-				return fmt.Errorf("failed to patch PVC %s ownerRef: %w", pvc.Name, err)
-			}
-			logger.Info("Removed ownerRef from PVC for Retain policy", "pvc", pvc.Name)
 		}
 	}
 
