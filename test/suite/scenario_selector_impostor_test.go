@@ -243,7 +243,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -561,17 +560,13 @@ func TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs(t *testing.T) 
 	}
 	setPolicy := func(policy multigresv1alpha1.PVCRetentionPolicyType) func() error {
 		return func() error {
-			return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				got := &MultigresCluster{}
-				if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
-					return err
-				}
+			c.updateCluster(cluster, func(got *MultigresCluster) {
 				got.Spec.PVCDeletionPolicy = &PVCDeletionPolicy{
 					WhenDeleted: policy,
 					WhenScaled:  policy,
 				}
-				return c.Update(got)
 			})
+			return nil
 		}
 	}
 	script.Step(
