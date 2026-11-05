@@ -238,6 +238,9 @@ func (r *ShardReconciler) releasePVCFromShard(
 		func(ref metav1.OwnerReference) bool { return ref.UID == shardUID },
 	)
 	if err := r.Patch(ctx, pvc, patch); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
 		return fmt.Errorf("failed to remove Shard ownerRef from PVC %s: %w", pvc.Name, err)
 	}
 	log.FromContext(ctx).Info("Removed Shard ownerRef from PVC", "pvc", pvc.Name)

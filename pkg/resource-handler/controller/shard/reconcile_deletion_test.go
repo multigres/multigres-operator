@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -594,7 +595,8 @@ func TestHandleDeletion(t *testing.T) {
 					if stranger == adopted {
 						want = nil
 					}
-					if len(got.OwnerReferences) != len(want) {
+					if !slices.EqualFunc(got.OwnerReferences, want,
+						func(a, b metav1.OwnerReference) bool { return reflect.DeepEqual(a, b) }) {
 						t.Errorf("stranger %s owner references = %v, want %v",
 							stranger.Name, got.OwnerReferences, want)
 					}
