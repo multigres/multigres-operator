@@ -56,9 +56,10 @@ import (
 // is present in both the old and the new object. A rule on cells never runs
 // for an update that drops the field: a JSON patch removing it, or a manifest
 // or typed client that omits it, which is what every omitempty empty list
-// becomes. Dropping a list that names no cell is allowed, since it removes
-// nothing and a typed client cannot write a cluster stored with cells: [] any
-// other way.
+// becomes. Dropping a list that names no cell is allowed: it removes nothing,
+// and a typed full-object update of a cluster stored with cells: [] always
+// drops it. The spec itself is kept from being dropped by a rule on
+// MultigresCluster, for the same reason.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.cells) || oldSelf.cells.all(c, has(self.cells) && self.cells.exists(x, x.name == c.name))",message="Cells cannot be removed or renamed (Append-Only)",fieldPath=".cells"
 
 // MultigresClusterSpec defines the desired state of MultigresCluster.
@@ -890,6 +891,12 @@ type DatabaseStatusSummary struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Available",type="string",JSONPath=".status.conditions[?(@.type=='Available')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+//
+// Every transition rule on MultigresClusterSpec is skipped by an update that
+// removes spec, since there is then no new spec to evaluate them on, and a
+// following update restoring a different spec has no old one to compare. So
+// spec, once present, cannot be removed.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || has(self.spec)",message="spec cannot be removed"
 
 // MultigresCluster represents a distributed database cluster managed by the operator.
 // +kubebuilder:resource:shortName=mgc

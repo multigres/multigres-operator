@@ -15,11 +15,13 @@ import (
 )
 
 // TestCellsAppendOnly asserts that a settled cluster's spec.cells cannot be
-// taken away by any of the three writes a user can make that drop it, and that
-// its Cell is left alone afterwards: a JSON patch removing the field, a JSON
-// patch emptying the list, and an update from a manifest that omits it (which
-// is what a typed Go client sends for both nil and an empty slice, since the
-// field is omitempty). Appending a cell must still be accepted.
+// taken away by four writes that drop it, and that its Cell is left alone
+// afterwards: a JSON patch removing the field, a JSON patch emptying the list,
+// an update from a manifest that omits it (which is what a typed Go client
+// sends for both nil and an empty slice, since the field is omitempty), and a
+// JSON patch removing spec itself, which would skip every rule on the spec and
+// let the next update restore a spec with different cells. Appending a cell
+// must still be accepted.
 //
 // Each dropped write would make every Cell an orphan for reconcileCells, which
 // stamps PendingDeletion and deletes the Cell once it drains. The suite runs no
@@ -34,34 +36,47 @@ func TestCellsAppendOnly(t *testing.T) {
 	cell := c.onlyCell(cluster)
 	cellKey, cellUID := client.ObjectKeyFromObject(cell), cell.UID
 
+	settled := &MultigresCluster{}
+	c.NoError(c.Get(clusterKey, settled), "get settled cluster")
+
+	const appendOnly, specRequired = "Append-Only", "spec cannot be removed"
 	drops := []struct {
-		name  string
-		write func(got *MultigresCluster) error
+		name   string
+		reason string
+		write  func(got *MultigresCluster) error
 	}{
-		{"JSON patch removing spec.cells", func(got *MultigresCluster) error {
+		{"JSON patch removing spec.cells", appendOnly, func(got *MultigresCluster) error {
 			return c.Patch(got, client.RawPatch(types.JSONPatchType,
 				[]byte(`[{"op":"remove","path":"/spec/cells"}]`)))
 		}},
-		{"JSON patch emptying spec.cells", func(got *MultigresCluster) error {
+		{"JSON patch emptying spec.cells", appendOnly, func(got *MultigresCluster) error {
 			return c.Patch(got, client.RawPatch(types.JSONPatchType,
 				[]byte(`[{"op":"replace","path":"/spec/cells","value":[]}]`)))
 		}},
-		{"update from a manifest without spec.cells", func(got *MultigresCluster) error {
-			got.Spec.Cells = nil
-			return c.Update(got)
+		{
+			"update from a manifest without spec.cells",
+			appendOnly,
+			func(got *MultigresCluster) error {
+				got.Spec.Cells = nil
+				return c.Update(got)
+			},
+		},
+		{"JSON patch removing spec", specRequired, func(got *MultigresCluster) error {
+			return c.Patch(got, client.RawPatch(types.JSONPatchType,
+				[]byte(`[{"op":"remove","path":"/spec"}]`)))
 		}},
 	}
 	for _, drop := range drops {
 		got := &MultigresCluster{}
 		c.NoError(c.Get(clusterKey, got), "get cluster")
 		err := drop.write(got)
-		c.Check().True(apierrors.IsInvalid(err) && strings.Contains(err.Error(), "Append-Only"),
-			"%s: want an Invalid append-only rejection, got %v", drop.name, err)
+		c.Check().True(apierrors.IsInvalid(err) && strings.Contains(err.Error(), drop.reason),
+			"%s: want an Invalid %q rejection, got %v", drop.name, drop.reason, err)
 		if err == nil {
-			// Put the cell back so the next write starts from the same spec
+			// Put the spec back so the next write starts from the same state
 			// and reports on its own.
 			c.updateCluster(cluster, func(got *MultigresCluster) {
-				got.Spec.Cells = []CellConfig{{Name: defaultSimCell, ZoneID: "us-central1-a"}}
+				got.Spec = settled.Spec
 			})
 		}
 	}
@@ -108,9 +123,9 @@ func TestCellsAppendOnly(t *testing.T) {
 
 // TestCellsAppendOnly_EmptyListMayBeDropped asserts that a cluster stored with
 // an empty spec.cells can still be written by a typed Go client, which omits
-// the empty list and so sends an object with no spec.cells at all. Dropping an
-// empty list removes no cell, and rejecting it would make every typed update of
-// such a cluster fail until someone wrote the empty list back by hand.
+// the empty list from a full-object update and so sends an object with no
+// spec.cells at all. Dropping an empty list removes no cell, and rejecting it
+// would make every typed full-object update of such a cluster fail.
 //
 // The validating webhook refuses a cluster whose shards match no cell, so this
 // state exists only with webhooks disabled, which is how the suite runs.

@@ -12792,6 +12792,8 @@ spec:
             type: object
         type: object
         x-kubernetes-validations:
+        - message: spec cannot be removed
+          rule: '!has(oldSelf.spec) || has(self.spec)'
         - message: MultigresCluster name must be at most 25 characters
           rule: self.metadata.name.size() <= 25
     served: true

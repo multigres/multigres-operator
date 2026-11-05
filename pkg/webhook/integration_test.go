@@ -518,22 +518,44 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 	// rejects it, not a later webhook check that happens to fail on a cluster
 	// left without cells.
 	drops := []struct {
-		name  string
-		write func(*multigresv1alpha1.MultigresCluster) error
+		name   string
+		reason string
+		write  func(*multigresv1alpha1.MultigresCluster) error
 	}{
-		{"Should Reject Removing spec.cells", func(c *multigresv1alpha1.MultigresCluster) error {
-			return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
-				[]byte(`[{"op":"remove","path":"/spec/cells"}]`)))
-		}},
-		{"Should Reject Emptying spec.cells", func(c *multigresv1alpha1.MultigresCluster) error {
-			return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
-				[]byte(`[{"op":"replace","path":"/spec/cells","value":[]}]`)))
-		}},
 		{
-			"Should Reject an Update Without spec.cells",
-			func(c *multigresv1alpha1.MultigresCluster) error {
+			name:   "Should Reject Removing spec.cells",
+			reason: "Append-Only",
+			write: func(c *multigresv1alpha1.MultigresCluster) error {
+				return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
+					[]byte(`[{"op":"remove","path":"/spec/cells"}]`)))
+			},
+		},
+		{
+			name:   "Should Reject Emptying spec.cells",
+			reason: "Append-Only",
+			write: func(c *multigresv1alpha1.MultigresCluster) error {
+				return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
+					[]byte(`[{"op":"replace","path":"/spec/cells","value":[]}]`)))
+			},
+		},
+		{
+			name:   "Should Reject an Update Without spec.cells",
+			reason: "Append-Only",
+			write: func(c *multigresv1alpha1.MultigresCluster) error {
 				c.Spec.Cells = nil
 				return k8sClient.Update(ctx, c)
+			},
+		},
+		{
+			// The mutating webhook decodes into the typed object and writes
+			// back a present, empty spec, so the spec-level append-only rule
+			// is what rejects this here; without webhooks the rule that spec
+			// cannot be removed does.
+			name:   "Should Reject Removing spec",
+			reason: "Append-Only",
+			write: func(c *multigresv1alpha1.MultigresCluster) error {
+				return k8sClient.Patch(ctx, c, client.RawPatch(types.JSONPatchType,
+					[]byte(`[{"op":"remove","path":"/spec"}]`)))
 			},
 		},
 	}
@@ -559,10 +581,10 @@ func TestWebhook_CellAppendOnly(t *testing.T) {
 			}
 			err := drop.write(fetched)
 			if err == nil {
-				t.Fatal("Expected error dropping spec.cells, got nil")
+				t.Fatal("Expected the write to be rejected, got nil")
 			}
-			if !strings.Contains(err.Error(), "Append-Only") {
-				t.Fatalf("Expected 'Append-Only' in error, got: %v", err)
+			if !strings.Contains(err.Error(), drop.reason) {
+				t.Fatalf("Expected %q in error, got: %v", drop.reason, err)
 			}
 		})
 	}
