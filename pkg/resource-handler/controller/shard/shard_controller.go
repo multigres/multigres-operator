@@ -14,6 +14,8 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 
@@ -95,6 +97,11 @@ type ShardReconciler struct {
 	// DialContext carries the topology store's connections. Nil (direct
 	// dialing) outside laptop mode.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// UnregisteredPodGrace is how long a scheduled pool Pod that is not Ready
+	// may go without registering in topology before a disruption may remove
+	// it unregistered. Zero means defaultUnregisteredPodGrace.
+	UnregisteredPodGrace time.Duration
 
 	postureStrikesMu sync.Mutex
 	postureStrikes   map[string]int
@@ -450,11 +457,28 @@ func (r *ShardReconciler) Reconcile(
 		rollout := &shardRolloutTracker{}
 		defer func() {
 			// Consensus changes do not generate Kubernetes watch events.
+			// A refusal that has not changed since the last pass is waiting
+			// on something slower, such as multiorch evicting a dead member
+			// or a human, and re-observing every pooler every few seconds
+			// would only add load. Pod changes still trigger a reconcile.
+			requeue := disruptionRecoveryRequeue
+			if rollout.blockedAgain {
+				requeue = repeatedRefusalRequeue
+			}
 			if err == nil && rollout.waitingForRecovery &&
-				(result.RequeueAfter == 0 || result.RequeueAfter > disruptionRecoveryRequeue) {
-				result.RequeueAfter = disruptionRecoveryRequeue
+				(result.RequeueAfter == 0 || result.RequeueAfter > requeue) {
+				result.RequeueAfter = requeue
 			}
 		}()
+		// Each pool/cell writes RollingUpdate for itself and the last one
+		// reconciled wins, so the condition can pass through other states
+		// within one pass. Its transition time must follow only a change in
+		// the final status, or every pass writes status and the Shard's own
+		// watch requeues it at once.
+		var rollingBefore *metav1.Condition
+		if c := meta.FindStatusCondition(shard.Status.Conditions, "RollingUpdate"); c != nil {
+			rollingBefore = c.DeepCopy()
+		}
 		for poolName, pool := range shard.Spec.Pools {
 			if err := r.reconcilePool(ctx, shard, string(poolName), pool, rollout); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
@@ -471,6 +495,7 @@ func (r *ShardReconciler) Reconcile(
 				return ctrl.Result{}, err
 			}
 		}
+		finishRollingUpdateCondition(&shard.Status.Conditions, rollout, rollingBefore)
 		childSpan.End()
 	}
 
@@ -756,4 +781,47 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 	}).
 		WithOptions(controllerOpts).
 		Complete(reconciler)
+}
+
+// finishRollingUpdateCondition settles the RollingUpdate condition once every
+// pool/cell has written its own. before is the condition as the pass began.
+func finishRollingUpdateCondition(
+	conditions *[]metav1.Condition,
+	rollout *shardRolloutTracker,
+	before *metav1.Condition,
+) {
+	if rollout.blocked != "" {
+		rollout.blockedAgain = before != nil && before.Reason == "RolloutBlocked" &&
+			before.Message == rollout.blocked
+		// Events about a Shard are rate limited per object and are lost once
+		// its early lifecycle has used the budget, so a rollout that is
+		// waiting on a safety check says so in status.
+		meta.SetStatusCondition(conditions, metav1.Condition{
+			Type:    "RollingUpdate",
+			Status:  metav1.ConditionTrue,
+			Reason:  "RolloutBlocked",
+			Message: rollout.blocked,
+		})
+	}
+	// A pass that reached no decision on a pending not-Ready replacement
+	// (another disruption already asked to wait) changes nothing about why
+	// the rollout is blocked, so the last reason stands.
+	if rollout.blocked == "" && rollout.unreadyDeferred &&
+		before != nil && before.Reason == "RolloutBlocked" {
+		meta.SetStatusCondition(conditions, *before)
+	}
+	keepTransitionTime(*conditions, before)
+}
+
+// keepTransitionTime restores before's LastTransitionTime on the condition of
+// the same type in conditions when its status is unchanged, whatever states
+// it passed through in between.
+func keepTransitionTime(conditions []metav1.Condition, before *metav1.Condition) {
+	if before == nil {
+		return
+	}
+	after := meta.FindStatusCondition(conditions, before.Type)
+	if after != nil && after.Status == before.Status {
+		after.LastTransitionTime = before.LastTransitionTime
+	}
 }

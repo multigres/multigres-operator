@@ -1545,7 +1545,7 @@ func TestReloadVsRestartRollout(t *testing.T) {
 		blockedReason string
 	}{
 		{name: "healthy cohort", replicas: 3},
-		{name: "missing status", replicas: 3, missingStatus: true, blockedReason: "no matching consensus identity"},
+		{name: "missing status", replicas: 3, missingStatus: true, blockedReason: "awaiting a registered target and a committed primary"},
 		{name: "insufficient quorum", replicas: 2, blockedReason: "remaining cohort cannot satisfy durability"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -299,6 +299,19 @@ func (r *ShardReconciler) hasMaintenanceCapacityForPod(
 	cellName string,
 	excludedPodName string,
 ) (bool, error) {
+	return r.maintenanceCapacityWithout(ctx, shard, cellName, excludedPodName, isAvailablePooler)
+}
+
+// maintenanceCapacityWithout reports whether enough poolers that available
+// counts would remain, shard-wide and in cellName, once excludedPodName is
+// disrupted.
+func (r *ShardReconciler) maintenanceCapacityWithout(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	cellName string,
+	excludedPodName string,
+	available func(*corev1.Pod) bool,
+) (bool, error) {
 	if !requiresTwoCellMaintenanceSurge(shard) {
 		return true, nil
 	}
@@ -321,7 +334,7 @@ func (r *ShardReconciler) hasMaintenanceCapacityForPod(
 		if isActiveMaintenanceSurge(shard, pod) {
 			surgeCount++
 		}
-		if pod.Name == excludedPodName || !isAvailablePooler(pod) {
+		if pod.Name == excludedPodName || !available(pod) {
 			continue
 		}
 		readyAfterDisruption++

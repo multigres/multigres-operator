@@ -165,6 +165,183 @@ type poolerSim struct {
 	mu         sync.Mutex
 	registered map[string]bool
 	held       map[string]bool
+	models     map[string]poolerModel
+	// unreachable holds the component IDs whose Status RPC fails, read by
+	// faultingRPC on the operator's side of the fake.
+	unreachable map[string]bool
+	// answering maps a component ID in a modelled namespace to the pod
+	// incarnation the sim has registered for it.
+	answering map[string]podIncarnation
+	// terms tracks each modelled cohort's leader and coordinator term.
+	terms map[string]simTerm
+}
+
+type simTerm struct {
+	leader string
+	term   int64
+}
+
+type podIncarnation struct{ ns, uid string }
+
+// poolerModel replaces the sim's defaults for one namespace.
+//
+// A modelled namespace also answers Status only for the pod incarnation the
+// sim has registered. Without that, a replacement pod would answer with its
+// predecessor's healthy response the moment it was created, since both share
+// a component ID, and a test could not tell an operator that waits for the
+// replacement to serve from one that does not.
+//
+// testkit's DataPlaneSim models what the kubelet reports about a Pod
+// (readiness, crashloops, scheduling) but nothing a pod's own process reports
+// over RPC, so a Pod that is not Ready while its pooler still serves, or a
+// pooler that is down while its Pod is Running, has no testkit primitive.
+// This is the local stand-in until testkit grows a data-plane RPC fault model.
+type poolerModel struct {
+	// durability is the policy the cohort is committed under. The default,
+	// AtLeastN(1), lets any single pooler satisfy durability alone, so
+	// posture.CheckDisruption's revocation check refuses every removal. A
+	// test that needs a pod replaced uses three pods and AtLeastN(2).
+	durability *cm.DurabilityPolicy
+	// fault decides, on every tick, how a pod's pooler deviates from
+	// healthy. nil means healthy.
+	fault func(*corev1.Pod) *poolerFault
+}
+
+// poolerFault is how one pooler's answer deviates from the sim's healthy one.
+type poolerFault struct {
+	// unreachable fails the Status RPC, as for a multipooler that is down.
+	unreachable bool
+	// notServing answers with PostgreSQL not accepting connections, as for
+	// a pooler whose Postgres is crashlooping.
+	notServing bool
+	// action reports a long-running Postgres operation in flight.
+	action md.PostgresAction
+	// neverRegisters keeps the pooler out of topology, as for a multipooler
+	// that cannot start on its spec.
+	neverRegisters bool
+}
+
+// Model installs m for ns until the returned function is called.
+func (p *poolerSim) Model(ns string, m poolerModel) func() {
+	p.mu.Lock()
+	if p.models == nil {
+		p.models = map[string]poolerModel{}
+	}
+	p.models[ns] = m
+	p.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			delete(p.models, ns)
+			p.mu.Unlock()
+		})
+	}
+}
+
+// SetFault replaces only the fault function of ns's installed model.
+func (p *poolerSim) SetFault(ns string, fault func(*corev1.Pod) *poolerFault) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m := p.models[ns]
+	m.fault = fault
+	if p.models == nil {
+		p.models = map[string]poolerModel{}
+	}
+	p.models[ns] = m
+}
+
+// termFor returns the coordinator term for a topology's cohort in ns,
+// starting a new one whenever its leader changes.
+func (p *poolerSim) termFor(k topoKey, ns, leader string) int64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.terms == nil {
+		p.terms = map[string]simTerm{}
+	}
+	key := registrationPrefix(k) + ns
+	t, ok := p.terms[key]
+	switch {
+	case !ok:
+		t = simTerm{leader: leader, term: 2}
+	case t.leader != leader:
+		t = simTerm{leader: leader, term: t.term + 1}
+	}
+	p.terms[key] = t
+	return t.term
+}
+
+func (p *poolerSim) isUnreachable(id string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.unreachable[id]
+}
+
+// notYetAnswering reports whether id belongs to a modelled namespace whose
+// current pod is not the incarnation the sim registered: deleted,
+// terminating, or recreated and not registered yet.
+func (p *poolerSim) notYetAnswering(ctx context.Context, id *cm.ID) bool {
+	p.mu.Lock()
+	inc, ok := p.answering[string(topoclient.ComponentIDString(id))]
+	p.mu.Unlock()
+	if !ok {
+		return false
+	}
+	pod := &corev1.Pod{}
+	if err := p.c.Get(
+		ctx,
+		client.ObjectKey{Namespace: inc.ns, Name: id.GetName()},
+		pod,
+	); err != nil {
+		return true
+	}
+	return string(pod.UID) != inc.uid || !pod.DeletionTimestamp.IsZero()
+}
+
+func (p *poolerSim) setAnswering(id string, inc podIncarnation) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.answering == nil {
+		p.answering = map[string]podIncarnation{}
+	}
+	p.answering[id] = inc
+}
+
+func (p *poolerSim) setUnreachable(id string, unreachable bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.unreachable == nil {
+		p.unreachable = map[string]bool{}
+	}
+	if unreachable {
+		p.unreachable[id] = true
+	} else {
+		delete(p.unreachable, id)
+	}
+}
+
+// faultingRPC is the operator's view of the pooler fake: it fails the Status
+// RPC of any pooler the sim marks unreachable. rpcclient.FakeClient's own
+// Errors map has no locked setter, so writing it while the operator reads it
+// would race.
+type faultingRPC struct {
+	*rpcclient.FakeClient
+	sim *poolerSim
+}
+
+var errPoolerUnreachable = errors.New("pooler unreachable (sim fault)")
+
+func (f faultingRPC) Status(
+	ctx context.Context,
+	pooler *cm.Multipooler,
+	req *md.StatusRequest,
+) (*md.StatusResponse, error) {
+	if f.sim.isUnreachable(string(topoclient.ComponentIDString(pooler.GetId()))) ||
+		f.sim.notYetAnswering(ctx, pooler.GetId()) {
+		return nil, errPoolerUnreachable
+	}
+	return f.FakeClient.Status(ctx, pooler, req)
 }
 
 // HoldRegistrations stops this fake registering any *new* pooler in ns until
@@ -295,11 +472,48 @@ func (p *poolerSim) tickShard(
 		return
 	}
 	leader := ids[0]
+	p.mu.Lock()
+	model, modelled := p.models[ns]
+	p.mu.Unlock()
+	durability := model.durability
+	if durability == nil {
+		durability = topoclient.AtLeastN(1)
+	}
+	faults := make([]*poolerFault, len(pods))
+	cohort := ids
+	followers := ids[1:]
+	term := int64(2)
+	if modelled {
+		// A modelled namespace is closer to multiorch: the cohort is the
+		// leader plus the poolers registered under their current pod,
+		// connected followers only those that could be streaming (answering,
+		// with Postgres up), and a new leader starts a new term. The leader
+		// stays the lowest-named pod even while its replacement registers,
+		// because the sim writes a pooler's routing role only once, at
+		// registration.
+		cohort, followers = nil, []*cm.ID{}
+		for i, pod := range pods {
+			if model.fault != nil {
+				faults[i] = model.fault(pod)
+			}
+			p.mu.Lock()
+			registered := p.registered[registrationKey(k, ns, string(pod.UID))]
+			p.mu.Unlock()
+			if !registered && i > 0 {
+				continue
+			}
+			cohort = append(cohort, ids[i])
+			if i > 0 && (faults[i] == nil || (!faults[i].unreachable && !faults[i].notServing)) {
+				followers = append(followers, ids[i])
+			}
+		}
+		term = p.termFor(k, ns, leader.Name)
+	}
 	rule := &cm.ShardRule{
-		RuleNumber:       &cm.RuleNumber{CoordinatorTerm: 2},
+		RuleNumber:       &cm.RuleNumber{CoordinatorTerm: term},
 		LeaderId:         leader,
-		CohortMembers:    ids,
-		DurabilityPolicy: topoclient.AtLeastN(1),
+		CohortMembers:    cohort,
+		DurabilityPolicy: durability,
 	}
 	store := p.topo.Store(k)
 
@@ -327,9 +541,21 @@ func (p *poolerSim) tickShard(
 			resp.Status.PostgresStatus = md.PostgresStatus_POSTGRES_STATUS_PRIMARY
 			resp.Status.PrimaryStatus = &md.PrimaryStatus{
 				Ready:              true,
-				ConnectedFollowers: ids[1:],
+				ConnectedFollowers: followers,
 			}
 		}
+		fault := faults[i]
+		if fault != nil {
+			resp.Status.PostgresReady = !fault.notServing
+			resp.Status.PostgresAction = fault.action
+			if fault.notServing && resp.Status.PrimaryStatus != nil {
+				resp.Status.PrimaryStatus.Ready = false
+			}
+		}
+		p.setUnreachable(
+			string(topoclient.ComponentIDString(id)),
+			fault != nil && fault.unreachable,
+		)
 		p.rpc.SetStatusResponse(topoclient.ComponentIDString(id), resp)
 
 		// Keyed by topology and pod UID, not name: a rolled pod keeps its name
@@ -344,7 +570,14 @@ func (p *poolerSim) tickShard(
 		// A held namespace still gets its Status RPC answered above, so pods
 		// already registered stay healthy and the shard keeps converging. Only
 		// the new registration waits, which is the whole point.
-		if already || heldBack {
+		if already {
+			if modelled {
+				p.setAnswering(string(topoclient.ComponentIDString(id)),
+					podIncarnation{ns: ns, uid: string(pod.UID)})
+			}
+			continue
+		}
+		if heldBack || (fault != nil && fault.neverRegisters) {
 			continue
 		}
 		pooler := &cm.Multipooler{

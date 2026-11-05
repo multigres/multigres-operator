@@ -268,8 +268,11 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 		Scheme:          mgr.GetScheme(),
 		Recorder:        mgr.GetEventRecorderFor("shard-controller"),
 		APIReader:       mgr.GetAPIReader(),
-		PoolerClients:   poolerclient.Static(rpc),
+		PoolerClients:   poolerclient.Static(faultingRPC{FakeClient: rpc, sim: poolers}),
 		CreateTopoStore: topo.ForShard,
+		// A scenario that never lets a pooler register should not wait the
+		// production grace before its pod may be replaced.
+		UnregisteredPodGrace: 2 * time.Second,
 	}
 	if err := shard.SetupWithManagerReconciler(
 		mgr, s.Reconciles.Wrap("shard", shard), opts,
