@@ -121,11 +121,12 @@
 //     own teardown is not cascaded through another controller's graceful
 //     orphan protocol. Not tested here.
 //
-//   - reconcile_deletion.go:166 (cleanupShardPVCs)  PersistentVolumeClaimList
-//     same 4-key selector. Every match is marked orphan or deleted with no
-//     owner-ref check, gated only by shardPVCShouldBeCleaned's policy read.
-//     Same family as reconcilePVCOwnerRefs at a different lifecycle
-//     point. Not independently tested.
+//   - reconcile_deletion.go (cleanupShardPVCs)  PersistentVolumeClaimList
+//     same 4-key selector. Matches are marked orphan, or deleted while the
+//     cluster itself is being deleted. Same family as reconcilePVCOwnerRefs
+//     at a different lifecycle point, and FIXED by the same name check,
+//     which shardPVCShouldBeCleaned applies for both. Unit tested
+//     (TestHandleDeletion, reconcile_deletion_test.go); not tested here.
 //
 //   - reconcile_deletion.go:252 (handlePendingDeletion)  PodList  same
 //     4-key selector. Runs the drain state machine (initiateDrain /

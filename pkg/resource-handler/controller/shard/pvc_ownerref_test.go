@@ -321,3 +321,21 @@ func TestIsShardBuiltPVC(t *testing.T) {
 		})
 	}
 }
+
+// The names below are what BuildSharedBackupPVCName returned for these inputs
+// while the backup repository was cell-scoped and the function took a cell.
+// They are literals so that a change to legacyCellBackupPVCName cannot also
+// change what the test expects.
+func TestLegacyCellBackupPVCNameMatchesTheCellScopedBuilder(t *testing.T) {
+	short := newTestShard()
+	require.Equal(t,
+		"backup-data-test-cluster-postgres-default-0-inf-z1-fef9c6a4",
+		legacyCellBackupPVCName(short, "z1"))
+
+	long := newTestShard()
+	long.Labels["multigres.com/cluster"] = strings.Repeat("c", 40)
+	long.Spec.TableGroupName = multigresv1alpha1.TableGroupName(strings.Repeat("t", 30))
+	require.Equal(t,
+		"backup-data-cccccccccccccccccccccccccccccccccccccccc---664dd5fd",
+		legacyCellBackupPVCName(long, "zone-a"))
+}

@@ -152,7 +152,8 @@ func (r *ShardReconciler) handleDeletion(
 }
 
 // cleanupShardPVCs handles per-PVC cleanup when a Shard is being deleted.
-// Only PVCs whose effective WhenDeleted policy is Delete are touched.
+// Only the shard's own PVCs whose effective WhenDeleted policy is Delete are
+// touched; see shardPVCShouldBeCleaned.
 //
 // If the owning MultigresCluster is confirmed still present and being
 // deleted, PVCs are deleted in line. The cluster is going away, so there is
@@ -211,12 +212,18 @@ func (r *ShardReconciler) cleanupShardPVCs(
 	return nil
 }
 
-// shardPVCShouldBeCleaned returns true when the PVC's effective
-// PVCDeletionPolicy (WhenDeleted) resolves to Delete.
+// shardPVCShouldBeCleaned returns true when the PVC is one the shard's
+// builders name (isShardBuiltPVC) and its effective PVCDeletionPolicy
+// (WhenDeleted) resolves to Delete. Callers select PVCs by the shard's
+// identity labels, which any PVC can carry, so the name check is what keeps
+// a stranger's volume from being deleted, orphaned or adopted with the Shard.
 func shardPVCShouldBeCleaned(
 	shard *multigresv1alpha1.Shard,
 	pvc *corev1.PersistentVolumeClaim,
 ) bool {
+	if !isShardBuiltPVC(shard, pvc) {
+		return false
+	}
 	poolName := pvc.Labels[metadata.LabelMultigresPool]
 	if poolName == "" {
 		return ShouldDeleteShardLevelPVCOnRemoval(shard)

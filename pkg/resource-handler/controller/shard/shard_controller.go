@@ -666,13 +666,12 @@ func (r *ShardReconciler) reconcilePVCOwnerRefs(
 			}
 		}
 
-		// The selector cannot tell the shard's own PVCs from any other PVC
-		// carrying the same identity labels, and SetControllerReference only
-		// refuses PVCs that already have a controller, so adoption is limited
-		// to the names the shard's builders produce. A PVC without such a name
+		// SetControllerReference only refuses PVCs that already have a
+		// controller, so it is shardPVCShouldBeCleaned's name check that keeps
+		// a labelled stranger from being adopted. A PVC without such a name
 		// that carries this Shard's ref anyway is released whatever the
 		// policy: releasing can only leave a volume behind, never delete one.
-		wantOwnerRef := isShardBuiltPVC(shard, pvc) && shardPVCShouldBeCleaned(shard, pvc)
+		wantOwnerRef := shardPVCShouldBeCleaned(shard, pvc)
 
 		if wantOwnerRef && !hasOwnerRef {
 			patch := client.MergeFrom(pvc.DeepCopy())
