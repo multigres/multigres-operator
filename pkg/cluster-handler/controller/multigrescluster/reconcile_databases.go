@@ -50,6 +50,13 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 	}
 
 	activeTGNames := make(map[string]bool)
+	dynamicTemplates := make(map[multigresv1alpha1.DatabaseName]dynamicTemplate)
+	dynamicNames := make(map[string]bool)
+	for i := range existingTGs.Items {
+		if existingTGs.Items[i].Labels[multigresv1alpha1.LabelDynamicTableGroup] == "true" {
+			dynamicNames[existingTGs.Items[i].Name] = true
+		}
+	}
 
 	for _, db := range cluster.Spec.Databases {
 		dbBackup := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
@@ -120,6 +127,10 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 				})
 			}
 
+			if tg.Default && len(resolvedShards) > 0 {
+				dynamicTemplates[db.Name] = dynamicTemplate{cfg: tg, shard: resolvedShards[0]}
+			}
+
 			desired, err := BuildTableGroup(
 				cluster,
 				db,
@@ -133,19 +144,22 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 			}
 			activeTGNames[desired.Name] = true
 
-			// Server Side Apply
-			desired.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("TableGroup"))
-			if err := r.Patch(
-				ctx,
-				desired,
-				client.Apply,
-				client.ForceOwnership,
-				client.FieldOwner(ownership.ManagerChildWriter),
-			); err != nil {
-				return false, fmt.Errorf("failed to apply tablegroup '%s': %w", tgNameFull, err)
+			// A tablegroup provisioned from the catalog keeps its name: applying
+			// the spec over it would replace its shard list and drain its
+			// shards. The conflict is reported by reconcileDynamicTableGroups.
+			if dynamicNames[desired.Name] {
+				continue
 			}
-			r.Recorder.Eventf(cluster, "Normal", "Applied", "Applied TableGroup %s", desired.Name)
+			if err := r.applyTableGroup(ctx, cluster, desired); err != nil {
+				return false, err
+			}
 		}
+	}
+
+	if err := r.reconcileDynamicTableGroups(
+		ctx, cluster, existingTGs.Items, dynamicTemplates, globalTopoRef, activeTGNames,
+	); err != nil {
+		return false, err
 	}
 
 	var pendingDeletion bool
@@ -197,4 +211,24 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 	}
 
 	return pendingDeletion, nil
+}
+
+// applyTableGroup server-side applies a desired TableGroup.
+func (r *MultigresClusterReconciler) applyTableGroup(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	desired *multigresv1alpha1.TableGroup,
+) error {
+	desired.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("TableGroup"))
+	if err := r.Patch(
+		ctx,
+		desired,
+		client.Apply,
+		client.ForceOwnership,
+		client.FieldOwner(ownership.ManagerChildWriter),
+	); err != nil {
+		return fmt.Errorf("failed to apply tablegroup '%s': %w", desired.Name, err)
+	}
+	r.Recorder.Eventf(cluster, "Normal", "Applied", "Applied TableGroup %s", desired.Name)
+	return nil
 }

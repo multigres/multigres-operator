@@ -747,7 +747,9 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 			oldAnnotations := e.ObjectOld.GetAnnotations()
 			newAnnotations := e.ObjectNew.GetAnnotations()
 			return oldAnnotations[metadata.AnnotationProjectRef] !=
-				newAnnotations[metadata.AnnotationProjectRef]
+				newAnnotations[metadata.AnnotationProjectRef] ||
+				oldAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups] !=
+					newAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups]
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true

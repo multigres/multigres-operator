@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/multiadmin"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/images"
@@ -80,9 +81,18 @@ type MultigresClusterReconciler struct {
 	// docs/development/reconcile-gating.md. The zero value is safe.
 	Gate features.Gate
 
-	// DialContext carries the topology store's connections and the etcd
-	// identity read. Nil (direct dialing) outside laptop mode.
+	// DialContext carries the topology store's connections, the etcd
+	// identity read and multiadmin reads. Nil (direct dialing) outside laptop
+	// mode.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// ListDesiredTableGroups overrides how a database's desired dynamic
+	// tablegroups are read, for testing. Defaults to multiadmin's REST API.
+	ListDesiredTableGroups func(
+		ctx context.Context,
+		cluster *multigresv1alpha1.MultigresCluster,
+		database string,
+	) ([]multiadmin.TableGroup, error)
 }
 
 // Reconcile resolves templates, reconciles child resources (Cells, TableGroups, TopoServer),
@@ -418,6 +428,12 @@ func (r *MultigresClusterReconciler) Reconcile(
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(start).String())
 	r.Recorder.Event(cluster, "Normal", "Synced", "Successfully reconciled MultigresCluster")
+	// An opted-in cluster polls the catalog: CREATE TABLEGROUP changes nothing
+	// the operator watches.
+	if dynamicTableGroupsEnabled(cluster) &&
+		(retireResult.RequeueAfter == 0 || retireResult.RequeueAfter > dynamicTableGroupPollInterval) {
+		retireResult.RequeueAfter = dynamicTableGroupPollInterval
+	}
 	return retireResult, nil
 }
 
@@ -670,7 +686,9 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 			oldAnnotations := e.ObjectOld.GetAnnotations()
 			newAnnotations := e.ObjectNew.GetAnnotations()
 			return oldAnnotations[metadata.AnnotationProjectRef] !=
-				newAnnotations[metadata.AnnotationProjectRef]
+				newAnnotations[metadata.AnnotationProjectRef] ||
+				oldAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups] !=
+					newAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups]
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true
