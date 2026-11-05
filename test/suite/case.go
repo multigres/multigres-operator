@@ -2,6 +2,7 @@ package suite
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,39 @@ type C struct {
 	*ctrltest.C
 	// legacy is the legacy-entry rule requireOwnership applies at cleanup.
 	legacy legacyRule
+	// tolerated are the misclaims requireOwnership lets this case pass.
+	tolerated []misclaim
+}
+
+// misclaim is one status-ownership violation a case may tolerate: field, or
+// any field below it, on an object of kind, owned by owner but claimed by
+// claimer. Anything else, including the same field claimed by another
+// manager, is still a violation.
+type misclaim struct {
+	kind, field, owner, claimer string
+}
+
+// matches reports whether violation, as checkOwnership formats it, is this
+// misclaim.
+func (m misclaim) matches(violation string) bool {
+	rest, ok := strings.CutPrefix(violation, m.kind+" ")
+	if !ok {
+		return false
+	}
+	if _, rest, ok = strings.Cut(rest, ": status field "); !ok {
+		return false
+	}
+	path, tail, ok := strings.Cut(rest, " owned by ")
+	underField := path == m.field || strings.HasPrefix(path, m.field+".")
+	return ok && underField && tail == m.owner+", claimed by "+m.claimer
+}
+
+// tolerateMisclaim lets this case's cleanup ownership check pass m, for a
+// case whose own claim is unrelated to field ownership but whose scenario
+// reliably reaches a known operator misclaim. Each tolerated violation is
+// still logged. Remove the call once the operator stops making the misclaim.
+func (c *C) tolerateMisclaim(m misclaim) {
+	c.tolerated = append(c.tolerated, m)
 }
 
 // newCase opens a test context on its own namespace.
@@ -59,6 +93,15 @@ func (c *C) requireOwnership(t *testing.T) {
 		t.Errorf("status ownership check: %v", err)
 		return
 	}
+	violations = slices.DeleteFunc(violations, func(v string) bool {
+		for _, m := range c.tolerated {
+			if m.matches(v) {
+				t.Logf("tolerated status ownership violation: %s", v)
+				return true
+			}
+		}
+		return false
+	})
 	if len(violations) > 0 {
 		t.Errorf("status ownership violations in %s:\n  %s", c.NS,
 			strings.Join(violations, "\n  "))

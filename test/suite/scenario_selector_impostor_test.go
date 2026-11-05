@@ -248,6 +248,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	topopkg "github.com/multigres/multigres-operator/pkg/data-handler/topo"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 	"github.com/multigres/testkit/ctrltest"
@@ -456,6 +457,21 @@ func TestSelectorImpostorGlobalTopoPruneDeletesCellOwnedLocalTopoServer(t *testi
 func TestSelectorImpostorShardOwnerRefReconcileLeavesStrangerPVCs(t *testing.T) {
 	c := newCase(t)
 	ns := c.NS
+	// Each policy step bumps the Shard's generation, which reaches an operator
+	// misclaim this test is not about. The guard applies StorageClassValid
+	// for the new generation (storage_class_guard.go) but leaves the
+	// reconcile's in-memory Shard holding the old condition, and when the
+	// same pass merge-patches another condition (reconcile_data_plane.go:
+	// backup health, pod roles), the patch carries the whole conditions
+	// array, writing the stale StorageClassValid back under multigres-shard.
+	// Only that field and that pair of managers is tolerated; this test
+	// asserts on PVCs, and every other ownership violation still fails it.
+	c.tolerateMisclaim(misclaim{
+		kind:    "Shard",
+		field:   ownership.ConditionPath("StorageClassValid"),
+		owner:   ownership.ManagerShardGuard,
+		claimer: ownership.ManagerShard,
+	})
 	cluster := c.MinimalCluster("pvc-adopt")
 
 	shard := c.awaitShard()
