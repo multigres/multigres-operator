@@ -91,6 +91,6 @@ pgBackRest requires TLS for its inter-node communication protocol. The shard con
 
 **User-provided:** Accepts a user-specified Secret (e.g., from cert-manager) via `spec.backup.pgbackrestTLS.secretName`. The operator validates the Secret exists and contains the required keys (`ca.crt`, `tls.crt`, `tls.key`).
 
-**Projected volume with key renaming:** Both modes mount certificates via a projected volume that renames `tls.crt` → `pgbackrest.crt` and `tls.key` → `pgbackrest.key` to match upstream pgctld/multipooler expectations. This makes user-provided mode directly compatible with cert-manager's standard Secret output without any manual key renaming.
+**Projected volume with key renaming:** Both modes mount certificates via a projected volume that renames `tls.crt` → `pgbackrest.crt` and `tls.key` → `pgbackrest.key` to the file names `pgbackrestd` reads from `--tls-cert-dir`. Only the `pgbackrest` sidecar mounts the volume. This makes user-provided mode directly compatible with cert-manager's standard Secret output without any manual key renaming.
 
 **APIReader for external Secret validation:** User-provided Secrets (e.g., from cert-manager) lack the `app.kubernetes.io/managed-by: multigres-operator` label and are therefore invisible to the informer cache (see [caching-strategy.md](caching-strategy.md)). The shard controller uses `r.APIReader.Get()` (uncached, direct API server call) to validate these Secrets. This is the `Option B` approach documented in the caching strategy document.

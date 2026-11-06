@@ -18,6 +18,7 @@ import (
 func cachedKinds() []client.Object {
 	return []client.Object{
 		&corev1.Secret{}, &appsv1.StatefulSet{}, &corev1.Service{}, &corev1.Pod{},
+		&corev1.ServiceAccount{},
 	}
 }
 
@@ -123,6 +124,27 @@ func TestLaptopNamespaceTakesPrecedenceOverWatchAllowlist(t *testing.T) {
 	for _, obj := range cachedKinds() {
 		if !reflect.DeepEqual(namespacesFor(t, got, obj), namespacesFor(t, want, obj)) {
 			t.Errorf("%T cache escaped the laptop namespace", obj)
+		}
+	}
+}
+
+// The shard reconciler reads the shared backup PVC through the informer cache
+// and decides what to apply from the operator's server-side-apply ownership in
+// its managedFields. A transform that strips managedFields would make every
+// claim look unowned there, so the operator would re-send fields the API server
+// refuses to change on a live claim and wedge the shard reconcile, with every
+// test that reads through a direct client still green.
+func TestNewKeepsManagedFields(t *testing.T) {
+	for _, laptop := range []string{"", "dev"} {
+		opts := New("op", laptop)
+		if opts.DefaultTransform != nil {
+			t.Errorf("namespace %q: DefaultTransform is set, it may strip managedFields", laptop)
+		}
+		for obj, byObj := range opts.ByObject {
+			if byObj.Transform != nil {
+				t.Errorf("namespace %q: ByObject[%T].Transform is set, it may strip managedFields",
+					laptop, obj)
+			}
 		}
 	}
 }

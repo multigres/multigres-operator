@@ -228,12 +228,15 @@ func storageWantFor(
 	}
 
 	if pvc.Name != BuildSharedBackupPVCName(shard) ||
-		(shard.Spec.Backup != nil && shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeS3) {
+		sidecarLocation(shard).Type == multigresv1alpha1.BackupTypeS3 {
 		return pvcStorageWant{}, false, nil
 	}
 	desired, err := BuildSharedBackupPVC(shard, false, nil)
 	if err != nil {
 		return pvcStorageWant{}, false, err
+	}
+	if desired == nil {
+		return pvcStorageWant{}, false, nil
 	}
 	want := pvcStorageWant{
 		request: desired.Spec.Resources.Requests[corev1.ResourceStorage],

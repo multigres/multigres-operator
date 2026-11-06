@@ -111,6 +111,7 @@ func (r *ShardReconciler) reconcileCellMaintenanceSurge(
 				desiredPool,
 				int(index),
 				r.Scheme,
+				r.podOptions()...,
 			) {
 				baseUnsettled = true
 				if stable && string(desiredPoolName) == poolName {
@@ -265,7 +266,14 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 		}
 	}
 
-	pod, err := BuildPoolPod(shard, poolName, cellName, poolSpec, int(index), r.Scheme)
+	pod, err := BuildPoolPod(
+		shard,
+		poolName,
+		cellName,
+		poolSpec,
+		int(index),
+		r.Scheme,
+		r.podOptions()...)
 	if err != nil {
 		return fmt.Errorf("build maintenance surge pod %s: %w", podName, err)
 	}

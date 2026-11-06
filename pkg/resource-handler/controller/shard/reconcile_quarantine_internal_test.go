@@ -49,6 +49,9 @@ func qrShard() *multigresv1alpha1.Shard {
 			Labels:    map[string]string{metadata.LabelMultigresCluster: "test-cluster"},
 		},
 		Spec: multigresv1alpha1.ShardSpec{
+			Images: multigresv1alpha1.ShardImages{
+				PgBackRestd: "registry/multigres@sha256:abc",
+			},
 			DatabaseName:   "testdb",
 			TableGroupName: "default",
 			ShardName:      "shard0",
