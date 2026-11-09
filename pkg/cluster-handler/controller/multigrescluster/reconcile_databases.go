@@ -2,8 +2,10 @@ package multigrescluster
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,6 +16,8 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	"github.com/multigres/multigres-operator/pkg/util/name"
 )
 
 // reconcileDatabases applies every TableGroup the spec names and drains and
@@ -73,16 +77,14 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 		return false, fmt.Errorf("failed to get global topo ref: %w", err)
 	}
 
-	dynamicNames := make(map[string]bool)
+	existingByName := make(map[string]*multigresv1alpha1.TableGroup, len(existingTGs.Items))
 	for i := range existingTGs.Items {
-		if existingTGs.Items[i].Labels[multigresv1alpha1.LabelDynamicTableGroup] == "true" {
-			dynamicNames[existingTGs.Items[i].Name] = true
-		}
+		existingByName[existingTGs.Items[i].Name] = &existingTGs.Items[i]
 	}
 
 	var errs []error
 	dynamicTemplates, err := r.applyTableGroups(
-		ctx, cluster, res, activeTGNames, dynamicNames, globalTopoRef,
+		ctx, cluster, res, activeTGNames, existingByName, globalTopoRef,
 	)
 	if err != nil {
 		errs = append(errs, err)
@@ -91,7 +93,7 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 	// Dynamic tablegroups mark themselves active; a failure here must not
 	// reach the pruning below with an incomplete active set.
 	if err := r.reconcileDynamicTableGroups(
-		ctx, cluster, existingTGs.Items, dynamicTemplates, globalTopoRef, activeTGNames,
+		ctx, cluster, existingByName, dynamicTemplates, globalTopoRef, activeTGNames,
 	); err != nil {
 		return false, errors.Join(append(errs, err)...)
 	}
@@ -157,7 +159,7 @@ func (r *MultigresClusterReconciler) applyTableGroups(
 	cluster *multigresv1alpha1.MultigresCluster,
 	res *resolver.Resolver,
 	active map[string]bool,
-	dynamicNames map[string]bool,
+	existing map[string]*multigresv1alpha1.TableGroup,
 	globalTopoRef multigresv1alpha1.GlobalTopoServerRef,
 ) (map[multigresv1alpha1.DatabaseName]dynamicTemplate, error) {
 	templates := make(map[multigresv1alpha1.DatabaseName]dynamicTemplate)
@@ -191,12 +193,12 @@ func (r *MultigresClusterReconciler) applyTableGroups(
 				continue
 			}
 			if tg.Default && len(resolvedShards) > 0 {
-				templates[db.Name] = dynamicTemplate{cfg: *tg, shard: resolvedShards[0]}
+				templates[db.Name] = dynamicTemplate{db: db, cfg: *tg, shard: resolvedShards[0]}
 			}
-			if dynamicNames[desired.Name] {
+			if isDynamic(existing[desired.Name]) {
 				continue
 			}
-			if err := r.applyTableGroup(ctx, cluster, desired); err != nil {
+			if err := r.applyTableGroup(ctx, cluster, desired, existing[desired.Name]); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -312,12 +314,25 @@ func tgDraining(tg *multigresv1alpha1.TableGroup) bool {
 		tg.DeletionTimestamp != nil
 }
 
-// applyTableGroup server-side applies a desired TableGroup.
+// applyTableGroup server-side applies a desired TableGroup. current is the
+// object as last observed, or nil. The apply and its event are skipped when
+// current already carries the hash of everything desired sets: an unchanged
+// apply leaves etcd alone but is still a request the API server authenticates,
+// admits and diffs, and on an opted-in cluster this runs for every TableGroup
+// every poll.
 func (r *MultigresClusterReconciler) applyTableGroup(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
-	desired *multigresv1alpha1.TableGroup,
+	desired, current *multigresv1alpha1.TableGroup,
 ) error {
+	hash := tableGroupHash(desired)
+	if current != nil && current.Annotations[metadata.AnnotationSpecHash] == hash {
+		return nil
+	}
+	if desired.Annotations == nil {
+		desired.Annotations = map[string]string{}
+	}
+	desired.Annotations[metadata.AnnotationSpecHash] = hash
 	desired.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("TableGroup"))
 	if err := r.Patch(
 		ctx,
@@ -330,4 +345,18 @@ func (r *MultigresClusterReconciler) applyTableGroup(
 	}
 	r.Recorder.Eventf(cluster, "Normal", "Applied", "Applied TableGroup %s", desired.Name)
 	return nil
+}
+
+// tableGroupHash hashes every field applyTableGroup manages on a TableGroup:
+// labels, annotations other than the hash itself, owner references and spec.
+func tableGroupHash(tg *multigresv1alpha1.TableGroup) string {
+	annotations := maps.Clone(tg.Annotations)
+	delete(annotations, metadata.AnnotationSpecHash)
+	parts := make([]string, 0, 4)
+	for _, v := range []any{tg.Labels, annotations, tg.OwnerReferences, tg.Spec} {
+		// Marshalling maps, slices and the generated API types cannot fail.
+		b, _ := json.Marshal(v)
+		parts = append(parts, string(b))
+	}
+	return name.Hash(parts)
 }

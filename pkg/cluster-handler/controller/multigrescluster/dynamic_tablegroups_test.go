@@ -119,7 +119,34 @@ func existingDynamic(cluster, tg string, id string) *multigresv1alpha1.TableGrou
 		Spec: multigresv1alpha1.TableGroupSpec{
 			DatabaseName:   "postgres",
 			TableGroupName: multigresv1alpha1.TableGroupName(tg),
+			// Bare shard names, as if provisioned by a build whose template
+			// differed from the current default tablegroup.
+			Shards: []multigresv1alpha1.ShardResolvedSpec{{Name: "0-80"}, {Name: "80-inf"}},
 		},
+	}
+}
+
+// assertShapedLikeDefault checks that every shard of tg copies the default
+// tablegroup's resolved shard, name aside.
+func (f *dynamicFixture) assertShapedLikeDefault(tg *multigresv1alpha1.TableGroup) {
+	f.t.Helper()
+	def := f.tableGroup("default")
+	if def == nil || tg == nil {
+		f.t.Fatalf("default=%v tablegroup=%v, want both", def != nil, tg != nil)
+	}
+	if len(tg.Spec.Shards) == 0 {
+		f.t.Fatal("tablegroup has no shards")
+	}
+	for _, s := range tg.Spec.Shards {
+		want := def.Spec.Shards[0].DeepCopy()
+		want.Name = s.Name
+		if !equality.Semantic.DeepEqual(*want, s) {
+			f.t.Errorf("shard %s differs from the default tablegroup's resolved shard", s.Name)
+		}
+	}
+	if !equality.Semantic.DeepEqual(def.Spec.Images, tg.Spec.Images) ||
+		!equality.Semantic.DeepEqual(def.Spec.Backup, tg.Spec.Backup) {
+		f.t.Error("images or backup differ from the default tablegroup")
 	}
 }
 
@@ -150,8 +177,14 @@ func TestDynamicTableGroups_GateOff(t *testing.T) {
 	if f.tableGroup("commerce") != nil {
 		t.Error("commerce provisioned with the opt-in off")
 	}
-	if pendingDeletion(f.tableGroup("orders")) {
+	orders := f.tableGroup("orders")
+	if pendingDeletion(orders) {
 		t.Error("turning the opt-in off must not tear down what was provisioned")
+	}
+	// Retained tablegroups keep following cluster-level configuration.
+	f.assertShapedLikeDefault(orders)
+	if !isDynamic(orders) || orders.Annotations[multigresv1alpha1.AnnotationTableGroupID] != "3" {
+		t.Errorf("re-applying orders lost its dynamic label or id: %v %v", orders.Labels, orders.Annotations)
 	}
 	if meta.FindStatusCondition(
 		f.cluster.Status.Conditions,
@@ -238,11 +271,95 @@ func TestDynamicTableGroups_AbsentFromSuccessfulReadIsKept(t *testing.T) {
 	f := newDynamicFixture(t, true, empty, existingDynamic("test-cluster", "commerce", "7"))
 	f.reconcile()
 
-	if tg := f.tableGroup("commerce"); tg == nil || pendingDeletion(tg) {
-		t.Error("a provisioned dynamic tablegroup was removed")
+	tg := f.tableGroup("commerce")
+	if tg == nil || pendingDeletion(tg) {
+		t.Fatal("a provisioned dynamic tablegroup was removed")
+	}
+	f.assertShapedLikeDefault(tg)
+	if len(tg.Spec.Shards) != 2 || tg.Spec.Shards[0].Name != "0-80" || tg.Spec.Shards[1].Name != "80-inf" {
+		t.Errorf("re-applying commerce changed its shard layout: %+v", tg.Spec.Shards)
 	}
 	if pendingDeletion(f.tableGroup("default")) {
 		t.Error("the spec-declared default tablegroup was marked for deletion")
+	}
+}
+
+func TestDynamicTableGroups_UnchangedTableGroupsAreNotReapplied(t *testing.T) {
+	f := newDynamicFixture(t, true, desiredCommerce(7))
+	f.reconcile()
+	before := map[string]string{}
+	for _, n := range []string{"default", "commerce"} {
+		tg := f.tableGroup(n)
+		if tg == nil || tg.Annotations[metadata.AnnotationSpecHash] == "" {
+			t.Fatalf("%s: not applied with a spec hash: %+v", n, tg)
+		}
+		before[n] = tg.ResourceVersion
+	}
+	drain(f.r.Recorder.(*record.FakeRecorder))
+
+	f.reconcile()
+	for n, rv := range before {
+		if got := f.tableGroup(n).ResourceVersion; got != rv {
+			t.Errorf("%s: resourceVersion %s -> %s on a converged reconcile", n, rv, got)
+		}
+	}
+	for _, e := range drain(f.r.Recorder.(*record.FakeRecorder)) {
+		if strings.Contains(e, "Applied TableGroup") {
+			t.Errorf("event on a converged reconcile: %s", e)
+		}
+	}
+
+	// A template change reaches both the spec and the dynamic tablegroup.
+	f.cluster.Spec.Images.Postgres = "postgres:changed"
+	f.reconcile()
+	for n, rv := range before {
+		if got := f.tableGroup(n).ResourceVersion; got == rv {
+			t.Errorf("%s: not re-applied after a template change", n)
+		}
+	}
+}
+
+// drain returns the events recorded so far.
+func drain(rec *record.FakeRecorder) []string {
+	var out []string
+	for {
+		select {
+		case e := <-rec.Events:
+			out = append(out, e)
+		default:
+			return out
+		}
+	}
+}
+
+func TestDynamicTableGroups_ConditionMessageIsBounded(t *testing.T) {
+	long := strings.Repeat("x", 4000)
+	list := func(string) ([]multiadmin.TableGroup, error) {
+		var out []multiadmin.TableGroup
+		for i := range 60 {
+			out = append(out, multiadmin.TableGroup{
+				ID: int64(i + 1), Name: fmt.Sprintf("%s%d", long, i), Shards: []string{"0-inf"},
+			})
+		}
+		return out, nil
+	}
+	f := newDynamicFixture(t, true, list)
+	f.reconcile()
+	c := meta.FindStatusCondition(
+		f.cluster.Status.Conditions,
+		multigresv1alpha1.ConditionDynamicTableGroups,
+	)
+	if c == nil {
+		t.Fatal("no condition")
+	}
+	if len(c.Message) > 4096 {
+		t.Errorf("message is %d bytes", len(c.Message))
+	}
+	if strings.Contains(c.Message, long[:maxNameLen+1]) {
+		t.Error("an unvalidated name was quoted in full")
+	}
+	if !strings.Contains(c.Message, "and 40 more") {
+		t.Errorf("message does not say how many problems were cut: %s", c.Message)
 	}
 }
 
