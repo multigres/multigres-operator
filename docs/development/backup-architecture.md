@@ -8,7 +8,7 @@ Backup configuration is defined at the `MultigresCluster` level and propagates d
 
 ## Filesystem repository
 
-pgBackRest needs one repository per shard. For filesystem backups, the operator creates one PVC named `backup-data-{cluster}-{db}-{tg}-{shard}` and mounts it at `/backups` in every pooler pod.
+pgBackRest needs one repository per shard. For filesystem backups, the operator creates one PVC named `backup-data-{cluster}-{db}-{tg}-{shard}` (`backup-data-{cluster}-{db}-{tg}-{tgid}-{shard}` for a shard of a dynamic tablegroup, so a tablegroup recreated under a dropped one's name never reuses its repository) and mounts it at `/backups` in every pooler pod.
 
 That PVC must be RWX when more than one pod needs it, including when a shard spans cells. A cell-local volume gives different poolers different repositories and cannot be used for a multi-cell shard. Use S3 if a shared filesystem is not available.
 

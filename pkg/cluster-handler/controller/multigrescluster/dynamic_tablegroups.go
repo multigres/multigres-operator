@@ -1,6 +1,7 @@
 package multigrescluster
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
@@ -34,16 +35,24 @@ import (
 //     annotated with the catalog id, shaped from the database's default
 //     tablegroup. The TableGroup controller creates its Shards, and the Shard
 //     controller passes the id to poolers.
-//   - Every dynamic TableGroup is kept in the active set, so the prune path in
-//     reconcileDatabases never removes one, even when the catalog no longer
-//     lists it. Removing provisioned tablegroups needs the topology cleanup a
-//     drop requires (pooler records and shard initialization claims), which
-//     this operator does not run.
+//   - Every dynamic TableGroup of a database the spec declares is kept in the
+//     active set, so the prune path in reconcileDatabases never removes one,
+//     even when the catalog no longer lists it. Removing provisioned
+//     tablegroups needs the topology cleanup a drop requires (pooler records
+//     and shard initialization claims), which this operator does not run.
+//   - Removing the database from the spec releases its dynamic tablegroups:
+//     they are drained and deleted with the database's spec-declared ones,
+//     as before dynamic tablegroups existed. Its catalog goes with the
+//     default tablegroup, and PruneDatabases deletes its topology record,
+//     which is what the shards' poolers and any waiting CREATE depend on.
 //   - A retained dynamic TableGroup is re-applied on every reconcile from its
 //     own stored shape (name, shard names, catalog id) and the database's
 //     current default tablegroup, whether or not the catalog is being read.
 //     Images, credentials, TLS, backup and topology changes reach it like any
 //     spec-declared tablegroup.
+//   - A spec-declared tablegroup is never applied over a dynamic one of the
+//     same name. The conflict is reported from the existing TableGroups, so
+//     it is visible whether or not the catalog is being read.
 //   - A failed read adds nothing.
 
 // dynamicTableGroupPollInterval is how often an opted-in cluster re-reads the
@@ -65,6 +74,14 @@ const maxDynamicShards = 32
 // names from the catalog are untrusted input and are only ever quoted
 // truncated to this length.
 const maxNameLen = 25
+
+// maxDynamicTableGroupsPerDatabase caps what the catalog can make the
+// operator provision for one database. It matches the spec's own limit
+// (MaxItems=20 on DatabaseConfig.TableGroups): anyone who can run CREATE
+// TABLEGROUP could otherwise turn a loop of statements into unbounded pods
+// and PVCs, with no supported cleanup. Entries past the cap, in id order, are
+// reported in the condition and not provisioned.
+const maxDynamicTableGroupsPerDatabase = 20
 
 // maxConditionItems bounds each list in the DynamicTableGroups condition
 // message. The CRD caps a message at 32768 bytes and a rejected status apply
@@ -127,18 +144,33 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 	globalTopoRef multigresv1alpha1.GlobalTopoServerRef,
 	active map[string]bool,
 ) error {
-	// Provisioned dynamic tablegroups are never removed and keep following
-	// cluster-level configuration; see the file comment. That also covers
-	// turning the opt-in off and a database leaving the spec (which leaves
-	// no template to re-apply from, so the TableGroup is kept as it is).
+	specDBs := map[multigresv1alpha1.DatabaseName]bool{}
+	conflicts := map[string]bool{}
+	for _, db := range cluster.Spec.Databases {
+		specDBs[db.Name] = true
+		for _, tg := range db.TableGroups {
+			if isDynamic(existing[TableGroupName(cluster.Name, db.Name, tg.Name)]) {
+				conflicts[fmt.Sprintf("%s/%s", db.Name, tg.Name)] = true
+			}
+		}
+	}
+
+	// Provisioned dynamic tablegroups of a declared database are never
+	// removed and keep following cluster-level configuration; see the file
+	// comment. That also covers turning the opt-in off. One whose database
+	// left the spec, or that is already draining, is left out of the active
+	// set so the prune below finishes it; a drained one the catalog still
+	// lists is recreated once its Shards are gone (priorIncarnationPresent).
 	for _, tgName := range slices.Sorted(maps.Keys(existing)) {
 		tg := existing[tgName]
-		if !isDynamic(tg) {
+		if !isDynamic(tg) || !specDBs[tg.Spec.DatabaseName] || tgDraining(tg) {
 			continue
 		}
 		active[tg.Name] = true
 		tmpl, ok := templates[tg.Spec.DatabaseName]
-		if !ok || tgDraining(tg) {
+		if !ok {
+			// The default tablegroup did not resolve this pass: keep the
+			// TableGroup as it is rather than guess its shape.
 			continue
 		}
 		desired, err := buildDynamicTableGroup(cluster, tmpl, storedShape(tg), globalTopoRef, r.Scheme)
@@ -153,13 +185,12 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 	if !dynamicTableGroupsEnabled(cluster) {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions,
 			multigresv1alpha1.ConditionDynamicTableGroups)
-		meta.RemoveStatusCondition(&cluster.Status.Conditions,
-			multigresv1alpha1.ConditionDynamicTableGroupConflict)
+		setDynamicTableGroupConflictCondition(cluster, conflicts)
 		return nil
 	}
 
 	l := log.FromContext(ctx)
-	var problems, conflicts []string
+	var problems []string
 	readFailed := false
 
 	for _, db := range cluster.Spec.Databases {
@@ -184,6 +215,18 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 			specNames[tg.Name] = true
 		}
 
+		// Oldest first, so the ones already provisioned keep their place
+		// under the cap and a new entry is the one left out.
+		slices.SortFunc(desired, func(a, b multiadmin.TableGroup) int {
+			return cmp.Compare(a.ID, b.ID)
+		})
+		provisioned := 0
+		for _, tg := range existing {
+			if isDynamic(tg) && tg.Spec.DatabaseName == db.Name {
+				provisioned++
+			}
+		}
+
 		listed := map[string]bool{}
 		for _, want := range desired {
 			// want.Name is unvalidated here and below: quote it truncated.
@@ -201,7 +244,7 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 				continue
 			}
 			if specNames[multigresv1alpha1.TableGroupName(want.Name)] {
-				conflicts = append(conflicts, fmt.Sprintf("%s/%s", db.Name, want.Name))
+				conflicts[fmt.Sprintf("%s/%s", db.Name, want.Name)] = true
 				continue
 			}
 
@@ -224,6 +267,14 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 				// This incarnation already exists and was re-applied above.
 				continue
 			}
+			if provisioned >= maxDynamicTableGroupsPerDatabase {
+				problems = append(problems, fmt.Sprintf(
+					"%s/%s (id %d): not provisioned, the database already has %d dynamic tablegroups",
+					db.Name, want.Name, want.ID, maxDynamicTableGroupsPerDatabase))
+				continue
+			}
+			provisioned++
+
 			active[desiredTG.Name] = true
 			if err := r.applyTableGroup(ctx, cluster, desiredTG, nil); err != nil {
 				// One entry the API server rejects must not stop the rest of the
@@ -386,7 +437,8 @@ func (r *MultigresClusterReconciler) setDynamicTableGroupConditions(
 	cluster *multigresv1alpha1.MultigresCluster,
 	existing map[string]*multigresv1alpha1.TableGroup,
 	readFailed bool,
-	problems, conflicts []string,
+	problems []string,
+	conflicts map[string]bool,
 ) {
 	var provisioned []string
 	for _, tg := range existing {
@@ -437,6 +489,15 @@ func (r *MultigresClusterReconciler) setDynamicTableGroupConditions(
 			"%s: %s", cond.Reason, joinCapped(problems))
 	}
 
+	setDynamicTableGroupConflictCondition(cluster, conflicts)
+}
+
+// setDynamicTableGroupConflictCondition reports names ("db/tablegroup") that
+// both the spec and the catalog claim.
+func setDynamicTableGroupConflictCondition(
+	cluster *multigresv1alpha1.MultigresCluster,
+	conflicts map[string]bool,
+) {
 	if len(conflicts) == 0 {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions,
 			multigresv1alpha1.ConditionDynamicTableGroupConflict)
@@ -447,7 +508,8 @@ func (r *MultigresClusterReconciler) setDynamicTableGroupConditions(
 		Status: metav1.ConditionTrue,
 		Reason: "DeclaredInSpec",
 		Message: "the catalog lists tablegroups the spec also declares; whichever was " +
-			"provisioned first is kept and the other is ignored: " + joinCapped(conflicts),
+			"provisioned first is kept and the other is ignored: " +
+			joinCapped(slices.Sorted(maps.Keys(conflicts))),
 		ObservedGeneration: cluster.Generation,
 	})
 }

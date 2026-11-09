@@ -32,8 +32,17 @@ func (r *MultigresClusterReconciler) reconcileDatabases(
 	cluster *multigresv1alpha1.MultigresCluster,
 	res *resolver.Resolver,
 ) (bool, error) {
+	// An opted-in cluster lists TableGroups from the API server, not the
+	// informer cache. A dynamic TableGroup created on the previous pass may
+	// not be in the cache yet; a spec edit declaring the same name would then
+	// be applied over it with ForceOwnership, replacing the catalog's shard
+	// list and draining its shards.
+	lister := client.Reader(r.Client)
+	if dynamicTableGroupsEnabled(cluster) && r.APIReader != nil {
+		lister = r.APIReader
+	}
 	existingTGs := &multigresv1alpha1.TableGroupList{}
-	if err := r.List(
+	if err := lister.List(
 		ctx,
 		existingTGs,
 		client.InNamespace(cluster.Namespace),

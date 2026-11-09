@@ -601,11 +601,91 @@ func TestDynamicTableGroups_SpecNeverOverwritesAProvisionedOne(t *testing.T) {
 		len(got.Spec.Shards) != 2 {
 		t.Fatalf("the spec replaced the provisioned commerce: %+v", got)
 	}
-	if c := meta.FindStatusCondition(
-		f.cluster.Status.Conditions,
-		multigresv1alpha1.ConditionDynamicTableGroupConflict,
-	); c == nil || !strings.Contains(c.Message, "postgres/commerce") {
+	conflict := func() *metav1.Condition {
+		return meta.FindStatusCondition(
+			f.cluster.Status.Conditions,
+			multigresv1alpha1.ConditionDynamicTableGroupConflict,
+		)
+	}
+	if c := conflict(); c == nil || !strings.Contains(c.Message, "postgres/commerce") {
 		t.Errorf("conflict condition = %+v", c)
+	}
+
+	// The conflict comes from the existing dynamic TableGroup, not from the
+	// catalog read: it stays when the catalog stops listing the name and
+	// when the opt-in is turned off.
+	f.r.ListDesiredTableGroups = func(context.Context, *multigresv1alpha1.MultigresCluster, string) ([]multiadmin.TableGroup, error) {
+		return nil, nil
+	}
+	f.reconcile()
+	if c := conflict(); c == nil || !strings.Contains(c.Message, "postgres/commerce") {
+		t.Errorf("conflict condition after the catalog stopped listing the name = %+v", c)
+	}
+	delete(f.cluster.Annotations, multigresv1alpha1.AnnotationDynamicTableGroups)
+	f.reconcile()
+	if c := conflict(); c == nil || !strings.Contains(c.Message, "postgres/commerce") {
+		t.Errorf("conflict condition with the opt-in off = %+v", c)
+	}
+	if got := f.tableGroup("commerce"); got == nil || !isDynamic(got) || len(got.Spec.Shards) != 2 {
+		t.Fatalf("the spec replaced the provisioned commerce with the opt-in off: %+v", got)
+	}
+}
+
+func TestDynamicTableGroups_DatabaseRemovedReleasesItsTableGroups(t *testing.T) {
+	gone := existingDynamic("test-cluster", "orders", "5")
+	gone.Name = name.JoinWithConstraints(name.DefaultConstraints, "test-cluster", "legacy", "orders")
+	gone.Spec.DatabaseName = "legacy"
+	metadata.AddDatabaseLabel(gone.Labels, "legacy")
+	f := newDynamicFixture(t, true, desiredCommerce(7), gone, existingDynamic("test-cluster", "stock", "6"))
+	f.reconcile()
+
+	released := &multigresv1alpha1.TableGroup{}
+	if err := f.c.Get(t.Context(), types.NamespacedName{Namespace: "default", Name: gone.Name}, released); err != nil {
+		t.Fatal(err)
+	}
+	if !pendingDeletion(released) {
+		t.Error("a dynamic tablegroup of a database no longer in the spec was not released")
+	}
+	if pendingDeletion(f.tableGroup("stock")) || pendingDeletion(f.tableGroup("commerce")) {
+		t.Error("a dynamic tablegroup of a declared database was marked for deletion")
+	}
+	if f.calls != 1 {
+		t.Errorf("multiadmin read %d times, want once for the one declared database", f.calls)
+	}
+}
+
+func TestDynamicTableGroups_PerDatabaseCap(t *testing.T) {
+	// Listed newest first: the cap must still keep the oldest ids.
+	list := func(string) ([]multiadmin.TableGroup, error) {
+		var out []multiadmin.TableGroup
+		for i := maxDynamicTableGroupsPerDatabase + 5; i >= 1; i-- {
+			out = append(out, multiadmin.TableGroup{
+				ID: int64(i), Name: fmt.Sprintf("tg%d", i), Shards: []string{"0-inf"},
+			})
+		}
+		return out, nil
+	}
+	f := newDynamicFixture(t, true, list)
+	for range 2 { // the second pass counts the existing ones
+		f.reconcile()
+		for i := 1; i <= maxDynamicTableGroupsPerDatabase+5; i++ {
+			got := f.tableGroup(fmt.Sprintf("tg%d", i))
+			if i <= maxDynamicTableGroupsPerDatabase && got == nil {
+				t.Errorf("tg%d under the cap not provisioned", i)
+			}
+			if i > maxDynamicTableGroupsPerDatabase && got != nil {
+				t.Errorf("tg%d over the cap provisioned", i)
+			}
+		}
+		c := meta.FindStatusCondition(
+			f.cluster.Status.Conditions,
+			multigresv1alpha1.ConditionDynamicTableGroups,
+		)
+		if c == nil || c.Status != metav1.ConditionFalse ||
+			!strings.Contains(c.Message, fmt.Sprintf("tg%d (id %d): not provisioned",
+				maxDynamicTableGroupsPerDatabase+1, maxDynamicTableGroupsPerDatabase+1)) {
+			t.Errorf("condition does not report the entries over the cap: %+v", c)
+		}
 	}
 }
 

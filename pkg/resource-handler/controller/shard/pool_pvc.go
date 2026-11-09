@@ -36,18 +36,30 @@ func poolDataPVCNamePrefix(
 	shard *multigresv1alpha1.Shard,
 	poolName, cellName string,
 ) string {
-	clusterName := shard.Labels["multigres.com/cluster"]
 	baseName := nameutil.JoinWithConstraints(
 		nameutil.PodConstraints,
-		clusterName,
-		string(shard.Spec.DatabaseName),
-		string(shard.Spec.TableGroupName),
-		string(shard.Spec.ShardName),
-		"pool",
-		poolName,
-		cellName,
+		append(shardStorageIdentity(shard), "pool", poolName, cellName)...,
 	)
 	return "data-" + baseName + "-"
+}
+
+// shardStorageIdentity is the name parts that identify a shard's volumes:
+// cluster, database, tablegroup, shard, and for a shard of a dynamic
+// tablegroup its catalog id. Retained PVCs outlive their Shard under the same
+// name, and a pool reuses an existing PVC by name, so without the id a
+// tablegroup recreated under a dropped one's name (a new catalog id, a new
+// backup scope) would start on the dropped one's data directory and backup
+// volume. Spec-declared tablegroups have no id and keep their names.
+func shardStorageIdentity(shard *multigresv1alpha1.Shard) []string {
+	parts := []string{
+		shard.Labels["multigres.com/cluster"],
+		string(shard.Spec.DatabaseName),
+		string(shard.Spec.TableGroupName),
+	}
+	if id := multigresv1alpha1.TableGroupIDOf(shard); id > 0 {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return append(parts, string(shard.Spec.ShardName))
 }
 
 // isShardBuiltPVC reports whether pvc carries a name the shard's builders
@@ -159,14 +171,9 @@ func poolStorageRequest(poolSpec multigresv1alpha1.PoolSpec) (resource.Quantity,
 
 // BuildSharedBackupPVCName builds the deterministic name for the shard-level shared backup PVC.
 func BuildSharedBackupPVCName(shard *multigresv1alpha1.Shard) string {
-	clusterName := shard.Labels["multigres.com/cluster"]
 	return nameutil.JoinWithConstraints(
 		nameutil.ServiceConstraints, // Using service constraints since PVC names follow similar rules
-		"backup-data",
-		clusterName,
-		string(shard.Spec.DatabaseName),
-		string(shard.Spec.TableGroupName),
-		string(shard.Spec.ShardName),
+		append([]string{"backup-data"}, shardStorageIdentity(shard)...)...,
 	)
 }
 
