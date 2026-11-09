@@ -115,7 +115,15 @@ jobs:
           echo "${NEW_COVERAGE}" > /tmp/coverage-artifact/new_coverage
           echo "${PREV_COVERAGE}" > /tmp/coverage-artifact/prev_coverage
           if [[ -f /tmp/coverage.txt ]]; then
-            cp /tmp/coverage.txt /tmp/coverage-artifact/coverage_report.txt
+            # The full report has one line per function and outgrows the artifact
+            # size limit. Keep the 200 least-covered functions and the total.
+            {
+              echo "Showing the 200 least-covered functions (functions at 100% are hidden)."
+              grep -v '^total:' /tmp/coverage.txt | grep -v '100.0%$' \
+                | awk '{ pct = $NF; sub(/%/, "", pct); print pct "\t" $0 }' \
+                | sort -n | head -n 200 | cut -f2-
+              grep '^total:' /tmp/coverage.txt
+            } > /tmp/coverage-artifact/coverage_report.txt
           else
             echo "No coverage report generated (Build likely failed)." > /tmp/coverage-artifact/coverage_report.txt
           fi
