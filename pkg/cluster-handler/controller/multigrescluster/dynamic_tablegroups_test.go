@@ -332,6 +332,65 @@ func drain(rec *record.FakeRecorder) []string {
 	}
 }
 
+func TestDynamicTableGroups_ProblemsTurnTheConditionFalseOnce(t *testing.T) {
+	list := func(string) ([]multiadmin.TableGroup, error) {
+		return []multiadmin.TableGroup{
+			{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}},
+			{ID: 2, Name: "ok", Shards: []string{"0-inf"}},
+		}, nil
+	}
+	f := newDynamicFixture(t, true, list)
+	warnings := func() int {
+		n := 0
+		for _, e := range drain(f.r.Recorder.(*record.FakeRecorder)) {
+			if strings.HasPrefix(e, "Warning DynamicTableGroupsFailed") {
+				n++
+			}
+		}
+		return n
+	}
+
+	f.reconcile()
+	c := meta.FindStatusCondition(
+		f.cluster.Status.Conditions,
+		multigresv1alpha1.ConditionDynamicTableGroups,
+	)
+	if c == nil || c.Status != metav1.ConditionFalse || c.Reason != "ProvisioningFailed" {
+		t.Fatalf("condition = %+v, want False/ProvisioningFailed", c)
+	}
+	if f.tableGroup("ok") == nil {
+		t.Error("the valid entry was not provisioned next to the failing one")
+	}
+	if got := warnings(); got != 1 {
+		t.Errorf("%d Warning events on the first failing pass, want 1", got)
+	}
+
+	// The problem persists: no new event.
+	f.reconcile()
+	if got := warnings(); got != 0 {
+		t.Errorf("%d Warning events on a pass with the same lasting problem, want 0", got)
+	}
+
+	// The problem clears, then returns: one more event.
+	f.r.ListDesiredTableGroups = func(context.Context, *multigresv1alpha1.MultigresCluster, string) ([]multiadmin.TableGroup, error) {
+		return []multiadmin.TableGroup{{ID: 2, Name: "ok", Shards: []string{"0-inf"}}}, nil
+	}
+	f.reconcile()
+	if c := meta.FindStatusCondition(
+		f.cluster.Status.Conditions,
+		multigresv1alpha1.ConditionDynamicTableGroups,
+	); c == nil || c.Status != metav1.ConditionTrue {
+		t.Fatalf("condition = %+v, want True once the problem cleared", c)
+	}
+	f.r.ListDesiredTableGroups = func(context.Context, *multigresv1alpha1.MultigresCluster, string) ([]multiadmin.TableGroup, error) {
+		return list("")
+	}
+	f.reconcile()
+	if got := warnings(); got != 1 {
+		t.Errorf("%d Warning events after the problem returned, want 1", got)
+	}
+}
+
 func TestDynamicTableGroups_ConditionMessageIsBounded(t *testing.T) {
 	long := strings.Repeat("x", 4000)
 	list := func(string) ([]multiadmin.TableGroup, error) {

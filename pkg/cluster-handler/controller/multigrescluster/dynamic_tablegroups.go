@@ -224,7 +224,6 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 				// This incarnation already exists and was re-applied above.
 				continue
 			}
-
 			active[desiredTG.Name] = true
 			if err := r.applyTableGroup(ctx, cluster, desiredTG, nil); err != nil {
 				// One entry the API server rejects must not stop the rest of the
@@ -235,7 +234,7 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 		}
 	}
 
-	setDynamicTableGroupConditions(cluster, existing, readFailed, problems, conflicts)
+	r.setDynamicTableGroupConditions(cluster, existing, readFailed, problems, conflicts)
 	return nil
 }
 
@@ -378,8 +377,12 @@ func (r *MultigresClusterReconciler) priorIncarnationPresent(
 }
 
 // setDynamicTableGroupConditions reports what the operator has provisioned.
-// It is for people and debugging; Multigres reads only topology.
-func setDynamicTableGroupConditions(
+// It is for people and debugging; Multigres reads only topology, so a CREATE
+// TABLEGROUP that cannot complete just hangs for the SQL user. This condition
+// and a Warning event when it turns False are the only places the failure
+// shows up. The event is recorded on the transition only, so a lasting
+// problem adds no steady-state events.
+func (r *MultigresClusterReconciler) setDynamicTableGroupConditions(
 	cluster *multigresv1alpha1.MultigresCluster,
 	existing map[string]*multigresv1alpha1.TableGroup,
 	readFailed bool,
@@ -417,11 +420,22 @@ func setDynamicTableGroupConditions(
 		Message:            msg,
 		ObservedGeneration: cluster.Generation,
 	}
-	if readFailed {
+	switch {
+	case readFailed:
 		cond.Status = metav1.ConditionFalse
 		cond.Reason = "DesiredStateUnknown"
+	case len(problems) > 0:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = "ProvisioningFailed"
 	}
+	// SetStatusCondition updates the stored condition in place, so read the
+	// previous status before it runs.
+	wasFalse := meta.IsStatusConditionFalse(cluster.Status.Conditions, cond.Type)
 	meta.SetStatusCondition(&cluster.Status.Conditions, cond)
+	if cond.Status == metav1.ConditionFalse && !wasFalse {
+		r.Recorder.Eventf(cluster, "Warning", "DynamicTableGroupsFailed",
+			"%s: %s", cond.Reason, joinCapped(problems))
+	}
 
 	if len(conflicts) == 0 {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions,
