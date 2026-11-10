@@ -29,7 +29,11 @@ import (
 //
 // Everything here is level-triggered from the latest successful read of
 // multiadmin's desired list and the cluster's own TableGroups and Shards;
-// nothing is kept in memory between reconciles.
+// nothing is kept in memory between reconciles. CREATE TABLEGROUP changes
+// nothing the operator watches, so dynamicTableGroupPoller reads the desired
+// lists on its own schedule and enqueues a cluster only when the catalog asks
+// for something its TableGroups and conditions do not yet show; a converged
+// cluster is never reconciled because of the catalog.
 //
 //   - Provisioning applies a TableGroup labelled LabelDynamicTableGroup and
 //     annotated with the catalog id, shaped from the database's default
@@ -54,10 +58,6 @@ import (
 //     same name. The conflict is reported from the existing TableGroups, so
 //     it is visible whether or not the catalog is being read.
 //   - A failed read adds nothing.
-
-// dynamicTableGroupPollInterval is how often an opted-in cluster re-reads the
-// desired list when nothing else requeues it.
-const dynamicTableGroupPollInterval = 10 * time.Second
 
 // multiadminHTTPTimeout bounds one desired-list read.
 const multiadminHTTPTimeout = 10 * time.Second
@@ -210,51 +210,21 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 			continue
 		}
 
-		specNames := map[multigresv1alpha1.TableGroupName]bool{}
-		for _, tg := range db.TableGroups {
-			specNames[tg.Name] = true
+		plan := planDesiredTableGroups(cluster, db, desired, existing)
+		problems = append(problems, plan.problems...)
+		for _, c := range plan.conflicts {
+			conflicts[c] = true
 		}
 
-		// Oldest first, so the ones already provisioned keep their place
-		// under the cap and a new entry is the one left out.
-		slices.SortFunc(desired, func(a, b multiadmin.TableGroup) int {
-			return cmp.Compare(a.ID, b.ID)
-		})
-		provisioned := 0
-		for _, tg := range existing {
-			if isDynamic(tg) && tg.Spec.DatabaseName == db.Name {
-				provisioned++
-			}
-		}
-
-		listed := map[string]bool{}
-		for _, want := range desired {
-			// want.Name is unvalidated here and below: quote it truncated.
-			if listed[want.Name] {
-				problems = append(
-					problems,
-					fmt.Sprintf("%s/%s: listed more than once", db.Name, shortName(want.Name)),
-				)
-				continue
-			}
-			listed[want.Name] = true
-			if msg := validateDesiredTableGroup(want); msg != "" {
-				problems = append(problems,
-					fmt.Sprintf("%s/%s: %s", db.Name, shortName(want.Name), msg))
-				continue
-			}
-			if specNames[multigresv1alpha1.TableGroupName(want.Name)] {
-				conflicts[fmt.Sprintf("%s/%s", db.Name, want.Name)] = true
-				continue
-			}
-
+		for _, want := range plan.pending {
 			desiredTG, err := buildDynamicTableGroup(cluster, tmpl, want, globalTopoRef, r.Scheme)
 			if err != nil {
 				return err
 			}
-
-			current := existing[desiredTG.Name]
-			wait, err := r.priorIncarnationPresent(ctx, cluster, current, db.Name, want)
+			// A pending entry has no TableGroup of its name and id, so a
+			// current object is another incarnation to wait for; what is
+			// left after the wait is a name with nothing under it yet.
+			wait, err := r.priorIncarnationPresent(ctx, cluster, existing[desiredTG.Name], db.Name, want)
 			if err != nil {
 				return err
 			}
@@ -263,17 +233,6 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 					db.Name, want.Name, want.ID, wait))
 				continue
 			}
-			if current != nil {
-				// This incarnation already exists and was re-applied above.
-				continue
-			}
-			if provisioned >= maxDynamicTableGroupsPerDatabase {
-				problems = append(problems, fmt.Sprintf(
-					"%s/%s (id %d): not provisioned, the database already has %d dynamic tablegroups",
-					db.Name, want.Name, want.ID, maxDynamicTableGroupsPerDatabase))
-				continue
-			}
-			provisioned++
 
 			active[desiredTG.Name] = true
 			if err := r.applyTableGroup(ctx, cluster, desiredTG, nil); err != nil {
@@ -287,6 +246,86 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 
 	r.setDynamicTableGroupConditions(cluster, existing, readFailed, problems, conflicts)
 	return nil
+}
+
+// desiredPlan is what one database's catalog read asks of the operator, given
+// the cluster's existing TableGroups. It is pure: the reconcile acts on it and
+// the poller decides from it whether a reconcile is due at all.
+type desiredPlan struct {
+	// pending are the valid entries under the cap that have no TableGroup of
+	// their name and catalog id yet. The name may still carry another
+	// incarnation (another id, a spec-declared TableGroup, one draining)
+	// that the reconcile waits on and reports before creating this one.
+	pending []multiadmin.TableGroup
+	// problems are entries that cannot be provisioned, with the reason.
+	problems []string
+	// conflicts are "db/name" entries the spec also declares.
+	conflicts []string
+}
+
+// planDesiredTableGroups classifies every catalog entry of db against
+// existing, the cluster's TableGroups by object name.
+func planDesiredTableGroups(
+	cluster *multigresv1alpha1.MultigresCluster,
+	db multigresv1alpha1.DatabaseConfig,
+	desired []multiadmin.TableGroup,
+	existing map[string]*multigresv1alpha1.TableGroup,
+) desiredPlan {
+	var plan desiredPlan
+
+	specNames := map[multigresv1alpha1.TableGroupName]bool{}
+	for _, tg := range db.TableGroups {
+		specNames[tg.Name] = true
+	}
+
+	// Oldest first, so the ones already provisioned keep their place under
+	// the cap and a new entry is the one left out.
+	desired = slices.SortedFunc(slices.Values(desired), func(a, b multiadmin.TableGroup) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	provisioned := 0
+	for _, tg := range existing {
+		if isDynamic(tg) && tg.Spec.DatabaseName == db.Name {
+			provisioned++
+		}
+	}
+
+	listed := map[string]bool{}
+	for _, want := range desired {
+		// want.Name is unvalidated here and below: quote it truncated.
+		if listed[want.Name] {
+			plan.problems = append(plan.problems,
+				fmt.Sprintf("%s/%s: listed more than once", db.Name, shortName(want.Name)))
+			continue
+		}
+		listed[want.Name] = true
+		if msg := validateDesiredTableGroup(want); msg != "" {
+			plan.problems = append(plan.problems,
+				fmt.Sprintf("%s/%s: %s", db.Name, shortName(want.Name), msg))
+			continue
+		}
+		if specNames[multigresv1alpha1.TableGroupName(want.Name)] {
+			plan.conflicts = append(plan.conflicts, fmt.Sprintf("%s/%s", db.Name, want.Name))
+			continue
+		}
+
+		current := existing[TableGroupName(cluster.Name, db.Name, multigresv1alpha1.TableGroupName(want.Name))]
+		if isDynamic(current) && multigresv1alpha1.TableGroupIDOf(current) == want.ID &&
+			!tgDraining(current) {
+			continue // this incarnation exists
+		}
+		if current == nil {
+			if provisioned >= maxDynamicTableGroupsPerDatabase {
+				plan.problems = append(plan.problems, fmt.Sprintf(
+					"%s/%s (id %d): not provisioned, the database already has %d dynamic tablegroups",
+					db.Name, want.Name, want.ID, maxDynamicTableGroupsPerDatabase))
+				continue
+			}
+			provisioned++
+		}
+		plan.pending = append(plan.pending, want)
+	}
+	return plan
 }
 
 // storedShape is the catalog entry a retained dynamic TableGroup was

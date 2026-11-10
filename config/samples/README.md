@@ -191,7 +191,7 @@ metadata:
     multigres.com/dynamic-tablegroups: "true"
 ```
 
-With it, every 10 seconds the operator reads each database's desired tablegroups from multiadmin (`GET /api/v1/databases/{db}/tablegroups`). For each one it creates a TableGroup labelled `multigres.com/dynamic-tablegroup` and annotated `multigres.com/tablegroup-id`, shaped from the database's default tablegroup: every shard copies the default shard's resolved spec (cells, pools, storage, backup), and poolers get `--tablegroup-id`. The waiting `CREATE TABLEGROUP` returns once every shard has a serving primary. A failed read provisions nothing new. Names the spec also declares are left to the spec and reported in the `DynamicTableGroupConflict` condition; `DynamicTableGroups` reports what is provisioned.
+With it, every 10 seconds the operator reads each database's desired tablegroups from multiadmin (`GET /api/v1/databases/{db}/tablegroups`) and reconciles the cluster only when the catalog lists something its TableGroups do not yet show; a converged cluster is not touched. For each listed tablegroup it creates a TableGroup labelled `multigres.com/dynamic-tablegroup` and annotated `multigres.com/tablegroup-id`, shaped from the database's default tablegroup: every shard copies the default shard's resolved spec (cells, pools, storage, backup), and poolers get `--tablegroup-id`. The waiting `CREATE TABLEGROUP` returns once every shard has a serving primary. A failed read provisions nothing new. Names the spec also declares are left to the spec and reported in the `DynamicTableGroupConflict` condition; `DynamicTableGroups` reports what is provisioned.
 
 ```sql
 SET statement_timeout = 0;  -- the gateway default (30s) is shorter than provisioning

@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -428,12 +429,6 @@ func (r *MultigresClusterReconciler) Reconcile(
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(start).String())
 	r.Recorder.Event(cluster, "Normal", "Synced", "Successfully reconciled MultigresCluster")
-	// An opted-in cluster polls the catalog: CREATE TABLEGROUP changes nothing
-	// the operator watches.
-	if dynamicTableGroupsEnabled(cluster) &&
-		(retireResult.RequeueAfter == 0 || retireResult.RequeueAfter > dynamicTableGroupPollInterval) {
-		retireResult.RequeueAfter = dynamicTableGroupPollInterval
-	}
 	return retireResult, nil
 }
 
@@ -622,6 +617,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
+	dynamicEvents := make(chan event.GenericEvent)
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.MultigresCluster{},
 			builder.WithPredicates(predicate.Or(
@@ -651,13 +647,25 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Watches(
 			&multigresv1alpha1.ShardTemplate{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueRequestsFromTemplate),
-		)
+		).
+		// CREATE TABLEGROUP through a gateway changes nothing the operator
+		// watches; dynamicTableGroupPoller feeds this source with the
+		// opted-in clusters whose catalog asks for something new. The gate's
+		// event filter applies to it like every other source.
+		WatchesRawSource(source.Channel(dynamicEvents, &handler.EnqueueRequestForObject{}))
 
-	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+	if err := r.Gate.Wire(b, mgr, func() client.ObjectList {
 		return &multigresv1alpha1.MultigresClusterList{}
 	}).
 		WithOptions(controllerOpts).
-		Complete(reconciler)
+		Complete(reconciler); err != nil {
+		return err
+	}
+	return mgr.Add(&dynamicTableGroupPoller{
+		r:        r,
+		events:   dynamicEvents,
+		interval: dynamicTableGroupPollInterval,
+	})
 }
 
 // projectRefOrGenerationChangedPredicate requeues when desired child state can
