@@ -150,6 +150,15 @@ type MultigresClusterSpec struct {
 	// +optional
 	Backup *BackupConfig `json:"backup,omitempty"`
 
+	// BackupSchedules declares backup schedules for this cluster. Each entry is
+	// rendered into a MultigresBackupSchedule named <cluster>-<name> and owned
+	// by the cluster; removing an entry deletes its schedule.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=20
+	BackupSchedules []BackupScheduleEntry `json:"backupSchedules,omitempty"`
+
 	// ExternalGateway controls external exposure of the global multigateway Service.
 	// When nil or enabled: false, the Service remains ClusterIP.
 	// +optional

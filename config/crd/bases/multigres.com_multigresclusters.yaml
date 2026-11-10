@@ -196,6 +196,129 @@ spec:
                     changed after creation
                   rule: has(self.encryption) == has(oldSelf.encryption) && (!has(self.encryption)
                     || self.encryption == oldSelf.encryption)
+              backupSchedules:
+                description: |-
+                  BackupSchedules declares backup schedules for this cluster. Each entry is
+                  rendered into a MultigresBackupSchedule named <cluster>-<name> and owned
+                  by the cluster; removing an entry deletes its schedule.
+                items:
+                  description: |-
+                    BackupScheduleEntry declares one schedule inline on a MultigresCluster. The
+                    cluster controller renders it into a MultigresBackupSchedule named
+                    <cluster>-<name>.
+                  properties:
+                    backupTimeoutSeconds:
+                      default: 14400
+                      description: BackupTimeoutSeconds is copied into each attempt's
+                        timeoutSeconds.
+                      format: int64
+                      minimum: 600
+                      type: integer
+                    failedBackupsHistoryLimit:
+                      default: 5
+                      description: FailedBackupsHistoryLimit is how many failed attempts
+                        to keep.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    forcePrimary:
+                      description: |-
+                        ForcePrimary allows the backup to run on the primary when no replica is
+                        available.
+                      type: boolean
+                    name:
+                      description: Name is unique within the list.
+                      maxLength: 30
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    retry:
+                      default: {}
+                      description: Retry controls retries within one scheduled run.
+                      properties:
+                        backoffSeconds:
+                          default: 1800
+                          description: |-
+                            BackoffSeconds is the minimum wait between a failed attempt finishing
+                            and the next attempt being created.
+                          format: int64
+                          minimum: 60
+                          type: integer
+                        maxAttempts:
+                          default: 4
+                          description: |-
+                            MaxAttempts is the total number of attempts per scheduled run, including
+                            the first.
+                          format: int32
+                          maximum: 10
+                          minimum: 1
+                          type: integer
+                      type: object
+                    schedule:
+                      description: Schedule is a standard 5-field cron expression,
+                        always evaluated in UTC.
+                      minLength: 1
+                      type: string
+                    startingDeadlineSeconds:
+                      default: 21600
+                      description: |-
+                        StartingDeadlineSeconds is how late a run may start. Runs that could not
+                        start within this window (for example because the operator was down)
+                        are counted as missed. Retries also stop once the window has passed.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    successfulBackupsHistoryLimit:
+                      default: 3
+                      description: SuccessfulBackupsHistoryLimit is how many succeeded
+                        attempts to keep.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    suspend:
+                      description: Suspend stops new runs from being created. Running
+                        attempts continue.
+                      type: boolean
+                    targets:
+                      description: |-
+                        Targets restricts the schedule to these shards. Empty means every shard
+                        in the cluster.
+                      items:
+                        description: BackupTarget selects one shard.
+                        properties:
+                          database:
+                            minLength: 1
+                            type: string
+                          shard:
+                            minLength: 1
+                            type: string
+                          tableGroup:
+                            minLength: 1
+                            type: string
+                        required:
+                        - database
+                        - shard
+                        - tableGroup
+                        type: object
+                      maxItems: 1000
+                      type: array
+                    type:
+                      description: Type of backup each run takes.
+                      enum:
+                      - full
+                      - differential
+                      - incremental
+                      type: string
+                  required:
+                  - name
+                  - schedule
+                  - type
+                  type: object
+                maxItems: 20
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               cells:
                 description: |-
                   Cells defines the list of cells (failure domains) in the cluster.

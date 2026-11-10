@@ -292,6 +292,27 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
+	{
+		ctx, childSpan := monitoring.StartChildSpan(
+			ctx,
+			"MultigresCluster.ReconcileBackupSchedules",
+		)
+		if err := r.reconcileBackupSchedules(ctx, cluster); err != nil {
+			monitoring.RecordSpanError(childSpan, err)
+			childSpan.End()
+			l.Error(err, "Failed to reconcile backup schedules")
+			r.Recorder.Eventf(
+				cluster,
+				"Warning",
+				"FailedApply",
+				"Failed to reconcile backup schedules: %v",
+				err,
+			)
+			return ctrl.Result{}, err
+		}
+		childSpan.End()
+	}
+
 	var pendingCells, pendingDBs bool
 
 	{
@@ -621,6 +642,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Owns(&multigresv1alpha1.Cell{}).
 		Owns(&multigresv1alpha1.TableGroup{}).
 		Owns(&multigresv1alpha1.TopoServer{}).
+		Owns(&multigresv1alpha1.MultigresBackupSchedule{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.NetworkPolicy{}).

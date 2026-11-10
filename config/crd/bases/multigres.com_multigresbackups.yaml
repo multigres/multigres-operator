@@ -1,0 +1,235 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: multigresbackups.multigres.com
+spec:
+  group: multigres.com
+  names:
+    kind: MultigresBackup
+    listKind: MultigresBackupList
+    plural: multigresbackups
+    shortNames:
+    - mgb
+    singular: multigresbackup
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.clusterRef.name
+      name: Cluster
+      type: string
+    - jsonPath: .spec.shard
+      name: Shard
+      type: string
+    - jsonPath: .spec.type
+      name: Type
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .status.backupID
+      name: Backup
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MultigresBackup is one backup attempt of one shard, scheduled
+          or manual.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MultigresBackupSpec describes one backup attempt. It is immutable.
+            properties:
+              attempt:
+                default: 1
+                description: Attempt is the attempt number within the scheduled run.
+                format: int32
+                minimum: 1
+                type: integer
+              clusterRef:
+                description: ClusterRef is the MultigresCluster that owns the shard.
+                properties:
+                  name:
+                    description: Name of the MultigresCluster.
+                    maxLength: 63
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              database:
+                minLength: 1
+                type: string
+              forcePrimary:
+                description: ForcePrimary allows the backup to run on the primary.
+                type: boolean
+              scheduledTime:
+                description: |-
+                  ScheduledTime is the scheduled run this attempt belongs to. Unset for
+                  manual backups.
+                format: date-time
+                type: string
+              shard:
+                minLength: 1
+                type: string
+              tableGroup:
+                minLength: 1
+                type: string
+              timeoutSeconds:
+                default: 14400
+                description: TimeoutSeconds bounds how long the attempt may stay Running.
+                format: int64
+                minimum: 600
+                type: integer
+              type:
+                description: Type of backup.
+                enum:
+                - full
+                - differential
+                - incremental
+                type: string
+            required:
+            - clusterRef
+            - database
+            - shard
+            - tableGroup
+            - type
+            type: object
+            x-kubernetes-validations:
+            - message: spec is immutable
+              rule: self == oldSelf
+          status:
+            description: MultigresBackupStatus defines the observed state of one attempt.
+            properties:
+              backupID:
+                description: BackupID is the pgBackRest backup label once the backup
+                  completed.
+                type: string
+              completionTime:
+                description: CompletionTime is when the attempt finished.
+                format: date-time
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              jobID:
+                description: JobID is multiadmin's job ID for the backup.
+                type: string
+              message:
+                type: string
+              notFoundSince:
+                description: |-
+                  NotFoundSince is when GetBackupJobStatus first started returning
+                  NotFound without a successful status since. Multiadmin's NotFound does
+                  not prove the job is gone, so the attempt is only marked Lost after a
+                  grace period.
+                format: date-time
+                type: string
+              phase:
+                description: BackupPhase is the lifecycle phase of a MultigresBackup.
+                enum:
+                - Pending
+                - Triggering
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+              reason:
+                description: Reason is set on Failed.
+                type: string
+              startTime:
+                description: StartTime is when multiadmin accepted the backup.
+                format: date-time
+                type: string
+              triggerTime:
+                description: |-
+                  TriggerTime is when the attempt entered Triggering, saved before the
+                  Backup RPC.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
