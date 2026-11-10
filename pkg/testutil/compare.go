@@ -9,6 +9,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
 // IgnoreMetaRuntimeFields returns cmp.Options that ignore runtime-generated
@@ -47,7 +49,35 @@ func IgnoreMetaRuntimeFields() cmp.Options {
 
 		// Ignore UID type
 		cmpopts.IgnoreTypes(types.UID("")),
+
+		// The operator stamps the hash of what it applied on the objects it
+		// manages, to skip an unchanged apply. It is bookkeeping, not desired
+		// state, so expected objects do not spell it out.
+		cmp.FilterPath(isAnnotationsField, cmp.Transformer("WithoutSpecHash", withoutSpecHash)),
 	}
+}
+
+func isAnnotationsField(p cmp.Path) bool {
+	return p.Last().String() == ".Annotations"
+}
+
+// withoutSpecHash returns annotations without the spec-hash entry, and nil
+// when nothing else is left, so an object whose only annotation is the hash
+// compares equal to one expected with none.
+func withoutSpecHash(annotations map[string]string) map[string]string {
+	if _, ok := annotations[metadata.AnnotationSpecHash]; !ok {
+		return annotations
+	}
+	out := make(map[string]string, len(annotations)-1)
+	for k, v := range annotations {
+		if k != metadata.AnnotationSpecHash {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // IgnoreServiceRuntimeFields ignores Service fields that are assigned at
