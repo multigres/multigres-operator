@@ -11,6 +11,15 @@ func TestValidate_Accepts(t *testing.T) {
 		"known integer, plain":     {"max_connections": "200"},
 		"known integer with unit":  {"shared_buffers": "128MB"},
 		"known integer, time unit": {"statement_timeout": "5min"},
+		"known integer, fractional with unit": {
+			"shared_buffers":    "64.5MB",
+			"statement_timeout": "1.5s",
+		},
+		"known integer, fractional without unit": {"max_connections": "1.5"},
+		"known integer, space before unit":       {"work_mem": "4 MB"},
+		"known integer, exponent":                {"max_connections": "1e2"},
+		"known integer, hex":                     {"max_connections": "0x64"},
+		"known integer, negative":                {"statement_timeout": "-1"},
 		"known bool forms": {
 			"fsync":         "on",
 			"wal_log_hints": "true",
@@ -55,9 +64,17 @@ func TestValidate_Rejects(t *testing.T) {
 			cfg:      map[string]string{"random_page_cost": "cheap"},
 			wantSubs: []string{"random_page_cost", "real"},
 		},
-		"fractional for integer": {
-			cfg:      map[string]string{"max_connections": "1.5"},
+		"two decimal points for integer": {
+			cfg:      map[string]string{"max_connections": "1.5.2"},
 			wantSubs: []string{"max_connections", "integer"},
+		},
+		"unit before number for integer": {
+			cfg:      map[string]string{"work_mem": "MB4"},
+			wantSubs: []string{"work_mem", "integer"},
+		},
+		"digits after unit for integer": {
+			cfg:      map[string]string{"shared_buffers": "128MB4"},
+			wantSubs: []string{"shared_buffers", "integer"},
 		},
 		"operator-managed wal_level": {
 			cfg:      map[string]string{"wal_level": "replica"},

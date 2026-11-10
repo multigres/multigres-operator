@@ -4,6 +4,7 @@ import (
 	"bufio"
 	_ "embed"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,28 +170,18 @@ func valueMatchesType(value string, typ gucType) bool {
 	return true
 }
 
-// isIntegerWithOptionalUnit accepts an integer optionally followed by a memory
-// or time unit (e.g. "200", "128MB", "5min"). It does not verify the unit is
-// valid for the specific parameter — PostgreSQL does that at startup.
+// integerSettingValue matches the number syntax PostgreSQL's parse_int accepts
+// for integer parameters: decimal or hex, and fractional or exponent forms,
+// which PostgreSQL rounds after unit conversion (so "64.5MB" and "1.5s" are
+// valid). An optional unit may follow, with optional whitespace between.
+var integerSettingValue = regexp.MustCompile(
+	`^[+-]?(0[xX][0-9a-fA-F]+|([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?)\s*[A-Za-z]*$`,
+)
+
+// isIntegerWithOptionalUnit accepts a number in a form PostgreSQL accepts for
+// an integer parameter, optionally followed by a memory or time unit (e.g.
+// "200", "128MB", "64.5MB", "5min"). It does not verify the unit is valid for
+// the specific parameter; PostgreSQL does that at startup.
 func isIntegerWithOptionalUnit(v string) bool {
-	v = strings.TrimSpace(v)
-	i := 0
-	if i < len(v) && (v[i] == '-' || v[i] == '+') {
-		i++
-	}
-	digits := 0
-	for i < len(v) && v[i] >= '0' && v[i] <= '9' {
-		i++
-		digits++
-	}
-	if digits == 0 {
-		return false
-	}
-	unit := strings.TrimSpace(v[i:])
-	for _, r := range unit {
-		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
-			return false
-		}
-	}
-	return true
+	return integerSettingValue.MatchString(strings.TrimSpace(v))
 }
