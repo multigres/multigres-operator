@@ -173,7 +173,13 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 			// TableGroup as it is rather than guess its shape.
 			continue
 		}
-		desired, err := buildDynamicTableGroup(cluster, tmpl, storedShape(tg), globalTopoRef, r.Scheme)
+		desired, err := buildDynamicTableGroup(
+			cluster,
+			tmpl,
+			storedShape(tg),
+			globalTopoRef,
+			r.Scheme,
+		)
 		if err != nil {
 			return err
 		}
@@ -224,7 +230,13 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 			// A pending entry has no TableGroup of its name and id, so a
 			// current object is another incarnation to wait for; what is
 			// left after the wait is a name with nothing under it yet.
-			wait, err := r.priorIncarnationPresent(ctx, cluster, existing[desiredTG.Name], db.Name, want)
+			wait, err := r.priorIncarnationPresent(
+				ctx,
+				cluster,
+				existing[desiredTG.Name],
+				db.Name,
+				want,
+			)
 			if err != nil {
 				return err
 			}
@@ -318,7 +330,11 @@ func planDesiredTableGroups(
 			if provisioned >= maxDynamicTableGroupsPerDatabase {
 				plan.problems = append(plan.problems, fmt.Sprintf(
 					"%s/%s (id %d): not provisioned, the database already has %d dynamic tablegroups",
-					db.Name, want.Name, want.ID, maxDynamicTableGroupsPerDatabase))
+					db.Name,
+					want.Name,
+					want.ID,
+					maxDynamicTableGroupsPerDatabase,
+				))
 				continue
 			}
 			provisioned++

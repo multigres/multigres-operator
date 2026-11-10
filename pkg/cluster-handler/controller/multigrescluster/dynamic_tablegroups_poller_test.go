@@ -14,7 +14,11 @@ import (
 
 func newPoller(f *dynamicFixture) (*dynamicTableGroupPoller, chan event.GenericEvent) {
 	events := make(chan event.GenericEvent, 8)
-	return &dynamicTableGroupPoller{r: f.r, events: events, interval: dynamicTableGroupPollInterval}, events
+	return &dynamicTableGroupPoller{
+		r:        f.r,
+		events:   events,
+		interval: dynamicTableGroupPollInterval,
+	}, events
 }
 
 func TestPoller_EnqueuesOnlyWhenTheCatalogAsksForSomethingNew(t *testing.T) {
@@ -95,7 +99,9 @@ func TestPoller_PollSkipsClustersNotOptedIn(t *testing.T) {
 		t.Fatalf("opt-in off: %d reads, %d events", f.calls, len(events))
 	}
 
-	f.cluster.Annotations = map[string]string{multigresv1alpha1.AnnotationDynamicTableGroups: "true"}
+	f.cluster.Annotations = map[string]string{
+		multigresv1alpha1.AnnotationDynamicTableGroups: "true",
+	}
 	if err := f.c.Update(t.Context(), f.cluster); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +111,11 @@ func TestPoller_PollSkipsClustersNotOptedIn(t *testing.T) {
 	}
 	e := <-events
 	if client.ObjectKeyFromObject(e.Object) != client.ObjectKeyFromObject(f.cluster) {
-		t.Errorf("enqueued %v, want %v", client.ObjectKeyFromObject(e.Object), client.ObjectKeyFromObject(f.cluster))
+		t.Errorf(
+			"enqueued %v, want %v",
+			client.ObjectKeyFromObject(e.Object),
+			client.ObjectKeyFromObject(f.cluster),
+		)
 	}
 
 	// A cluster being deleted is left alone. A finalizer keeps the object

@@ -184,7 +184,11 @@ func TestDynamicTableGroups_GateOff(t *testing.T) {
 	// Retained tablegroups keep following cluster-level configuration.
 	f.assertShapedLikeDefault(orders)
 	if !isDynamic(orders) || orders.Annotations[multigresv1alpha1.AnnotationTableGroupID] != "3" {
-		t.Errorf("re-applying orders lost its dynamic label or id: %v %v", orders.Labels, orders.Annotations)
+		t.Errorf(
+			"re-applying orders lost its dynamic label or id: %v %v",
+			orders.Labels,
+			orders.Annotations,
+		)
 	}
 	if meta.FindStatusCondition(
 		f.cluster.Status.Conditions,
@@ -276,7 +280,8 @@ func TestDynamicTableGroups_AbsentFromSuccessfulReadIsKept(t *testing.T) {
 		t.Fatal("a provisioned dynamic tablegroup was removed")
 	}
 	f.assertShapedLikeDefault(tg)
-	if len(tg.Spec.Shards) != 2 || tg.Spec.Shards[0].Name != "0-80" || tg.Spec.Shards[1].Name != "80-inf" {
+	if len(tg.Spec.Shards) != 2 || tg.Spec.Shards[0].Name != "0-80" ||
+		tg.Spec.Shards[1].Name != "80-inf" {
 		t.Errorf("re-applying commerce changed its shard layout: %+v", tg.Spec.Shards)
 	}
 	if pendingDeletion(f.tableGroup("default")) {
@@ -633,14 +638,29 @@ func TestDynamicTableGroups_SpecNeverOverwritesAProvisionedOne(t *testing.T) {
 
 func TestDynamicTableGroups_DatabaseRemovedReleasesItsTableGroups(t *testing.T) {
 	gone := existingDynamic("test-cluster", "orders", "5")
-	gone.Name = name.JoinWithConstraints(name.DefaultConstraints, "test-cluster", "legacy", "orders")
+	gone.Name = name.JoinWithConstraints(
+		name.DefaultConstraints,
+		"test-cluster",
+		"legacy",
+		"orders",
+	)
 	gone.Spec.DatabaseName = "legacy"
 	metadata.AddDatabaseLabel(gone.Labels, "legacy")
-	f := newDynamicFixture(t, true, desiredCommerce(7), gone, existingDynamic("test-cluster", "stock", "6"))
+	f := newDynamicFixture(
+		t,
+		true,
+		desiredCommerce(7),
+		gone,
+		existingDynamic("test-cluster", "stock", "6"),
+	)
 	f.reconcile()
 
 	released := &multigresv1alpha1.TableGroup{}
-	if err := f.c.Get(t.Context(), types.NamespacedName{Namespace: "default", Name: gone.Name}, released); err != nil {
+	if err := f.c.Get(
+		t.Context(),
+		types.NamespacedName{Namespace: "default", Name: gone.Name},
+		released,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if !pendingDeletion(released) {
