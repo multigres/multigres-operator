@@ -492,3 +492,10 @@ func buildTLSConfig(secret *corev1.Secret, serverName string) (*tls.Config, erro
 		ServerName:   serverName,
 	}, nil
 }
+
+// ClientTLSConfig builds a client TLS config from a cert-manager Secret
+// holding the operator's per-cluster identity, verifying the server as
+// serverName. Exported for other operator gRPC clients (multiadmin).
+func ClientTLSConfig(secret *corev1.Secret, serverName string) (*tls.Config, error) {
+	return buildTLSConfig(secret, serverName)
+}

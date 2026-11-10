@@ -51,6 +51,9 @@ import (
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	backupcontroller "github.com/multigres/multigres-operator/pkg/backup-handler/controller/multigresbackup"
+	backupschedulecontroller "github.com/multigres/multigres-operator/pkg/backup-handler/controller/multigresbackupschedule"
+	"github.com/multigres/multigres-operator/pkg/backup-handler/multiadmin"
 	"github.com/multigres/multigres-operator/pkg/cacheopts"
 	multigresclustercontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/multigrescluster"
 	tablegroupcontroller "github.com/multigres/multigres-operator/pkg/cluster-handler/controller/tablegroup"
@@ -592,6 +595,33 @@ func main() {
 		DialContext:              laptopDial,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Shard")
+		os.Exit(1)
+	}
+
+	multiadminClients := &multiadmin.GRPCFactory{
+		Reader:      mgr.GetAPIReader(),
+		DialContext: laptopDial,
+	}
+	defer multiadminClients.Close()
+
+	if err = (&backupcontroller.Reconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Recorder:   mgr.GetEventRecorderFor("multigresbackup-controller"),
+		Multiadmin: multiadminClients,
+		Gate:       gate,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "MultigresBackup")
+		os.Exit(1)
+	}
+
+	if err = (&backupschedulecontroller.Reconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("multigresbackupschedule-controller"),
+		Gate:     gate,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "MultigresBackupSchedule")
 		os.Exit(1)
 	}
 
