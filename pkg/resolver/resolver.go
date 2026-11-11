@@ -10,7 +10,7 @@ import (
 // Resolver handles the logic for fetching templates and calculating defaults.
 // It serves as the single source of truth for defaulting logic across the operator.
 type Resolver struct {
-	Client             client.Client
+	Client             client.Reader
 	Namespace          string
 	CoreTemplateCache  map[string]*multigresv1alpha1.CoreTemplate
 	CellTemplateCache  map[string]*multigresv1alpha1.CellTemplate
@@ -19,7 +19,7 @@ type Resolver struct {
 
 // NewResolver creates a new defaults.Resolver.
 func NewResolver(
-	c client.Client,
+	c client.Reader,
 	namespace string,
 ) *Resolver {
 	return &Resolver{

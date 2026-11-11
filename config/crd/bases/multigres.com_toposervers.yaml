@@ -50,6 +50,18 @@ spec:
             description: TopoServerSpec defines the desired state of TopoServer (Child
               CR).
             properties:
+              auth:
+                description: |-
+                  Auth turns on certificate-based etcd authorization for this managed
+                  topology server. It requires TLS.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled turns on etcd authentication and per-cluster permissions.
+                      Once true, it cannot be set to false or removed.
+                    type: boolean
+                type: object
               etcd:
                 description: Etcd defines the configuration if using Etcd.
                 properties:
@@ -1431,9 +1443,27 @@ spec:
             x-kubernetes-validations:
             - message: must specify 'etcd' configuration
               rule: has(self.etcd)
+            - message: managed authorization cannot be disabled after being requested
+              rule: '!(has(oldSelf.auth) && has(oldSelf.auth.enabled) && oldSelf.auth.enabled)
+                || (has(self.auth) && has(self.auth.enabled) && self.auth.enabled)'
           status:
             description: TopoServerStatus defines the observed state of TopoServer.
             properties:
+              authEnabled:
+                description: |-
+                  AuthEnabled records successful authorization activation and remains true
+                  through subsequent reconciliation failures. AuthorizationReady reports
+                  whether the current desired grants have been reconciled.
+                type: boolean
+              authIdentities:
+                description: |-
+                  AuthIdentities lists the etcd users the controller manages. The
+                  controller writes it before changing etcd, so it can delete users left
+                  by an interrupted reconcile or a removed cluster.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
               clientService:
                 description: ClientService is the name of the service for clients.
                 type: string

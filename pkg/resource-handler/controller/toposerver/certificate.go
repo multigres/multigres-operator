@@ -49,6 +49,24 @@ func BuildServingCertificate(
 	})
 }
 
+// BuildAdminCertificate constructs the operator's dedicated etcd client identity.
+func BuildAdminCertificate(
+	toposerver *multigresv1alpha1.TopoServer,
+	scheme *runtime.Scheme,
+) (*unstructured.Unstructured, error) {
+	if !toposerver.Spec.TLS.IsEnabled() {
+		return nil, nil
+	}
+	return certs.Build(toposerver, scheme, certs.Spec{
+		Name:       multigresv1alpha1.TopoServerAdminCertName(toposerver.Name),
+		SecretName: multigresv1alpha1.TopoServerAdminCertSecretName(toposerver.Name),
+		CommonName: operatorEtcdUsername,
+		DNSNames:   []any{},
+		Usages:     []any{"digital signature", "key encipherment", "client auth"},
+		IssuerName: toposerver.Spec.TLS.IssuerName,
+	})
+}
+
 // servingDNSNames returns the names etcd is reached by: the client Service and
 // the headless peer Service, each in its short, namespaced and fully qualified
 // form so in-cluster callers verify regardless of how they resolve the name.
@@ -72,22 +90,45 @@ func serviceFQDN(name, namespace string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", name, namespace)
 }
 
-// reconcileCertificate ensures the serving Certificate matches the TopoServer
-// spec. A topology server owns exactly one Certificate under a deterministic
-// name, so this addresses it directly rather than listing the namespace. When
-// topology TLS is off — whether disabled or absent from the spec — the owned
-// Certificate and its generated Secret are removed, so no private key material
-// outlives the configuration that asked for it.
+// reconcileCertificate ensures serving and administration credentials match the
+// TopoServer spec, removing owned credentials when TLS is disabled.
 func (r *TopoServerReconciler) reconcileCertificate(
 	ctx context.Context,
 	toposerver *multigresv1alpha1.TopoServer,
 ) error {
-	desired, err := BuildServingCertificate(toposerver, r.Scheme)
-	if err != nil {
-		return fmt.Errorf("failed to build topology server cert-manager Certificate: %w", err)
+	for _, certificate := range []struct {
+		name  string
+		build func(*multigresv1alpha1.TopoServer, *runtime.Scheme) (*unstructured.Unstructured, error)
+	}{
+		{multigresv1alpha1.TopoServerCertName(toposerver.Name), BuildServingCertificate},
+		{multigresv1alpha1.TopoServerAdminCertName(toposerver.Name), BuildAdminCertificate},
+	} {
+		desired, err := certificate.build(toposerver, r.Scheme)
+		if err != nil {
+			return fmt.Errorf(
+				"failed to build topology server cert-manager Certificate %q: %w",
+				certificate.name,
+				err,
+			)
+		}
+		if err := r.reconcileOwnedCertificate(
+			ctx,
+			toposerver,
+			certificate.name,
+			desired,
+		); err != nil {
+			return err
+		}
 	}
+	return nil
+}
 
-	certName := multigresv1alpha1.TopoServerCertName(toposerver.Name)
+func (r *TopoServerReconciler) reconcileOwnedCertificate(
+	ctx context.Context,
+	toposerver *multigresv1alpha1.TopoServer,
+	certName string,
+	desired *unstructured.Unstructured,
+) error {
 	existing, err := certs.Get(ctx, r.Client, toposerver.Namespace, certName)
 	if err != nil {
 		return err

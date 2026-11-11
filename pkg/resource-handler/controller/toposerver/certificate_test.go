@@ -123,6 +123,93 @@ func TestBuildServingCertificate(t *testing.T) {
 	}
 }
 
+func TestBuildAdminCertificate(t *testing.T) {
+	ts := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{
+		Enabled: ptr.To(true), IssuerName: "infra-issuer",
+	})
+	certificate, err := BuildAdminCertificate(ts, certScheme())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantName := multigresv1alpha1.TopoServerAdminCertName(ts.Name)
+	if certificate.GetName() != wantName {
+		t.Fatalf("admin certificate name = %q", certificate.GetName())
+	}
+	for path, want := range map[string]string{
+		"secretName":     wantName,
+		"literalSubject": fmt.Sprintf(certs.LiteralSubjectTemplate, operatorEtcdUsername),
+	} {
+		got, _, _ := unstructured.NestedString(certificate.Object, "spec", path)
+		if got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+	usages, _, _ := unstructured.NestedSlice(certificate.Object, "spec", "usages")
+	if diff := cmp.Diff(
+		[]any{"digital signature", "key encipherment", "client auth"},
+		usages,
+	); diff != "" {
+		t.Fatal(diff)
+	}
+	issuer, _, _ := unstructured.NestedString(certificate.Object, "spec", "issuerRef", "name")
+	if issuer != "infra-issuer" {
+		t.Fatalf("issuer = %q", issuer)
+	}
+	if refs := certificate.GetOwnerReferences(); len(refs) != 1 || refs[0].UID != ts.UID {
+		t.Fatalf("unexpected admin certificate ownership: %v", refs)
+	}
+	for _, tls := range []*multigresv1alpha1.TopoTLSConfig{nil, {Enabled: ptr.To(false)}} {
+		ts.Spec.TLS = tls
+		got, err := BuildAdminCertificate(ts, certScheme())
+		if err != nil || got != nil {
+			t.Fatalf("disabled TLS: certificate=%v, err=%v", got, err)
+		}
+	}
+}
+
+func TestReconcileAdminCertificateLifecycle(t *testing.T) {
+	ts := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})
+	scheme := certScheme()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ts).Build()
+	r := &TopoServerReconciler{Client: c, Scheme: scheme}
+	if err := r.reconcileCertificate(t.Context(), ts); err != nil {
+		t.Fatal(err)
+	}
+	key := client.ObjectKey{
+		Namespace: ts.Namespace,
+		Name:      multigresv1alpha1.TopoServerAdminCertName(ts.Name),
+	}
+	certificate, err := certs.Get(t.Context(), c, key.Namespace, key.Name)
+	if err != nil || certificate == nil {
+		t.Fatalf("admin certificate missing: %v", err)
+	}
+	version := certificate.GetResourceVersion()
+	if err := r.reconcileCertificate(t.Context(), ts); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err = certs.Get(t.Context(), c, key.Namespace, key.Name)
+	if err != nil || certificate.GetResourceVersion() != version {
+		t.Fatalf("unchanged certificate was modified: %v", err)
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: key.Name, Namespace: key.Namespace,
+	}}
+	if err := c.Create(t.Context(), secret); err != nil {
+		t.Fatal(err)
+	}
+	ts.Spec.TLS = nil
+	if err := r.reconcileCertificate(t.Context(), ts); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err = certs.Get(t.Context(), c, key.Namespace, key.Name)
+	if err != nil || certificate != nil {
+		t.Fatalf("admin certificate not removed: %v", err)
+	}
+	if err := c.Get(t.Context(), key, &corev1.Secret{}); err == nil {
+		t.Fatal("admin private key Secret not removed")
+	}
+}
+
 func TestBuildServingCertificateSANsCoverBothServices(t *testing.T) {
 	scheme := certScheme()
 	toposerver := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)})

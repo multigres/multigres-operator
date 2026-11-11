@@ -33,7 +33,6 @@ func topoRefCluster(
 		},
 	}
 }
-
 func resolveTopoRef(
 	t *testing.T,
 	cluster *multigresv1alpha1.MultigresCluster,

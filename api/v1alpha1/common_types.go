@@ -446,6 +446,20 @@ func TopoServerCertSecretName(toposerverName string) string {
 	return TopoServerCertName(toposerverName)
 }
 
+// TopoServerAdminCertName returns the Certificate name for the operator's etcd
+// administration credential, which is never mounted into a workload.
+func TopoServerAdminCertName(toposerverName string) string {
+	if toposerverName == "" {
+		return ""
+	}
+	return toposerverName + "-topo-admin-tls"
+}
+
+// TopoServerAdminCertSecretName returns the operator's etcd client Secret name.
+func TopoServerAdminCertSecretName(toposerverName string) string {
+	return TopoServerAdminCertName(toposerverName)
+}
+
 // TopoClientCertName returns the cert-manager Certificate name for the client
 // credential a Multigres cluster presents to its topology server.
 func TopoClientCertName(clusterName string) string {

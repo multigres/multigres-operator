@@ -1039,10 +1039,11 @@ func TestBuildMultiadminDeployment_TopoClientTLS(t *testing.T) {
 		if !containerMountsVolume(c, multigresv1alpha1.TopoClientTLSVolumeName) {
 			t.Error("multiadmin does not mount the topo client certificate")
 		}
-		volumes := got.Spec.Template.Spec.Volumes
-		if !podHasVolume(volumes, multigresv1alpha1.TopoClientTLSVolumeName) {
-			t.Error("topo client volume missing from pod spec")
-		}
+		assertTopoVolumeSecret(
+			t,
+			got.Spec.Template.Spec.Volumes,
+			"my-cluster-topo-client-tls",
+		)
 	})
 
 	t.Run("renders unchanged when the reference carries no credential", func(t *testing.T) {
@@ -1091,4 +1092,20 @@ func podHasVolume(vols []corev1.Volume, name string) bool {
 		}
 	}
 	return false
+}
+
+func assertTopoVolumeSecret(t *testing.T, volumes []corev1.Volume, want string) {
+	t.Helper()
+	for _, volume := range volumes {
+		if volume.Name != multigresv1alpha1.TopoClientTLSVolumeName {
+			continue
+		}
+		for _, source := range volume.Projected.Sources {
+			if source.Secret.Name != want {
+				t.Errorf("topology Secret = %q, want %q", source.Secret.Name, want)
+			}
+		}
+		return
+	}
+	t.Fatal("topology client volume missing")
 }

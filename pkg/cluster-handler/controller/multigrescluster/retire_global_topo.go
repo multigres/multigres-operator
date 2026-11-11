@@ -20,6 +20,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/resolver"
+	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -154,7 +155,7 @@ func (r *MultigresClusterReconciler) retirementStillDue(
 	if fresh.Generation != cluster.Generation {
 		return false, false, nil
 	}
-	res := resolver.NewResolver(uncachedReads{Client: r.Client, reader: reader}, fresh.Namespace)
+	res := resolver.NewResolver(reader, fresh.Namespace)
 	spec, err := res.ResolveGlobalTopo(ctx, fresh)
 	if err != nil {
 		return false, false, fmt.Errorf("failed to resolve global topo before retiring: %w", err)
@@ -212,30 +213,6 @@ func (r *MultigresClusterReconciler) retireDeletesPVCs(
 		return false
 	}
 	return true
-}
-
-// uncachedReads is a client whose reads go to the API server rather than the
-// informer cache, for the resolver's lookups that decide an irreversible delete.
-type uncachedReads struct {
-	client.Client
-	reader client.Reader
-}
-
-func (u uncachedReads) Get(
-	ctx context.Context,
-	key client.ObjectKey,
-	obj client.Object,
-	opts ...client.GetOption,
-) error {
-	return u.reader.Get(ctx, key, obj, opts...)
-}
-
-func (u uncachedReads) List(
-	ctx context.Context,
-	list client.ObjectList,
-	opts ...client.ListOption,
-) error {
-	return u.reader.List(ctx, list, opts...)
 }
 
 // managedGlobalTopoServer returns the global TopoServer this cluster
@@ -374,7 +351,15 @@ func (r *MultigresClusterReconciler) externalIsAnotherEtcd(
 	ts *multigresv1alpha1.TopoServer,
 	external multigresv1alpha1.GlobalTopoServerRef,
 ) (*retireWait, error) {
-	ext, err := r.etcdIdentity(ctx, cluster.Namespace, external)
+	probeNamespace, probeRef, err := r.identityProbeRef(
+		ctx,
+		cluster.Namespace,
+		external,
+	)
+	if err != nil {
+		return nil, err
+	}
+	ext, err := r.etcdIdentity(ctx, probeNamespace, probeRef)
 	if err != nil {
 		return &retireWait{
 			reason: "the external etcd's membership to be readable",
@@ -517,6 +502,34 @@ func normalizeHost(h string) string {
 	return strings.TrimSuffix(strings.ToLower(h), ".")
 }
 
+// identityProbeRef returns the reference to probe ref's etcd identity with.
+// Under etcd auth, project client certificates lack the root role that
+// MemberList and Status require, so a managed TopoServer is probed through its
+// own Service with its admin credential.
+func (r *MultigresClusterReconciler) identityProbeRef(
+	ctx context.Context,
+	requestNamespace string,
+	ref multigresv1alpha1.GlobalTopoServerRef,
+) (string, multigresv1alpha1.GlobalTopoServerRef, error) {
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	servers := &multigresv1alpha1.TopoServerList{}
+	if err := reader.List(ctx, servers); err != nil {
+		return "", ref, fmt.Errorf("failed to list topo servers: %w", err)
+	}
+	for i := range servers.Items {
+		ts := &servers.Items[i]
+		if !ts.Spec.TLS.IsEnabled() ||
+			!topology.EndpointMatchesTopoServer(ts, requestNamespace, ref.Address) {
+			continue
+		}
+		return ts.Namespace, managedTopoRef(ts), nil
+	}
+	return requestNamespace, ref, nil
+}
+
 // isManagedEtcdPod reports whether pod is one of ts's etcd members, by the
 // StatefulSet's pod naming (ts.Name-<ordinal>). The pods' labels carry the
 // generic toposerver component, which every TopoServer's pods share.
@@ -529,16 +542,15 @@ func isManagedEtcdPod(pod *corev1.Pod, ts *multigresv1alpha1.TopoServer) bool {
 	return err == nil
 }
 
-// managedTopoRef is a topology reference to ts's own Service, with ts's serving
-// credential as both CA bundle and client keypair when TLS is on: the
-// certificate carries client-auth usage for etcd peer TLS, which is also how
-// the TopoServer controller's maintenance client reaches it.
+// managedTopoRef is a topology reference to ts's own Service, with the
+// operator's dedicated admin credential when TLS is on. The serving
+// certificate is not an authorized etcd user once certificate RBAC is enabled.
 func managedTopoRef(ts *multigresv1alpha1.TopoServer) multigresv1alpha1.GlobalTopoServerRef {
 	scheme := "http"
 	ref := multigresv1alpha1.GlobalTopoServerRef{Implementation: "etcd"}
 	if ts.Spec.TLS.IsEnabled() {
 		scheme = "https"
-		secret := multigresv1alpha1.TopoServerCertSecretName(ts.Name)
+		secret := multigresv1alpha1.TopoServerAdminCertSecretName(ts.Name)
 		ref.CASecret = secret
 		ref.ClientCertSecret = secret
 	}

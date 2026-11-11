@@ -192,6 +192,8 @@ func (r *TopoServerReconciler) Reconcile(
 		childSpan.End()
 	}
 
+	authReady, authErr := r.reconcileTopologyAuth(ctx, toposerver)
+
 	// Reconcile PodDisruptionBudget
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "TopoServer.ReconcilePodDisruptionBudget")
@@ -231,6 +233,12 @@ func (r *TopoServerReconciler) Reconcile(
 	}
 
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
+	if authErr != nil {
+		return ctrl.Result{RequeueAfter: statusRecheckDelay}, authErr
+	}
+	if !authReady {
+		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
+	}
 	r.Recorder.Event(toposerver, "Normal", "Synced", "Successfully reconciled TopoServer")
 
 	if toposerver.Status.Phase != multigresv1alpha1.PhaseHealthy {
@@ -244,6 +252,11 @@ func (r *TopoServerReconciler) Reconcile(
 		if state := toposerver.Status.EtcdMaintenance; state != nil && state.InProgress {
 			return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
 		}
+	}
+	if topologyAuthManaged(toposerver) {
+		return ctrl.Result{RequeueAfter: authRecheckInterval}, nil
+	}
+	if maintenanceEnabled(toposerver) {
 		return ctrl.Result{RequeueAfter: maintenanceInterval}, nil
 	}
 	return ctrl.Result{}, nil
@@ -442,14 +455,26 @@ func (r *TopoServerReconciler) updateStatus(
 	})
 	toposerver.Status.Phase = result.Phase
 	toposerver.Status.Message = result.Message
+	if topologyAuthManaged(toposerver) && !toposerver.Status.AuthEnabled {
+		toposerver.Status.Phase = multigresv1alpha1.PhaseProgressing
+		toposerver.Status.Message = "Waiting for topology authorization"
+		meta.SetStatusCondition(&toposerver.Status.Conditions, metav1.Condition{
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: "AuthorizationPending",
+			Message: toposerver.Status.Message, ObservedGeneration: toposerver.Generation,
+		})
+	}
 
 	toposerver.Status.ObservedGeneration = toposerver.Generation
 
 	// 1. Construct the Patch Object
-	readyCond := meta.FindStatusCondition(toposerver.Status.Conditions, "Ready")
 	var patchConditions []metav1.Condition
-	if readyCond != nil {
-		patchConditions = []metav1.Condition{*readyCond}
+	for _, conditionType := range []string{"Ready", "AuthorizationReady"} {
+		if condition := meta.FindStatusCondition(
+			toposerver.Status.Conditions,
+			conditionType,
+		); condition != nil {
+			patchConditions = append(patchConditions, *condition)
+		}
 	}
 
 	patchObj := &multigresv1alpha1.TopoServer{
@@ -462,6 +487,8 @@ func (r *TopoServerReconciler) updateStatus(
 			Namespace: toposerver.Namespace,
 		},
 		Status: multigresv1alpha1.TopoServerStatus{
+			AuthEnabled:        toposerver.Status.AuthEnabled,
+			AuthIdentities:     toposerver.Status.AuthIdentities,
 			Phase:              toposerver.Status.Phase,
 			Message:            toposerver.Status.Message,
 			ObservedGeneration: toposerver.Status.ObservedGeneration,

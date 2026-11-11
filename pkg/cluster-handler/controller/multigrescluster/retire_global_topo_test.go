@@ -537,10 +537,135 @@ func TestManagedTopoRef(t *testing.T) {
 	}
 	ts.Spec.TLS = &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)}
 	secure := managedTopoRef(ts)
-	secret := multigresv1alpha1.TopoServerCertSecretName(ts.Name)
+	secret := multigresv1alpha1.TopoServerAdminCertSecretName(ts.Name)
 	if secure.Address != "https://c-global-topo.ns.svc:2379" ||
 		secure.ClientCertSecret != secret || secure.CASecret != secret {
 		t.Errorf("with TLS: %+v", secure)
+	}
+}
+
+func TestRetireManagedGlobalTopo_IdentityProbeCredentials(t *testing.T) {
+	t.Run("managed topology servers use their admin identities", func(t *testing.T) {
+		f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
+		f.cluster.Spec.TopoTLS = &multigresv1alpha1.TopoTLSConfig{
+			Enabled: ptr.To(true), IssuerName: "topology-issuer",
+		}
+		f.ts.Spec.TLS = &multigresv1alpha1.TopoTLSConfig{
+			Enabled: ptr.To(true), IssuerName: "topology-issuer",
+		}
+		shared := &multigresv1alpha1.TopoServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared-topo", Namespace: "default"},
+			Spec: multigresv1alpha1.TopoServerSpec{
+				TLS: &multigresv1alpha1.TopoTLSConfig{
+					Enabled: ptr.To(true), IssuerName: "topology-issuer",
+				},
+				Etcd: &multigresv1alpha1.EtcdSpec{},
+			},
+		}
+		f.objs = append(f.objs, shared)
+
+		var external, managed multigresv1alpha1.GlobalTopoServerRef
+		f.identity = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
+			if isManagedRef(ref) {
+				managed = ref
+				return managedEtcd(), nil
+			}
+			external = ref
+			return distinctEtcds(t.Context(), "", ref)
+		}
+		f.retire(t)
+
+		if want := managedTopoRef(shared); external != want {
+			t.Errorf("external identity probe reference = %+v, want %+v", external, want)
+		}
+		if want := managedTopoRef(f.ts); managed != want {
+			t.Errorf("managed identity probe reference = %+v, want %+v", managed, want)
+		}
+	})
+
+	t.Run("custom external credentials are preserved", func(t *testing.T) {
+		f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
+		f.cluster.Spec.TopoTLS = &multigresv1alpha1.TopoTLSConfig{
+			Enabled: ptr.To(true), IssuerName: "topology-issuer",
+		}
+		f.cluster.Spec.GlobalTopoServer.External.CASecret = "custom-ca"
+		f.cluster.Spec.GlobalTopoServer.External.ClientCertSecret = "custom-client"
+
+		var external multigresv1alpha1.GlobalTopoServerRef
+		f.identity = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
+			if isManagedRef(ref) {
+				return managedEtcd(), nil
+			}
+			external = ref
+			return distinctEtcds(t.Context(), "", ref)
+		}
+		f.retire(t)
+
+		if external.ClientCertSecret != "custom-client" || external.CASecret != "custom-ca" {
+			t.Errorf("external identity probe credentials = %+v, want custom Secrets", external)
+		}
+	})
+}
+
+func TestIdentityProbeRef(t *testing.T) {
+	shared := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-topo", Namespace: "infra"},
+		Spec: multigresv1alpha1.TopoServerSpec{
+			TLS:  &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)},
+			Etcd: &multigresv1alpha1.EtcdSpec{},
+		},
+	}
+	r := &MultigresClusterReconciler{
+		Client: fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(shared).Build(),
+	}
+	supplied := multigresv1alpha1.GlobalTopoServerRef{
+		Implementation:   "tenant-supplied",
+		RootPath:         "/tenant-root",
+		CASecret:         "project-ca",
+		ClientCertSecret: "project-client",
+	}
+	adminSecret := multigresv1alpha1.TopoServerAdminCertSecretName(shared.Name)
+
+	tests := map[string]struct {
+		address       string
+		wantNamespace string
+		want          multigresv1alpha1.GlobalTopoServerRef
+	}{
+		"managed TopoServer is probed with its admin credential": {
+			address:       "http://shared-topo-0.shared-topo-headless.infra.svc.cluster.local:2379",
+			wantNamespace: shared.Namespace,
+			want: multigresv1alpha1.GlobalTopoServerRef{
+				Implementation:   "etcd",
+				Address:          "https://shared-topo.infra.svc:2379",
+				CASecret:         adminSecret,
+				ClientCertSecret: adminSecret,
+			},
+		},
+		"external endpoint keeps the supplied reference": {
+			address:       "https://external.example:2379",
+			wantNamespace: "tenant",
+			want: func() multigresv1alpha1.GlobalTopoServerRef {
+				ref := supplied
+				ref.Address = "https://external.example:2379"
+				return ref
+			}(),
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			ref := supplied
+			ref.Address = tt.address
+			namespace, got, err := r.identityProbeRef(t.Context(), "tenant", ref)
+			if err != nil {
+				t.Fatalf("identityProbeRef() error = %v", err)
+			}
+			if namespace != tt.wantNamespace || got != tt.want {
+				t.Errorf(
+					"identityProbeRef() = namespace %q, ref %+v; want namespace %q and ref %+v",
+					namespace, got, tt.wantNamespace, tt.want,
+				)
+			}
+		})
 	}
 }
 

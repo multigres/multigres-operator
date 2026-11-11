@@ -69,7 +69,7 @@ func TestMaintenanceTLSUsesUncachedCredentialAndFailsClosed(t *testing.T) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      multigresv1alpha1.TopoServerCertSecretName(ts.Name),
+			Name:      multigresv1alpha1.TopoServerAdminCertSecretName(ts.Name),
 			Namespace: ts.Namespace,
 		},
 		Data: map[string][]byte{
@@ -86,6 +86,7 @@ func TestMaintenanceTLSUsesUncachedCredentialAndFailsClosed(t *testing.T) {
 		{"valid", func(*corev1.Secret) {}, false},
 		{"missing key", func(s *corev1.Secret) { delete(s.Data, "tls.key") }, true},
 		{"invalid CA", func(s *corev1.Secret) { s.Data["ca.crt"] = []byte("invalid") }, true},
+		{"serving credential only", func(s *corev1.Secret) { s.Name = multigresv1alpha1.TopoServerCertSecretName(ts.Name) }, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := secret.DeepCopy()

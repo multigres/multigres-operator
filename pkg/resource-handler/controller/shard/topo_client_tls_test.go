@@ -173,3 +173,19 @@ func TestTopoSpeakingContainers_PresentClientCert(t *testing.T) {
 		t.Error("multiorch does not mount the topo client certificate")
 	}
 }
+
+func assertTopoVolumeSecret(t *testing.T, volumes []corev1.Volume, want string) {
+	t.Helper()
+	for _, volume := range volumes {
+		if volume.Name != multigresv1alpha1.TopoClientTLSVolumeName {
+			continue
+		}
+		for _, source := range volume.Projected.Sources {
+			if source.Secret.Name != want {
+				t.Errorf("topology Secret = %q, want %q", source.Secret.Name, want)
+			}
+		}
+		return
+	}
+	t.Fatal("topology client volume missing")
+}
