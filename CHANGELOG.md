@@ -4,6 +4,14 @@ All notable changes to the Multigres Operator are documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Breaking
+
+- **Rollback with dynamic tablegroups is destructive.** A `MultigresCluster` annotated `multigres.com/dynamic-tablegroups: "true"` provisions TableGroups from the Multigres sharding catalog. An operator release before this one computes the wanted TableGroups from the spec alone and drains and deletes every dynamic one, with its Shards and PVCs per their deletion policy, while the catalog still lists them; re-upgrading provisions them again from empty. Remove the annotation and empty the catalog before rolling back an opted-in cluster.
+
+---
+
 ## [v0.10.1] — 2026-03-27
 
 **Previous release:** v0.10.0 (2026-03-26)

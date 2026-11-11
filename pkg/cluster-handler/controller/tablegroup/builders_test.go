@@ -287,3 +287,49 @@ func TestBuildShard(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildShard_DynamicTableGroup(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	tg := &multigresv1alpha1.TableGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "c-postgres-commerce", Namespace: "default", UID: "tg-uid",
+			Labels: map[string]string{
+				"multigres.com/cluster":                  "c",
+				multigresv1alpha1.LabelDynamicTableGroup: "true",
+			},
+			Annotations: map[string]string{multigresv1alpha1.AnnotationTableGroupID: "7"},
+		},
+		Spec: multigresv1alpha1.TableGroupSpec{
+			DatabaseName:   "postgres",
+			TableGroupName: "commerce",
+		},
+	}
+	shard, err := BuildShard(tg, &multigresv1alpha1.ShardResolvedSpec{Name: "0-80"}, scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shard.Labels[multigresv1alpha1.LabelDynamicTableGroup] != "true" ||
+		multigresv1alpha1.TableGroupIDOf(shard) != 7 {
+		t.Errorf(
+			"labels=%v annotations=%v, want the dynamic marker and id 7",
+			shard.Labels,
+			shard.Annotations,
+		)
+	}
+
+	delete(tg.Labels, multigresv1alpha1.LabelDynamicTableGroup)
+	tg.Annotations = nil
+	shard, err = BuildShard(tg, &multigresv1alpha1.ShardResolvedSpec{Name: "0-inf"}, scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := shard.Labels[multigresv1alpha1.LabelDynamicTableGroup]; ok ||
+		shard.Annotations != nil {
+		t.Errorf(
+			"spec-declared shard got dynamic metadata: labels=%v annotations=%v",
+			shard.Labels,
+			shard.Annotations,
+		)
+	}
+}

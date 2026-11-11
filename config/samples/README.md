@@ -181,7 +181,32 @@ In Lite mode, the same setting on the sole cell configures Minigres, including v
 
 ---
 
-## 8. Scenarios & Gotchas
+## 8. Dynamic Tablegroups
+
+`CREATE TABLEGROUP`, run through a gateway, records intent in Multigres's sharding catalog; the operator provisions the tablegroup's shards to match. It is off unless the cluster opts in with an annotation (no CRD change is involved):
+
+```yaml
+metadata:
+  annotations:
+    multigres.com/dynamic-tablegroups: "true"
+```
+
+With it, every 10 seconds the operator reads each database's desired tablegroups from multiadmin (`GET /api/v1/databases/{db}/tablegroups`) and reconciles the cluster only when the catalog lists something its TableGroups do not yet show; a converged cluster is not touched. For each listed tablegroup it creates a TableGroup labelled `multigres.com/dynamic-tablegroup` and annotated `multigres.com/tablegroup-id`, shaped from the database's default tablegroup: every shard copies the default shard's resolved spec (cells, pools, storage, backup), and poolers get `--tablegroup-id`. The waiting `CREATE TABLEGROUP` returns once every shard has a serving primary. A failed read provisions nothing new. Names the spec also declares are left to the spec and reported in the `DynamicTableGroupConflict` condition; `DynamicTableGroups` reports what is provisioned.
+
+```sql
+SET statement_timeout = 0;  -- the gateway default (30s) is shorter than provisioning
+CREATE TABLEGROUP commerce SHARDS ('0-80', '80-inf');
+```
+
+The operator never removes a provisioned dynamic tablegroup while its database is in the spec, including one the catalog no longer lists, and never applies a spec-declared tablegroup over one (the `DynamicTableGroupConflict` condition reports the name whether or not the catalog is being read). Removing the database from the spec drains and deletes its dynamic tablegroups along with its declared ones. At most 20 dynamic tablegroups are provisioned per database, the same limit as `spec.databases[].tableGroups`; entries past it, in catalog id order, are reported in the condition and not provisioned. Volumes of a dynamic tablegroup's shards carry the catalog id in their names, so a tablegroup recreated under a dropped one's name never binds the earlier volumes. Removal is not supported in this release: a tablegroup recreated under the same name with a new catalog id waits, reported in the condition, until a later release retires the earlier one (TableGroups and Shards cannot be deleted by hand; the admission webhook rejects it). With `spec.networkPolicy.enabled`, list the operator's namespace in `allowedIngressNamespaces`: the operator reads multiadmin directly, and the policy admits only the cluster's namespace and the listed ones. Removing the annotation stops reading the catalog and leaves provisioned tablegroups in place; they keep following cluster-level configuration (images, credentials, TLS, backup, topology) like spec-declared tablegroups. Lite clusters ignore the annotation. Images must include the multigres tablegroup operations (pooler `--tablegroup-id`).
+
+Gateways do not yet run with `--enable-tablegroup-ddl`: in multigres that one flag enables `DROP TABLEGROUP` as well as `CREATE`, and this release cannot remove a tablegroup, so a drop would leave shards and volumes running and a later create of the same name would wait forever. The release that adds removal turns the flag on for opted-in clusters. Until then the annotation only provisions tablegroups that reach the catalog another way.
+
+Rolling the operator back to a release without dynamic tablegroups is destructive for an opted-in cluster: the older build computes the wanted TableGroups from the spec alone and drains and deletes every dynamic one, with its Shards and PVCs per their deletion policy, while the catalog still lists them. Re-upgrading provisions them again from empty. Remove the annotation and let the catalog be emptied before rolling back.
+
+---
+
+## 9. Scenarios & Gotchas
 
 ### Scenario A: Namespace Defaults (The "Happy Path")
 

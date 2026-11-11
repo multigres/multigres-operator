@@ -326,3 +326,49 @@ func TestBuildShardPodDisruptionBudget(t *testing.T) {
 		t.Fatalf("expected 1 owner reference, got %d", len(pdb.OwnerReferences))
 	}
 }
+
+// A shard of a dynamic tablegroup names its volumes with the catalog id, so
+// a tablegroup recreated under a dropped one's name never binds its PVCs.
+func TestPVCNames_DynamicTableGroupCarriesCatalogID(t *testing.T) {
+	plain := newTestShard()
+	dynamic := newTestShard()
+	dynamic.Annotations = map[string]string{multigresv1alpha1.AnnotationTableGroupID: "7"}
+	recreated := newTestShard()
+	recreated.Annotations = map[string]string{multigresv1alpha1.AnnotationTableGroupID: "9"}
+
+	for _, tc := range []struct {
+		name string
+		of   func(*multigresv1alpha1.Shard) string
+	}{
+		{"data", func(s *multigresv1alpha1.Shard) string { return BuildPoolDataPVCName(s, "main", "z1", 0) }},
+		{"backup", BuildSharedBackupPVCName},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.of(plain) != tc.of(newTestShard()) {
+				t.Error("a spec-declared shard's PVC name changed")
+			}
+			if tc.of(dynamic) == tc.of(plain) {
+				t.Error("a dynamic shard shares its PVC name with a spec-declared one")
+			}
+			if tc.of(dynamic) == tc.of(recreated) {
+				t.Error("two incarnations of a tablegroup share a PVC name")
+			}
+		})
+	}
+
+	// isShardBuiltPVC recognises the id-bearing names as the shard's own.
+	pvc, err := BuildPoolDataPVC(dynamic, "main", "z1", newTestPoolSpec(), 0, false, testScheme())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isShardBuiltPVC(dynamic, pvc) {
+		t.Errorf("data PVC %q not recognised as the dynamic shard's", pvc.Name)
+	}
+	backup, err := BuildSharedBackupPVC(dynamic, false, testScheme())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isShardBuiltPVC(dynamic, backup) {
+		t.Errorf("backup PVC %q not recognised as the dynamic shard's", backup.Name)
+	}
+}

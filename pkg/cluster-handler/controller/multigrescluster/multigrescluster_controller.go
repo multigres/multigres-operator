@@ -24,10 +24,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"go.opentelemetry.io/otel/trace"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/multiadmin"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/images"
@@ -80,9 +82,18 @@ type MultigresClusterReconciler struct {
 	// docs/development/reconcile-gating.md. The zero value is safe.
 	Gate features.Gate
 
-	// DialContext carries the topology store's connections and the etcd
-	// identity read. Nil (direct dialing) outside laptop mode.
+	// DialContext carries the topology store's connections, the etcd
+	// identity read and multiadmin reads. Nil (direct dialing) outside laptop
+	// mode.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	// ListDesiredTableGroups overrides how a database's desired dynamic
+	// tablegroups are read, for testing. Defaults to multiadmin's REST API.
+	ListDesiredTableGroups func(
+		ctx context.Context,
+		cluster *multigresv1alpha1.MultigresCluster,
+		database string,
+	) ([]multiadmin.TableGroup, error)
 }
 
 // Reconcile resolves templates, reconciles child resources (Cells, TableGroups, TopoServer),
@@ -606,6 +617,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		controllerOpts = opts[0]
 	}
 
+	dynamicEvents := make(chan event.GenericEvent)
 	b := ctrl.NewControllerManagedBy(mgr).
 		For(&multigresv1alpha1.MultigresCluster{},
 			builder.WithPredicates(predicate.Or(
@@ -635,13 +647,25 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Watches(
 			&multigresv1alpha1.ShardTemplate{},
 			handler.EnqueueRequestsFromMapFunc(r.enqueueRequestsFromTemplate),
-		)
+		).
+		// CREATE TABLEGROUP through a gateway changes nothing the operator
+		// watches; dynamicTableGroupPoller feeds this source with the
+		// opted-in clusters whose catalog asks for something new. The gate's
+		// event filter applies to it like every other source.
+		WatchesRawSource(source.Channel(dynamicEvents, &handler.EnqueueRequestForObject{}))
 
-	return r.Gate.Wire(b, mgr, func() client.ObjectList {
+	if err := r.Gate.Wire(b, mgr, func() client.ObjectList {
 		return &multigresv1alpha1.MultigresClusterList{}
 	}).
 		WithOptions(controllerOpts).
-		Complete(reconciler)
+		Complete(reconciler); err != nil {
+		return err
+	}
+	return mgr.Add(&dynamicTableGroupPoller{
+		r:        r,
+		events:   dynamicEvents,
+		interval: dynamicTableGroupPollInterval,
+	})
 }
 
 // projectRefOrGenerationChangedPredicate requeues when desired child state can
@@ -670,7 +694,9 @@ func projectRefOrGenerationChangedPredicate() predicate.Predicate {
 			oldAnnotations := e.ObjectOld.GetAnnotations()
 			newAnnotations := e.ObjectNew.GetAnnotations()
 			return oldAnnotations[metadata.AnnotationProjectRef] !=
-				newAnnotations[metadata.AnnotationProjectRef]
+				newAnnotations[metadata.AnnotationProjectRef] ||
+				oldAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups] !=
+					newAnnotations[multigresv1alpha1.AnnotationDynamicTableGroups]
 		},
 		GenericFunc: func(event.GenericEvent) bool {
 			return true
