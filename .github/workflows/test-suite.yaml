@@ -38,6 +38,7 @@ jobs:
 
       - name: Run test suite
         id: tests
+        continue-on-error: true
         run: make test-suite TEST_JSON_FILE="$RUNNER_TEMP/test-suite.jsonl"
 
       - name: Upload test results to Trunk
@@ -46,4 +47,5 @@ jobs:
         with:
           json-file: ${{ runner.temp }}/test-suite.jsonl
           previous-step-outcome: ${{ steps.tests.outcome }}
+          allow-quarantine: "true"
           variant: test-suite
