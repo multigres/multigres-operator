@@ -2,12 +2,16 @@ package toposerver
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
@@ -234,6 +238,33 @@ func TestSetupWithManager(t *testing.T) {
 		mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 			Scheme:  scheme,
 			Metrics: metricsserver.Options{BindAddress: "0"},
+			MapperProvider: func(*rest.Config, *http.Client) (meta.RESTMapper, error) {
+				mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{
+					multigresv1alpha1.GroupVersion,
+					appsv1.SchemeGroupVersion,
+					corev1.SchemeGroupVersion,
+					policyv1.SchemeGroupVersion,
+				})
+				mapper.Add(multigresv1alpha1.GroupVersion.WithKind("Cell"), meta.RESTScopeNamespace)
+				mapper.Add(
+					multigresv1alpha1.GroupVersion.WithKind("MultigresCluster"),
+					meta.RESTScopeNamespace,
+				)
+				mapper.Add(
+					multigresv1alpha1.GroupVersion.WithKind("TopoServer"),
+					meta.RESTScopeNamespace,
+				)
+				mapper.Add(
+					appsv1.SchemeGroupVersion.WithKind("StatefulSet"),
+					meta.RESTScopeNamespace,
+				)
+				mapper.Add(corev1.SchemeGroupVersion.WithKind("Service"), meta.RESTScopeNamespace)
+				mapper.Add(
+					policyv1.SchemeGroupVersion.WithKind("PodDisruptionBudget"),
+					meta.RESTScopeNamespace,
+				)
+				return mapper, nil
+			},
 		})
 		if err != nil {
 			t.Fatalf("Failed to create manager: %v", err)

@@ -1,8 +1,11 @@
 package shard
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -171,5 +174,89 @@ func TestTopoSpeakingContainers_PresentClientCert(t *testing.T) {
 	}
 	if !mountsVolume(&orch, multigresv1alpha1.TopoClientTLSVolumeName) {
 		t.Error("multiorch does not mount the topo client certificate")
+	}
+}
+
+func assertTopoVolumeSecret(t *testing.T, volumes []corev1.Volume, want string) {
+	t.Helper()
+	for _, volume := range volumes {
+		if volume.Name != multigresv1alpha1.TopoClientTLSVolumeName {
+			continue
+		}
+		for _, source := range volume.Projected.Sources {
+			if source.Secret.Name != want {
+				t.Errorf("topology Secret = %q, want %q", source.Secret.Name, want)
+			}
+		}
+		return
+	}
+	t.Fatal("topology client volume missing")
+}
+
+// The container that runs pgctld, and so Postgres and customer code, must
+// never see the topology client credential. With auth on, that certificate can
+// rewrite the project's own primary records. Both pod shapes run pgctld in a
+// container named "postgres"; in the Lite pod the minigres container is the
+// separate one that mounts the credential.
+func TestPgctldContainerNeverMountsTopoClientCredential(t *testing.T) {
+	pool, err := BuildPoolPod(topoTLSShard(), "main", "z1", newTestPoolSpec(), 0, testScheme())
+	require.NoError(t, err)
+
+	liteShard := newTestLiteShard()
+	secret := multigresv1alpha1.TopoClientCertSecretName("test-cluster")
+	liteShard.Spec.GlobalTopoServer.ClientCertSecret = secret
+	liteShard.Spec.GlobalTopoServer.CASecret = secret
+	lite, err := BuildLitePod(liteShard, "main", "z1", newTestPoolSpec(), testScheme())
+	require.NoError(t, err)
+
+	for name, pod := range map[string]*corev1.Pod{"pool": pool, "lite": lite} {
+		t.Run(name, func(t *testing.T) {
+			require.NotNil(
+				t,
+				findVolume(pod.Spec.Volumes, multigresv1alpha1.TopoClientTLSVolumeName),
+				"the credential must be configured for this test to mean anything",
+			)
+			volumes := map[string]corev1.Volume{}
+			for _, v := range pod.Spec.Volumes {
+				volumes[v.Name] = v
+			}
+
+			var pgctld []corev1.Container
+			for _, c := range append(slices.Clone(pod.Spec.InitContainers), pod.Spec.Containers...) {
+				if slices.Contains(c.Command, "/usr/local/bin/pgctld") {
+					pgctld = append(pgctld, c)
+				}
+			}
+			require.Len(t, pgctld, 1, "exactly one container runs pgctld")
+
+			for _, c := range pgctld {
+				require.Equal(t, "postgres", c.Name)
+				for _, m := range c.VolumeMounts {
+					require.NotEqual(t, multigresv1alpha1.TopoClientTLSVolumeName, m.Name)
+					require.False(
+						t,
+						strings.HasPrefix(m.MountPath, multigresv1alpha1.TopoClientTLSMountPath),
+						"mount path %q", m.MountPath,
+					)
+					// A differently named volume must not project the same Secret.
+					if projected := volumes[m.Name].Projected; projected != nil {
+						for _, source := range projected.Sources {
+							if source.Secret != nil {
+								require.NotEqual(t, secret, source.Secret.Name)
+							}
+						}
+					}
+					if s := volumes[m.Name].Secret; s != nil {
+						require.NotEqual(t, secret, s.SecretName)
+					}
+				}
+				for _, arg := range append(slices.Clone(c.Command), c.Args...) {
+					require.NotContains(t, arg, multigresv1alpha1.TopoClientTLSMountPath)
+				}
+				for _, env := range c.Env {
+					require.NotContains(t, env.Value, multigresv1alpha1.TopoClientTLSMountPath)
+				}
+			}
+		})
 	}
 }

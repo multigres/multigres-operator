@@ -164,9 +164,13 @@ func buildInternalCertificates(
 //
 // The issuer is the topology CA, not the cluster's own issuer: the credential
 // is only useful if it chains to a CA the topology server trusts.
+//
+// The URI SAN carries the same project identity in SPIFFE form for an issuer
+// gate to match on. Nothing reads it yet.
 func buildTopoClientCertificate(
 	cluster *multigresv1alpha1.MultigresCluster,
 	scheme *runtime.Scheme,
+	trustDomain string,
 ) (*unstructured.Unstructured, error) {
 	roots, err := topology.ForCluster(cluster)
 	if err != nil {
@@ -192,6 +196,9 @@ func buildTopoClientCertificate(
 		// A client credential is verified by its subject, not by name, so it
 		// carries no SANs.
 		DNSNames: []any{},
+		URIs: []any{
+			certs.SPIFFEURI(trustDomain, "project/"+projectRefFromRoot(commonName)),
+		},
 		Usages: []any{
 			"digital signature",
 			"key encipherment",
@@ -199,6 +206,16 @@ func buildTopoClientCertificate(
 		},
 		IssuerName: cluster.Spec.TopoTLS.IssuerName,
 	})
+}
+
+// projectRefFromRoot returns the cluster root without its leading
+// /multigres/, which is the project ref when one is set and the escaped
+// namespace/name otherwise.
+func projectRefFromRoot(clusterRoot string) string {
+	if ref, ok := strings.CutPrefix(clusterRoot, "/multigres/"); ok {
+		return ref
+	}
+	return strings.TrimPrefix(clusterRoot, "/")
 }
 
 // issuesTopoClientCert reports whether the operator issues the topology
@@ -340,7 +357,7 @@ func (r *MultigresClusterReconciler) reconcileCertificate(
 		// Secret brings its own trust, so a credential issued here would sit
 		// unused.
 		if issue {
-			topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme)
+			topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme, r.TrustDomain)
 			if err != nil {
 				r.markTopologyFailed(
 					ctx,

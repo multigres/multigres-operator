@@ -2,6 +2,7 @@ package multigrescluster
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -10,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/ownership"
@@ -101,6 +103,17 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 		return fmt.Errorf("failed to resolve global topo: %w", err)
 	}
 
+	existing, err := r.existingGlobalTopoServer(ctx, cluster)
+	if err != nil {
+		return err
+	}
+	if reason, message := resolvedTopoAuthProblem(cluster, spec, existing); reason != "" {
+		problem := stderrors.New(message)
+		r.Recorder.Event(cluster, "Warning", reason, message)
+		r.markTopologyFailed(ctx, cluster, reason, problem, log.FromContext(ctx))
+		return problem
+	}
+
 	desired, err := BuildGlobalTopoServer(cluster, spec, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build global topo server: %w", err)
@@ -134,6 +147,60 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 	)
 
 	return nil
+}
+
+const (
+	reasonTopologyAuthRequiresTLS      = "TopologyAuthRequiresTLS"
+	reasonTopologyAuthCannotBeDisabled = "TopologyAuthCannotBeDisabled"
+)
+
+// resolvedTopoAuthProblem checks the resolved global topology spec against the
+// rules the child TopoServer enforces. Admission only sees the inline value, so
+// an auth setting inherited from a CoreTemplate reaches here unchecked. An empty
+// reason means the spec is valid.
+func resolvedTopoAuthProblem(
+	cluster *multigresv1alpha1.MultigresCluster,
+	spec *multigresv1alpha1.GlobalTopoServerSpec,
+	existing *multigresv1alpha1.TopoServer,
+) (reason, message string) {
+	if spec == nil || spec.Etcd == nil {
+		return "", ""
+	}
+	if spec.Auth.IsEnabled() {
+		if cluster.Spec.TopoTLS.IsEnabled() {
+			return "", ""
+		}
+		return reasonTopologyAuthRequiresTLS,
+			"spec.globalTopoServer.auth is enabled (possibly by the CoreTemplate default) " +
+				"but spec.topoTLS is not: set spec.globalTopoServer.auth.enabled to false, " +
+				"or create the cluster with spec.topoTLS.enabled, which is immutable"
+	}
+	if existing != nil && (existing.Spec.Auth.IsEnabled() || existing.Status.AuthEnabled) {
+		return reasonTopologyAuthCannotBeDisabled,
+			"spec.globalTopoServer.auth is no longer enabled (possibly through the " +
+				"CoreTemplate default) but TopoServer " + existing.Name + " already has " +
+				"authorization on: set spec.globalTopoServer.auth.enabled to true, " +
+				"or move to an external topology server"
+	}
+	return "", ""
+}
+
+func (r *MultigresClusterReconciler) existingGlobalTopoServer(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) (*multigresv1alpha1.TopoServer, error) {
+	existing := &multigresv1alpha1.TopoServer{}
+	err := r.Get(ctx, client.ObjectKey{
+		Name:      cluster.Name + "-global-topo",
+		Namespace: cluster.Namespace,
+	}, existing)
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get global topo server: %w", err)
+	}
+	return existing, nil
 }
 
 // reconcileMultiadmin reconciles the Multiadmin Deployment.

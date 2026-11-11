@@ -762,6 +762,40 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: nil, // Explicitly nilled out
 			},
 		},
+		"Inline External clears template auth": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					TemplateDefaults: multigresv1alpha1.TemplateDefaults{CoreTemplate: "with-auth"},
+					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+						External: &multigresv1alpha1.ExternalTopoServerSpec{
+							Endpoints: []multigresv1alpha1.EndpointUrl{
+								"https://external-etcd.default.svc:2379",
+							},
+						},
+					},
+				},
+			},
+			objects: []client.Object{
+				&multigresv1alpha1.CoreTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "with-auth", Namespace: "default"},
+					Spec: multigresv1alpha1.CoreTemplateSpec{
+						GlobalTopoServer: &multigresv1alpha1.TopoServerSpec{
+							Auth: &multigresv1alpha1.TopoServerAuthSpec{Enabled: true},
+							Etcd: &multigresv1alpha1.EtcdSpec{},
+						},
+					},
+				},
+			},
+			want: &multigresv1alpha1.GlobalTopoServerSpec{
+				External: &multigresv1alpha1.ExternalTopoServerSpec{
+					Endpoints: []multigresv1alpha1.EndpointUrl{
+						"https://external-etcd.default.svc:2379",
+					},
+					Implementation: DefaultTopoImplementation,
+					RootPath:       canonicalTestGlobalRoot,
+				},
+			},
+		},
 		"CoreTemplate with GlobalTopo": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -784,6 +818,67 @@ func TestResolver_ResolveGlobalTopo(t *testing.T) {
 				Etcd: &multigresv1alpha1.EtcdSpec{
 					Image:     "core-image",
 					Replicas:  ptr.To(DefaultEtcdReplicas), // Defaults applied
+					RootPath:  canonicalTestGlobalRoot,
+					Resources: DefaultResourcesEtcd(),
+					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
+				},
+			},
+		},
+		"CoreTemplate auth default": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+						TemplateRef: "with-auth",
+					},
+				},
+			},
+			objects: []client.Object{
+				&multigresv1alpha1.CoreTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "with-auth", Namespace: "default"},
+					Spec: multigresv1alpha1.CoreTemplateSpec{
+						GlobalTopoServer: &multigresv1alpha1.TopoServerSpec{
+							Auth: &multigresv1alpha1.TopoServerAuthSpec{Enabled: true},
+							Etcd: &multigresv1alpha1.EtcdSpec{},
+						},
+					},
+				},
+			},
+			want: &multigresv1alpha1.GlobalTopoServerSpec{
+				Auth: &multigresv1alpha1.TopoServerAuthSpec{Enabled: true},
+				Etcd: &multigresv1alpha1.EtcdSpec{
+					Image:     DefaultEtcdImage,
+					Replicas:  ptr.To(DefaultEtcdReplicas),
+					RootPath:  canonicalTestGlobalRoot,
+					Resources: DefaultResourcesEtcd(),
+					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},
+				},
+			},
+		},
+		"Inline auth overrides template": {
+			cluster: &multigresv1alpha1.MultigresCluster{
+				Spec: multigresv1alpha1.MultigresClusterSpec{
+					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
+						TemplateRef: "with-auth",
+						Auth:        &multigresv1alpha1.TopoServerAuthSpec{Enabled: false},
+					},
+				},
+			},
+			objects: []client.Object{
+				&multigresv1alpha1.CoreTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "with-auth", Namespace: "default"},
+					Spec: multigresv1alpha1.CoreTemplateSpec{
+						GlobalTopoServer: &multigresv1alpha1.TopoServerSpec{
+							Auth: &multigresv1alpha1.TopoServerAuthSpec{Enabled: true},
+							Etcd: &multigresv1alpha1.EtcdSpec{},
+						},
+					},
+				},
+			},
+			want: &multigresv1alpha1.GlobalTopoServerSpec{
+				Auth: &multigresv1alpha1.TopoServerAuthSpec{Enabled: false},
+				Etcd: &multigresv1alpha1.EtcdSpec{
+					Image:     DefaultEtcdImage,
+					Replicas:  ptr.To(DefaultEtcdReplicas),
 					RootPath:  canonicalTestGlobalRoot,
 					Resources: DefaultResourcesEtcd(),
 					Storage:   multigresv1alpha1.StorageSpec{Size: DefaultEtcdStorageSize},

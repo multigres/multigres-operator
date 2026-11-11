@@ -198,6 +198,7 @@ func (r *Resolver) ResolveGlobalTopo(
 
 	if coreTemplate != nil && coreTemplate.Spec.GlobalTopoServer != nil {
 		finalSpec = &multigresv1alpha1.GlobalTopoServerSpec{
+			Auth:              coreTemplate.Spec.GlobalTopoServer.Auth.DeepCopy(),
 			Etcd:              coreTemplate.Spec.GlobalTopoServer.Etcd.DeepCopy(),
 			PVCDeletionPolicy: coreTemplate.Spec.GlobalTopoServer.PVCDeletionPolicy,
 			Placement:         coreTemplate.Spec.GlobalTopoServer.Placement.DeepCopy(),
@@ -209,9 +210,13 @@ func (r *Resolver) ResolveGlobalTopo(
 	}
 
 	if spec != nil {
+		if spec.Auth != nil {
+			finalSpec.Auth = spec.Auth.DeepCopy()
+		}
 		if spec.External != nil {
 			finalSpec.External = spec.External.DeepCopy()
 			finalSpec.Etcd = nil
+			finalSpec.Auth = nil
 		} else if spec.Etcd != nil {
 			if finalSpec.Etcd == nil {
 				finalSpec.Etcd = &multigresv1alpha1.EtcdSpec{}
