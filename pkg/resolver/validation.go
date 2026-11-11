@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"regexp"
@@ -240,7 +241,32 @@ func (r *Resolver) ValidateClusterLogic(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (admission.Warnings, error) {
+	return r.ValidateClusterLogicUpdate(ctx, nil, cluster)
+}
+
+// ValidateClusterLogicUpdate is ValidateClusterLogic for an update. A sidecar
+// configuration error the stored object (old) already had, word for word, is
+// reported as a warning instead of rejecting: refusing it would block every
+// write to a cluster stored before the sidecar became unconditional, the
+// operator's own metadata updates and finalizer removal included, leaving it
+// unreconcilable and undeletable. Introducing or changing a violation is still rejected.
+func (r *Resolver) ValidateClusterLogicUpdate(
+	ctx context.Context,
+	old, cluster *multigresv1alpha1.MultigresCluster,
+) (admission.Warnings, error) {
 	var warnings admission.Warnings
+
+	if err := ValidateSidecarConfig(cluster); err != nil {
+		if old == nil {
+			return nil, err
+		}
+		oldErr := ValidateSidecarConfig(old)
+		if oldErr == nil || oldErr.Error() != err.Error() {
+			return nil, err
+		}
+		warnings = append(warnings, err.Error()+
+			"; the existing configuration is left in place, but its shards will not reconcile until it is fixed")
+	}
 
 	// Extract all valid cell names for this cluster
 	var cellNames []multigresv1alpha1.CellName
@@ -1128,4 +1154,90 @@ func (r *Resolver) validateCellTopology(
 	}
 
 	return warnings
+}
+
+// sidecarBackupMountPath is the only directory the pgBackRest sidecar mounts
+// the backup volume at, so a filesystem repository anywhere else would land on
+// the container's ephemeral root filesystem and be lost with the pod.
+const sidecarBackupMountPath = "/backups"
+
+// validateSidecarFilesystemPath rejects a filesystem backup location with a
+// path other than /backups. The location is the database-level merge (the one
+// the sidecar renders), so tablegroup and shard overrides are not considered.
+func validateSidecarFilesystemPath(cluster *multigresv1alpha1.MultigresCluster) error {
+	check := func(where string, cfg *multigresv1alpha1.BackupConfig) error {
+		if cfg == nil || cfg.Type != multigresv1alpha1.BackupTypeFilesystem ||
+			cfg.Filesystem == nil {
+			return nil
+		}
+		if p := cfg.Filesystem.Path; p != "" && p != sidecarBackupMountPath {
+			return fmt.Errorf(
+				"%s: filesystem backup path %q is not supported by the pgBackRest sidecar: "+
+					"the sidecar only mounts the backup volume at %q, so the path must be %q or unset",
+				where, p, sidecarBackupMountPath, sidecarBackupMountPath,
+			)
+		}
+		return nil
+	}
+	if err := check("spec.backup", cluster.Spec.Backup); err != nil {
+		return err
+	}
+	for _, db := range cluster.Spec.Databases {
+		merged := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
+		if err := check(fmt.Sprintf("database %q backup", db.Name), merged); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ErrSidecarCredentials marks the rejection of an S3 credential source the
+// sidecar cannot render.
+var ErrSidecarCredentials = stderrors.New(
+	"unsupported credential source for the pgBackRest sidecar",
+)
+
+// ValidateSidecarConfig runs every admission rule for the pgBackRest sidecar
+// and returns the first violation. Every cluster runs the sidecar, Lite
+// included.
+func ValidateSidecarConfig(cluster *multigresv1alpha1.MultigresCluster) error {
+	if err := validateSidecarFilesystemPath(cluster); err != nil {
+		return err
+	}
+	return ValidateSidecarCredentials(cluster)
+}
+
+// ValidateSidecarCredentials requires that every S3 backup config names a
+// credential source the sidecar can render: IRSA (serviceAccountName on the
+// config, or the cluster's shardServiceAccount) or static keys (credentialsSecret). Node or instance-profile credentials,
+// useEnvCredentials without a secret, and EKS Pod Identity are not mapped, so a
+// cluster using them would silently stop archiving. useEnvCredentials next to a
+// credentialsSecret is the documented static-key form and stays valid. The
+// location checked is the database-level merge, as for the filesystem path.
+func ValidateSidecarCredentials(cluster *multigresv1alpha1.MultigresCluster) error {
+	check := func(where string, cfg *multigresv1alpha1.BackupConfig) error {
+		if cfg == nil || cfg.Type != multigresv1alpha1.BackupTypeS3 || cfg.S3 == nil ||
+			cfg.S3.CredentialsSecret != "" || cfg.S3.ServiceAccountName != "" ||
+			cluster.Spec.ShardServiceAccount != nil {
+			return nil
+		}
+		return fmt.Errorf(
+			"%w: %s: s3 backup has no credential source the sidecar supports: "+
+				"the sidecar supports IRSA (serviceAccountName or shardServiceAccount) and "+
+				"static keys (credentialsSecret) only; node or instance-profile credentials "+
+				"(including useEnvCredentials without a credentialsSecret) and EKS Pod Identity "+
+				"are not supported",
+			ErrSidecarCredentials, where,
+		)
+	}
+	if err := check("spec.backup", cluster.Spec.Backup); err != nil {
+		return err
+	}
+	for _, db := range cluster.Spec.Databases {
+		merged := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
+		if err := check(fmt.Sprintf("database %q backup", db.Name), merged); err != nil {
+			return err
+		}
+	}
+	return nil
 }

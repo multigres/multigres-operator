@@ -26,6 +26,21 @@ You can customize the operator's behavior by passing flags to the binary (or edi
 | `--enable-http2` | `false` | Enable HTTP/2 for metrics and webhook servers. |
 | `--leader-elect` | `false` | Enable leader election (recommended for HA deployments). |
 | `--image-update-strategy` | `immediate` | Default for when clusters adopt a changed default image set: `immediate` rolls a cluster as soon as operator configuration changes; `lazy` holds it on its current set until `spec.imageUpdatePolicy.acknowledgedRevision` names the new set's revision. Individual clusters can override this via `spec.imageUpdatePolicy.strategy`. |
+| `--pgbackrest-sandbox` | `$MULTIGRES_PGBACKREST_SANDBOX`, else `required` | Whether pgBackRest child processes are confined with Landlock, passed as `--sandbox=<mode>` to every pgbackrestd sidecar. See [pgBackRest sandbox mode](#pgbackrest-sandbox-mode). |
+
+## pgBackRest sandbox mode
+
+Every pool pod and Lite pod runs a pgbackrestd sidecar that confines the pgBackRest processes it starts with Landlock. Whether that is possible is a property of the nodes, so it is chosen per operator deployment with `--pgbackrest-sandbox` (default from the `MULTIGRES_PGBACKREST_SANDBOX` environment variable; the flag wins over the environment; empty means `required`). There is no per-cluster field and nothing in the CRDs. An unrecognised value stops the operator at startup.
+
+| Mode | Behaviour |
+| :--- | :--- |
+| `required` (default) | The sidecar refuses to start unless Landlock works. Fails closed. |
+| `auto` | For fleets with mixed kernels: confine when the node supports Landlock, otherwise run unconfined. The sidecar logs what it found at start; the operator exposes no status, condition or metric for it. |
+| `off` | Never use Landlock. For environments without it. |
+
+Changing the mode changes the sidecar's arguments, and therefore the pod spec hash, so **flipping the mode rolls every pool pod and Lite pod** under the usual rollout rules.
+
+Requirements for `required` (and for `auto` to confine): a Linux kernel with the Landlock LSM enabled at ABI 3 or later (Linux 6.2+), and a seccomp profile that allows `landlock_create_ruleset`, `landlock_add_rule` and `landlock_restrict_self`. Docker's default profile allows them on Docker 29.8.2. The `RuntimeDefault` profile of containerd on real nodes has NOT been verified; if it blocks the syscalls, the probe fails with EPERM and the sidecar exits in every mode but `off` (a blocked syscall is never treated as "unsupported", so `auto` does not silently degrade on it).
 
 ## Component Images
 

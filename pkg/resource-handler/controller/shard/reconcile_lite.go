@@ -209,9 +209,10 @@ func litePool(
 
 // registerLiteDatabase writes the shard's database record to the global
 // topology with RegisterDatabaseFromSpec, built from the shard: its cells, the
-// backup location from spec.backup and the durability policy. In lite mode the
-// Shard owns this record because its resolved backup and pool cells may differ
-// from the cluster defaults, and the cluster controller skips it. It reports
+// backup location from spec.sidecarBackupLocation (the one the sidecar renders)
+// and the durability policy. In lite mode the Shard owns this record because
+// its pool cells may differ from the cluster defaults, and the cluster
+// controller skips it. It reports
 // false when the topology server cannot be reached yet, so the caller requeues
 // as the data-plane phase does.
 func (r *ShardReconciler) registerLiteDatabase(
@@ -240,7 +241,7 @@ func (r *ShardReconciler) registerLiteDatabase(
 	}
 	if err := topo.RegisterDatabaseFromSpec(
 		ctx, store, r.Recorder, shard, dbConfig, topo.CollectCells(shard),
-		shard.Spec.Backup, shard.Spec.DurabilityPolicy,
+		shard.Spec.SidecarBackupLocation, shard.Spec.DurabilityPolicy,
 	); err != nil {
 		if isLiteTopoUnavailable(err) {
 			logger.Info("Topology server unavailable; requeueing", "error", err.Error())

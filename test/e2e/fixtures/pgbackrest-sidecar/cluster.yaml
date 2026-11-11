@@ -1,0 +1,49 @@
+# Cluster for the PgBackRestSidecar e2e. The filesystem repository
+# lives on a static RWX volume the test provisions (class e2e-rwx), and the
+# cipher Secret named here is created by the test before the cluster, so
+# encryption is on and the sidecar's cipher key file exists on its mount.
+apiVersion: multigres.com/v1alpha1
+kind: MultigresCluster
+metadata:
+  name: e2e-pgbr
+  namespace: default
+spec:
+  postgresPasswordSecretRef:
+    name: multigres-admin-password
+    key: password
+  pvcDeletionPolicy:
+    whenDeleted: Delete
+    whenScaled: Delete
+  shardServiceAccount:
+    name: e2e-pgbr-shard
+  backup:
+    type: filesystem
+    filesystem:
+      storage:
+        size: "1Gi"
+        class: e2e-rwx
+        accessModes: ["ReadWriteMany"]
+    encryption:
+      secretName: e2e-pgbr-cipher
+  cells:
+    - name: "zone-a"
+      zoneId: us-central1-a
+  databases:
+    - name: "postgres"
+      default: true
+      tablegroups:
+        - name: "default"
+          default: true
+          shards:
+            - name: "0-inf"
+              spec:
+                multiorch:
+                  replicas: 1
+                pools:
+                  default:
+                    type: readWrite
+                    cells: ["zone-a"]
+                    # AT_LEAST_2 bootstrap must tolerate losing one cohort member.
+                    replicasPerCell: 3
+                    storage:
+                      size: "1Gi"

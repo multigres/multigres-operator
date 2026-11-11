@@ -126,10 +126,13 @@ func FromSpec(spec multigresv1alpha1.ClusterImages) multigresv1alpha1.ComponentI
 		Multiorch:     spec.Multiorch,
 		Multipooler:   spec.Multipooler,
 		Multigateway:  spec.Multigateway,
+		PgBackRestd:   spec.PgBackRestd,
 	}
 }
 
 // IsComplete reports whether every component image in the set is non-empty.
+// PgBackRestd is not required: it is never part of a default or recorded set,
+// only derived per cluster (see DerivePgBackRestd).
 // A recorded applied set is only trustworthy when complete: a partial set
 // would resolve some components from the record and silently drop the rest
 // to compiled-in fallbacks.
@@ -162,5 +165,17 @@ func Complete(spec *multigresv1alpha1.ClusterImages, defaults multigresv1alpha1.
 	}
 	if spec.Multigateway == "" {
 		spec.Multigateway = defaults.Multigateway
+	}
+}
+
+// DerivePgBackRestd sets an unset pgbackrestd image to the Multipooler image
+// of the same resolved set. The sidecar and multipooler talk over a versioned
+// connect API and an argv allowlist, so they must be the same multigres build:
+// it follows multipooler through every resolution (pinned, lazy record,
+// default) and never moves on its own. An explicit value is left untouched.
+// Call it after Complete.
+func DerivePgBackRestd(spec *multigresv1alpha1.ClusterImages) {
+	if spec.PgBackRestd == "" {
+		spec.PgBackRestd = spec.Multipooler
 	}
 }

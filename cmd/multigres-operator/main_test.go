@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"flag"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	shardcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/shard"
+)
 
 func TestGoMemLimitFromEnv(t *testing.T) {
 	tests := map[string]struct {
@@ -57,4 +64,38 @@ func TestGoMemLimitFromEnvDoesNotOverflowAtNodeScale(t *testing.T) {
 	if got <= 0 || got >= nodeAllocatable {
 		t.Fatalf("goMemLimitFromEnv() = %d, want a positive value below %d", got, nodeAllocatable)
 	}
+}
+
+func TestPgBackRestSandboxFlag(t *testing.T) {
+	const env = "MULTIGRES_PGBACKREST_SANDBOX"
+	parse := func(t *testing.T, args ...string) string {
+		t.Helper()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		v := registerPgBackRestSandboxFlag(fs)
+		require.NoError(t, fs.Parse(args))
+		return *v
+	}
+
+	t.Run("unset is empty, which the reconciler treats as required", func(t *testing.T) {
+		t.Setenv(env, "")
+		got, err := shardcontroller.ParseSandboxMode(parse(t))
+		require.NoError(t, err)
+		require.Equal(t, "required", got)
+	})
+	t.Run("environment is the default", func(t *testing.T) {
+		t.Setenv(env, "auto")
+		require.Equal(t, "auto", parse(t))
+	})
+	t.Run("flag beats environment", func(t *testing.T) {
+		t.Setenv(env, "auto")
+		require.Equal(t, "off", parse(t, "--pgbackrest-sandbox=off"))
+	})
+	t.Run("invalid value is rejected naming the accepted values", func(t *testing.T) {
+		t.Setenv(env, "bogus")
+		_, err := shardcontroller.ParseSandboxMode(parse(t))
+		require.ErrorContains(t, err, `"required", "auto" and "off"`)
+		t.Setenv(env, "auto")
+		_, err = shardcontroller.ParseSandboxMode(parse(t, "--pgbackrest-sandbox=nope"))
+		require.Error(t, err)
+	})
 }
