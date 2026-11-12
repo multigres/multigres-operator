@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -168,6 +169,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		targets = append(targets, ts)
 	}
 	sched.Status.Targets = targets
+	r.pruneUntargeted(ctx, sched, backups.Items, targets)
 
 	if len(missing) > 0 {
 		r.setReady(sched, metav1.ConditionFalse,
@@ -199,11 +201,11 @@ func (r *Reconciler) reconcileTarget(
 	now time.Time,
 ) (time.Time, error) {
 	// Observed state, independent of whether a run is due.
-	ts.Active = ""
+	ts.Active = nil
 	for i := range owned {
 		b := &owned[i]
 		if !b.Status.Phase.Finished() {
-			ts.Active = b.Name
+			ts.Active = &corev1.LocalObjectReference{Name: b.Name}
 		}
 		if b.Status.Phase == multigresv1alpha1.BackupPhaseSucceeded &&
 			b.Status.CompletionTime != nil &&
@@ -258,7 +260,6 @@ func (r *Reconciler) reconcileTarget(
 		ts.LastScheduleTime = &metav1.Time{Time: last}
 		if !withinDeadline {
 			ts.LastScheduleOutcome = multigresv1alpha1.BackupScheduleOutcomeMissed
-			ts.MissedRuns++
 			backuphandler.ScheduleRunsMissed.WithLabelValues(sched.Namespace, sched.Name).Inc()
 			r.Recorder.Eventf(sched, "Warning", "Missed",
 				"Run at %s for %s/%s/%s missed: more than %ds late",
@@ -311,7 +312,6 @@ func (r *Reconciler) createOrSkip(
 ) error {
 	if covering := backuphandler.CoveringBackup(shardBackups, sched.Spec.Type); covering != nil {
 		ts.LastScheduleOutcome = multigresv1alpha1.BackupScheduleOutcomeSkipped
-		ts.SkippedRuns++
 		backuphandler.ScheduleRunsSkipped.WithLabelValues(sched.Namespace, sched.Name).Inc()
 		r.Recorder.Eventf(sched, "Normal", "Skipped",
 			"Run at %s for %s/%s/%s skipped: %s backup %s is unfinished",
@@ -352,7 +352,7 @@ func (r *Reconciler) createOrSkip(
 		return fmt.Errorf("creating MultigresBackup %s: %w", backup.Name, err)
 	}
 	ts.LastScheduleOutcome = multigresv1alpha1.BackupScheduleOutcomeCreated
-	ts.Active = backup.Name
+	ts.Active = &corev1.LocalObjectReference{Name: backup.Name}
 	return nil
 }
 
@@ -400,6 +400,40 @@ func (r *Reconciler) pruneHistory(
 		return err
 	}
 	return prune(failed, sched.Spec.FailedHistoryLimit())
+}
+
+// pruneUntargeted applies the history limits to this schedule's attempts for
+// shards it no longer targets, because the Shard was deleted or dropped from
+// spec.targets. No new attempts are created for those shards, so without this
+// their finished attempts would stay until the schedule is deleted. Unfinished
+// attempts are left to fail on their own and are pruned on a later reconcile.
+func (r *Reconciler) pruneUntargeted(
+	ctx context.Context,
+	sched *multigresv1alpha1.MultigresBackupSchedule,
+	all []multigresv1alpha1.MultigresBackup,
+	targeted []multigresv1alpha1.BackupScheduleTargetStatus,
+) {
+	seen := make(map[multigresv1alpha1.BackupTarget]bool, len(targeted))
+	for _, ts := range targeted {
+		seen[ts.BackupTarget] = true
+	}
+	byTarget := map[multigresv1alpha1.BackupTarget][]multigresv1alpha1.MultigresBackup{}
+	for _, b := range filterOwned(all, sched) {
+		t := multigresv1alpha1.BackupTarget{
+			Database:   b.Spec.Database,
+			TableGroup: b.Spec.TableGroup,
+			Shard:      b.Spec.Shard,
+		}
+		if !seen[t] {
+			byTarget[t] = append(byTarget[t], b)
+		}
+	}
+	for t, owned := range byTarget {
+		if err := r.pruneHistory(ctx, sched, owned, nil); err != nil {
+			log.FromContext(ctx).Error(err,
+				"pruning backup history for untargeted shard", "shard", t)
+		}
+	}
 }
 
 func finishedAt(b *multigresv1alpha1.MultigresBackup) time.Time {

@@ -2,6 +2,7 @@ package multigresbackupschedule
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ type harness struct {
 	c   client.Client
 	now time.Time
 	r   *Reconciler
+	rec *record.FakeRecorder
 }
 
 func newHarness(
@@ -83,11 +85,11 @@ func newHarness(
 			&multigresv1alpha1.MultigresBackup{},
 		).
 		Build()
-	h := &harness{t: t, c: c, now: due.Add(time.Minute)}
+	h := &harness{t: t, c: c, now: due.Add(time.Minute), rec: record.NewFakeRecorder(100)}
 	h.r = &Reconciler{
 		Client:   c,
 		Scheme:   scheme,
-		Recorder: record.NewFakeRecorder(100),
+		Recorder: h.rec,
 		Now:      func() time.Time { return h.now },
 	}
 	return h
@@ -108,6 +110,21 @@ func bootstrappedShard(name, shard string) *multigresv1alpha1.Shard {
 			LastBackupTime: ptr.To(metav1.NewTime(created)),
 			PodRoles:       map[string]string{"pod-0": "PRIMARY", "pod-1": "REPLICA"},
 		},
+	}
+}
+
+// eventsWithReason drains the recorded Events and counts those with reason.
+func (h *harness) eventsWithReason(reason string) int {
+	n := 0
+	for {
+		select {
+		case e := <-h.rec.Events:
+			if strings.Contains(e, " "+reason+" ") {
+				n++
+			}
+		default:
+			return n
+		}
 	}
 }
 
@@ -208,7 +225,7 @@ func TestDueRunCreatesOneAttempt(t *testing.T) {
 	}
 	ts := h.targetStatus()
 	if ts.LastScheduleOutcome != multigresv1alpha1.BackupScheduleOutcomeCreated ||
-		ts.Active != b.Name || !ts.NextScheduleTime.Time.Equal(due.Add(24*time.Hour)) {
+		ts.Active == nil || ts.Active.Name != b.Name || !ts.NextScheduleTime.Time.Equal(due.Add(24*time.Hour)) {
 		t.Fatalf("target status = %+v", ts)
 	}
 	if !meta.IsStatusConditionTrue(h.schedule().Status.Conditions, "Ready") {
@@ -263,9 +280,11 @@ func TestMissedRun(t *testing.T) {
 		t.Fatalf("attempts = %d, want 0", n)
 	}
 	ts := h.targetStatus()
-	if ts.MissedRuns != 1 ||
-		ts.LastScheduleOutcome != multigresv1alpha1.BackupScheduleOutcomeMissed {
+	if ts.LastScheduleOutcome != multigresv1alpha1.BackupScheduleOutcomeMissed {
 		t.Fatalf("target status = %+v", ts)
+	}
+	if n := h.eventsWithReason("Missed"); n != 1 {
+		t.Fatalf("Missed events = %d, want 1", n)
 	}
 }
 
@@ -317,7 +336,7 @@ func TestNoRetryAfterSuccess(t *testing.T) {
 	if n := len(h.backups()); n != 1 {
 		t.Fatalf("attempts = %d, want 1", n)
 	}
-	if ts := h.targetStatus(); ts.LastSuccessfulTime == nil || ts.Active != "" {
+	if ts := h.targetStatus(); ts.LastSuccessfulTime == nil || ts.Active != nil {
 		t.Fatalf("target status = %+v", ts)
 	}
 }
@@ -343,9 +362,11 @@ func TestTypeAwareSkip(t *testing.T) {
 		t.Fatalf("differential while full runs: attempts = %d, want 1", n)
 	}
 	ts := h.targetStatus()
-	if ts.SkippedRuns != 1 ||
-		ts.LastScheduleOutcome != multigresv1alpha1.BackupScheduleOutcomeSkipped {
+	if ts.LastScheduleOutcome != multigresv1alpha1.BackupScheduleOutcomeSkipped {
 		t.Fatalf("target status = %+v", ts)
+	}
+	if n := h.eventsWithReason("Skipped"); n != 1 {
+		t.Fatalf("Skipped events = %d, want 1", n)
 	}
 
 	// A same-type backup also covers the run.
@@ -404,6 +425,75 @@ func TestHistoryLimit(t *testing.T) {
 	oldest := AttemptName(sname, target, due.Add(-4*24*time.Hour), 1)
 	if names[oldest] {
 		t.Fatalf("oldest attempt %s was kept", oldest)
+	}
+}
+
+// Attempts for a shard the schedule no longer targets (here: deleted) are
+// still pruned under the history limits; unfinished ones are kept.
+func TestHistoryLimitUntargetedShard(t *testing.T) {
+	gone := multigresv1alpha1.BackupTarget{
+		Database: "postgres", TableGroup: "default", Shard: "0-80",
+	}
+	owned := func(i int, phase multigresv1alpha1.BackupPhase) *multigresv1alpha1.MultigresBackup {
+		scheduled := due.Add(-time.Duration(20-i) * 24 * time.Hour)
+		b := &multigresv1alpha1.MultigresBackup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      AttemptName(sname, gone, scheduled, 1),
+				Namespace: ns,
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: multigresv1alpha1.GroupVersion.String(),
+					Kind:       "MultigresBackupSchedule", Name: sname, UID: types.UID("sched-uid"),
+					Controller: ptr.To(true),
+				}},
+			},
+			Spec: multigresv1alpha1.MultigresBackupSpec{
+				ClusterRef:    multigresv1alpha1.BackupClusterReference{Name: "mgc"},
+				Database:      gone.Database,
+				TableGroup:    gone.TableGroup,
+				Shard:         gone.Shard,
+				Type:          multigresv1alpha1.BackupKindDifferential,
+				ScheduledTime: ptr.To(metav1.NewTime(scheduled)),
+				Attempt:       1,
+			},
+			Status: multigresv1alpha1.MultigresBackupStatus{Phase: phase},
+		}
+		if phase.Finished() {
+			b.Status.CompletionTime = ptr.To(metav1.NewTime(scheduled.Add(time.Hour)))
+		}
+		return b
+	}
+
+	objs := []client.Object{bootstrappedShard("s0", "0-inf")}
+	i := 0
+	for range 4 {
+		objs = append(objs, owned(i, multigresv1alpha1.BackupPhaseSucceeded))
+		i++
+	}
+	for range 7 {
+		objs = append(objs, owned(i, multigresv1alpha1.BackupPhaseFailed))
+		i++
+	}
+	running := owned(i, multigresv1alpha1.BackupPhaseRunning)
+	objs = append(objs, running)
+
+	h := newHarness(t, func(s *multigresv1alpha1.MultigresBackupSchedule) {
+		s.Spec.Suspend = true // only prune
+	}, objs...)
+	h.reconcile()
+
+	counts := map[multigresv1alpha1.BackupPhase]int{}
+	for _, b := range h.backups() {
+		if b.Spec.Shard == gone.Shard {
+			counts[b.Status.Phase]++
+		}
+	}
+	if counts[multigresv1alpha1.BackupPhaseSucceeded] != 3 ||
+		counts[multigresv1alpha1.BackupPhaseFailed] != 5 ||
+		counts[multigresv1alpha1.BackupPhaseRunning] != 1 {
+		t.Fatalf("kept %v, want 3 Succeeded, 5 Failed, 1 Running", counts)
+	}
+	if ts := h.targetStatus(); ts.BackupTarget != target {
+		t.Fatalf("status.targets = %+v, want only %+v", ts.BackupTarget, target)
 	}
 }
 
