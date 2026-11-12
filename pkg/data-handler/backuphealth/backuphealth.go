@@ -6,6 +6,7 @@ package backuphealth
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/multigres/multigres/go/common/rpcclient"
@@ -90,32 +91,44 @@ func EvaluateBackups(
 		}
 	}
 
-	var latest *multipoolermanagerdatapb.BackupMetadata
+	var (
+		latest       *multipoolermanagerdatapb.BackupMetadata
+		backupTime   time.Time
+		unparseable  *multipoolermanagerdatapb.BackupMetadata
+		anyCompleted bool
+	)
 	for _, b := range backups {
 		if b.Status != multipoolermanagerdatapb.BackupMetadata_COMPLETE {
 			continue
 		}
-		if latest == nil {
-			latest = b
+		anyCompleted = true
+		t := BackupTime(b)
+		if t.IsZero() {
+			if unparseable == nil {
+				unparseable = b
+			}
 			continue
 		}
-		if b.BackupId > latest.BackupId {
+		if latest == nil || t.After(backupTime) {
 			latest = b
+			backupTime = t
 		}
 	}
 
-	if latest == nil {
+	if !anyCompleted {
 		return &Result{
 			Healthy: false,
 			Message: "No completed backups found",
 		}
 	}
 
-	backupTime := ParseTime(latest.BackupId)
-	if backupTime.IsZero() {
+	if latest == nil {
 		return &Result{
 			Healthy: false,
-			Message: fmt.Sprintf("Failed to parse backup timestamp from ID %q", latest.BackupId),
+			Message: fmt.Sprintf(
+				"Failed to parse backup timestamp from ID %q",
+				unparseable.BackupId,
+			),
 		}
 	}
 
@@ -142,9 +155,27 @@ func EvaluateBackups(
 	return result
 }
 
-// ParseTime extracts the timestamp from a pgBackRest backup ID.
-// Format: YYYYMMDD-HHMMSSF (F = fractional seconds suffix).
+// BackupTime returns when a backup finished. It prefers the stop timestamp
+// reported by pgBackRest and falls back to the time encoded in the backup ID
+// when the stop timestamp is not set. Returns the zero time if neither is
+// usable.
+func BackupTime(b *multipoolermanagerdatapb.BackupMetadata) time.Time {
+	if ts := b.GetStopTimestamp(); ts != nil && ts.IsValid() && ts.GetSeconds() > 0 {
+		return ts.AsTime()
+	}
+	return ParseTime(b.GetBackupId())
+}
+
+// ParseTime extracts the timestamp of a backup from its pgBackRest backup ID.
+//
+// A full backup ID is YYYYMMDD-HHMMSSF. A differential or incremental ID
+// prefixes its own label with the label of the backup it depends on, as in
+// 20261031-113826F_20261104-113819D. The backup's own time is the part after
+// the last underscore; the part before it belongs to the base backup.
 func ParseTime(backupID string) time.Time {
+	if i := strings.LastIndex(backupID, "_"); i >= 0 {
+		backupID = backupID[i+1:]
+	}
 	if len(backupID) < 15 {
 		return time.Time{}
 	}
