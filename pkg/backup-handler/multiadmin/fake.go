@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	multiadminpb "github.com/multigres/multigres/go/pb/multiadmin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
@@ -25,9 +27,12 @@ type Fake struct {
 	BackupErr error
 	// StatusErr, when set, is returned by every GetBackupJobStatus call.
 	StatusErr error
+	// ListErr, when set, is returned by every GetBackups call.
+	ListErr error
 
 	jobs        map[string]*multiadminpb.GetBackupJobStatusResponse
 	lost        map[string]bool
+	backups     []*multiadminpb.BackupInfo
 	nextID      int
 	backupCalls []*multiadminpb.BackupRequest
 	statusCalls []*multiadminpb.GetBackupJobStatusRequest
@@ -104,6 +109,76 @@ func (f *Fake) SetJob(id string, s multiadminpb.JobStatus, backupID, errMsg stri
 	job.Status = s
 	job.BackupId = backupID
 	job.ErrorMessage = errMsg
+}
+
+// GetBackups implements Client. It lists the backups added with SetBackup or
+// CompleteJob for the request's database and table group.
+func (f *Fake) GetBackups(
+	_ context.Context,
+	req *multiadminpb.GetBackupsRequest,
+	_ ...grpc.CallOption,
+) (*multiadminpb.GetBackupsResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ListErr != nil {
+		return nil, f.ListErr
+	}
+	resp := &multiadminpb.GetBackupsResponse{}
+	for _, b := range f.backups {
+		if b.Database == req.Database && b.TableGroup == req.TableGroup {
+			resp.Backups = append(resp.Backups, proto.Clone(b).(*multiadminpb.BackupInfo))
+		}
+	}
+	return resp, nil
+}
+
+// SetBackup adds a backup to the listing, replacing any with the same ID.
+func (f *Fake) SetBackup(info *multiadminpb.BackupInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, b := range f.backups {
+		if b.BackupId == info.BackupId {
+			f.backups[i] = proto.Clone(info).(*multiadminpb.BackupInfo)
+			return
+		}
+	}
+	f.backups = append(f.backups, proto.Clone(info).(*multiadminpb.BackupInfo))
+}
+
+// CompleteJob marks a job COMPLETED with backupID and lists that backup as
+// COMPLETE with full metadata, as multiadmin does after a successful backup.
+func (f *Fake) CompleteJob(id, backupID string) {
+	f.SetJob(id, multiadminpb.JobStatus_JOB_STATUS_COMPLETED, backupID, "")
+	f.mu.Lock()
+	job := f.jobs[id]
+	f.mu.Unlock()
+	f.SetBackup(CompleteBackupInfo(job.Database, job.TableGroup, job.Shard, id, backupID))
+}
+
+// FakeBackupSizeBytes is the size CompleteBackupInfo reports.
+const FakeBackupSizeBytes = 123456789
+
+// CompleteBackupInfo returns a COMPLETE listing entry with every metadata
+// field set.
+func CompleteBackupInfo(
+	database, tableGroup, shard, jobID, backupID string,
+) *multiadminpb.BackupInfo {
+	start := time.Date(2026, 11, 7, 4, 0, 2, 0, time.UTC)
+	return &multiadminpb.BackupInfo{
+		BackupId:        backupID,
+		Database:        database,
+		TableGroup:      tableGroup,
+		Shard:           shard,
+		Type:            "full",
+		Status:          multiadminpb.BackupStatus_BACKUP_STATUS_COMPLETE,
+		BackupSizeBytes: FakeBackupSizeBytes,
+		StartLsn:        "0/3000028",
+		StopLsn:         "0/3000138",
+		PgVersion:       "17",
+		StartTimestamp:  timestamppb.New(start),
+		StopTimestamp:   timestamppb.New(start.Add(41 * time.Minute)),
+		JobId:           jobID,
+	}
 }
 
 // Lose makes a job answer NotFound.

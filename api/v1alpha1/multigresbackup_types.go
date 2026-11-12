@@ -435,6 +435,29 @@ const (
 	BackupConditionComplete = "Complete"
 )
 
+// BackupArtifact is the metadata of a completed backup, as pgBackRest
+// records it. It is what a consumer needs to catalogue the backup without
+// querying multiadmin.
+type BackupArtifact struct {
+	// StartLSN is the WAL position at which the backup started.
+	StartLSN string `json:"startLSN"`
+
+	// StopLSN is the WAL position at which the backup stopped.
+	StopLSN string `json:"stopLSN"`
+
+	// SizeBytes is the size of the backup.
+	SizeBytes int64 `json:"sizeBytes"`
+
+	// PostgresVersion is the Postgres major version that was backed up.
+	PostgresVersion string `json:"postgresVersion"`
+
+	// StartTime is when pgBackRest started the backup.
+	StartTime metav1.Time `json:"startTime"`
+
+	// StopTime is when pgBackRest finished the backup.
+	StopTime metav1.Time `json:"stopTime"`
+}
+
 // MultigresBackupStatus defines the observed state of one attempt.
 type MultigresBackupStatus struct {
 	// +optional
@@ -454,6 +477,11 @@ type MultigresBackupStatus struct {
 	// BackupID is the pgBackRest backup label once the backup completed.
 	// +optional
 	BackupID string `json:"backupID,omitempty"`
+
+	// Backup describes the backup this attempt produced, as reported by
+	// multiadmin's backup listing. Set on Succeeded.
+	// +optional
+	Backup *BackupArtifact `json:"backup,omitempty"`
 
 	// TriggerTime is when the attempt entered Triggering, saved before the
 	// Backup RPC.

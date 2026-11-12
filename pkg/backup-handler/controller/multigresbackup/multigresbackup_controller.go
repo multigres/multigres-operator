@@ -5,6 +5,7 @@ package multigresbackup
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	multiadminpb "github.com/multigres/multigres/go/pb/multiadmin"
@@ -328,7 +329,7 @@ func (r *Reconciler) reconcileRunning(
 
 	switch resp.GetStatus() {
 	case multiadminpb.JobStatus_JOB_STATUS_COMPLETED:
-		return r.succeed(ctx, backup, resp.GetBackupId())
+		return r.reconcileCompleted(ctx, backup, ma, resp.GetBackupId())
 	case multiadminpb.JobStatus_JOB_STATUS_FAILED:
 		msg := resp.GetErrorMessage()
 		if msg == "" {
@@ -340,16 +341,131 @@ func (r *Reconciler) reconcileRunning(
 	}
 }
 
+// reconcileCompleted settles an attempt whose job multiadmin reports
+// COMPLETED. The job status is authoritative that the job finished, but the
+// backup's metadata, and whether pgBackRest considers the backup itself
+// complete, come from multiadmin's backup listing. Until the backup appears
+// there with all its metadata, the attempt stays Running and polls again; the
+// attempt's timeout bounds the wait.
+func (r *Reconciler) reconcileCompleted(
+	ctx context.Context,
+	backup *multigresv1alpha1.MultigresBackup,
+	ma multiadmin.Client,
+	backupID string,
+) (ctrl.Result, error) {
+	if backupID == "" {
+		return r.waitRunning(ctx, backup,
+			"multiadmin reported the job completed without a backup ID")
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+	list, err := ma.GetBackups(rpcCtx, &multiadminpb.GetBackupsRequest{
+		Database:   backup.Spec.Database,
+		TableGroup: backup.Spec.TableGroup,
+		Shard:      backup.Spec.Shard,
+	})
+	if err != nil {
+		// I5: temporary, retried with backoff.
+		return ctrl.Result{}, fmt.Errorf("listing backups for %s: %w", backupID, err)
+	}
+
+	var info *multiadminpb.BackupInfo
+	for _, b := range list.GetBackups() {
+		if b.GetBackupId() == backupID {
+			info = b
+			break
+		}
+	}
+	if info == nil {
+		return r.waitRunning(ctx, backup,
+			fmt.Sprintf("backup %s is not in multiadmin's backup listing yet", backupID))
+	}
+
+	switch info.GetStatus() {
+	case multiadminpb.BackupStatus_BACKUP_STATUS_COMPLETE:
+		artifact, missing := backupArtifact(info)
+		if len(missing) > 0 {
+			return r.waitRunning(ctx, backup, fmt.Sprintf(
+				"backup %s is listed without %v", backupID, missing))
+		}
+		return r.succeed(ctx, backup, backupID, artifact)
+	case multiadminpb.BackupStatus_BACKUP_STATUS_FAILED,
+		multiadminpb.BackupStatus_BACKUP_STATUS_INCOMPLETE:
+		return r.fail(ctx, backup, multigresv1alpha1.BackupReasonBackupFailed, fmt.Sprintf(
+			"job completed but pgBackRest reports backup %s as %s",
+			backupID, info.GetStatus()))
+	default:
+		return r.waitRunning(ctx, backup, fmt.Sprintf(
+			"backup %s has status %s in multiadmin's backup listing", backupID, info.GetStatus()))
+	}
+}
+
+// backupArtifact converts a listed backup into the status metadata, and names
+// any fields multiadmin left empty.
+func backupArtifact(
+	info *multiadminpb.BackupInfo,
+) (*multigresv1alpha1.BackupArtifact, []string) {
+	var missing []string
+	if info.GetStartLsn() == "" {
+		missing = append(missing, "startLSN")
+	}
+	if info.GetStopLsn() == "" {
+		missing = append(missing, "stopLSN")
+	}
+	if info.GetPgVersion() == "" {
+		missing = append(missing, "postgresVersion")
+	}
+	if info.GetStartTimestamp() == nil {
+		missing = append(missing, "startTime")
+	}
+	if info.GetStopTimestamp() == nil {
+		missing = append(missing, "stopTime")
+	}
+	if info.GetBackupSizeBytes() > math.MaxInt64 {
+		missing = append(missing, "sizeBytes")
+	}
+	if len(missing) > 0 {
+		return nil, missing
+	}
+	return &multigresv1alpha1.BackupArtifact{
+		StartLSN:        info.GetStartLsn(),
+		StopLSN:         info.GetStopLsn(),
+		SizeBytes:       int64(info.GetBackupSizeBytes()), //nolint:gosec // bounds-checked above
+		PostgresVersion: info.GetPgVersion(),
+		StartTime:       metav1.NewTime(info.GetStartTimestamp().AsTime()),
+		StopTime:        metav1.NewTime(info.GetStopTimestamp().AsTime()),
+	}, nil
+}
+
+// waitRunning keeps the attempt Running with an explanatory message and polls
+// again.
+func (r *Reconciler) waitRunning(
+	ctx context.Context,
+	backup *multigresv1alpha1.MultigresBackup,
+	msg string,
+) (ctrl.Result, error) {
+	if backup.Status.Message != msg {
+		backup.Status.Message = msg
+		if err := r.Status().Update(ctx, backup); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	return ctrl.Result{RequeueAfter: RunningRequeue}, nil
+}
+
 func (r *Reconciler) succeed(
 	ctx context.Context,
 	backup *multigresv1alpha1.MultigresBackup,
 	backupID string,
+	artifact *multigresv1alpha1.BackupArtifact,
 ) (ctrl.Result, error) {
 	now := metav1.NewTime(r.now())
 	backup.Status.Phase = multigresv1alpha1.BackupPhaseSucceeded
 	backup.Status.Reason = ""
 	backup.Status.Message = ""
 	backup.Status.BackupID = backupID
+	backup.Status.Backup = artifact
 	backup.Status.CompletionTime = &now
 	meta.SetStatusCondition(&backup.Status.Conditions, metav1.Condition{
 		Type:               multigresv1alpha1.BackupConditionComplete,
