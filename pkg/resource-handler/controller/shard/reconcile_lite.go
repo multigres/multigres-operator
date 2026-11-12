@@ -118,7 +118,7 @@ func (r *ShardReconciler) reconcileLite(
 
 	// The pooler reads its backup location from the database record when it
 	// bootstraps, so the record is registered before the pod is created.
-	registered, err := r.registerLiteDatabase(ctx, shard)
+	registered, err := r.registerLiteDatabase(ctx, shard, poolName, cellName)
 	if err != nil {
 		monitoring.RecordSpanError(span, err)
 		return ctrl.Result{}, err
@@ -213,10 +213,12 @@ func litePool(
 // Shard owns this record because its resolved backup and pool cells may differ
 // from the cluster defaults, and the cluster controller skips it. It reports
 // false when the topology server cannot be reached yet, so the caller requeues
-// as the data-plane phase does.
+// as the data-plane phase does. A new Lite shard whose S3 backups have no key
+// prefix is refused before anything is written; see checkLiteBackupRepository.
 func (r *ShardReconciler) registerLiteDatabase(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
+	poolName, cellName string,
 ) (bool, error) {
 	logger := log.FromContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, liteTopoTimeout)
@@ -233,6 +235,14 @@ func (r *ShardReconciler) registerLiteDatabase(
 		return false, fmt.Errorf("open topology for Lite database registration: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+
+	if err := r.checkLiteBackupRepository(ctx, store, shard, poolName, cellName); err != nil {
+		if isLiteTopoUnavailable(err) {
+			logger.Info("Topology server unavailable; requeueing", "error", err.Error())
+			return false, nil
+		}
+		return false, err
+	}
 
 	dbConfig := multigresv1alpha1.DatabaseConfig{
 		Name:             shard.Spec.DatabaseName,

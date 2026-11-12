@@ -17,6 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -294,10 +296,19 @@ type S3BackupConfig struct {
 	// +kubebuilder:validation:MinLength=1
 	Bucket string `json:"bucket"`
 	// +kubebuilder:validation:MinLength=1
-	Region            string `json:"region"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	KeyPrefix         string `json:"keyPrefix,omitempty"`
-	UseEnvCredentials bool   `json:"useEnvCredentials,omitempty"`
+	Region   string `json:"region"`
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// KeyPrefix is the path below the bucket that holds this database's
+	// pgBackRest repositories. Without it the repository path depends only on
+	// the database layout (/multigres for the default table group and shard),
+	// so every other installation backing up to the same bucket without a
+	// prefix uses the same one. Lite clusters must set it when they are
+	// created; existing Lite clusters that never set it keep their repository.
+	// +optional
+	KeyPrefix string `json:"keyPrefix,omitempty"`
+
+	UseEnvCredentials bool `json:"useEnvCredentials,omitempty"`
 
 	// CredentialsSecret is the name of the Secret containing AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
 	// +optional
@@ -735,4 +746,27 @@ func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {
 	}
 
 	return merged
+}
+
+// Messages for refusing a Lite cluster whose S3 backups have no key prefix,
+// shared by admission and the shard controller.
+const (
+	// LiteDefaultS3RepositoryMessage refuses a new Lite cluster.
+	LiteDefaultS3RepositoryMessage = "lite mode requires spec.backup.s3.keyPrefix: without it " +
+		"the pgBackRest repository path depends only on the database layout, so every " +
+		"cluster backing up to the same bucket without a prefix shares it"
+	// LiteMoveToDefaultS3RepositoryMessage refuses moving an existing Lite
+	// cluster into a default repository it does not already use.
+	LiteMoveToDefaultS3RepositoryMessage = "lite mode requires spec.backup.s3.keyPrefix: this " +
+		"change would move the cluster's backups into a shared default repository it does " +
+		"not already use"
+)
+
+// UsesDefaultS3Repository reports whether backup leaves the pgBackRest
+// repository at the bucket's default path: S3 backups with no key prefix. A
+// prefix made only of slashes counts as none. Installations that do so on the
+// same bucket and endpoint, with the same database layout, share a repository.
+func UsesDefaultS3Repository(backup *BackupConfig) bool {
+	return backup != nil && backup.Type == BackupTypeS3 && backup.S3 != nil &&
+		strings.Trim(backup.S3.KeyPrefix, "/") == ""
 }

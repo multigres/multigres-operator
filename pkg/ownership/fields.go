@@ -205,6 +205,12 @@ var Fields = []Field{
 		Manager: ManagerShardGuard,
 		Class:   Observation,
 	},
+	{
+		Kind:    kindShard,
+		Path:    `.status.conditions[type="BackupRepositoryValid"]`,
+		Manager: ManagerShardGuard,
+		Class:   Observation,
+	},
 	// shard/status.go updateStatus turns False into Degraded and Unknown into
 	// Progressing. posture.go Apply preserves a confirmed False until a complete
 	// observation, and the shard controller requeues to perform that observation.

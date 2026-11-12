@@ -142,7 +142,8 @@ func (r *ShardReconciler) patchStatus(
 	// exactly one SSA field manager
 	var patchConditions []metav1.Condition
 	for i := range shard.Status.Conditions {
-		if shard.Status.Conditions[i].Type == conditionStorageClassValid {
+		switch shard.Status.Conditions[i].Type {
+		case conditionStorageClassValid, conditionBackupRepositoryValid:
 			continue
 		}
 		patchConditions = append(patchConditions, shard.Status.Conditions[i])

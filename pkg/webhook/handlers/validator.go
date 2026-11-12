@@ -43,7 +43,16 @@ func (v *MultigresClusterValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
-	return v.validate(ctx, obj)
+	warnings, err := v.validate(ctx, obj)
+	if err != nil {
+		return warnings, err
+	}
+	if cluster, ok := obj.(*multigresv1alpha1.MultigresCluster); ok {
+		if err := validateLiteBackupRepository(nil, cluster); err != nil {
+			return warnings, err
+		}
+	}
+	return warnings, nil
 }
 
 // ValidateUpdate validates a MultigresCluster on update, including storage shrink and etcd replica checks.
@@ -67,6 +76,9 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 					oldCluster,
 					newCluster,
 				); err != nil {
+					return nil, err
+				}
+				if err := validateLiteBackupRepository(oldCluster, newCluster); err != nil {
 					return nil, err
 				}
 			}

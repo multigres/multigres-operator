@@ -5,7 +5,8 @@ The operator integrates **pgBackRest** to handle automated backups, WAL archivin
 ## Architecture
 
 Every Shard in the cluster has its own independent backup repository.
-- **Replica-Based Backups:** To avoid impacting the primary's performance, backups are always performed by a **replica**. The operator's MultiAdmin component selects a healthy replica (typically in the primary zone/cell) to execute the backup.
+- **Replica-Based Backups:** To avoid impacting the primary's performance, backups in a distributed cluster are performed by a **replica**. The operator's MultiAdmin component selects a healthy replica (typically in the primary zone/cell) to execute the backup.
+- **Lite clusters back up on the static leader.** A Lite shard has one pooler and no replicas, so that pooler takes its own backups and expires old ones, without the etcd backup lease a distributed cluster uses. This relies on each Lite cluster having a backup repository no other cluster writes to; see [Repository isolation](#repository-isolation).
 - **Universal Availability:** While only one replica performs the backup, **all replicas** (current and future) need access to the backup repository to:
   1.  Bootstrap new replicas (via `pgbackrest restore`).
   2.  Perform Point-in-Time Recovery (PITR).
@@ -48,6 +49,18 @@ spec:
 
       # Option 3: EC2 instance metadata (default, no fields needed)
 ```
+
+#### Repository isolation
+
+Without a `keyPrefix`, the repository path in the bucket depends only on the database layout: `/multigres` for the default table group and shard, and a path under `/tablegroups` built from the table group, its catalog ID when known, and the shard for any other shard. Two clusters with the same layout on the same bucket and endpoint and no `keyPrefix` therefore resolve to one repository. A new cluster's pooler restores from whatever complete backup it finds there, so the second cluster can start with the first cluster's data and then archive WAL into the same stanza. If the repository holds no complete backup yet, one of the two clusters fails to create its stanza instead and cannot back up or archive WAL.
+
+- **Lite clusters must set `keyPrefix`.** Admission rejects a new Lite cluster with S3 backups and no `keyPrefix`, and an update that would put a cluster in a default repository it did not already use, including a change of bucket or endpoint. When the webhook is disabled, the shard controller refuses to provision such a Lite shard, records a `ConfigError` event, and sets the Shard's `BackupRepositoryValid` condition to `False` with the reason. The condition turns `True` once a `keyPrefix` is set.
+- **Existing Lite clusters keep their repository.** A Lite cluster that never set `keyPrefix` keeps backing up to its default repository, as long as its database record in topology names the same bucket and endpoint, or its data PVC still exists. Its Shard's `BackupRepositoryValid` condition is `True` with reason `ExistingDefaultRepository`, so these clusters can be found.
+- **Do not change `keyPrefix` on a cluster that has already run.** The pooler creates its stanza only when the cluster first bootstraps. After a restart with a different prefix, Postgres starts from its existing data, finds no stanza in the new location, and backups and WAL archiving fail. Admission does not block this change.
+- **The repository is matched by bucket and endpoint as written.** Changing `endpoint` from empty to the explicit AWS endpoint for the same bucket counts as a move and is refused for a cluster without `keyPrefix`.
+- **A refused shard is not reconciled further.** While the shard controller refuses a Lite shard, it does not create or update its pod; the `BackupRepositoryValid` condition says why. The one exception is a topology outage: outage recovery runs before the check and can still bring back a pod from an existing data PVC. For an existing cluster, restore its previous backup settings. A new cluster that was refused can set a `keyPrefix` instead.
+- **A recreated cluster is a new cluster.** Admission rejects creating a Lite cluster without `keyPrefix`, even when a data PVC from an earlier cluster of the same name was retained. Backups left in the default repository are not reachable through the operator. With a `keyPrefix` and a retained data PVC, the cluster starts from the existing data with no stanza in the new location, as above, so remove the retained PVC to start fresh.
+- **Distributed clusters** are not checked. Give each one its own `keyPrefix` when several share a bucket.
 
 ### 2. Filesystem
 

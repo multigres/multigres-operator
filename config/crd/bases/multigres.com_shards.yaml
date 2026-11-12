@@ -134,6 +134,13 @@ spec:
                       endpoint:
                         type: string
                       keyPrefix:
+                        description: |-
+                          KeyPrefix is the path below the bucket that holds this database's
+                          pgBackRest repositories. Without it the repository path depends only on
+                          the database layout (/multigres for the default table group and shard),
+                          so every other installation backing up to the same bucket without a
+                          prefix uses the same one. Lite clusters must set it when they are
+                          created; existing Lite clusters that never set it keep their repository.
                         type: string
                       region:
                         minLength: 1
