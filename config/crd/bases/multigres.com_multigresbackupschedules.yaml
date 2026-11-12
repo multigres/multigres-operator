@@ -250,7 +250,18 @@ spec:
                     active:
                       description: Active is the unfinished attempt from this schedule,
                         if any.
-                      type: string
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
                     database:
                       minLength: 1
                       type: string
@@ -273,12 +284,6 @@ spec:
                         schedule completed.
                       format: date-time
                       type: string
-                    missedRuns:
-                      description: |-
-                        MissedRuns counts runs that could not start within
-                        startingDeadlineSeconds.
-                      format: int64
-                      type: integer
                     nextScheduleTime:
                       description: NextScheduleTime is the next time a run is due.
                       format: date-time
@@ -286,12 +291,6 @@ spec:
                     shard:
                       minLength: 1
                       type: string
-                    skippedRuns:
-                      description: |-
-                        SkippedRuns counts runs skipped because an unfinished backup of the same
-                        or a stronger type was already queued or running.
-                      format: int64
-                      type: integer
                     tableGroup:
                       minLength: 1
                       type: string

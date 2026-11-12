@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -286,22 +287,12 @@ type BackupScheduleTargetStatus struct {
 
 	// Active is the unfinished attempt from this schedule, if any.
 	// +optional
-	Active string `json:"active,omitempty"`
+	Active *corev1.LocalObjectReference `json:"active,omitempty"`
 
 	// Waiting explains why no run is created for this shard yet, e.g. the
 	// shard has not finished bootstrapping.
 	// +optional
 	Waiting string `json:"waiting,omitempty"`
-
-	// MissedRuns counts runs that could not start within
-	// startingDeadlineSeconds.
-	// +optional
-	MissedRuns int64 `json:"missedRuns,omitempty"`
-
-	// SkippedRuns counts runs skipped because an unfinished backup of the same
-	// or a stronger type was already queued or running.
-	// +optional
-	SkippedRuns int64 `json:"skippedRuns,omitempty"`
 }
 
 // MultigresBackupScheduleStatus defines the observed state.
