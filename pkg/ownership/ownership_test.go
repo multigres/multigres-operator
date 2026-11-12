@@ -417,7 +417,12 @@ func TestTidyLegacy_ClassifiesPatchErrors(t *testing.T) {
 				require.Same(t, tc.err, err, "other errors are returned unchanged")
 			}
 			var calls []string
-			TidyLegacy(log.IntoContext(t.Context(), logr.New(logSink{calls: &calls})), c, s)
+			err = TidyLegacy(log.IntoContext(t.Context(), logr.New(logSink{calls: &calls})), c, s)
+			if tc.wantChanged {
+				require.ErrorIs(t, err, ErrManagedFieldsChanged)
+			} else {
+				require.NoError(t, err, "non-conflict cleanup failures remain best-effort")
+			}
 			require.Equal(t, []string{tc.wantLog}, calls)
 		})
 	}
@@ -471,4 +476,44 @@ func TestSkipUnchanged(t *testing.T) {
 			require.Equal(t, want, *calls, "tidy-up patches")
 		})
 	}
+}
+
+func TestApplyStatus_CleanupConflictRequiresRetry(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
+	conflict := statusError(http.StatusUnprocessableEntity, metav1.StatusReasonInvalid, nil)
+	var applied bool
+	c := interceptor.NewClient(
+		fake.NewClientBuilder().WithScheme(scheme).Build(),
+		interceptor.Funcs{
+			SubResourcePatch: func(_ context.Context, _ client.Client, sub string,
+				obj client.Object, _ client.Patch, _ ...client.SubResourcePatchOption,
+			) error {
+				require.Equal(t, "status", sub)
+				applied = true
+				obj.SetManagedFields(
+					shardWithStatusManagers(ManagerChildWriter, ManagerShard).ManagedFields,
+				)
+				return nil
+			},
+			Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
+				return conflict
+			},
+		},
+	)
+	err := ApplyStatus(t.Context(), c, shardWithStatusManagers(), ManagerShard)
+	require.True(t, applied, "status is applied before attempting cleanup")
+	require.ErrorIs(
+		t,
+		err,
+		ErrManagedFieldsChanged,
+		"the controller must retry cleanup even after status succeeds",
+	)
+}
+
+func TestSkipUnchanged_CleanupConflictRequiresApply(t *testing.T) {
+	s := shardWithStatusManagers(ManagerChildWriter, ManagerShard)
+	c := patchFails(t, statusError(http.StatusUnprocessableEntity, metav1.StatusReasonInvalid, nil))
+	require.False(t, SkipUnchanged(t.Context(), c, s, ManagerShard, ".status.phase", true),
+		"a stale cleanup must fall through to ApplyStatus so it can retry or return the conflict")
 }

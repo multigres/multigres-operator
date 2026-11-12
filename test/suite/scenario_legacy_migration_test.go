@@ -44,7 +44,7 @@ const (
 
 // TestLegacyManagerMigration proves objects whose status was written under the
 // retired shared names shed every legacy status entry a current writer covers
-// on the first reconcile, keep the ones that are a field's only owner, keep the
+// after reconciliation, keep the ones that are a field's only owner, keep the
 // child writer's live entries, and never change a value.
 //
 // The legacy state is built from the real controllers' own writes, with only
@@ -230,10 +230,11 @@ func TestLegacyManagerMigration(t *testing.T) {
 		c.RequireQuiescent(5*time.Second, 30*time.Second)
 		c.EqDiff(before, c.snapshotSpecStatus(), "round %d changed a spec or status value", round)
 
-		// TidyLegacy returns nothing, so a failed tidy-up cannot fail a
-		// reconcile; this catches any other error the migration provokes.
+		// A concurrent managedFields change requests another reconcile. The
+		// convergence check above still requires cleanup to finish; any other
+		// reconcile error is unexpected.
 		for _, r := range Suite.Reconciles.InNamespace(c.NS) {
-			if r.Start.After(liftedAt) {
+			if r.Start.After(liftedAt) && !errors.Is(r.Err, ownership.ErrManagedFieldsChanged) {
 				c.NoError(r.Err, "reconcile errored after the gate lifted: %s", r)
 			}
 		}
