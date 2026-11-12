@@ -1,5 +1,5 @@
 // Package multiadmin is the backup controllers' client for a cluster's
-// multiadmin gRPC service. It exposes only the two RPCs the attempt controller
+// multiadmin gRPC service. It exposes only the RPCs the attempt controller
 // needs, so tests can substitute the in-memory Fake.
 package multiadmin
 
@@ -38,6 +38,11 @@ type Client interface {
 		req *multiadminpb.GetBackupJobStatusRequest,
 		opts ...grpc.CallOption,
 	) (*multiadminpb.GetBackupJobStatusResponse, error)
+	GetBackups(
+		ctx context.Context,
+		req *multiadminpb.GetBackupsRequest,
+		opts ...grpc.CallOption,
+	) (*multiadminpb.GetBackupsResponse, error)
 }
 
 // Factory returns the Client for a cluster.

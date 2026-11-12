@@ -125,6 +125,42 @@ spec:
           status:
             description: MultigresBackupStatus defines the observed state of one attempt.
             properties:
+              backup:
+                description: |-
+                  Backup describes the backup this attempt produced, as reported by
+                  multiadmin's backup listing. Set on Succeeded.
+                properties:
+                  postgresVersion:
+                    description: PostgresVersion is the Postgres major version that
+                      was backed up.
+                    type: string
+                  sizeBytes:
+                    description: SizeBytes is the size of the backup.
+                    format: int64
+                    type: integer
+                  startLSN:
+                    description: StartLSN is the WAL position at which the backup
+                      started.
+                    type: string
+                  startTime:
+                    description: StartTime is when pgBackRest started the backup.
+                    format: date-time
+                    type: string
+                  stopLSN:
+                    description: StopLSN is the WAL position at which the backup stopped.
+                    type: string
+                  stopTime:
+                    description: StopTime is when pgBackRest finished the backup.
+                    format: date-time
+                    type: string
+                required:
+                - postgresVersion
+                - sizeBytes
+                - startLSN
+                - startTime
+                - stopLSN
+                - stopTime
+                type: object
               backupID:
                 description: BackupID is the pgBackRest backup label once the backup
                   completed.

@@ -202,12 +202,20 @@ func TestRestartResumesPolling(t *testing.T) {
 	if _, err := h.reconcile("b1"); err != nil {
 		t.Fatal(err)
 	}
-	h.fake.SetJob(jobID, multiadminpb.JobStatus_JOB_STATUS_COMPLETED, "20261107-040002F", "")
+	h.fake.CompleteJob(jobID, "20261107-040002F")
 	h.reconcileUntil("b1", multigresv1alpha1.BackupPhaseSucceeded)
 
 	b := h.get("b1")
 	if b.Status.BackupID != "20261107-040002F" || b.Status.CompletionTime == nil {
 		t.Fatalf("status = %+v", b.Status)
+	}
+	want := multiadmin.CompleteBackupInfo("postgres", "default", "0-inf", jobID, "20261107-040002F")
+	if a := b.Status.Backup; a == nil ||
+		a.StartLSN != want.StartLsn || a.StopLSN != want.StopLsn ||
+		a.SizeBytes != multiadmin.FakeBackupSizeBytes || a.PostgresVersion != want.PgVersion ||
+		!a.StartTime.Time.Equal(want.StartTimestamp.AsTime()) ||
+		!a.StopTime.Time.Equal(want.StopTimestamp.AsTime()) {
+		t.Fatalf("status.backup = %+v, want metadata of %v", b.Status.Backup, want)
 	}
 	if n := len(h.fake.BackupCalls()); n != 1 {
 		t.Fatalf("Backup calls = %d, want 1", n)
@@ -313,6 +321,77 @@ func TestBackupFailed(t *testing.T) {
 	}
 }
 
+// A COMPLETED job stays Running until its backup is listed with full
+// metadata; a listing error is temporary (I5).
+func TestCompletedWaitsForListing(t *testing.T) {
+	h := newHarness(t, newBackup("b1", time.Now()))
+	h.reconcileUntil("b1", multigresv1alpha1.BackupPhaseRunning)
+	jobID := h.get("b1").Status.JobID
+	h.fake.SetJob(jobID, multiadminpb.JobStatus_JOB_STATUS_COMPLETED, "F1", "")
+
+	// Not listed yet.
+	if _, err := h.reconcile("b1"); err != nil {
+		t.Fatal(err)
+	}
+	if b := h.get("b1"); b.Status.Phase != multigresv1alpha1.BackupPhaseRunning ||
+		b.Status.Message == "" {
+		t.Fatalf("unlisted: status = %s %q, want Running with a message", b.Status.Phase,
+			b.Status.Message)
+	}
+
+	// Listed, but missing metadata.
+	partial := multiadmin.CompleteBackupInfo("postgres", "default", "0-inf", jobID, "F1")
+	partial.StopLsn = ""
+	h.fake.SetBackup(partial)
+	if _, err := h.reconcile("b1"); err != nil {
+		t.Fatal(err)
+	}
+	if p := h.get("b1").Status.Phase; p != multigresv1alpha1.BackupPhaseRunning {
+		t.Fatalf("partial metadata: phase = %s, want Running", p)
+	}
+
+	// Listing fails: temporary.
+	h.fake.ListErr = status.Error(codes.Unavailable, "connection refused")
+	if _, err := h.reconcile("b1"); err == nil {
+		t.Fatal("want error for backoff")
+	}
+	if p := h.get("b1").Status.Phase; p != multigresv1alpha1.BackupPhaseRunning {
+		t.Fatalf("list error: phase = %s, want Running", p)
+	}
+
+	// Listed with full metadata.
+	h.fake.ListErr = nil
+	h.fake.CompleteJob(jobID, "F1")
+	h.reconcileUntil("b1", multigresv1alpha1.BackupPhaseSucceeded)
+	if b := h.get("b1"); b.Status.Backup == nil || b.Status.Message != "" {
+		t.Fatalf("status = %+v", b.Status)
+	}
+}
+
+// A COMPLETED job whose backup pgBackRest lists as failed ends BackupFailed.
+func TestCompletedButBackupFailed(t *testing.T) {
+	for _, s := range []multiadminpb.BackupStatus{
+		multiadminpb.BackupStatus_BACKUP_STATUS_FAILED,
+		multiadminpb.BackupStatus_BACKUP_STATUS_INCOMPLETE,
+	} {
+		t.Run(s.String(), func(t *testing.T) {
+			h := newHarness(t, newBackup("b1", time.Now()))
+			h.reconcileUntil("b1", multigresv1alpha1.BackupPhaseRunning)
+			jobID := h.get("b1").Status.JobID
+			h.fake.SetJob(jobID, multiadminpb.JobStatus_JOB_STATUS_COMPLETED, "F1", "")
+			info := multiadmin.CompleteBackupInfo("postgres", "default", "0-inf", jobID, "F1")
+			info.Status = s
+			h.fake.SetBackup(info)
+			h.reconcileUntil("b1", multigresv1alpha1.BackupPhaseFailed)
+			b := h.get("b1")
+			if b.Status.Reason != multigresv1alpha1.BackupReasonBackupFailed ||
+				b.Status.Backup != nil {
+				t.Fatalf("status = %+v", b.Status)
+			}
+		})
+	}
+}
+
 func TestTriggerRejectedAndUnknown(t *testing.T) {
 	for _, tc := range []struct {
 		code   codes.Code
@@ -358,12 +437,7 @@ func TestPerShardQueue(t *testing.T) {
 		t.Fatalf("Backup calls = %d, want 1", n)
 	}
 
-	h.fake.SetJob(
-		h.get("first").Status.JobID,
-		multiadminpb.JobStatus_JOB_STATUS_COMPLETED,
-		"F1",
-		"",
-	)
+	h.fake.CompleteJob(h.get("first").Status.JobID, "F1")
 	h.reconcileUntil("first", multigresv1alpha1.BackupPhaseSucceeded)
 	h.reconcileUntil("second", multigresv1alpha1.BackupPhaseRunning)
 	if n := len(h.fake.BackupCalls()); n != 2 {
