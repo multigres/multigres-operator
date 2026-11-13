@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
@@ -261,5 +262,166 @@ func TestHandleDeletion_DynamicShardSkipsTopologyWhileClusterIsDeleted(t *testin
 		&multigresv1alpha1.Shard{},
 	); !apierrors.IsNotFound(err) {
 		t.Errorf("shard finalizer not removed: %v", err)
+	}
+}
+
+// droppedShardFixture is a deleted Shard of dynamic tablegroup id 7, one
+// pooler record carrying that id, and the labels its pool pods carry.
+func droppedShardFixture(t *testing.T) (
+	*runtime.Scheme, *multigresv1alpha1.Shard, map[string]string, topoclient.Store,
+	func(*multigresv1alpha1.Shard) (topoclient.Store, error),
+) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = multigresv1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	_ = appsv1.AddToScheme(scheme)
+	podLabels := map[string]string{
+		metadata.LabelMultigresCluster:    "c",
+		metadata.LabelMultigresDatabase:   "postgres",
+		metadata.LabelMultigresTableGroup: "commerce",
+		metadata.LabelMultigresShard:      "0-80",
+		metadata.LabelAppComponent:        PoolComponentName,
+		metadata.LabelAppManagedBy:        metadata.ManagedByMultigres,
+	}
+	now := metav1.Now()
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "s", Namespace: "default",
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster:           "c",
+				multigresv1alpha1.LabelDynamicTableGroup: "true",
+			},
+			Annotations:       map[string]string{multigresv1alpha1.AnnotationTableGroupID: "7"},
+			DeletionTimestamp: &now,
+			Finalizers:        []string{shardFinalizer},
+		},
+		Spec: multigresv1alpha1.ShardSpec{
+			DatabaseName:   "postgres",
+			TableGroupName: "commerce",
+			ShardName:      "0-80",
+		},
+	}
+	_, factory := memorytopo.NewServerAndFactory(t.Context(), "cell1")
+	newStore := func(*multigresv1alpha1.Shard) (topoclient.Store, error) {
+		return topoclient.NewWithFactory(
+			factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+		), nil
+	}
+	store, _ := newStore(nil)
+	t.Cleanup(func() { _ = store.Close() })
+	registerPooler(t, store, "this-incarnation", "0-80", 7)
+	return scheme, shard, podLabels, store, newStore
+}
+
+// stuckPod has been terminating for twice terminatingTimeout, held by its own
+// finalizer.
+func stuckPod(labels map[string]string) *corev1.Pod {
+	return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "pooler-0", Namespace: "default", Labels: labels,
+		DeletionTimestamp: &metav1.Time{Time: time.Now().Add(-2 * terminatingTimeout)},
+		Finalizers:        []string{"test/hold"},
+	}}
+}
+
+// requireDropHeld asserts a pass of handleDeletion left the drop pending: a
+// requeue, the pooler record in place and the Shard's finalizer kept.
+func requireDropHeld(
+	t *testing.T,
+	r *ShardReconciler,
+	shard *multigresv1alpha1.Shard,
+	store topoclient.Store,
+) {
+	t.Helper()
+	res, err := r.handleDeletion(t.Context(), shard.DeepCopy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RequeueAfter == 0 {
+		t.Error("did not requeue while a pooler pod remained")
+	}
+	if got := poolerNames(t, store); !slices.Equal(got, []string{"this-incarnation"}) {
+		t.Errorf("pooler records = %v, want the dropped id's record kept", got)
+	}
+	if err := r.Get(
+		t.Context(),
+		client.ObjectKeyFromObject(shard),
+		&multigresv1alpha1.Shard{},
+	); err != nil {
+		t.Errorf("shard finalizer removed while a pooler pod remained: %v", err)
+	}
+}
+
+// A pod stuck terminating past terminatingTimeout is treated as gone by every
+// other Shard deletion. A dropped tablegroup's shard keeps waiting: letting go
+// would release the provision claim and complete the drop with the pooler
+// possibly still running.
+func TestHandleDeletion_DynamicShardWaitsForAStuckPod(t *testing.T) {
+	scheme, shard, podLabels, store, newStore := droppedShardFixture(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(shard, stuckPod(podLabels)).Build()
+	rec := record.NewFakeRecorder(20)
+	r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: rec, CreateTopoStore: newStore}
+
+	requireDropHeld(t, r, shard, store)
+	if len(rec.Events) == 0 || !strings.Contains(<-rec.Events, "StuckTerminating") {
+		t.Error("no StuckTerminating event")
+	}
+}
+
+// While the cluster itself is being deleted there is no drop to protect, so
+// the stuck pod stops holding the Shard after terminatingTimeout as usual.
+func TestHandleDeletion_DynamicShardGivesUpOnAStuckPodWhileClusterIsDeleted(t *testing.T) {
+	scheme, shard, podLabels, store, newStore := droppedShardFixture(t)
+	now := metav1.Now()
+	cluster := &multigresv1alpha1.MultigresCluster{ObjectMeta: metav1.ObjectMeta{
+		Name: "c", Namespace: "default", DeletionTimestamp: &now, Finalizers: []string{"test/hold"},
+	}}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(cluster, shard, stuckPod(podLabels)).Build()
+	r := &ShardReconciler{
+		Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(20), CreateTopoStore: newStore,
+	}
+
+	if _, err := r.handleDeletion(t.Context(), shard.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(
+		t.Context(),
+		client.ObjectKeyFromObject(shard),
+		&multigresv1alpha1.Shard{},
+	); !apierrors.IsNotFound(err) {
+		t.Errorf("shard finalizer not removed: %v", err)
+	}
+	if got := poolerNames(t, store); !slices.Equal(got, []string{"this-incarnation"}) {
+		t.Errorf("pooler records = %v, want topology left alone", got)
+	}
+}
+
+// The informer cache lists no pod it has not observed yet, so a drop reads the
+// API server before it takes the shard's poolers to be gone.
+func TestHandleDeletion_DynamicShardAsksTheAPIServerForPoolerPods(t *testing.T) {
+	scheme, shard, podLabels, store, newStore := droppedShardFixture(t)
+	cached := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "pooler-0", Namespace: "default", Labels: podLabels,
+	}}
+	server := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()
+	r := &ShardReconciler{
+		Client: cached, APIReader: server, Scheme: scheme,
+		Recorder: record.NewFakeRecorder(20), CreateTopoStore: newStore,
+	}
+
+	requireDropHeld(t, r, shard, store)
+
+	// Once the API server lists none, the drop goes through.
+	if err := server.Delete(t.Context(), pod); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.handleDeletion(t.Context(), shard.DeepCopy()); err != nil {
+		t.Fatal(err)
+	}
+	if got := poolerNames(t, store); len(got) != 0 {
+		t.Errorf("pooler records left = %v", got)
 	}
 }
