@@ -1,11 +1,12 @@
 package topo
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // poolerWithTableGroupID builds a pooler record as a pooler started with
@@ -41,36 +42,24 @@ func TestUnregisterTableGroupPoolers(t *testing.T) {
 		poolerWithTableGroupID("cell1", "other-tablegroup", "orders", "0-80", 7),
 	}
 	for _, mp := range records {
-		if err := store.RegisterMultipooler(ctx, mp, false); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, store.RegisterMultipooler(ctx, mp, false))
 	}
 	ref := ShardRef{Database: "postgres", TableGroup: "commerce", Shard: "0-80"}
 
 	n, err := UnregisterTableGroupPoolers(ctx, store, ref, 7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 {
-		t.Errorf("deleted %d records, want 2", n)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, 2, n, "records deleted")
 	var left []string
 	for _, cell := range []string{"cell1", "cell2"} {
 		poolers, err := store.GetMultipoolersByCell(ctx, cell, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, p := range poolers {
 			left = append(left, p.Id.Name)
 		}
 	}
-	slices.Sort(left)
-	want := []string{"no-id", "older-incarnation", "other-shard", "other-tablegroup"}
-	if !slices.Equal(left, want) {
-		t.Errorf("records left = %v, want %v", left, want)
-	}
+	assert.ElementsMatch(t,
+		[]string{"no-id", "older-incarnation", "other-shard", "other-tablegroup"}, left)
 
-	if _, err := UnregisterTableGroupPoolers(ctx, store, ref, 0); err == nil {
-		t.Error("id 0 must be refused: it would match default-tablegroup poolers")
-	}
+	_, err = UnregisterTableGroupPoolers(ctx, store, ref, 0)
+	assert.Error(t, err, "id 0 must be refused: it would match default-tablegroup poolers")
 }

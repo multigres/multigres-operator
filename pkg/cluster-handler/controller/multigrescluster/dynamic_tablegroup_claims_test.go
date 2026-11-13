@@ -2,12 +2,12 @@ package multigrescluster
 
 import (
 	"errors"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -34,12 +34,10 @@ func listSequence(lists ...[]multiadmin.TableGroup) func(string) ([]multiadmin.T
 
 func (f *dynamicFixture) claim(id int64, provisioner string) {
 	f.t.Helper()
-	if err := f.topo.ClaimTableGroupProvisioning(f.t.Context(), "postgres",
+	require.NoError(f.t, f.topo.ClaimTableGroupProvisioning(f.t.Context(), "postgres",
 		&clustermetadatapb.TableGroupProvisionClaim{
 			Provisioner: provisioner, TablegroupId: id, TablegroupName: "commerce",
-		}); err != nil {
-		f.t.Fatal(err)
-	}
+		}))
 }
 
 func (f *dynamicFixture) claimed(id int64) *clustermetadatapb.TableGroupProvisionClaim {
@@ -48,9 +46,7 @@ func (f *dynamicFixture) claimed(id int64) *clustermetadatapb.TableGroupProvisio
 	if errors.Is(err, &topoclient.TopoError{Code: topoclient.NoNode}) {
 		return nil
 	}
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	require.NoError(f.t, err)
 	return c
 }
 
@@ -73,26 +69,17 @@ func TestDynamicTableGroups_ClaimsBeforeProvisioning(t *testing.T) {
 	f := newDynamicFixture(t, true, desiredCommerce(7))
 	f.reconcile()
 
-	if f.tableGroup("commerce") == nil {
-		t.Fatal("commerce not provisioned")
-	}
+	require.NotNil(t, f.tableGroup("commerce"), "commerce not provisioned")
 	c := f.claimed(7)
-	if c == nil {
-		t.Fatal("provisioned without a claim")
-	}
-	if c.GetProvisioner() != provisionerID(f.cluster) || c.GetTablegroupName() != "commerce" {
-		t.Errorf("claim = %v", c)
-	}
-	if f.calls != 2 {
-		t.Errorf("multiadmin read %d times, want the list and a re-read after claiming", f.calls)
-	}
+	require.NotNil(t, c, "provisioned without a claim")
+	assert.Equal(t, provisionerID(f.cluster), c.GetProvisioner())
+	assert.Equal(t, "commerce", c.GetTablegroupName())
+	assert.Equal(t, 2, f.calls, "want the list and a re-read after claiming")
 
 	// Converged: nothing pending, no further claim or re-read.
 	f.calls = 0
 	f.reconcile()
-	if f.calls != 1 {
-		t.Errorf("multiadmin read %d times on a converged pass, want once", f.calls)
-	}
+	assert.Equal(t, 1, f.calls, "a converged pass reads multiadmin once")
 }
 
 func TestDynamicTableGroups_RecheckNotProvisionableReleasesTheClaim(t *testing.T) {
@@ -105,12 +92,9 @@ func TestDynamicTableGroups_RecheckNotProvisionableReleasesTheClaim(t *testing.T
 				listSequence(commerceIn(multiadmin.StateCreating, 7), second))
 			f.reconcile()
 
-			if f.tableGroup("commerce") != nil {
-				t.Error("provisioned although the re-read no longer lists it as creating")
-			}
-			if f.claimed(7) != nil {
-				t.Error("claim left behind")
-			}
+			assert.Nil(t, f.tableGroup("commerce"),
+				"provisioned although the re-read no longer lists it as creating")
+			assert.Nil(t, f.claimed(7), "claim left behind")
 		})
 	}
 }
@@ -129,23 +113,18 @@ func TestDynamicTableGroups_FailedRecheckKeepsTheClaimUntilDropped(t *testing.T)
 	})
 	f.reconcile()
 
-	if f.tableGroup("commerce") != nil {
-		t.Error("provisioned without a successful re-read")
-	}
-	if f.claimed(7) == nil {
-		t.Error("claim released on a failed read: the catalog's state is unknown")
-	}
+	assert.Nil(t, f.tableGroup("commerce"), "provisioned without a successful re-read")
+	assert.NotNil(t, f.claimed(7),
+		"claim released on a failed read: the catalog's state is unknown")
 	c := meta.FindStatusCondition(f.cluster.Status.Conditions,
 		multigresv1alpha1.ConditionDynamicTableGroups)
-	if c == nil || c.Reason != "DesiredStateUnknown" {
-		t.Errorf("condition = %+v, want DesiredStateUnknown", c)
+	if assert.NotNil(t, c) {
+		assert.Equal(t, "DesiredStateUnknown", c.Reason)
 	}
 
 	// The next read lists it dropping and nothing was provisioned.
 	f.reconcile()
-	if f.claimed(7) != nil {
-		t.Error("claim of a dropped id with nothing provisioned not released")
-	}
+	assert.Nil(t, f.claimed(7), "claim of a dropped id with nothing provisioned not released")
 }
 
 func TestClaimAndRecheck_AFailedRecheckIsNamedInTheError(t *testing.T) {
@@ -158,16 +137,12 @@ func TestClaimAndRecheck_AFailedRecheckIsNamedInTheError(t *testing.T) {
 
 	ready, problems, err := f.r.claimAndRecheck(t.Context(), f.cluster, claims, "postgres",
 		commerceIn(multiadmin.StateCreating, 7))
-	if !errors.Is(err, cause) || !strings.Contains(err.Error(),
-		"failed to recheck the tablegroups of database postgres after claiming") {
-		t.Errorf("err = %v, want the cause wrapped with the recheck and its database", err)
-	}
-	if len(ready) != 0 || !slices.Equal(problems, []string{"postgres: HTTP 503"}) {
-		t.Errorf("ready = %v, problems = %v", ready, problems)
-	}
-	if f.claimed(7) == nil {
-		t.Error("claim released on a failed recheck")
-	}
+	require.ErrorIs(t, err, cause)
+	assert.ErrorContains(t, err,
+		"failed to recheck the tablegroups of database postgres after claiming")
+	assert.Empty(t, ready)
+	assert.Equal(t, []string{"postgres: HTTP 503"}, problems)
+	assert.NotNil(t, f.claimed(7), "claim released on a failed recheck")
 }
 
 func TestDynamicTableGroups_ClaimHeldElsewhereProvisionsNothing(t *testing.T) {
@@ -175,16 +150,12 @@ func TestDynamicTableGroups_ClaimHeldElsewhereProvisionsNothing(t *testing.T) {
 	f.claim(7, "someone-else")
 	f.reconcile()
 
-	if f.tableGroup("commerce") != nil {
-		t.Error("provisioned an id another provisioner holds")
-	}
-	if f.claimed(7).GetProvisioner() != "someone-else" {
-		t.Error("another provisioner's claim was replaced")
-	}
-	if !meta.IsStatusConditionFalse(f.cluster.Status.Conditions,
-		multigresv1alpha1.ConditionDynamicTableGroups) {
-		t.Error("condition does not report the failed claim")
-	}
+	assert.Nil(t, f.tableGroup("commerce"), "provisioned an id another provisioner holds")
+	assert.Equal(t, "someone-else", f.claimed(7).GetProvisioner(),
+		"another provisioner's claim was replaced")
+	assert.True(t, meta.IsStatusConditionFalse(f.cluster.Status.Conditions,
+		multigresv1alpha1.ConditionDynamicTableGroups),
+		"condition does not report the failed claim")
 }
 
 func TestDynamicTableGroups_DroppingTearsDownThenReleases(t *testing.T) {
@@ -193,33 +164,20 @@ func TestDynamicTableGroups_DroppingTearsDownThenReleases(t *testing.T) {
 	f.claim(7, provisionerID(f.cluster))
 
 	f.reconcile()
-	if !pendingDeletion(f.tableGroup("commerce")) {
-		t.Fatal("a tablegroup the catalog is dropping was not marked for deletion")
-	}
-	if f.claimed(7) == nil {
-		t.Fatal("claim released while the TableGroup exists")
-	}
+	require.True(t, pendingDeletion(f.tableGroup("commerce")),
+		"a tablegroup the catalog is dropping was not marked for deletion")
+	require.NotNil(t, f.claimed(7), "claim released while the TableGroup exists")
 
 	// The TableGroup is gone; one Shard is still running its finalizer.
-	if err := f.c.Delete(t.Context(), f.tableGroup("commerce")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, f.c.Delete(t.Context(), f.tableGroup("commerce")))
 	shard := dynamicShard("7")
-	if err := f.c.Create(t.Context(), shard); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, f.c.Create(t.Context(), shard))
 	f.reconcile()
-	if f.claimed(7) == nil {
-		t.Fatal("claim released while a Shard carrying the id exists")
-	}
+	require.NotNil(t, f.claimed(7), "claim released while a Shard carrying the id exists")
 
-	if err := f.c.Delete(t.Context(), shard); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, f.c.Delete(t.Context(), shard))
 	f.reconcile()
-	if f.claimed(7) != nil {
-		t.Error("claim not released once nothing carries the id")
-	}
+	assert.Nil(t, f.claimed(7), "claim not released once nothing carries the id")
 	// Idempotent: the catalog may list it a while longer.
 	f.reconcile()
 }
@@ -228,13 +186,10 @@ func TestDynamicTableGroups_DroppingLeavesAnotherProvisionersClaim(t *testing.T)
 	f := newDynamicFixture(t, true, listSequence(commerceIn(multiadmin.StateDropping, 7)))
 	f.claim(7, "someone-else")
 	f.reconcile()
-	if f.claimed(7) == nil {
-		t.Error("released a claim another provisioner holds")
-	}
+	assert.NotNil(t, f.claimed(7), "released a claim another provisioner holds")
 	p, _ := newPoller(f)
-	if p.clusterNeedsReconcile(t.Context(), f.cluster) {
-		t.Error("another provisioner's claim asked for a reconcile")
-	}
+	assert.False(t, p.clusterNeedsReconcile(t.Context(), f.cluster),
+		"another provisioner's claim asked for a reconcile")
 }
 
 func TestDynamicTableGroups_DroppingAnotherIDLeavesTheTableGroup(t *testing.T) {
@@ -244,15 +199,10 @@ func TestDynamicTableGroups_DroppingAnotherIDLeavesTheTableGroup(t *testing.T) {
 	f.claim(9, provisionerID(f.cluster))
 	f.reconcile()
 
-	if pendingDeletion(f.tableGroup("commerce")) {
-		t.Error("dropping id 9 marked the TableGroup of id 7")
-	}
-	if f.claimed(7) == nil {
-		t.Error("claim of id 7 released")
-	}
-	if f.claimed(9) != nil {
-		t.Error("claim of id 9, with nothing carrying it, not released")
-	}
+	assert.False(t, pendingDeletion(f.tableGroup("commerce")),
+		"dropping id 9 marked the TableGroup of id 7")
+	assert.NotNil(t, f.claimed(7), "claim of id 7 released")
+	assert.Nil(t, f.claimed(9), "claim of id 9, with nothing carrying it, not released")
 }
 
 func TestDynamicTableGroups_UnknownStateIsNeitherProvisionedNorRemoved(t *testing.T) {
@@ -267,21 +217,17 @@ func TestDynamicTableGroups_UnknownStateIsNeitherProvisionedNorRemoved(t *testin
 	}), existingDynamic("test-cluster", "commerce", "7"))
 	f.reconcile()
 
-	if pendingDeletion(f.tableGroup("commerce")) {
-		t.Error("a tablegroup in an unknown state was removed")
-	}
-	if f.tableGroup("orders") != nil {
-		t.Error("a tablegroup with no state was provisioned")
-	}
+	assert.False(t, pendingDeletion(f.tableGroup("commerce")),
+		"a tablegroup in an unknown state was removed")
+	assert.Nil(t, f.tableGroup("orders"), "a tablegroup with no state was provisioned")
 }
 
 func TestDynamicTableGroups_GateOffDropsNothing(t *testing.T) {
 	f := newDynamicFixture(t, false, listSequence(commerceIn(multiadmin.StateDropping, 7)),
 		existingDynamic("test-cluster", "commerce", "7"))
 	f.reconcile()
-	if pendingDeletion(f.tableGroup("commerce")) {
-		t.Error("removed a tablegroup with the opt-in off")
-	}
+	assert.False(t, pendingDeletion(f.tableGroup("commerce")),
+		"removed a tablegroup with the opt-in off")
 }
 
 func TestPoller_DroppedTableGroups(t *testing.T) {
@@ -291,25 +237,17 @@ func TestPoller_DroppedTableGroups(t *testing.T) {
 	p, _ := newPoller(f)
 	ctx := t.Context()
 
-	if !p.clusterNeedsReconcile(ctx, f.cluster) {
-		t.Fatal("a dropped tablegroup still serving did not ask for a reconcile")
-	}
+	require.True(t, p.clusterNeedsReconcile(ctx, f.cluster),
+		"a dropped tablegroup still serving did not ask for a reconcile")
 	f.reconcile()
-	if p.clusterNeedsReconcile(ctx, f.cluster) {
-		t.Fatal("a draining tablegroup asked for a reconcile; its own events drive it")
-	}
+	require.False(t, p.clusterNeedsReconcile(ctx, f.cluster),
+		"a draining tablegroup asked for a reconcile; its own events drive it")
 
-	if err := f.c.Delete(ctx, f.tableGroup("commerce")); err != nil {
-		t.Fatal(err)
-	}
-	if !p.clusterNeedsReconcile(ctx, f.cluster) {
-		t.Fatal("a held claim with no TableGroup left did not ask for a reconcile")
-	}
+	require.NoError(t, f.c.Delete(ctx, f.tableGroup("commerce")))
+	require.True(t, p.clusterNeedsReconcile(ctx, f.cluster),
+		"a held claim with no TableGroup left did not ask for a reconcile")
 	f.reconcile()
-	if f.claimed(7) != nil {
-		t.Fatal("claim not released")
-	}
-	if p.clusterNeedsReconcile(ctx, f.cluster) {
-		t.Fatal("a released drop asked for a reconcile")
-	}
+	require.Nil(t, f.claimed(7), "claim not released")
+	require.False(t, p.clusterNeedsReconcile(ctx, f.cluster),
+		"a released drop asked for a reconcile")
 }
