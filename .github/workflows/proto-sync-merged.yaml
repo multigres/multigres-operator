@@ -1,0 +1,128 @@
+name: Proto sync merge cleanup
+
+on: # zizmor: ignore[dangerous-triggers] Observer only reads API data; no PR code is executed.
+  pull_request_target:
+    types: [closed]
+    branches: [main]
+
+permissions: {}
+
+# Serialize with the CI failure observer while updating tracking issues.
+concurrency:
+  group: proto-sync-failure-tracking
+  cancel-in-progress: false
+
+jobs:
+  close-superseded:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'chore/sync-proto-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # Read go.mod at the merge commit.
+      issues: write # Explain and close superseded tracking issues.
+    steps:
+      - name: Generate GitHub App token for reading upstream
+        id: upstream-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.MULTIGRES_BOT_APP_ID }}
+          private-key: ${{ secrets.MULTIGRES_BOT_APP_PRIVATE_KEY }}
+          owner: multigres
+          repositories: multigres
+          permission-contents: read
+
+      - name: Close superseded sync failure issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          EXPECTED_BOT_LOGIN: ${{ vars.MULTIGRES_BOT_LOGIN }}
+          UPSTREAM_TOKEN: ${{ steps.upstream-token.outputs.token }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const expectedRepo = `${context.repo.owner}/${context.repo.repo}`;
+            if (!pr.merged || pr.base.ref !== 'main' ||
+                pr.head.repo?.full_name !== expectedRepo ||
+                pr.user?.type !== 'Bot' ||
+                !/^chore\/sync-proto-[0-9a-f]{7}$/.test(pr.head.ref)) {
+              core.info('Not a merged automated proto-sync PR.');
+              return;
+            }
+            const expectedBot = process.env.EXPECTED_BOT_LOGIN?.trim().toLowerCase();
+            if (!expectedBot) {
+              core.setFailed('Could not resolve the expected GitHub App bot identity.');
+              return;
+            }
+            if (pr.user.login.toLowerCase() !== expectedBot) {
+              core.info(`PR #${pr.number} was opened by an unexpected bot identity.`);
+              return;
+            }
+
+            // Use the dependency actually merged, even if the PR body is stale.
+            const { data: file } = await github.rest.repos.getContent({
+              ...context.repo,
+              path: 'go.mod',
+              ref: pr.merge_commit_sha,
+            });
+            const goMod = Buffer.from(file.content, 'base64').toString('utf8');
+            const revision = goMod.match(
+              /^\s*github\.com\/multigres\/multigres\s+v\S*-(\d{14})-([0-9a-f]{12})\s*$/m,
+            )?.[2];
+            if (!revision) {
+              core.setFailed('Could not resolve the merged multigres pseudo-version.');
+              return;
+            }
+            const upstream = getOctokit(process.env.UPSTREAM_TOKEN);
+            const { data: commit } = await upstream.rest.repos.getCommit({
+              owner: 'multigres', repo: 'multigres', ref: revision,
+            });
+            const mergedSha = commit.sha;
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              ...context.repo,
+              state: 'open',
+              labels: 'upstream-impact',
+              per_page: 100,
+            });
+            for (const issue of issues) {
+              if (issue.pull_request) continue;
+              const body = issue.body || '';
+              const failureSha = body.match(
+                /^<!-- upstream-impact:([0-9a-f]{40}) -->$/m,
+              )?.[1] ?? (
+                /^<!-- proto-sync-failure:\d+ -->$/m.test(body)
+                  ? body.match(/^\s*- \*\*Upstream SHA:\*\* `([0-9a-f]{40})`\s*$/m)?.[1]
+                  : undefined
+              );
+              if (!failureSha) continue;
+
+              let comparison;
+              try {
+                ({ data: comparison } = await upstream.rest.repos.compareCommitsWithBasehead({
+                  owner: 'multigres', repo: 'multigres',
+                  basehead: `${failureSha}...${mergedSha}`,
+                  per_page: 1,
+                }));
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                core.warning(`Cannot compare revision for issue #${issue.number}; leaving it open.`);
+                continue;
+              }
+              if (!['ahead', 'identical'].includes(comparison.status)) continue;
+
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue.number,
+                body: `Resolved by merged sync PR #${pr.number} (${pr.html_url}). ` +
+                  `The merged dependency revision \`${mergedSha}\` includes the failed revision ` +
+                  `\`${failureSha}\` ([compare revisions](${comparison.html_url})). ` +
+                  'This sync failure has been superseded.',
+              });
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
