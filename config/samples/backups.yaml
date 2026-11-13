@@ -1,0 +1,42 @@
+# In-cluster backup scheduling (PoC).
+#
+# Schedules are usually declared on the MultigresCluster and rendered into
+# MultigresBackupSchedule objects named <cluster>-<entry>:
+#
+#   spec:
+#     backupSchedules:
+#       - name: daily-differential
+#         schedule: "0 4 * * 0-5"   # Sun–Fri 04:00 UTC
+#         type: differential
+#       - name: weekly-full
+#         schedule: "0 4 * * 6"     # Sat 04:00 UTC
+#         type: full
+#
+# A schedule can also be created directly:
+apiVersion: multigres.com/v1alpha1
+kind: MultigresBackupSchedule
+metadata:
+  name: minimal-every-15m
+spec:
+  clusterRef:
+    name: minimal
+  schedule: "*/15 * * * *"
+  type: incremental
+  startingDeadlineSeconds: 600
+  retry:
+    maxAttempts: 2
+    backoffSeconds: 60
+---
+# A manual (on-demand) backup of one shard. It waits behind any unfinished
+# backup of the same shard, then runs once.
+apiVersion: multigres.com/v1alpha1
+kind: MultigresBackup
+metadata:
+  name: minimal-manual-1
+spec:
+  clusterRef:
+    name: minimal
+  database: postgres
+  tableGroup: default
+  shard: 0-inf
+  type: full
