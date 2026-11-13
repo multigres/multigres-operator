@@ -10,6 +10,7 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/pb/clustermetadata"
 	"github.com/multigres/multigres/go/pb/multipoolermanagerdata"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -143,6 +144,111 @@ func TestEvaluateBackups_SelectsMostRecent(t *testing.T) {
 	}
 }
 
+func TestEvaluateBackups_DifferentialOnOldFull(t *testing.T) {
+	t.Parallel()
+
+	shard := &multigresv1alpha1.Shard{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-shard",
+			Namespace: "default",
+			Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+		},
+	}
+
+	// Weekly full, daily differentials: the full is five days old and the
+	// differential on top of it is one hour old. The shard has a fresh backup.
+	fullLabel := time.Now().Add(-5*24*time.Hour).UTC().Format("20060102-150405") + "F"
+	diffTime := time.Now().Add(-1 * time.Hour).UTC().Truncate(time.Second)
+	diffLabel := fullLabel + "_" + diffTime.Format("20060102-150405") + "D"
+
+	tests := map[string]*multipoolermanagerdata.BackupMetadata{
+		"with stop timestamp": {
+			BackupId:      diffLabel,
+			Status:        multipoolermanagerdata.BackupMetadata_COMPLETE,
+			Type:          "diff",
+			StopTimestamp: timestamppb.New(diffTime.Add(3 * time.Second)),
+		},
+		"without stop timestamp": {
+			BackupId: diffLabel,
+			Status:   multipoolermanagerdata.BackupMetadata_COMPLETE,
+			Type:     "diff",
+		},
+	}
+
+	for name, diff := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			backups := []*multipoolermanagerdata.BackupMetadata{
+				diff,
+				{
+					BackupId: fullLabel,
+					Status:   multipoolermanagerdata.BackupMetadata_COMPLETE,
+					Type:     "full",
+				},
+			}
+
+			result := backuphealth.EvaluateBackups(shard, backups)
+			if !result.Healthy {
+				t.Fatalf("expected healthy for 1h-old differential, got: %s", result.Message)
+			}
+			if result.LastBackupType != "diff" {
+				t.Errorf("expected type=diff, got %s", result.LastBackupType)
+			}
+			if age := time.Since(result.LastBackupTime.Time); age > 2*time.Hour {
+				t.Errorf("expected LastBackupTime from the differential, got age %s", age)
+			}
+		})
+	}
+}
+
+func TestEvaluateBackups_PrefersStopTimestamp(t *testing.T) {
+	t.Parallel()
+
+	shard := &multigresv1alpha1.Shard{}
+	stop := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	backups := []*multipoolermanagerdata.BackupMetadata{
+		{
+			// The label says 48h ago; the stop timestamp is authoritative.
+			BackupId:      time.Now().Add(-48*time.Hour).UTC().Format("20060102-150405") + "F",
+			Status:        multipoolermanagerdata.BackupMetadata_COMPLETE,
+			Type:          "full",
+			StopTimestamp: timestamppb.New(stop),
+		},
+	}
+
+	result := backuphealth.EvaluateBackups(shard, backups)
+	if !result.Healthy {
+		t.Fatalf("expected healthy, got: %s", result.Message)
+	}
+	if !result.LastBackupTime.Time.Equal(stop) {
+		t.Errorf("LastBackupTime = %v, want %v", result.LastBackupTime.Time, stop)
+	}
+}
+
+func TestEvaluateBackups_SkipsUnparseableWhenAnotherIsUsable(t *testing.T) {
+	t.Parallel()
+
+	shard := &multigresv1alpha1.Shard{}
+	recentID := time.Now().Add(-1*time.Hour).UTC().Format("20060102-150405") + "F"
+	backups := []*multipoolermanagerdata.BackupMetadata{
+		{
+			BackupId: "not-a-timestamp",
+			Status:   multipoolermanagerdata.BackupMetadata_COMPLETE,
+			Type:     "full",
+		},
+		{
+			BackupId: recentID,
+			Status:   multipoolermanagerdata.BackupMetadata_COMPLETE,
+			Type:     "full",
+		},
+	}
+
+	result := backuphealth.EvaluateBackups(shard, backups)
+	if !result.Healthy {
+		t.Fatalf("expected healthy, got: %s", result.Message)
+	}
+}
+
 func TestApply(t *testing.T) {
 	t.Parallel()
 
@@ -233,8 +339,17 @@ func TestParseTime(t *testing.T) {
 			input: "20260224-143055F123456",
 			want:  time.Date(2026, 2, 24, 14, 30, 55, 0, time.UTC),
 		},
-		"too short": {input: "20260224", want: time.Time{}},
-		"empty":     {input: "", want: time.Time{}},
+		"differential uses its own time, not the base full's": {
+			input: "20261031-113826F_20261104-113819D",
+			want:  time.Date(2026, 11, 4, 11, 38, 19, 0, time.UTC),
+		},
+		"incremental uses its own time, not the base backup's": {
+			input: "20261031-113826F_20261105-020000I",
+			want:  time.Date(2026, 11, 5, 2, 0, 0, 0, time.UTC),
+		},
+		"empty segment after underscore": {input: "20261031-113826F_", want: time.Time{}},
+		"too short":                      {input: "20260224", want: time.Time{}},
+		"empty":                          {input: "", want: time.Time{}},
 	}
 
 	for name, tc := range tests {

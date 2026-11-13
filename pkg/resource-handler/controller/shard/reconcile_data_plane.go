@@ -192,10 +192,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 	}
 
-	// Phase: Evaluate backup health
+	// Phase: Evaluate backup health. Publish through patchStatus so the
+	// storage guard's condition is excluded from our SSA payload. A merge
+	// patch of conditions replaces the whole list and can overwrite a newer
+	// guard verdict with the stale copy held by this reconciliation.
 	if rpcClient != nil {
 		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileBackupHealth")
-		backupBase := shard.DeepCopy()
 		result, err := backuphealth.Evaluate(ctx, store, rpcClient, shard)
 		if err != nil {
 			monitoring.RecordSpanError(childSpan, err)
@@ -212,12 +214,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 				shard,
 				fmt.Sprintf("Failed to check backup health: %v", err),
 			)
-			if patchErr := r.Status().Patch(
-				ctx,
-				shard,
-				client.MergeFrom(backupBase),
-				client.FieldOwner(ownership.ManagerShard),
-			); patchErr != nil {
+			if patchErr := r.patchStatus(ctx, shard, shard.Status.Phase); patchErr != nil {
 				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
 			}
 		} else if result != nil {
@@ -233,12 +230,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 				r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
 			}
 
-			if err := r.Status().Patch(
-				ctx,
-				shard,
-				client.MergeFrom(backupBase),
-				client.FieldOwner(ownership.ManagerShard),
-			); err != nil {
+			if err := r.patchStatus(ctx, shard, shard.Status.Phase); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
 				logger.Error(err, "Failed to update shard backup status")
