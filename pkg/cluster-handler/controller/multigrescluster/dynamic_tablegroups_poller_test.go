@@ -45,7 +45,9 @@ func TestPoller_EnqueuesOnlyWhenTheCatalogAsksForSomethingNew(t *testing.T) {
 
 func TestPoller_ReportedProblemsDoNotRequeue(t *testing.T) {
 	bad := func(string) ([]multiadmin.TableGroup, error) {
-		return []multiadmin.TableGroup{{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}}}, nil
+		return []multiadmin.TableGroup{
+			{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+		}, nil
 	}
 	f := newDynamicFixture(t, true, bad)
 	p, _ := newPoller(f)
