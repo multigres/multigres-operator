@@ -110,7 +110,12 @@ func (r *MultigresClusterReconciler) claimAndRecheck(
 
 	again, err := r.listDesiredTableGroups(ctx, cluster, string(db))
 	if err != nil {
-		return nil, append(problems, fmt.Sprintf("%s: %v", db, err)), err
+		return nil, append(problems, fmt.Sprintf("%s: %v", db, err)),
+			fmt.Errorf(
+				"failed to recheck the tablegroups of database %s after claiming: %w",
+				db,
+				err,
+			)
 	}
 	still := map[int64]bool{}
 	for _, tg := range again {

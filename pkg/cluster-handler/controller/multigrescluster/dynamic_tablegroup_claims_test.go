@@ -2,6 +2,8 @@ package multigrescluster
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/multigres/multigres/go/common/topoclient"
@@ -143,6 +145,28 @@ func TestDynamicTableGroups_FailedRecheckKeepsTheClaimUntilDropped(t *testing.T)
 	f.reconcile()
 	if f.claimed(7) != nil {
 		t.Error("claim of a dropped id with nothing provisioned not released")
+	}
+}
+
+func TestClaimAndRecheck_AFailedRecheckIsNamedInTheError(t *testing.T) {
+	cause := errors.New("HTTP 503")
+	f := newDynamicFixture(t, true, func(string) ([]multiadmin.TableGroup, error) {
+		return nil, cause
+	})
+	claims := &claimStore{r: f.r, cluster: f.cluster}
+	defer claims.close()
+
+	ready, problems, err := f.r.claimAndRecheck(t.Context(), f.cluster, claims, "postgres",
+		commerceIn(multiadmin.StateCreating, 7))
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(),
+		"failed to recheck the tablegroups of database postgres after claiming") {
+		t.Errorf("err = %v, want the cause wrapped with the recheck and its database", err)
+	}
+	if len(ready) != 0 || !slices.Equal(problems, []string{"postgres: HTTP 503"}) {
+		t.Errorf("ready = %v, problems = %v", ready, problems)
+	}
+	if f.claimed(7) == nil {
+		t.Error("claim released on a failed recheck")
 	}
 }
 
