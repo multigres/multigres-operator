@@ -75,9 +75,9 @@ An operator version that wrote status under shared names leaves entries the per-
 - **Removed** when every field it claims is covered.
 - **Kept** otherwise, without error: removing it would leave a populated field with no owner, invisible to every later apply. A later pass removes it once a current writer claims those fields.
 
-A legacy entry goes on the first pass whose current applies send everything it claims. Every status writer re-applies its whole status each pass, and the Shard's main status apply sends the pod roles and every condition but the shard guard's `StorageClassValid` and `BackupRepositoryValid`, so this covers the Update entries the Shard's merge-patch writers leave as well (see Known limitations for when it does not happen).
+A legacy entry goes on the first pass whose current applies send everything it claims. Every status writer re-applies its whole status each pass, and the Shard's main status apply sends the pod roles and every condition but `StorageClassValid`, so this covers the Update entries the Shard's merge-patch writers leave as well (see Known limitations for when it does not happen).
 
-A status writer that skips an unchanged value (the storage-class guards, the Lite backup-repository guard, pool Pod readiness) skips only when its own entry already owns it; `ownership.SkipUnchanged` holds that rule and also runs the tidy-up, so a writer whose value never changes (a missing StorageClass stops every pass at the guard) still retries one that failed.
+A status writer that skips an unchanged value (the storage-class guards, pool Pod readiness) skips only when its own entry already owns it; `ownership.SkipUnchanged` holds that rule and also runs the tidy-up, so a writer whose value never changes (a missing StorageClass stops every pass at the guard) still retries one that failed.
 
 The patch has no resourceVersion precondition, which a busy object would fail every time. It tests what the decision read: each removed index still holds the identical entry, and for every field of a removed entry, one current entry covering it still has the same manager, operation, subresource and fields. A current writer withdrawing a shared field in between fails the patch, and the legacy entry stays the field's owner.
 

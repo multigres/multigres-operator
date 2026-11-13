@@ -203,12 +203,7 @@ func TestLiteRegistrationOutageClassification(t *testing.T) {
 						return liteRegistrationFailure{err: tc.err}, nil
 					},
 				}
-				registered, err := r.registerLiteDatabase(
-					t.Context(),
-					newTestLiteShard(),
-					"main",
-					"z1",
-				)
+				registered, err := r.registerLiteDatabase(t.Context(), newTestLiteShard())
 				require.False(t, registered)
 				if tc.outage {
 					require.NoError(t, err)

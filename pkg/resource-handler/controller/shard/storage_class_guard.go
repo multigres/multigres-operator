@@ -232,48 +232,27 @@ func (r *ShardReconciler) setStorageClassCondition(
 	shard *multigresv1alpha1.Shard,
 	check storageClassCheck,
 ) error {
-	return r.applyGuardCondition(ctx, shard, metav1.Condition{
-		Type:    conditionStorageClassValid,
-		Status:  check.status,
-		Reason:  check.reason,
-		Message: check.message,
-	}, false)
-}
-
-// applyGuardCondition writes one status condition under the shard guard field
-// manager, skipping the write when the stored condition already matches. With
-// onlyIfPresent it writes only when the condition already exists, so a guard
-// can clear a condition it set without adding one to every shard.
-func (r *ShardReconciler) applyGuardCondition(
-	ctx context.Context,
-	shard *multigresv1alpha1.Shard,
-	want metav1.Condition,
-	onlyIfPresent bool,
-) error {
 	// Read through the client's cache rather than use the in-memory copy,
 	// which a write earlier in this reconcile may have outdated. The cache can
 	// still lag: a stale read can repeat or skip one write until the next pass,
 	// and fails the tidy-up's test ops rather than misleading it.
 	latest := &multigresv1alpha1.Shard{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(shard), latest); err != nil {
-		return fmt.Errorf("failed to get Shard for %s condition check: %w", want.Type, err)
+		return fmt.Errorf("failed to get Shard for StorageClass condition check: %w", err)
 	}
 
-	existing := meta.FindStatusCondition(latest.Status.Conditions, want.Type)
-	if existing == nil && onlyIfPresent {
-		return nil
-	}
+	existing := meta.FindStatusCondition(latest.Status.Conditions, conditionStorageClassValid)
 	unchanged := existing != nil &&
-		existing.Status == want.Status &&
-		existing.Reason == want.Reason &&
-		existing.Message == want.Message &&
+		existing.Status == check.status &&
+		existing.Reason == check.reason &&
+		existing.Message == check.message &&
 		existing.ObservedGeneration == latest.Generation
 	if ownership.SkipUnchanged(
 		ctx,
 		r.Client,
 		latest,
 		ownership.ManagerShardGuard,
-		ownership.ConditionPath(want.Type),
+		ownership.ConditionPath(conditionStorageClassValid),
 		unchanged,
 	) {
 		return nil
@@ -282,22 +261,22 @@ func (r *ShardReconciler) applyGuardCondition(
 	// Preserve LastTransitionTime when the status hasn't transitioned,
 	// matching the behaviour of meta.SetStatusCondition.
 	now := metav1.Now()
-	if existing != nil && existing.Status == want.Status {
+	if existing != nil && existing.Status == check.status {
 		now = existing.LastTransitionTime
 	}
 
 	// Converted from the typed condition rather than hand-built so the wire
 	// encoding, notably the metav1.Time format, cannot drift from the API's.
 	cond, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&metav1.Condition{
-		Type:               want.Type,
-		Status:             want.Status,
-		Reason:             want.Reason,
-		Message:            want.Message,
+		Type:               conditionStorageClassValid,
+		Status:             check.status,
+		Reason:             check.reason,
+		Message:            check.message,
 		ObservedGeneration: latest.Generation,
 		LastTransitionTime: now,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to encode Shard %s condition: %w", want.Type, err)
+		return fmt.Errorf("failed to encode Shard StorageClass condition: %w", err)
 	}
 
 	patchObj := &unstructured.Unstructured{Object: map[string]any{
@@ -318,7 +297,7 @@ func (r *ShardReconciler) applyGuardCondition(
 		patchObj,
 		ownership.ManagerShardGuard,
 	); err != nil {
-		return fmt.Errorf("failed to patch Shard %s condition: %w", want.Type, err)
+		return fmt.Errorf("failed to patch Shard StorageClass condition: %w", err)
 	}
 
 	return nil

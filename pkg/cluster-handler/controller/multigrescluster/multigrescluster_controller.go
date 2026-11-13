@@ -441,6 +441,9 @@ func (r *MultigresClusterReconciler) ensureClusterFinalizer(
 	}
 
 	before := cluster.DeepCopy()
+	if err := r.initializeBackupKeyPrefix(ctx, cluster); err != nil {
+		return err
+	}
 	cluster.Finalizers = append(cluster.Finalizers, multigresv1alpha1.FinalizerClusterCleanup)
 	patch := client.MergeFromWithOptions(
 		before,

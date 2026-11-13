@@ -18,6 +18,9 @@ func (r *Resolver) PopulateClusterDefaults(
 	cluster *multigresv1alpha1.MultigresCluster,
 ) ([]string, error) {
 	var decisions []string
+	// Only clusters allocated a prefix before their first provisioning opt in.
+	// This also applies the persisted default to backup settings added later.
+	multigresv1alpha1.DefaultBackupKeyPrefixes(cluster)
 	// Component images are deliberately not defaulted here. They are operator
 	// configuration that changes every release, so persisting them would
 	// freeze each cluster on the versions it was admitted with. The cluster

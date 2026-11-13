@@ -43,16 +43,14 @@ func (v *MultigresClusterValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
-	warnings, err := v.validate(ctx, obj)
-	if err != nil {
-		return warnings, err
+	if cluster, ok := obj.(*multigresv1alpha1.MultigresCluster); ok &&
+		cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix] != "" {
+		return nil, fmt.Errorf(
+			"annotation %s is allocated by the controller; omit it when creating a cluster",
+			multigresv1alpha1.AnnotationDefaultBackupKeyPrefix,
+		)
 	}
-	if cluster, ok := obj.(*multigresv1alpha1.MultigresCluster); ok {
-		if err := validateLiteBackupRepository(nil, cluster); err != nil {
-			return warnings, err
-		}
-	}
-	return warnings, nil
+	return v.validate(ctx, obj)
 }
 
 // ValidateUpdate validates a MultigresCluster on update, including storage shrink and etcd replica checks.
@@ -62,6 +60,9 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 ) (admission.Warnings, error) {
 	if oldCluster, ok := oldObj.(*multigresv1alpha1.MultigresCluster); ok {
 		if newCluster, ok := newObj.(*multigresv1alpha1.MultigresCluster); ok {
+			if err := validateBackupDefaultUpdate(oldCluster, newCluster); err != nil {
+				return nil, err
+			}
 			if oldCluster.Spec.Mode != newCluster.Spec.Mode {
 				return nil, fmt.Errorf(
 					"mode is immutable and can only be set when the cluster is created",
@@ -76,9 +77,6 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 					oldCluster,
 					newCluster,
 				); err != nil {
-					return nil, err
-				}
-				if err := validateLiteBackupRepository(oldCluster, newCluster); err != nil {
 					return nil, err
 				}
 			}
