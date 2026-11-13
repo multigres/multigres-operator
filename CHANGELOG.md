@@ -6,6 +6,10 @@ All notable changes to the Multigres Operator are documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- **Dynamic tablegroup removal.** On a cluster annotated `multigres.com/dynamic-tablegroups: "true"`, the operator now removes a tablegroup the sharding catalog lists as dropping (`DROP TABLEGROUP`, or a failed or cancelled `CREATE TABLEGROUP`): it drains and deletes the TableGroup and its Shards, deletes the poolers' topology records carrying the tablegroup's catalog id, and then releases its provision claim so the catalog completes the drop. Provisioning now claims the catalog id in the global topology (`databases/{db}/TableGroupClaims/{id}`) and reads the catalog again before creating anything, so a tablegroup dropped in between is never provisioned. Contract: multigres/multigres#1676 and #1677.
+
 ### Breaking
 
 - **Rollback with dynamic tablegroups is destructive.** A `MultigresCluster` annotated `multigres.com/dynamic-tablegroups: "true"` provisions TableGroups from the Multigres sharding catalog. An operator release before this one computes the wanted TableGroups from the spec alone and drains and deletes every dynamic one, with its Shards and PVCs per their deletion policy, while the catalog still lists them; re-upgrading provisions them again from empty. Remove the annotation and empty the catalog before rolling back an opted-in cluster.
