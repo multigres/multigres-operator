@@ -48,6 +48,18 @@ spec:
                   GlobalTopoServer configuration.
                   Uses TopoServerSpec directly (Managed Etcd only).
                 properties:
+                  auth:
+                    description: |-
+                      Auth turns on certificate-based etcd authorization for this managed
+                      topology server. It requires TLS.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled turns on etcd authentication and per-cluster permissions.
+                          Once true, it cannot be set to false or removed.
+                        type: boolean
+                    type: object
                   etcd:
                     description: Etcd defines the configuration if using Etcd.
                     properties:
@@ -1436,6 +1448,9 @@ spec:
                 x-kubernetes-validations:
                 - message: must specify 'etcd' configuration
                   rule: has(self.etcd)
+                - message: managed authorization cannot be disabled after being requested
+                  rule: '!(has(oldSelf.auth) && has(oldSelf.auth.enabled) && oldSelf.auth.enabled)
+                    || (has(self.auth) && has(self.auth.enabled) && self.auth.enabled)'
               multiadmin:
                 description: Multiadmin configuration.
                 properties:

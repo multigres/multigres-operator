@@ -46,7 +46,12 @@ type EndpointUrl string
 
 // TopoServerSpec defines the desired state of TopoServer (Child CR).
 // +kubebuilder:validation:XValidation:rule="has(self.etcd)",message="must specify 'etcd' configuration"
+// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.auth) && has(oldSelf.auth.enabled) && oldSelf.auth.enabled) || (has(self.auth) && has(self.auth.enabled) && self.auth.enabled)",message="managed authorization cannot be disabled after being requested"
 type TopoServerSpec struct {
+	// Auth turns on certificate-based etcd authorization for this managed
+	// topology server. It requires TLS.
+	// +optional
+	Auth *TopoServerAuthSpec `json:"auth,omitempty"`
 	// Etcd defines the configuration if using Etcd.
 	Etcd *EtcdSpec `json:"etcd,omitempty"`
 
@@ -65,12 +70,38 @@ type TopoServerSpec struct {
 	TLS *TopoTLSConfig `json:"tls,omitempty"`
 }
 
+// TopoServerAuthSpec controls managed etcd authorization.
+type TopoServerAuthSpec struct {
+	// Enabled turns on etcd authentication and per-cluster permissions.
+	// Once true, it cannot be set to false or removed.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether managed authorization was explicitly requested.
+func (a *TopoServerAuthSpec) IsEnabled() bool {
+	return a != nil && a.Enabled
+}
+
 // ============================================================================
 // CR Controller Status Specs
 // ============================================================================
 
 // TopoServerStatus defines the observed state of TopoServer.
 type TopoServerStatus struct {
+	// AuthEnabled records successful authorization activation and remains true
+	// through subsequent reconciliation failures. AuthorizationReady reports
+	// whether the current desired grants have been reconciled.
+	// +optional
+	AuthEnabled bool `json:"authEnabled,omitempty"`
+
+	// AuthIdentities lists the etcd users the controller manages. The
+	// controller writes it before changing etcd, so it can delete users left
+	// by an interrupted reconcile or a removed cluster.
+	// +optional
+	// +listType=set
+	AuthIdentities []string `json:"authIdentities,omitempty"`
 	// ObservedGeneration is the most recent generation observed.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

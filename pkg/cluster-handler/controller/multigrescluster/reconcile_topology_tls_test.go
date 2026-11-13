@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	_ "github.com/multigres/multigres/go/common/topoclient/etcdtopo"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -13,6 +15,31 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
+
+func TestOpenTopoStoreReadsCredentialThroughAPIReader(t *testing.T) {
+	want := multigresv1alpha1.TopoClientCertSecretName("cluster")
+	ref := multigresv1alpha1.GlobalTopoServerRef{
+		Address:          "localhost:2379",
+		RootPath:         "/test",
+		CASecret:         want,
+		ClientCertSecret: want,
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: want, Namespace: "team-a"},
+		Data: map[string][]byte{
+			"tls.crt": []byte("cert"),
+			"tls.key": []byte("key"),
+			"ca.crt":  []byte("ca"),
+		},
+	}
+	r := &MultigresClusterReconciler{APIReader: fake.NewClientBuilder().
+		WithScheme(setupScheme()).WithObjects(secret).Build()}
+	store, err := r.openTopoStore(t.Context(), "team-a", ref)
+	if err != nil {
+		t.Fatalf("opening store with only expected credential %q: %v", want, err)
+	}
+	defer func() { _ = store.Close() }()
+}
 
 // A topology connection failure has to be visible in the cluster status, not
 // only in the logs, so an operator can see why the cluster is not becoming

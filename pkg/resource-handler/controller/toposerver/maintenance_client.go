@@ -31,9 +31,12 @@ type EtcdMaintenanceClient interface {
 // Each endpoint has a separate client. A linearizable health read must reach
 // that member, not silently fail over to a healthy endpoint in a client pool.
 type memberClients struct {
+	clientv3.Auth
 	clients map[string]*clientv3.Client
 	first   *clientv3.Client
 }
+
+var _ etcdAuthClient = (*memberClients)(nil)
 
 func (r *TopoServerReconciler) maintenanceClient(
 	ctx context.Context,
@@ -56,6 +59,7 @@ func (r *TopoServerReconciler) maintenanceClient(
 		result.clients[endpoint] = c
 		if result.first == nil {
 			result.first = c
+			result.Auth = c.Auth
 		}
 	}
 	return result, nil
@@ -133,12 +137,11 @@ func (r *TopoServerReconciler) maintenanceTLSConfig(
 	secret := &corev1.Secret{}
 	key := client.ObjectKey{
 		Namespace: ts.Namespace,
-		Name:      multigresv1alpha1.TopoServerCertSecretName(ts.Name),
+		Name:      multigresv1alpha1.TopoServerAdminCertSecretName(ts.Name),
 	}
 	if err := r.maintenanceReader().Get(ctx, key, secret); err != nil {
 		return nil, fmt.Errorf("reading etcd maintenance credential: %w", err)
 	}
-	// The managed serving identity also has client-auth usage for peer TLS.
 	cert, err := tls.X509KeyPair(
 		secret.Data[corev1.TLSCertKey],
 		secret.Data[corev1.TLSPrivateKeyKey],

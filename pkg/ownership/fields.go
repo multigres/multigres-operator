@@ -157,6 +157,16 @@ var Fields = []Field{
 		Class:   Gate,
 	},
 	{Kind: kindTopoServer, Path: conditionsOwner, Manager: ManagerTopoServer, Class: Observation},
+	// auth.go makes successful authorization activation sticky, while status.go
+	// uses it to gate initial readiness. AuthorizationReady reports the current
+	// reconciliation without resetting this gate.
+	{Kind: kindTopoServer, Path: ".status.authEnabled", Manager: ManagerTopoServer, Class: Gate},
+	// auth.go records identities before granting access and retains them on errors;
+	// later reconciles prune removed identities before shrinking this list.
+	{
+		Kind: kindTopoServer, Path: ".status.authIdentities",
+		Manager: ManagerTopoServer, Class: WorkflowMemory,
+	},
 	{
 		Kind:    kindTopoServer,
 		Path:    `.status.conditions[type="StorageClassValid"]`,
