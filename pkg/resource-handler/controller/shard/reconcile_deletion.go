@@ -17,6 +17,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/drain"
+	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
@@ -129,6 +130,14 @@ func (r *ShardReconciler) handleDeletion(
 	// deleting in-line.
 	if err := r.cleanupShardPVCs(ctx, shard); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// A dynamic tablegroup's shard also leaves pooler records behind its
+	// pods. Removing them is part of what completes a DROP TABLEGROUP.
+	if isDynamicShard(shard) {
+		if err := r.cleanupDynamicShardTopology(ctx, shard); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// The shard is done reconciling; drop its strike entries so a shard
@@ -426,4 +435,64 @@ func (r *ShardReconciler) handlePendingDeletion(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// isDynamicShard reports whether shard belongs to a tablegroup the operator
+// provisioned from the sharding catalog.
+func isDynamicShard(shard *multigresv1alpha1.Shard) bool {
+	return shard.Labels[multigresv1alpha1.LabelDynamicTableGroup] == "true" &&
+		multigresv1alpha1.TableGroupIDOf(shard) > 0
+}
+
+// cleanupDynamicShardTopology runs once a dynamic shard's pods are gone, so
+// nothing can register again, and before its finalizer is removed. It deletes
+// the pooler records carrying this incarnation's tablegroup id, in every cell:
+// the catalog primary completes a DROP TABLEGROUP only once none remain. The
+// MultigresCluster controller releases the tablegroup's provision claim only
+// once every such Shard is gone, so an error here keeps the finalizer and is
+// retried. The shard's initialization claim is left to the catalog primary,
+// which deletes it once the drop has completed.
+//
+// Topology is skipped while the MultigresCluster itself is being deleted: the
+// cluster's topology goes with it, and a managed one may already be
+// unreachable, which must not hold the Shard forever.
+func (r *ShardReconciler) cleanupDynamicShardTopology(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) error {
+	churning, err := r.clusterIsChurning(
+		ctx, shard.Namespace, shard.Labels[metadata.LabelMultigresCluster],
+	)
+	if err != nil {
+		return fmt.Errorf("failed to determine MultigresCluster deletion state: %w", err)
+	}
+	if churning {
+		return nil
+	}
+
+	store, err := r.topoStore(ctx, shard)
+	if err != nil {
+		r.Recorder.Eventf(shard, "Warning", "TopologyError",
+			"Cannot connect to topology to remove dynamic tablegroup records: %v", err)
+		return fmt.Errorf("failed to open topology store: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	id := multigresv1alpha1.TableGroupIDOf(shard)
+	ref := topo.ShardRef{
+		Database:   string(shard.Spec.DatabaseName),
+		TableGroup: string(shard.Spec.TableGroupName),
+		Shard:      string(shard.Spec.ShardName),
+	}
+	n, err := topo.UnregisterTableGroupPoolers(ctx, store, ref, id)
+	if err != nil {
+		r.Recorder.Eventf(shard, "Warning", "TopologyError",
+			"Failed to remove pooler records of tablegroup id %d: %v", id, err)
+		return err
+	}
+	log.FromContext(ctx).Info("Removed dynamic tablegroup shard from topology",
+		"tablegroupID", id, "poolerRecords", n)
+	r.Recorder.Eventf(shard, "Normal", "TopologyCleaned",
+		"Removed %d pooler record(s) of tablegroup id %d", n, id)
+	return nil
 }
