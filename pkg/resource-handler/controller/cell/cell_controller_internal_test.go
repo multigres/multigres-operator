@@ -475,6 +475,22 @@ func TestProjectRefOrGenerationChangedPredicate_Update(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "dynamic-tablegroups annotation added",
+			old:  newCell(nil),
+			new: newCell(
+				map[string]string{multigresv1alpha1.AnnotationDynamicTableGroups: "true"},
+			),
+			want: true,
+		},
+		{
+			name: "dynamic-tablegroups annotation removed",
+			old: newCell(
+				map[string]string{multigresv1alpha1.AnnotationDynamicTableGroups: "true"},
+			),
+			new:  newCell(nil),
+			want: true,
+		},
+		{
 			name: "unrelated annotation changed",
 			old:  newCell(map[string]string{"example.com/unrelated": "a"}),
 			new:  newCell(map[string]string{"example.com/unrelated": "b"}),
