@@ -14,6 +14,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
 )
 
 func TestBuildMultipoolerContainer(t *testing.T) {
@@ -705,6 +706,10 @@ func TestBuildMultiorchContainer(t *testing.T) {
 	}{
 		"default multiorch container": {
 			shard: &multigresv1alpha1.Shard{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Labels:    map[string]string{"multigres.com/cluster": "test-cluster"},
+				},
 				Spec: multigresv1alpha1.ShardSpec{
 					DatabaseName:   "testdb",
 					TableGroupName: "default",
@@ -736,6 +741,16 @@ func TestBuildMultiorchContainer(t *testing.T) {
 					"--cell=zone1",
 					"--watch-targets=testdb/default/0",
 					"--log-level=info",
+					"--hostname=" + buildMultiorchNameWithCell(&multigresv1alpha1.Shard{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{"multigres.com/cluster": "test-cluster"},
+						},
+						Spec: multigresv1alpha1.ShardSpec{
+							DatabaseName:   "testdb",
+							TableGroupName: "default",
+							ShardName:      "0",
+						},
+					}, "zone1", nameutil.ServiceConstraints) + ".default.svc.cluster.local",
 				},
 				Ports:     buildMultiorchContainerPorts(),
 				Resources: corev1.ResourceRequirements{},
