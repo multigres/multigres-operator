@@ -6,6 +6,10 @@ All notable changes to the Multigres Operator are documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- **Tablegroup DDL on opted-in gateways.** A `MultigresCluster` annotated `multigres.com/dynamic-tablegroups: "true"` now runs its gateways with `--enable-tablegroup-ddl=true`, so `CREATE TABLEGROUP` and `DROP TABLEGROUP` execute through the gateway. Clusters without the annotation keep their current gateway args. Needs a gateway image with multigres commit `dda2860b` or later, which the default image includes.
+
 ### Breaking
 
 - **Rollback with dynamic tablegroups is destructive.** A `MultigresCluster` annotated `multigres.com/dynamic-tablegroups: "true"` provisions TableGroups from the Multigres sharding catalog. An operator release before this one computes the wanted TableGroups from the spec alone and drains and deletes every dynamic one, with its Shards and PVCs per their deletion policy, while the catalog still lists them; re-upgrading provisions them again from empty. Remove the annotation and empty the catalog before rolling back an opted-in cluster.
