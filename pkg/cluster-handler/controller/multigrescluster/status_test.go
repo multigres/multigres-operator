@@ -46,6 +46,9 @@ func TestReconcile_Status(t *testing.T) {
 			wantErrMsg: "failed to list cells for status",
 		},
 		"Error: UpdateStatus (List TableGroups Failed)": {
+			preReconcileUpdate: func(t testing.TB, cluster *multigresv1alpha1.MultigresCluster) {
+				cluster.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
+			},
 			failureConfig: &testutil.FailureConfig{
 				OnList: func() func(client.ObjectList) error {
 					count := 0
