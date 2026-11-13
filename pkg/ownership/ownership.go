@@ -178,6 +178,8 @@ func decode(e metav1.ManagedFieldsEntry) (*fieldpath.Set, error) {
 //
 // ForceOwnership lets the first apply under a status manager take fields a
 // legacy entry holds rather than conflict with it.
+// A cleanup conflict is returned even after a successful status apply so the
+// controller retries instead of leaving a healthy object with no future event.
 func ApplyStatus(ctx context.Context, c client.Client, obj client.Object, manager string) error {
 	if err := c.Status().Patch(
 		ctx,
@@ -188,8 +190,7 @@ func ApplyStatus(ctx context.Context, c client.Client, obj client.Object, manage
 	); err != nil {
 		return err
 	}
-	TidyLegacy(ctx, c, obj)
-	return nil
+	return TidyLegacy(ctx, c, obj)
 }
 
 // SkipUnchanged reports whether a status writer may skip writing path under
@@ -199,8 +200,9 @@ func ApplyStatus(ctx context.Context, c client.Client, obj client.Object, manage
 //
 // A skip also skips the tidy-up ApplyStatus would run, so it runs TidyLegacy
 // itself: a writer whose value never changes (a reconcile that stops at a
-// missing StorageClass) would otherwise never retry a tidy-up that failed. A
-// cached obj is fine; stale managedFields only fail the tidy-up's test ops.
+// missing StorageClass) would otherwise never retry a tidy-up that failed.
+// A cleanup conflict falls through to ApplyStatus, whose response refreshes
+// managedFields and whose cleanup can return a conflict to the reconciler.
 func SkipUnchanged(
 	ctx context.Context,
 	c client.Client,
@@ -211,8 +213,7 @@ func SkipUnchanged(
 	if !unchanged || !Owns(obj, manager, path) {
 		return false
 	}
-	TidyLegacy(ctx, c, obj)
-	return true
+	return TidyLegacy(ctx, c, obj) == nil
 }
 
 type patchOp struct {
@@ -263,7 +264,7 @@ func isStatusRoot(p fieldpath.Path) bool {
 // owner. Entries the decision did not read cannot uncover a covered field and
 // are not tested.
 //
-// Callers use TidyLegacy, which logs a failure and lets the next pass retry.
+// Callers use TidyLegacy, which returns cleanup conflicts to request a retry.
 func DropLegacy(ctx context.Context, c client.Client, obj client.Object) error {
 	entries := obj.GetManagedFields()
 	claims := make([]*fieldpath.Set, len(entries))
@@ -387,14 +388,14 @@ func isPatchNotApplied(err error) bool {
 	return d == nil || (d.Name == "" && d.Kind == "" && len(d.Causes) == 0)
 }
 
-// TidyLegacy runs DropLegacy and logs a failure instead of returning it: a
-// leftover legacy entry costs nothing until the next pass retries, so it must
-// never fail or delay the write it follows. A changed list is routine and
-// logged at Info, anything else at Error.
-func TidyLegacy(ctx context.Context, c client.Client, obj client.Object) {
+// TidyLegacy returns a changed-list error so the controller's work queue
+// schedules another pass, even for an otherwise healthy object. Other cleanup
+// failures remain best-effort: admission denials must not block reconciliation
+// after a successful status write.
+func TidyLegacy(ctx context.Context, c client.Client, obj client.Object) error {
 	err := DropLegacy(ctx, c, obj)
 	if err == nil {
-		return
+		return nil
 	}
 	l := log.FromContext(ctx).WithValues("object", client.ObjectKeyFromObject(obj))
 	if errors.Is(err, ErrManagedFieldsChanged) {
@@ -403,7 +404,8 @@ func TidyLegacy(ctx context.Context, c client.Client, obj client.Object) {
 			"error",
 			err.Error(),
 		)
-		return
+		return err
 	}
-	l.Error(err, "Failed to drop legacy field managers; retrying next reconcile")
+	l.Error(err, "Failed to drop legacy field managers; cleanup deferred until a future reconcile")
+	return nil
 }
