@@ -22,6 +22,29 @@ type TableGroup struct {
 	Name string
 	// Shards is the shard layout, e.g. ["0-80", "80-inf"].
 	Shards []string
+	// State is the catalog's TableGroupState by its protojson name, e.g.
+	// StateCreating. A state this package does not name, including none,
+	// is neither provisioned nor removed.
+	State string
+}
+
+// The TableGroupState values a provisioner acts on.
+const (
+	StateCreating = "TABLE_GROUP_STATE_CREATING"
+	StateActive   = "TABLE_GROUP_STATE_ACTIVE"
+	StateDropping = "TABLE_GROUP_STATE_DROPPING"
+)
+
+// Provisionable reports whether the catalog wants tg to exist: creating or
+// active.
+func (tg TableGroup) Provisionable() bool {
+	return tg.State == StateCreating || tg.State == StateActive
+}
+
+// Dropping reports whether the catalog wants everything provisioned for tg
+// removed.
+func (tg TableGroup) Dropping() bool {
+	return tg.State == StateDropping
 }
 
 // wireTableGroup is one entry of multiadmin's protojson response, which uses
@@ -31,6 +54,7 @@ type wireTableGroup struct {
 	TablegroupID json.Number `json:"tablegroupId"`
 	Name         string      `json:"name"`
 	Shards       []string    `json:"shards"`
+	State        string      `json:"state"`
 }
 
 type wireResponse struct {
@@ -84,7 +108,7 @@ func ListDesiredTableGroups(
 				err,
 			)
 		}
-		out = append(out, TableGroup{ID: id, Name: w.Name, Shards: w.Shards})
+		out = append(out, TableGroup{ID: id, Name: w.Name, Shards: w.Shards, State: w.State})
 	}
 	return out, nil
 }
