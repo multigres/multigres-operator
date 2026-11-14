@@ -22,11 +22,24 @@ import (
 // litePrimaryTimeout bounds the Status RPC that reads the Lite pooler's role.
 const litePrimaryTimeout = 5 * time.Second
 
+// Reasons of the Lite UpToDate condition. Callers may branch on them, so
+// their values are part of the API and must not change.
+const (
+	liteReasonConfigError   = "ConfigError"
+	liteReasonPodMissing    = "PodMissing"
+	liteReasonBuildFailed   = "BuildFailed"
+	liteReasonSpecChanged   = "SpecChanged"
+	liteReasonReloadPending = "ReloadPending"
+	liteReasonSpecApplied   = "SpecApplied"
+)
+
 // updateLiteStatus is the Lite branch of updateStatus. It reports the single
 // pod as a pool of one, so PoolsReady, ReadyReplicas and Phase roll up through
 // the TableGroup as they do for any other shard, and sets three conditions:
 // Available from the pod's readiness, Primary from the pooler's own routing
-// role, and UpToDate from the pod's spec-hash and confirmed reload-hash.
+// role, and UpToDate from the pod's spec-hash and confirmed reload-hash. The
+// UpToDate result also drives status.postgresConfig, so a Lite shard reports
+// config rollouts the way a regular shard does.
 func (r *ShardReconciler) updateLiteStatus(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
@@ -72,10 +85,11 @@ func (r *ShardReconciler) updateLiteStatus(
 		&shard.Status.Conditions,
 		r.litePrimaryCondition(ctx, shard, cellName, pod),
 	)
-	meta.SetStatusCondition(
-		&shard.Status.Conditions,
-		r.liteUpToDateCondition(shard, poolName, cellName, poolSpec, rendered, pod),
-	)
+	upToDate := r.liteUpToDateCondition(shard, poolName, cellName, poolSpec, rendered, pod)
+	meta.SetStatusCondition(&shard.Status.Conditions, upToDate)
+	if inProgress, known := liteConfigInProgress(upToDate, pod, rendered); known {
+		r.setPostgresConfigStatus(shard, inProgress, rendered.err)
+	}
 
 	primary := meta.IsStatusConditionTrue(
 		shard.Status.Conditions,
@@ -200,12 +214,12 @@ func (r *ShardReconciler) liteUpToDateCondition(
 		ObservedGeneration: shard.Generation,
 	}
 	if rendered.err != nil {
-		cond.Reason = "ConfigError"
+		cond.Reason = liteReasonConfigError
 		cond.Message = fmt.Sprintf("Failed to render postgresql.conf: %v", rendered.err)
 		return cond
 	}
 	if pod == nil {
-		cond.Reason = "PodMissing"
+		cond.Reason = liteReasonPodMissing
 		cond.Message = "The Lite pod does not exist"
 		return cond
 	}
@@ -218,23 +232,53 @@ func (r *ShardReconciler) liteUpToDateCondition(
 	desiredShard.Annotations[metadata.AnnotationPostgresReloadHash] = rendered.reloadHash
 	desired, err := r.buildLitePod(desiredShard, poolName, cellName, poolSpec)
 	if err != nil {
-		cond.Reason = "BuildFailed"
+		cond.Reason = liteReasonBuildFailed
 		cond.Message = fmt.Sprintf("Failed to build the desired Lite pod: %v", err)
 		return cond
 	}
 
 	if pod.Annotations[metadata.AnnotationSpecHash] != desired.Annotations[metadata.AnnotationSpecHash] {
-		cond.Reason = "SpecChanged"
+		cond.Reason = liteReasonSpecChanged
 		cond.Message = "The Lite pod does not match the desired spec and will be replaced"
 		return cond
 	}
 	if pod.Annotations[metadata.AnnotationPostgresReloadHash] != rendered.reloadHash {
-		cond.Reason = "ReloadPending"
+		cond.Reason = liteReasonReloadPending
 		cond.Message = "Waiting for the Lite pooler to confirm the PostgreSQL config reload"
 		return cond
 	}
 	cond.Status = metav1.ConditionTrue
-	cond.Reason = "SpecApplied"
+	cond.Reason = liteReasonSpecApplied
 	cond.Message = "The Lite pod matches the desired spec"
 	return cond
+}
+
+// liteConfigInProgress maps the Lite UpToDate condition onto the rollout state
+// setPostgresConfigStatus records, with the meaning a regular shard gives it:
+// in progress while the pod lacks the rendered restart or reload hash, or
+// carries both but is crash-looping, because a value Postgres rejects at
+// startup must not be reported as applied once the pod is seen crash-looping.
+// A spec change that leaves the config alone, such as a new image, is not a
+// config rollout. known is false when the pod tells nothing about the config,
+// so the previous status.postgresConfig is left as it was: BuildFailed, and a
+// missing pod, which the Lite controller deletes before creating its
+// replacement for any spec change, config or not.
+func liteConfigInProgress(
+	upToDate metav1.Condition,
+	pod *corev1.Pod,
+	rendered renderedConfig,
+) (inProgress, known bool) {
+	switch upToDate.Reason {
+	case liteReasonBuildFailed, liteReasonPodMissing:
+		return false, false
+	case liteReasonConfigError:
+		// setPostgresConfigStatus reports the render error and ignores inProgress.
+		return false, true
+	}
+	if pod == nil {
+		return false, false
+	}
+	hasDesiredConfig := pod.Annotations[metadata.AnnotationPostgresConfigHash] == rendered.restartHash &&
+		pod.Annotations[metadata.AnnotationPostgresReloadHash] == rendered.reloadHash
+	return !hasDesiredConfig || status.IsCrashLooping(pod), true
 }
