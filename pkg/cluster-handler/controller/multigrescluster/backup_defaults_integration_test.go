@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -48,6 +51,10 @@ func TestBackupPrefixesWithoutWebhook(t *testing.T) {
 					cluster.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 				}
 				setTestPostgresPasswordSecretRef(cluster)
+				if !legacy {
+					// Reapply this manifest while its previous topology PVC is terminating.
+					deleteClusterWithTopologyPVC(t, c, cluster.DeepCopy())
+				}
 				require.NoError(t, c.Create(t.Context(), cluster))
 				want := ""
 				if !legacy {
@@ -91,4 +98,47 @@ func TestBackupPrefixesWithoutWebhook(t *testing.T) {
 			})
 		}
 	}
+}
+
+func deleteClusterWithTopologyPVC(
+	t *testing.T,
+	c client.Client,
+	cluster *multigresv1alpha1.MultigresCluster,
+) {
+	t.Helper()
+	ctx := t.Context()
+	require.NoError(t, c.Create(ctx, cluster))
+	key := client.ObjectKeyFromObject(cluster)
+	require.Eventually(t, func() bool {
+		var stored multigresv1alpha1.MultigresCluster
+		return c.Get(ctx, key, &stored) == nil &&
+			stored.Spec.Backup.S3.KeyPrefix == "clusters/"+string(cluster.UID)
+	}, testTimeout, 100*time.Millisecond)
+
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "data-" + cluster.Name + "-global-topo-0", Namespace: cluster.Namespace,
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster: cluster.Name,
+				metadata.LabelAppComponent:     metadata.ComponentTopoServer,
+			},
+			Finalizers: []string{"test.multigres.com/hold"},
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceStorage: resource.MustParse("1Gi"),
+			}},
+		},
+	}
+	require.NoError(t, c.Create(ctx, pvc))
+	require.Eventually(t, func() bool {
+		return c.Get(ctx, client.ObjectKeyFromObject(pvc), &corev1.PersistentVolumeClaim{}) == nil
+	}, testTimeout, 100*time.Millisecond)
+	require.NoError(t, c.Delete(ctx, cluster))
+	require.Eventually(t, func() bool {
+		return apierrors.IsNotFound(c.Get(ctx, key, &multigresv1alpha1.MultigresCluster{}))
+	}, testTimeout, 100*time.Millisecond)
+	require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(pvc), pvc))
+	require.False(t, pvc.DeletionTimestamp.IsZero())
 }

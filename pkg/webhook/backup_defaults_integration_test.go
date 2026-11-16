@@ -50,6 +50,11 @@ func TestWebhook_BackupPrefixAllocation(t *testing.T) {
 				cluster.Annotations = make(map[string]string)
 			}
 			cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix] = want
+			require.ErrorContains(
+				t,
+				k8sClient.Patch(t.Context(), cluster, client.MergeFrom(before)),
+				"cleanup finalizer",
+			)
 			cluster.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 			// Exercise admission for the atomic patch the controller sends.
 			require.NoError(

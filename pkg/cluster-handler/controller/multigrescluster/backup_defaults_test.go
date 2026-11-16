@@ -3,6 +3,7 @@ package multigrescluster
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -78,6 +79,71 @@ func TestInitializeBackupKeyPrefix(t *testing.T) {
 					PopulateClusterDefaults(t.Context(), stored)
 				require.NoError(t, err)
 				require.Equal(t, tc.wantPrefix, stored.Spec.Backup.S3.KeyPrefix)
+			})
+		}
+	}
+}
+
+func TestBackupPrefixWithResourcesFromPreviousCluster(t *testing.T) {
+	clusterOwner := metav1.OwnerReference{
+		APIVersion: multigresv1alpha1.GroupVersion.String(), Kind: "MultigresCluster",
+		Name: "shared-name", UID: "old-uid",
+	}
+	currentOwner := clusterOwner
+	currentOwner.UID = "uid-a"
+	shardOwner := clusterOwner
+	shardOwner.Kind = "Shard"
+	otherGroup := clusterOwner
+	otherGroup.APIVersion = "example.com/v1"
+	for _, tc := range []struct {
+		name       string
+		deleting   bool
+		owners     []metav1.OwnerReference
+		retained   bool
+		wantPrefix string
+	}{
+		{name: "terminating", deleting: true, wantPrefix: "clusters/uid-a"},
+		{name: "previous cluster", owners: []metav1.OwnerReference{clusterOwner}, wantPrefix: "clusters/uid-a"},
+		{name: "current cluster", owners: []metav1.OwnerReference{currentOwner}},
+		{name: "both clusters", owners: []metav1.OwnerReference{clusterOwner, currentOwner}},
+		{name: "indirect owner", owners: []metav1.OwnerReference{shardOwner}},
+		{name: "different API group", owners: []metav1.OwnerReference{otherGroup}},
+		{name: "terminating alongside retained PVC", deleting: true, retained: true},
+	} {
+		for _, obj := range []client.Object{&corev1.PersistentVolumeClaim{}, &multigresv1alpha1.TableGroup{}} {
+			t.Run(fmt.Sprintf("%T/%s", obj, tc.name), func(t *testing.T) {
+				cluster := backupPrefixCluster("")
+				labels := map[string]string{metadata.LabelMultigresCluster: cluster.Name}
+				obj.SetNamespace(cluster.Namespace)
+				obj.SetName("leftover")
+				obj.SetLabels(labels)
+				obj.SetOwnerReferences(tc.owners)
+				if tc.deleting {
+					now := metav1.Now()
+					obj.SetFinalizers([]string{"test.multigres.com/hold"})
+					obj.SetDeletionTimestamp(&now)
+				}
+				objects := []client.Object{cluster, obj}
+				if tc.retained {
+					objects = append(
+						objects,
+						&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+							Namespace: cluster.Namespace, Name: "retained", Labels: labels,
+						}},
+					)
+				}
+				c := fake.NewClientBuilder().
+					WithScheme(setupScheme()).
+					WithObjects(objects...).
+					Build()
+				r := &MultigresClusterReconciler{Client: c}
+				require.NoError(t, r.ensureClusterFinalizer(t.Context(), cluster))
+				require.Equal(t, tc.wantPrefix, cluster.Spec.Backup.S3.KeyPrefix)
+				require.Equal(
+					t,
+					tc.wantPrefix,
+					cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix],
+				)
 			})
 		}
 	}

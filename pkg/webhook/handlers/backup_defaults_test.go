@@ -34,6 +34,8 @@ func TestBackupDefaultAdmission(t *testing.T) {
 			cluster.UID = "cluster-uid"
 			old := cluster.DeepCopy()
 			cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix] = "clusters/cluster-uid"
+			_, err = v.ValidateUpdate(t.Context(), old, cluster)
+			require.ErrorContains(t, err, "cleanup finalizer")
 			cluster.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 			require.NoError(t, d.Default(t.Context(), cluster))
 			_, err = v.ValidateUpdate(t.Context(), old, cluster)
@@ -72,6 +74,7 @@ func TestBackupDefaultAnnotationValidation(t *testing.T) {
 				old.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 			}
 			updated := old.DeepCopy()
+			updated.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 			updated.Annotations[key] = tc.new
 			err := validateBackupDefaultUpdate(old, updated)
 			if tc.wantError {
