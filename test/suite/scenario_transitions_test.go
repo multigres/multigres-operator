@@ -161,10 +161,16 @@ func testPVCDeletionPolicyRoundTrip(t *testing.T) {
 	for _, pvc := range pvcs.Items {
 		baseline = append(baseline,
 			ctrltest.Added("PersistentVolumeClaim", pvc.Name),
-			ctrltest.Changed("PersistentVolumeClaim", pvc.Name))
+			ctrltest.Changed("PersistentVolumeClaim", pvc.Name, "status.phase"))
+		// The topology controller records the backup prefix on each etcd claim
+		// after the StatefulSet creates it. This can happen before or after binding.
+		if strings.Contains(pvc.Name, "-global-topo-") {
+			baseline = append(baseline, ctrltest.Changed("PersistentVolumeClaim", pvc.Name,
+				"metadata.annotations."+multigresv1alpha1.AnnotationDefaultBackupKeyPrefix))
+		}
 		pvcNames = append(pvcNames, pvc.Name)
 	}
-	sc.Step("PVCs created and bound during initial convergence", nil, baseline...)
+	sc.Step("PVCs created and bound, backup prefix recorded on etcd claims", nil, baseline...)
 
 	sc.Step("cluster settled", nil, ctrltest.Quiet())
 
