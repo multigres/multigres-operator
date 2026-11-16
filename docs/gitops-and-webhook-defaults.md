@@ -90,6 +90,8 @@ status:
 
 When defaults participate, the applied default set is also recorded in the operator-owned `multigres.com/applied-images` annotation. That copy is the durable one: status can be lost on backup/restore or `kubectl replace`, and losing it must not roll the cluster onto new defaults. Do not edit or strip this annotation. When all six component images are explicitly pinned, the operator replaces the old set with a small fully-pinned tombstone once and stops computing default revisions for that cluster. The tombstone prevents stale status from being revived if a pin is later removed after an interrupted reconcile. `status.images.source` is `explicit`, the effective set remains visible, and `ImageRolloutPending` reports `False` with reason `FullyPinned`.
 
+**The pgBackRest sidecar image.** `spec.images.pgbackrestd` is the seventh image but not part of the default set, the applied-images record or the revision. Unless set explicitly it resolves to the multipooler image of the same resolved set (pinned, held by a lazy record, or default), so the sidecar always runs the same multigres build as the multipooler it serves and never moves on its own. There is no operator-level override for it.
+
 **Update strategies.** By default (`--image-update-strategy=immediate`), changing the operator's image configuration — a new operator build or a changed override — rolls every cluster on its next reconcile. With `--image-update-strategy=lazy`, each cluster keeps the default set it is already running: `status.images.availableRevision` advances to announce the new set, but the cluster adopts it only when the new revision is acknowledged in its spec:
 
 ```yaml
@@ -107,7 +109,7 @@ The flag sets the fleet-wide default; `spec.imageUpdatePolicy.strategy` override
 ```bash
 kubectl patch multigrescluster <name> --type=merge -p '{"spec":{"images":{
   "postgres":null,"multiadmin":null,"multiadminWeb":null,
-  "multiorch":null,"multipooler":null,"multigateway":null}}}'
+  "multiorch":null,"multipooler":null,"multigateway":null,"pgbackrestd":null}}}'
 ```
 
 Only clear values you did not set yourself. After a fully pinned period, the operator deliberately adopts its current defaults for any fields you clear; it never resurrects the default set that existed before the pins. Clearing only some fields produces `status.images.source: mixed`, because the remaining pins and current defaults are both part of the effective set. If you pin images deliberately, pin by digest rather than tag — a digest states intent unambiguously.

@@ -69,8 +69,10 @@ func (r *MultigresClusterReconciler) resolveImages(
 			return err
 		}
 
+		// Pins stay pinned: pgbackrestd follows the pinned multipooler.
+		images.DerivePgBackRestd(&cluster.Spec.Images)
 		cluster.Status.Images = &multigresv1alpha1.ImagesStatus{
-			Effective: explicit,
+			Effective: images.FromSpec(cluster.Spec.Images),
 			Source:    multigresv1alpha1.ImageSourceExplicit,
 		}
 		meta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
@@ -163,6 +165,7 @@ func (r *MultigresClusterReconciler) resolveImages(
 	}
 
 	images.Complete(&cluster.Spec.Images, applied)
+	images.DerivePgBackRestd(&cluster.Spec.Images)
 	effective := images.FromSpec(cluster.Spec.Images)
 	cluster.Status.Images = &multigresv1alpha1.ImagesStatus{
 		UpdateStrategy:    string(cfg.Strategy),

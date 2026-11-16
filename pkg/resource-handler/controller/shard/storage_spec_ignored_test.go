@@ -123,7 +123,7 @@ func storageTestShard(t *testing.T) (
 	pool.Cells = []multigresv1alpha1.CellName{"z1"}
 	pool.Storage.Class = "data-class"
 	shard.Spec.Pools = map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{"main": pool}
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
 		Type: multigresv1alpha1.BackupTypeFilesystem,
 		Filesystem: &multigresv1alpha1.FilesystemBackupConfig{
 			Storage: multigresv1alpha1.StorageSpec{Size: "10Gi", Class: "backup-class"},
@@ -131,6 +131,7 @@ func storageTestShard(t *testing.T) (
 	}
 	backup, err := BuildSharedBackupPVC(shard, false, nil)
 	require.NoError(t, err)
+	ownedBy(backup, `"f:storageClassName":{},"f:accessModes":{}`)
 	data, err := BuildPoolDataPVC(shard, "main", "z1", pool, 0, false, nil)
 	require.NoError(t, err)
 	for _, pvc := range []*corev1.PersistentVolumeClaim{backup, data} {
@@ -149,6 +150,7 @@ func storageTestReconciler(
 	recorder := record.NewFakeRecorder(100)
 	base := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithReturnManagedFields().
 		WithObjects(append(objs,
 			expandableStorageClass("backup-class"),
 			expandableStorageClass("data-class"),
@@ -173,7 +175,7 @@ func TestReconcileSharedBackupPVC_KeepsUnchangeableFields(t *testing.T) {
 
 	// Every field the API server refuses to change, changed at once, together
 	// with a label the operator does own so the apply has something to write.
-	shard.Spec.Backup.Filesystem.Storage = multigresv1alpha1.StorageSpec{
+	shard.Spec.SidecarBackupLocation.Filesystem.Storage = multigresv1alpha1.StorageSpec{
 		Size:        "5Gi",
 		Class:       "other-class",
 		AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
@@ -195,7 +197,7 @@ func TestReconcileSharedBackupPVC_Grows(t *testing.T) {
 	shard, backup, _ := storageTestShard(t)
 	r, _ := storageTestReconciler(t, shard, backup)
 
-	shard.Spec.Backup.Filesystem.Storage.Size = "30Gi"
+	shard.Spec.SidecarBackupLocation.Filesystem.Storage.Size = "30Gi"
 	require.NoError(t, r.reconcileSharedBackupPVC(t.Context(), shard))
 
 	got := &corev1.PersistentVolumeClaim{}
@@ -225,8 +227,11 @@ func TestReconcileSharedBackupPVC_KeepsRequestWhenGrowthRefused(t *testing.T) {
 
 			// The class is left at the PVC's own so the only refused field
 			// is the request.
-			shard.Spec.Backup.Filesystem.Storage.Size = "30Gi"
-			shard.Spec.Backup.Filesystem.Storage.Class = ptr.Deref(backup.Spec.StorageClassName, "")
+			shard.Spec.SidecarBackupLocation.Filesystem.Storage.Size = "30Gi"
+			shard.Spec.SidecarBackupLocation.Filesystem.Storage.Class = ptr.Deref(
+				backup.Spec.StorageClassName,
+				"",
+			)
 			require.NoError(t, r.reconcileSharedBackupPVC(t.Context(), shard))
 
 			got := &corev1.PersistentVolumeClaim{}
@@ -273,7 +278,7 @@ func TestReconcileSharedBackupPVC_CreatesFromSpec(t *testing.T) {
 	shard, backup, _ := storageTestShard(t)
 	r, _ := storageTestReconciler(t, shard)
 
-	shard.Spec.Backup.Filesystem.Storage.Size = "5Gi"
+	shard.Spec.SidecarBackupLocation.Filesystem.Storage.Size = "5Gi"
 	require.NoError(t, r.reconcileSharedBackupPVC(t.Context(), shard))
 
 	got := &corev1.PersistentVolumeClaim{}
@@ -309,11 +314,11 @@ func TestStorageSpecIgnoredCondition(t *testing.T) {
 	require.Empty(t, drainEvents(recorder))
 
 	// Growth is applied, not ignored, whether or not it has landed yet.
-	shard.Spec.Backup.Filesystem.Storage.Size = "20Gi"
+	shard.Spec.SidecarBackupLocation.Filesystem.Storage.Size = "20Gi"
 	require.Equal(t, metav1.ConditionFalse, storageSpecIgnored(t, r, shard).Status)
 
 	// A shrink of both PVCs plus a class change on the data PVC, in one edit.
-	shard.Spec.Backup.Filesystem.Storage.Size = "5Gi"
+	shard.Spec.SidecarBackupLocation.Filesystem.Storage.Size = "5Gi"
 	pool := shard.Spec.Pools["main"]
 	pool.Storage.Size = "1Gi"
 	pool.Storage.Class = "faster"
@@ -337,7 +342,7 @@ func TestStorageSpecIgnoredCondition(t *testing.T) {
 	require.Empty(t, drainEvents(recorder))
 
 	// The return trip.
-	shard.Spec.Backup.Filesystem.Storage.Size = "10Gi"
+	shard.Spec.SidecarBackupLocation.Filesystem.Storage.Size = "10Gi"
 	pool.Storage.Size = "10Gi"
 	pool.Storage.Class = "data-class"
 	shard.Spec.Pools["main"] = pool
@@ -360,7 +365,9 @@ func TestStorageSpecIgnoredCondition_SkipsPVCsOutOfService(t *testing.T) {
 
 	// S3 backups have no shared PVC, so the one left behind by an earlier
 	// filesystem config is not compared.
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{Type: multigresv1alpha1.BackupTypeS3}
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
+		Type: multigresv1alpha1.BackupTypeS3,
+	}
 	cond := storageSpecIgnored(t, r, shard)
 	require.Equal(t, metav1.ConditionFalse, cond.Status, cond.Message)
 
@@ -379,7 +386,9 @@ func TestStorageSpecIgnoredCondition_SkipsPVCsOutOfService(t *testing.T) {
 
 func TestStorageSpecIgnoredCondition_BoundsMessage(t *testing.T) {
 	shard, _, _ := storageTestShard(t)
-	shard.Spec.Backup = &multigresv1alpha1.BackupConfig{Type: multigresv1alpha1.BackupTypeS3}
+	shard.Spec.SidecarBackupLocation = &multigresv1alpha1.BackupConfig{
+		Type: multigresv1alpha1.BackupTypeS3,
+	}
 	pool := shard.Spec.Pools["main"]
 	objs := []client.Object{shard}
 	for i := range maxIgnoredStorageDetails + 3 {
