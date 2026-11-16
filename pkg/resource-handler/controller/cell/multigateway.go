@@ -269,6 +269,15 @@ func BuildMultigatewayDeployment(
 		container.Args = append(container.Args, "--enable-cluster-views=true")
 	}
 
+	// Tablegroup DDL can only complete where the operator provisions
+	// tablegroups from the catalog, so the flag follows the cluster's
+	// dynamic tablegroups opt-in, which the cluster controller copies onto
+	// the Cell. Emitted only when enabled, like --enable-cluster-views.
+	if multigresv1alpha1.DynamicTableGroupsEnabled(cell) {
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		container.Args = append(container.Args, "--enable-tablegroup-ddl=true")
+	}
+
 	if otelVol, otelMount := multigresv1alpha1.BuildOTELSamplingVolume(
 		cell.Spec.Observability,
 	); otelVol != nil {
