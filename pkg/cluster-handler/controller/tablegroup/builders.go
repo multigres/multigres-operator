@@ -91,6 +91,7 @@ func BuildShard(
 			CellTopologyLabels:        tg.Spec.CellTopologyLabels,
 		},
 	}
+	multigresv1alpha1.CopyDefaultBackupKeyPrefix(tg, &shardCR.ObjectMeta)
 	if err := controllerutil.SetControllerReference(tg, shardCR, scheme); err != nil {
 		return nil, err
 	}

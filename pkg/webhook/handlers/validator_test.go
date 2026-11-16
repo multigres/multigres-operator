@@ -28,6 +28,7 @@ func setupScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = multigresv1alpha1.AddToScheme(scheme)
 	_ = storagev1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
 	return scheme
 }
 

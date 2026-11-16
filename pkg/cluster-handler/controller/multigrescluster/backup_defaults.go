@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/backup"
+	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -24,15 +25,47 @@ func (r *MultigresClusterReconciler) initializeBackupKeyPrefix(
 	cluster *multigresv1alpha1.MultigresCluster,
 ) error {
 	logger := log.FromContext(ctx)
+	reader := client.Reader(r.Client)
+	if r.APIReader != nil {
+		reader = r.APIReader
+	}
+	key := multigresv1alpha1.AnnotationDefaultBackupKeyPrefix
+	claim, prefix, err := backup.RetainedDefault(
+		ctx,
+		reader,
+		resolver.NewResolver(r.Client, cluster.Namespace),
+		cluster,
+	)
+	if err != nil {
+		return err
+	}
+	if prefix != "" {
+		metav1.SetMetaDataAnnotation(&cluster.ObjectMeta, key, prefix)
+		multigresv1alpha1.DefaultBackupKeyPrefixes(cluster)
+		logger.Info("Recovered backup prefix from retained PVC", "pvc", claim, "prefix", prefix)
+		return nil
+	}
 	// Be conservative with clusters restored from older Kubernetes objects.
 	if cluster.Status.ObservedGeneration != 0 || cluster.Status.Phase != "" {
 		logger.Info("Preserving backup paths because the cluster has prior status",
 			"observedGeneration", cluster.Status.ObservedGeneration, "phase", cluster.Status.Phase)
 		return nil
 	}
-	reader := client.Reader(r.Client)
-	if r.APIReader != nil {
-		reader = r.APIReader
+	if claim != "" {
+		// A volume predating allocation records may belong to either a legacy
+		// root repository or a generated one. Require the caller to disambiguate.
+		probe := cluster.DeepCopy()
+		metav1.SetMetaDataAnnotation(&probe.ObjectMeta, key, "clusters/"+string(cluster.UID))
+		multigresv1alpha1.DefaultBackupKeyPrefixes(probe)
+		if !equality.Semantic.DeepEqual(probe.Spec.Backup, cluster.Spec.Backup) ||
+			!equality.Semantic.DeepEqual(probe.Spec.Databases, cluster.Spec.Databases) {
+			return fmt.Errorf(
+				"retained PVC %s has no recorded backup prefix: set the original S3 keyPrefix (use / for the legacy bucket root) before restoring",
+				claim,
+			)
+		}
+		logger.Info("Preserving supplied backup settings for retained PVC", "pvc", claim)
+		return nil
 	}
 	opts := []client.ListOption{
 		client.InNamespace(cluster.Namespace),
@@ -46,7 +79,7 @@ func (r *MultigresClusterReconciler) initializeBackupKeyPrefix(
 		)
 	}
 	for i := range tableGroups.Items {
-		if tg := &tableGroups.Items[i]; mayBeReusedByCluster(tg, cluster) {
+		if tg := &tableGroups.Items[i]; backup.MayBeReusedByCluster(tg, cluster) {
 			logger.Info(
 				"Preserving backup paths because a TableGroup exists",
 				"tableGroup",
@@ -55,56 +88,10 @@ func (r *MultigresClusterReconciler) initializeBackupKeyPrefix(
 			return nil
 		}
 	}
-	// A new CR may reuse data/topology PVCs from a deleted cluster. Their
-	// repository cannot be inferred from the PVC, so preserve the supplied
-	// configuration exactly, just as for an already provisioned cluster.
-	pvcs := &corev1.PersistentVolumeClaimList{}
-	if err := reader.List(ctx, pvcs, opts...); err != nil {
-		return fmt.Errorf("checking retained PVCs before allocating backup prefix: %w", err)
-	}
-	for i := range pvcs.Items {
-		if pvc := &pvcs.Items[i]; mayBeReusedByCluster(pvc, cluster) {
-			logger.Info(
-				"Preserving backup paths because a PVC exists",
-				"pvc",
-				client.ObjectKeyFromObject(pvc),
-			)
-			return nil
-		}
-	}
 	if cluster.UID == "" {
 		return fmt.Errorf("cannot allocate backup prefix before the cluster has a UID")
 	}
-	if cluster.Annotations == nil {
-		cluster.Annotations = make(map[string]string)
-	}
-	cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix] = "clusters/" + string(
-		cluster.UID,
-	)
+	metav1.SetMetaDataAnnotation(&cluster.ObjectMeta, key, "clusters/"+string(cluster.UID))
 	multigresv1alpha1.DefaultBackupKeyPrefixes(cluster)
 	return nil
-}
-
-// A same-name replacement can see resources awaiting garbage collection.
-// A Shard or StatefulSet UID does not identify the owning MultigresCluster,
-// and a retained PVC can have no owner at all.
-func mayBeReusedByCluster(
-	obj metav1.Object,
-	cluster *multigresv1alpha1.MultigresCluster,
-) bool {
-	if !obj.GetDeletionTimestamp().IsZero() {
-		return false
-	}
-	clusterKind := multigresv1alpha1.GroupVersion.WithKind("MultigresCluster").GroupKind()
-	hasClusterOwner := false
-	for _, ref := range obj.GetOwnerReferences() {
-		if schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind).GroupKind() != clusterKind {
-			continue
-		}
-		if ref.UID == "" || ref.UID == cluster.UID {
-			return true
-		}
-		hasClusterOwner = true
-	}
-	return !hasClusterOwner
 }

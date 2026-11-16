@@ -1,11 +1,22 @@
 package v1alpha1
 
-import "strings"
+import (
+	"strings"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 // AnnotationDefaultBackupKeyPrefix records the S3 prefix allocated before a
 // cluster is first provisioned. Its absence on an already reconciled cluster
 // preserves the pre-existing repository paths, including unprefixed ones.
 const AnnotationDefaultBackupKeyPrefix = "multigres.com/default-backup-key-prefix"
+
+// CopyDefaultBackupKeyPrefix carries the cluster allocation down to its storage.
+func CopyDefaultBackupKeyPrefix(source metav1.Object, target *metav1.ObjectMeta) {
+	if prefix := source.GetAnnotations()[AnnotationDefaultBackupKeyPrefix]; prefix != "" {
+		metav1.SetMetaDataAnnotation(target, AnnotationDefaultBackupKeyPrefix, prefix)
+	}
+}
 
 // DefaultBackupKeyPrefixes fills missing S3 prefixes using the cluster's durable
 // default. Explicit prefixes take precedence, including inherited ones. Backup
@@ -33,7 +44,7 @@ func DefaultBackupKeyPrefixes(cluster *MultigresCluster) {
 func defaultBackupKeyPrefix(config, parent *BackupConfig, prefix string) *BackupConfig {
 	merged := MergeBackupConfig(config, parent)
 	if config != nil && merged != nil && merged.Type == BackupTypeS3 &&
-		merged.S3 != nil && strings.Trim(merged.S3.KeyPrefix, "/") == "" {
+		merged.S3 != nil && merged.S3.KeyPrefix != "/" && strings.Trim(merged.S3.KeyPrefix, "/") == "" {
 		if config.S3 == nil {
 			config.S3 = &S3BackupConfig{}
 		}

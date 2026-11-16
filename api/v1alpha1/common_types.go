@@ -298,8 +298,8 @@ type S3BackupConfig struct {
 	Endpoint string `json:"endpoint,omitempty"`
 
 	// KeyPrefix is the path below the bucket that holds the pgBackRest repositories.
-	// For new clusters in either mode, the operator defaults an omitted or slash-only
-	// prefix to clusters/<cluster UID> before provisioning. Explicit prefixes are
+	// Set "/" to restore from the legacy bucket root. New clusters default an empty
+	// prefix or multiple slashes to clusters/<cluster UID>. Other explicit prefixes are
 	// preserved. Clusters already reconciled by an older operator keep their paths,
 	// including an empty prefix. Do not change a running cluster's repository path
 	// without migrating its backups and stanza. Independent clusters sharing a

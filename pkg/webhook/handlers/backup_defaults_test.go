@@ -76,7 +76,9 @@ func TestBackupDefaultAnnotationValidation(t *testing.T) {
 			updated := old.DeepCopy()
 			updated.Finalizers = []string{multigresv1alpha1.FinalizerClusterCleanup}
 			updated.Annotations[key] = tc.new
-			err := validateBackupDefaultUpdate(old, updated)
+			err := NewMultigresClusterValidator(
+				identityClient(),
+			).validateBackupDefaultUpdate(t.Context(), old, updated)
 			if tc.wantError {
 				require.Error(t, err)
 			} else {

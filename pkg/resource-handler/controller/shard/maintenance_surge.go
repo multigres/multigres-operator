@@ -259,7 +259,7 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 			return fmt.Errorf("clear orphan label on maintenance surge PVC %s: %w", pvcName, err)
 		}
 		if !terminating {
-			if err := r.expandPVCIfNeeded(ctx, shard, pvc, poolSpec); err != nil {
+			if err := r.reconcilePoolDataPVC(ctx, shard, pvc, poolSpec); err != nil {
 				return err
 			}
 		}
@@ -270,7 +270,7 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 		return fmt.Errorf("build maintenance surge pod %s: %w", podName, err)
 	}
 	// The surge pod would start on a PVC being deleted; see terminating_pvc.go.
-	if claim, err := r.claimPodVolumes(ctx, pod); err != nil {
+	if claim, err := r.claimPodVolumes(ctx, shard, pod); err != nil {
 		return err
 	} else if claim != "" {
 		logger.Info("Not creating maintenance surge pod while a PVC it mounts is being deleted",

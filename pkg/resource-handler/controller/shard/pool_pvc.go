@@ -2,8 +2,6 @@ package shard
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -14,6 +12,7 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	nameutil "github.com/multigres/multigres-operator/pkg/util/name"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
 
 const (
@@ -27,39 +26,7 @@ func BuildPoolDataPVCName(
 	poolName, cellName string,
 	index int,
 ) string {
-	return poolDataPVCNamePrefix(shard, poolName, cellName) + strconv.Itoa(index)
-}
-
-// poolDataPVCNamePrefix is every BuildPoolDataPVCName result for one pool and
-// cell, up to and excluding the pod index.
-func poolDataPVCNamePrefix(
-	shard *multigresv1alpha1.Shard,
-	poolName, cellName string,
-) string {
-	baseName := nameutil.JoinWithConstraints(
-		nameutil.PodConstraints,
-		append(shardStorageIdentity(shard), "pool", poolName, cellName)...,
-	)
-	return "data-" + baseName + "-"
-}
-
-// shardStorageIdentity is the name parts that identify a shard's volumes:
-// cluster, database, tablegroup, shard, and for a shard of a dynamic
-// tablegroup its catalog id. Retained PVCs outlive their Shard under the same
-// name, and a pool reuses an existing PVC by name, so without the id a
-// tablegroup recreated under a dropped one's name (a new catalog id, a new
-// backup scope) would start on the dropped one's data directory and backup
-// volume. Spec-declared tablegroups have no id and keep their names.
-func shardStorageIdentity(shard *multigresv1alpha1.Shard) []string {
-	parts := []string{
-		shard.Labels["multigres.com/cluster"],
-		string(shard.Spec.DatabaseName),
-		string(shard.Spec.TableGroupName),
-	}
-	if id := multigresv1alpha1.TableGroupIDOf(shard); id > 0 {
-		parts = append(parts, strconv.FormatInt(id, 10))
-	}
-	return append(parts, string(shard.Spec.ShardName))
+	return pvcutil.PoolDataName(shard, poolName, cellName, index)
 }
 
 // isShardBuiltPVC reports whether pvc carries a name the shard's builders
@@ -87,12 +54,8 @@ func isShardBuiltPVC(shard *multigresv1alpha1.Shard, pvc *corev1.PersistentVolum
 	if cellName == "" {
 		return false
 	}
-	suffix, ok := strings.CutPrefix(pvc.Name, poolDataPVCNamePrefix(shard, poolName, cellName))
-	if !ok {
-		return false
-	}
-	index, err := strconv.Atoi(suffix)
-	return err == nil && index >= 0 && strconv.Itoa(index) == suffix
+	first, _, ok := pvcutil.Ordinal(pvc.Name)
+	return ok && first == BuildPoolDataPVCName(shard, poolName, cellName, 0)
 }
 
 // BuildPoolDataPVC creates a PersistentVolumeClaim for a pool pod's data volume.
@@ -142,6 +105,8 @@ func BuildPoolDataPVC(
 		},
 	}
 
+	multigresv1alpha1.CopyDefaultBackupKeyPrefix(shard, &pvc.ObjectMeta)
+
 	if storageClass != nil {
 		pvc.Spec.StorageClassName = storageClass
 	}
@@ -173,7 +138,7 @@ func poolStorageRequest(poolSpec multigresv1alpha1.PoolSpec) (resource.Quantity,
 func BuildSharedBackupPVCName(shard *multigresv1alpha1.Shard) string {
 	return nameutil.JoinWithConstraints(
 		nameutil.ServiceConstraints, // Using service constraints since PVC names follow similar rules
-		append([]string{"backup-data"}, shardStorageIdentity(shard)...)...,
+		append([]string{"backup-data"}, pvcutil.ShardStorageIdentity(shard)...)...,
 	)
 }
 

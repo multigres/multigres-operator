@@ -62,6 +62,7 @@ func BuildLocalTopoServer(
 		},
 	}
 
+	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cell, &ts.ObjectMeta)
 	if err := ctrl.SetControllerReference(cell, ts, scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)
 	}

@@ -74,6 +74,7 @@ func BuildCell(
 		},
 	}
 
+	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cluster, &cellCR.ObjectMeta)
 	if err := controllerutil.SetControllerReference(cluster, cellCR, scheme); err != nil {
 		return nil, err
 	}

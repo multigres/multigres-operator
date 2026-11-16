@@ -50,7 +50,9 @@ func TestInitializeBackupKeyPrefix(t *testing.T) {
 			}},
 			{name: "legacy status", mutate: func(c *multigresv1alpha1.MultigresCluster) { c.Status.ObservedGeneration = 1 }},
 			{name: "existing tablegroup", objects: []client.Object{&multigresv1alpha1.TableGroup{ObjectMeta: metav1.ObjectMeta{Name: "old", Namespace: "default", Labels: map[string]string{metadata.LabelMultigresCluster: "shared-name"}}}}},
-			{name: "retained PVC", objects: []client.Object{&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "old-data", Namespace: "default", Labels: map[string]string{metadata.LabelMultigresCluster: "shared-name"}}}}},
+			{name: "legacy retained PVC with explicit root", mutate: func(c *multigresv1alpha1.MultigresCluster) { c.Spec.Backup.S3.KeyPrefix = "/" }, wantPrefix: "/", objects: []client.Object{&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-shared-name-global-topo-0", Namespace: "default", Labels: map[string]string{metadata.LabelMultigresCluster: "shared-name"}}}}},
+			{name: "fresh recovery from explicit root", mutate: func(c *multigresv1alpha1.MultigresCluster) { c.Spec.Backup.S3.KeyPrefix = "/" }, wantPrefix: "/", wantDefault: true},
+			{name: "unmounted claim with matching cluster label", objects: []client.Object{&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "monitoring-history", Namespace: "default", Labels: map[string]string{metadata.LabelMultigresCluster: "shared-name"}}}}, wantPrefix: "clusters/uid-a", wantDefault: true},
 			{name: "unrelated PVC", objects: []client.Object{&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default", Labels: map[string]string{metadata.LabelMultigresCluster: "other"}}}}, wantPrefix: "clusters/uid-a", wantDefault: true},
 			{name: "recreated name new UID", mutate: func(c *multigresv1alpha1.MultigresCluster) { c.UID = "uid-b" }, wantPrefix: "clusters/uid-b", wantDefault: true},
 		} {
@@ -113,9 +115,10 @@ func TestBackupPrefixWithResourcesFromPreviousCluster(t *testing.T) {
 		for _, obj := range []client.Object{&corev1.PersistentVolumeClaim{}, &multigresv1alpha1.TableGroup{}} {
 			t.Run(fmt.Sprintf("%T/%s", obj, tc.name), func(t *testing.T) {
 				cluster := backupPrefixCluster("")
+				cluster.Spec.Backup = nil
 				labels := map[string]string{metadata.LabelMultigresCluster: cluster.Name}
 				obj.SetNamespace(cluster.Namespace)
-				obj.SetName("leftover")
+				obj.SetName("data-shared-name-global-topo-0")
 				obj.SetLabels(labels)
 				obj.SetOwnerReferences(tc.owners)
 				if tc.deleting {
@@ -128,7 +131,9 @@ func TestBackupPrefixWithResourcesFromPreviousCluster(t *testing.T) {
 					objects = append(
 						objects,
 						&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
-							Namespace: cluster.Namespace, Name: "retained", Labels: labels,
+							Namespace: cluster.Namespace,
+							Name:      "data-shared-name-global-topo-1",
+							Labels:    labels,
 						}},
 					)
 				}
@@ -138,7 +143,6 @@ func TestBackupPrefixWithResourcesFromPreviousCluster(t *testing.T) {
 					Build()
 				r := &MultigresClusterReconciler{Client: c}
 				require.NoError(t, r.ensureClusterFinalizer(t.Context(), cluster))
-				require.Equal(t, tc.wantPrefix, cluster.Spec.Backup.S3.KeyPrefix)
 				require.Equal(
 					t,
 					tc.wantPrefix,
@@ -233,13 +237,47 @@ func TestBackupPrefixRetainedPVCUsesUncachedReader(t *testing.T) {
 		WithScheme(setupScheme()).
 		WithObjects(&corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: "retained", Namespace: cluster.Namespace,
+				Name: "data-shared-name-global-topo-0", Namespace: cluster.Namespace,
 				Labels: map[string]string{metadata.LabelMultigresCluster: cluster.Name},
 			},
 		}).
 		Build()
 	r := &MultigresClusterReconciler{Client: cached, APIReader: live}
-	require.NoError(t, r.ensureClusterFinalizer(t.Context(), cluster))
+	require.ErrorContains(
+		t,
+		r.ensureClusterFinalizer(t.Context(), cluster),
+		"set the original S3 keyPrefix",
+	)
+	require.Empty(t, cluster.Finalizers)
 	require.Empty(t, cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix])
 	require.Empty(t, cluster.Spec.Backup.S3.KeyPrefix)
+}
+
+func TestConflictingRetainedAllocationsStopInitialization(t *testing.T) {
+	cluster := backupPrefixCluster("")
+	key := multigresv1alpha1.AnnotationDefaultBackupKeyPrefix
+	objects := []client.Object{cluster}
+	for i, prefix := range []string{"clusters/old-a", "clusters/old-b"} {
+		objects = append(objects, &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf(
+				"data-%s-global-topo-%d",
+				cluster.Name,
+				i,
+			),
+			Namespace: cluster.Namespace,
+			Labels: map[string]string{
+				metadata.LabelMultigresCluster: cluster.Name,
+			},
+			Annotations: map[string]string{key: prefix},
+		}})
+	}
+	c := fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(objects...).Build()
+	r := &MultigresClusterReconciler{Client: c}
+	require.ErrorContains(
+		t,
+		r.ensureClusterFinalizer(t.Context(), cluster),
+		"conflicting backup allocations",
+	)
+	require.Empty(t, cluster.Finalizers)
+	require.Empty(t, cluster.Annotations)
 }

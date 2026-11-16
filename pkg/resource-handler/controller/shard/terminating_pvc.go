@@ -172,6 +172,7 @@ func podTerminatingClaim(
 // resourceVersion just read, is what makes that Delete fail.
 func (r *ShardReconciler) claimPodVolumes(
 	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
 	pod *corev1.Pod,
 ) (terminating string, err error) {
 	for _, vol := range pod.Spec.Volumes {
@@ -191,6 +192,16 @@ func (r *ShardReconciler) claimPodVolumes(
 		}
 		if pvcutil.IsTerminating(pvc) {
 			return pvc.Name, nil
+		}
+		if vol.Name == DataVolumeName {
+			if err := pvcutil.RecordBackupPrefix(
+				ctx,
+				r.Client,
+				pvc,
+				shard.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix],
+			); err != nil {
+				return "", err
+			}
 		}
 		if err := pvcutil.ClearOrphan(ctx, log.FromContext(ctx), r.Client, pvc); err != nil {
 			return "", fmt.Errorf("reclaim PVC %s: %w", pvc.Name, err)

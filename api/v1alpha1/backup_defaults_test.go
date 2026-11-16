@@ -26,6 +26,8 @@ func TestDefaultBackupKeyPrefixes(t *testing.T) {
 			{"shard", [4]*BackupConfig{nil, nil, nil, s3("")}, "clusters/uid"},
 			{"explicit inherited", [4]*BackupConfig{s3("/original/"), nil, nil, s3("")}, "/original/"},
 			{"explicit child", [4]*BackupConfig{s3(""), nil, nil, s3("child")}, "child"},
+			{"explicit legacy root", [4]*BackupConfig{s3("/"), nil, nil, s3("")}, "/"},
+			{"restore shard from root", [4]*BackupConfig{s3("parent"), nil, nil, s3("/")}, "/"},
 			{"slash-only override", [4]*BackupConfig{s3("original"), nil, nil, s3("//")}, "clusters/uid"},
 			{"partial inherited config", [4]*BackupConfig{s3(""), {S3: &S3BackupConfig{Bucket: "other"}}}, "clusters/uid"},
 			{"backend override", [4]*BackupConfig{{Type: BackupTypeFilesystem}, nil, nil, s3("")}, "clusters/uid"},
