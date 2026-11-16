@@ -33,6 +33,103 @@
         "x": 0,
         "y": 0
       },
+      "id": 500,
+      "panels": [],
+      "title": "SQL Queries - Multigateway and Lite (Minigres)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-uid"
+      },
+      "description": "SQL queries per second handled by the gateway, by cluster, component, database and status. Covers multigateway in distributed clusters and Minigres in Lite clusters, which runs queries in-process, so its query traffic produces no gRPC metrics. Built from mg.gateway.query.duration exported as an exponential histogram. The cluster comes from target_info, reduced to one series per pod so a pod replaced during an upgrade does not break the join.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "id": 23,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-uid"
+          },
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "sum by (multigres_cluster, job, db_namespace, status) (sum by (job, instance, db_namespace, status) (histogram_count(rate(mg_gateway_query_duration_seconds{job=~\"multigateway|minigres\"}[$__rate_interval]))) * on (job, instance) group_left (multigres_cluster) max by (job, instance, multigres_cluster) (target_info{job=~\"multigateway|minigres\"}))",
+          "legendFormat": "{{multigres_cluster}} {{job}} {{db_namespace}} [{{status}}]",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "SQL Query Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-uid"
+      },
+      "description": "SQL query latency percentiles measured by the gateway, by cluster, component and database. Covers multigateway in distributed clusters and Minigres in Lite clusters. The histogram is in seconds.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "id": 24,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-uid"
+          },
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "histogram_quantile(0.95, sum by (multigres_cluster, job, db_namespace) (sum by (job, instance, db_namespace) (rate(mg_gateway_query_duration_seconds{job=~\"multigateway|minigres\"}[$__rate_interval])) * on (job, instance) group_left (multigres_cluster) max by (job, instance, multigres_cluster) (target_info{job=~\"multigateway|minigres\"})))",
+          "legendFormat": "p95 - {{multigres_cluster}} {{job}} {{db_namespace}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus-uid"
+          },
+          "editorMode": "code",
+          "exemplar": true,
+          "expr": "histogram_quantile(0.50, sum by (multigres_cluster, job, db_namespace) (sum by (job, instance, db_namespace) (rate(mg_gateway_query_duration_seconds{job=~\"multigateway|minigres\"}[$__rate_interval])) * on (job, instance) group_left (multigres_cluster) max by (job, instance, multigres_cluster) (target_info{job=~\"multigateway|minigres\"})))",
+          "legendFormat": "p50 - {{multigres_cluster}} {{job}} {{db_namespace}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "SQL Query Latency",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
       "id": 100,
       "panels": [],
       "title": "Multigateway - Client Gateway",
@@ -54,7 +151,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 1
+        "y": 11
       },
       "id": 1,
       "targets": [
@@ -90,7 +187,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 1
+        "y": 11
       },
       "id": 2,
       "targets": [
@@ -127,7 +224,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "Outgoing gRPC calls from multigateway to multipooler. Status code 0 = OK. Click on data points to view traces in Tempo.",
+      "description": "Outgoing gRPC calls from multigateway to multipooler. Status code 0 = OK. Click on data points to view traces in Tempo. Multigateway calls come from distributed clusters only; multiadmin calls appear for Lite clusters too. Lite (Minigres) query traffic does not go over gRPC; see the SQL Queries row.",
       "fieldConfig": {
         "defaults": {
           "unit": "reqps"
@@ -138,7 +235,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 10
+        "y": 20
       },
       "id": 3,
       "targets": [
@@ -163,7 +260,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "Latency for multigateway -> multipooler gRPC calls. Click on data points to view traces in Tempo.",
+      "description": "Latency for multigateway -> multipooler gRPC calls. Click on data points to view traces in Tempo. Multigateway calls come from distributed clusters only; multiadmin calls appear for Lite clusters too. Lite (Minigres) query traffic does not go over gRPC; see the SQL Queries row.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -174,7 +271,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 10
+        "y": 20
       },
       "id": 4,
       "targets": [
@@ -212,7 +309,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 19
+        "y": 29
       },
       "id": 200,
       "panels": [],
@@ -224,7 +321,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "Incoming gRPC requests to multipooler. Status code 0 = OK. Click on data points to view traces in Tempo.",
+      "description": "Incoming gRPC requests to multipooler. Status code 0 = OK. Click on data points to view traces in Tempo. Distributed clusters only: Lite (Minigres) serves queries in-process, so its query traffic does not appear here; see the SQL Queries row.",
       "fieldConfig": {
         "defaults": {
           "unit": "reqps"
@@ -235,7 +332,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 20
+        "y": 30
       },
       "id": 5,
       "targets": [
@@ -252,7 +349,7 @@
           "refId": "A"
         }
       ],
-      "title": "gRPC Server Response Codes",
+      "title": "gRPC Server Response Codes (distributed)",
       "type": "timeseries"
     },
     {
@@ -260,7 +357,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "Latency for incoming multipooler gRPC requests. Click on data points to view traces in Tempo.",
+      "description": "Latency for incoming multipooler gRPC requests. Click on data points to view traces in Tempo. Distributed clusters only: Lite (Minigres) serves queries in-process, so its query traffic does not appear here; see the SQL Queries row.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -271,7 +368,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 20
+        "y": 30
       },
       "id": 6,
       "targets": [
@@ -300,7 +397,7 @@
           "refId": "B"
         }
       ],
-      "title": "gRPC Server Latency",
+      "title": "gRPC Server Latency (distributed)",
       "type": "timeseries"
     },
     {
@@ -308,7 +405,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "Outgoing gRPC calls from multipooler to pgctld. Status code 0 = OK. Click on data points to view traces in Tempo.",
+      "description": "Outgoing gRPC calls from multipooler to pgctld. Status code 0 = OK. Click on data points to view traces in Tempo. Selects job multipooler only, so Lite (Minigres) pods do not appear here.",
       "fieldConfig": {
         "defaults": {
           "unit": "reqps"
@@ -319,7 +416,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 29
+        "y": 39
       },
       "id": 7,
       "targets": [
@@ -336,7 +433,7 @@
           "refId": "A"
         }
       ],
-      "title": "gRPC Client Response Codes (to pgctld)",
+      "title": "gRPC Client Response Codes (to pgctld, distributed)",
       "type": "timeseries"
     },
     {
@@ -344,7 +441,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "Latency for multipooler -> pgctld gRPC calls. Click on data points to view traces in Tempo.",
+      "description": "Latency for multipooler -> pgctld gRPC calls. Click on data points to view traces in Tempo. Selects job multipooler only, so Lite (Minigres) pods do not appear here.",
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -355,7 +452,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 29
+        "y": 39
       },
       "id": 8,
       "targets": [
@@ -384,7 +481,7 @@
           "refId": "B"
         }
       ],
-      "title": "gRPC Client Latency (to pgctld)",
+      "title": "gRPC Client Latency (to pgctld, distributed)",
       "type": "timeseries"
     },
     {
@@ -392,7 +489,7 @@
         "type": "prometheus",
         "uid": "prometheus-uid"
       },
-      "description": "PostgreSQL connection states by pool. Idle = available connections, Used = active connections. Stacked to show total pool size. Will appear once db.client.connection.count is wired up.",
+      "description": "PostgreSQL connection states by pool. Idle = available connections, Used = active connections. Stacked to show total pool size. Will appear once db.client.connection.count is wired up. Selects job multipooler only, so Lite (Minigres) pods do not appear here.",
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -409,7 +506,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 38
+        "y": 48
       },
       "id": 9,
       "targets": [
@@ -426,7 +523,7 @@
           "refId": "A"
         }
       ],
-      "title": "PostgreSQL Connection Pool States",
+      "title": "PostgreSQL Connection Pool States (distributed)",
       "type": "timeseries"
     },
     {
@@ -445,7 +542,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 38
+        "y": 48
       },
       "id": 10,
       "targets": [
@@ -480,7 +577,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 57
       },
       "id": 11,
       "targets": [
@@ -526,7 +623,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 57
       },
       "id": 12,
       "targets": [
@@ -564,7 +661,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 66
       },
       "id": 300,
       "panels": [],
@@ -587,7 +684,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 57
+        "y": 67
       },
       "id": 13,
       "targets": [
@@ -623,7 +720,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 57
+        "y": 67
       },
       "id": 14,
       "targets": [
@@ -671,7 +768,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 66
+        "y": 76
       },
       "id": 15,
       "targets": [
@@ -707,7 +804,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 66
+        "y": 76
       },
       "id": 16,
       "targets": [
@@ -755,7 +852,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 75
+        "y": 85
       },
       "id": 17,
       "targets": [
@@ -790,7 +887,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 75
+        "y": 85
       },
       "id": 18,
       "targets": [
@@ -848,7 +945,7 @@
         "h": 9,
         "w": 6,
         "x": 0,
-        "y": 84
+        "y": 94
       },
       "id": 19,
       "options": {
@@ -898,7 +995,7 @@
         "h": 9,
         "w": 18,
         "x": 6,
-        "y": 84
+        "y": 94
       },
       "id": 20,
       "targets": [
@@ -936,7 +1033,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 93
+        "y": 103
       },
       "id": 400,
       "panels": [],
@@ -959,7 +1056,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 94
+        "y": 104
       },
       "id": 21,
       "targets": [
@@ -1012,7 +1109,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 94
+        "y": 104
       },
       "id": 22,
       "targets": [
