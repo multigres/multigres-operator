@@ -35,15 +35,17 @@ import (
 // for something its TableGroups and conditions do not yet show; a converged
 // cluster is never reconciled because of the catalog.
 //
-//   - Provisioning applies a TableGroup labelled LabelDynamicTableGroup and
-//     annotated with the catalog id, shaped from the database's default
-//     tablegroup. The TableGroup controller creates its Shards, and the Shard
-//     controller passes the id to poolers.
-//   - Every dynamic TableGroup of a database the spec declares is kept in the
-//     active set, so the prune path in reconcileDatabases never removes one,
-//     even when the catalog no longer lists it. Removing provisioned
-//     tablegroups needs the topology cleanup a drop requires (pooler records
-//     and shard initialization claims), which this operator does not run.
+//   - Provisioning claims the catalog id in topology, reads the list again,
+//     and applies a TableGroup labelled LabelDynamicTableGroup and annotated
+//     with the catalog id, shaped from the database's default tablegroup.
+//     The TableGroup controller creates its Shards, and the Shard controller
+//     passes the id to poolers. See dynamic_tablegroup_claims.go.
+//   - A dynamic TableGroup whose id a successful read lists as dropping
+//     leaves the active set, so the prune path in reconcileDatabases drains
+//     and deletes it. Each Shard's deletion removes the id's pooler records,
+//     and the provision claim is released once nothing carries the id. Every other dynamic TableGroup
+//     of a database the spec declares stays active, even when the catalog no
+//     longer lists it: absence is never a reason to remove anything.
 //   - Removing the database from the spec releases its dynamic tablegroups:
 //     they are drained and deleted with the database's spec-declared ones,
 //     as before dynamic tablegroups existed. Its catalog goes with the
@@ -57,7 +59,7 @@ import (
 //   - A spec-declared tablegroup is never applied over a dynamic one of the
 //     same name. The conflict is reported from the existing TableGroups, so
 //     it is visible whether or not the catalog is being read.
-//   - A failed read adds nothing.
+//   - A failed read adds nothing and removes nothing.
 
 // multiadminHTTPTimeout bounds one desired-list read.
 const multiadminHTTPTimeout = 10 * time.Second
@@ -133,9 +135,12 @@ func (r *MultigresClusterReconciler) listDesiredTableGroups(
 }
 
 // reconcileDynamicTableGroups re-applies the retained dynamic TableGroups,
-// applies the ones the catalog newly lists, and marks in active every
-// TableGroup that must not be pruned. existing is the cluster's TableGroups
-// by object name as listed before this reconcile applied anything.
+// applies the ones the catalog newly lists, leaves out of active the ones it
+// is dropping so the prune in reconcileDatabases removes them, and releases
+// the provision claims of dropped ones with nothing left. It marks in active
+// every TableGroup that must not be pruned. existing is the cluster's
+// TableGroups by object name as listed before this reconcile applied
+// anything.
 func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
@@ -155,15 +160,50 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 		}
 	}
 
-	// Provisioned dynamic tablegroups of a declared database are never
-	// removed and keep following cluster-level configuration; see the file
-	// comment. That also covers turning the opt-in off. One whose database
-	// left the spec, or that is already draining, is left out of the active
-	// set so the prune below finishes it; a drained one the catalog still
-	// lists is recreated once its Shards are gone (priorIncarnationPresent).
+	enabled := dynamicTableGroupsEnabled(cluster)
+	l := log.FromContext(ctx)
+	var problems []string
+	readFailed := false
+
+	// Read every database's list first: a provisioned tablegroup the catalog
+	// is dropping must stay out of the active set below. A database whose
+	// read fails has no plan, and so loses nothing.
+	plans := map[multigresv1alpha1.DatabaseName]desiredPlan{}
+	if enabled {
+		for _, db := range cluster.Spec.Databases {
+			desired, err := r.listDesiredTableGroups(ctx, cluster, string(db.Name))
+			if err != nil {
+				l.Info("Desired tablegroups unknown; provisioning and removing nothing",
+					"database", db.Name, "error", err.Error())
+				readFailed = true
+				problems = append(problems, fmt.Sprintf("%s: %v", db.Name, err))
+				continue
+			}
+			plan := planDesiredTableGroups(cluster, db, desired, existing)
+			plans[db.Name] = plan
+			problems = append(problems, plan.problems...)
+			for _, c := range plan.conflicts {
+				conflicts[c] = true
+			}
+		}
+	}
+
+	// Provisioned dynamic tablegroups of a declared database keep following
+	// cluster-level configuration, and are removed only when a successful
+	// read lists their id as dropping; see the file comment. Turning the
+	// opt-in off therefore removes nothing. One whose database left the
+	// spec, that is already draining, or that is being dropped is left out
+	// of the active set so the prune below finishes it; a drained one the
+	// catalog still lists is recreated once its Shards are gone
+	// (priorIncarnationPresent).
 	for _, tgName := range slices.Sorted(maps.Keys(existing)) {
 		tg := existing[tgName]
 		if !isDynamic(tg) || !specDBs[tg.Spec.DatabaseName] || tgDraining(tg) {
+			continue
+		}
+		if plans[tg.Spec.DatabaseName].drops(multigresv1alpha1.TableGroupIDOf(tg)) {
+			l.Info("Removing a tablegroup the catalog is dropping", "tablegroup", tg.Name,
+				"tablegroupID", multigresv1alpha1.TableGroupIDOf(tg))
 			continue
 		}
 		active[tg.Name] = true
@@ -188,18 +228,25 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 		}
 	}
 
-	if !dynamicTableGroupsEnabled(cluster) {
+	if !enabled {
 		meta.RemoveStatusCondition(&cluster.Status.Conditions,
 			multigresv1alpha1.ConditionDynamicTableGroups)
 		setDynamicTableGroupConflictCondition(cluster, conflicts)
 		return nil
 	}
 
-	l := log.FromContext(ctx)
-	var problems []string
-	readFailed := false
+	claims := &claimStore{r: r, cluster: cluster, ref: globalTopoRef}
+	defer claims.close()
 
 	for _, db := range cluster.Spec.Databases {
+		plan, ok := plans[db.Name]
+		if !ok {
+			continue
+		}
+		problems = append(
+			problems,
+			r.releaseDroppedClaims(ctx, cluster, claims, db.Name, plan.dropping, existing)...)
+
 		tmpl, ok := templates[db.Name]
 		if !ok {
 			problems = append(problems,
@@ -207,21 +254,8 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 			continue
 		}
 
-		desired, err := r.listDesiredTableGroups(ctx, cluster, string(db.Name))
-		if err != nil {
-			l.Info("Desired tablegroups unknown; provisioning nothing new",
-				"database", db.Name, "error", err.Error())
-			readFailed = true
-			problems = append(problems, fmt.Sprintf("%s: %v", db.Name, err))
-			continue
-		}
-
-		plan := planDesiredTableGroups(cluster, db, desired, existing)
-		problems = append(problems, plan.problems...)
-		for _, c := range plan.conflicts {
-			conflicts[c] = true
-		}
-
+		var claimable []multiadmin.TableGroup
+		built := map[int64]*multigresv1alpha1.TableGroup{}
 		for _, want := range plan.pending {
 			desiredTG, err := buildDynamicTableGroup(cluster, tmpl, want, globalTopoRef, r.Scheme)
 			if err != nil {
@@ -245,11 +279,28 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 					db.Name, want.Name, want.ID, wait))
 				continue
 			}
+			claimable = append(claimable, want)
+			built[want.ID] = desiredTG
+		}
+		if len(claimable) == 0 {
+			continue
+		}
 
+		ready, msgs, err := r.claimAndRecheck(ctx, cluster, claims, db.Name, claimable)
+		problems = append(problems, msgs...)
+		if err != nil {
+			l.Info("Desired tablegroups unknown after claiming; provisioning nothing",
+				"database", db.Name, "error", err.Error())
+			readFailed = true
+			continue
+		}
+		for _, want := range ready {
+			desiredTG := built[want.ID]
 			active[desiredTG.Name] = true
 			if err := r.applyTableGroup(ctx, cluster, desiredTG, nil); err != nil {
 				// One entry the API server rejects must not stop the rest of the
-				// cluster's reconcile.
+				// cluster's reconcile. Its claim stays: it is released once the
+				// catalog drops the id, like any other.
 				problems = append(problems, fmt.Sprintf("%s/%s: %v", db.Name, want.Name, err))
 				continue
 			}
@@ -269,6 +320,9 @@ type desiredPlan struct {
 	// incarnation (another id, a spec-declared TableGroup, one draining)
 	// that the reconcile waits on and reports before creating this one.
 	pending []multiadmin.TableGroup
+	// dropping are the valid entries the catalog is dropping, whether or not
+	// anything was ever provisioned for them.
+	dropping []multiadmin.TableGroup
 	// problems are entries that cannot be provisioned, with the reason.
 	problems []string
 	// conflicts are "db/name" entries the spec also declares.
@@ -316,6 +370,13 @@ func planDesiredTableGroups(
 				fmt.Sprintf("%s/%s: %s", db.Name, shortName(want.Name), msg))
 			continue
 		}
+		if want.Dropping() {
+			plan.dropping = append(plan.dropping, want)
+			continue
+		}
+		if !want.Provisionable() {
+			continue // a state this operator does not know: neither add nor remove
+		}
 		if specNames[multigresv1alpha1.TableGroupName(want.Name)] {
 			plan.conflicts = append(plan.conflicts, fmt.Sprintf("%s/%s", db.Name, want.Name))
 			continue
@@ -342,6 +403,14 @@ func planDesiredTableGroups(
 		plan.pending = append(plan.pending, want)
 	}
 	return plan
+}
+
+// drops reports whether the catalog is dropping tablegroup id. A zero plan,
+// from a read that failed or never ran, drops nothing.
+func (p desiredPlan) drops(id int64) bool {
+	return slices.ContainsFunc(p.dropping, func(tg multiadmin.TableGroup) bool {
+		return tg.ID == id
+	})
 }
 
 // storedShape is the catalog entry a retained dynamic TableGroup was

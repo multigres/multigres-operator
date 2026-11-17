@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multigres/multigres/go/common/topoclient"
+	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +33,8 @@ type dynamicFixture struct {
 	r       *MultigresClusterReconciler
 	cluster *multigresv1alpha1.MultigresCluster
 	calls   int
+	// topo is the global topology every store the reconciler opens shares.
+	topo topoclient.Store
 }
 
 func newDynamicFixture(
@@ -60,11 +64,18 @@ func newDynamicFixture(
 		WithObjects(objs...).
 		WithStatusSubresource(&multigresv1alpha1.MultigresCluster{}, &multigresv1alpha1.TableGroup{}).
 		Build()
-	f := &dynamicFixture{t: t, c: c, cluster: cluster}
+	topo, factory := memorytopo.NewServerAndFactory(t.Context(), "zone1")
+	t.Cleanup(func() { _ = topo.Close() })
+	f := &dynamicFixture{t: t, c: c, cluster: cluster, topo: topo}
 	f.r = &MultigresClusterReconciler{
 		Client:   c,
 		Scheme:   setupScheme(),
 		Recorder: record.NewFakeRecorder(100),
+		CreateTopoStore: func(multigresv1alpha1.GlobalTopoServerRef) (topoclient.Store, error) {
+			return topoclient.NewWithFactory(
+				factory, "", []string{""}, topoclient.NewDefaultTopoConfig(),
+			), nil
+		},
 		ListDesiredTableGroups: func(_ context.Context, _ *multigresv1alpha1.MultigresCluster, db string) ([]multiadmin.TableGroup, error) {
 			f.calls++
 			return list(db)
@@ -153,7 +164,12 @@ func (f *dynamicFixture) assertShapedLikeDefault(tg *multigresv1alpha1.TableGrou
 func desiredCommerce(id int64) func(string) ([]multiadmin.TableGroup, error) {
 	return func(string) ([]multiadmin.TableGroup, error) {
 		return []multiadmin.TableGroup{
-			{ID: id, Name: "commerce", Shards: []string{"0-80", "80-inf"}},
+			{
+				ID:     id,
+				Name:   "commerce",
+				Shards: []string{"0-80", "80-inf"},
+				State:  multiadmin.StateCreating,
+			},
 		}, nil
 	}
 }
@@ -340,8 +356,8 @@ func drain(rec *record.FakeRecorder) []string {
 func TestDynamicTableGroups_ProblemsTurnTheConditionFalseOnce(t *testing.T) {
 	list := func(string) ([]multiadmin.TableGroup, error) {
 		return []multiadmin.TableGroup{
-			{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}},
-			{ID: 2, Name: "ok", Shards: []string{"0-inf"}},
+			{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+			{ID: 2, Name: "ok", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
 		}, nil
 	}
 	f := newDynamicFixture(t, true, list)
@@ -378,7 +394,9 @@ func TestDynamicTableGroups_ProblemsTurnTheConditionFalseOnce(t *testing.T) {
 
 	// The problem clears, then returns: one more event.
 	f.r.ListDesiredTableGroups = func(context.Context, *multigresv1alpha1.MultigresCluster, string) ([]multiadmin.TableGroup, error) {
-		return []multiadmin.TableGroup{{ID: 2, Name: "ok", Shards: []string{"0-inf"}}}, nil
+		return []multiadmin.TableGroup{
+			{ID: 2, Name: "ok", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+		}, nil
 	}
 	f.reconcile()
 	if c := meta.FindStatusCondition(
@@ -403,6 +421,7 @@ func TestDynamicTableGroups_ConditionMessageIsBounded(t *testing.T) {
 		for i := range 60 {
 			out = append(out, multiadmin.TableGroup{
 				ID: int64(i + 1), Name: fmt.Sprintf("%s%d", long, i), Shards: []string{"0-inf"},
+				State: multiadmin.StateCreating,
 			})
 		}
 		return out, nil
@@ -530,11 +549,16 @@ func TestDynamicTableGroups_SpecNameConflict(t *testing.T) {
 func TestDynamicTableGroups_InvalidEntriesSkipped(t *testing.T) {
 	bad := func(string) ([]multiadmin.TableGroup, error) {
 		return []multiadmin.TableGroup{
-			{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}},
-			{ID: 2, Name: "this-name-is-far-too-long-for-k8s", Shards: []string{"0-inf"}},
-			{ID: 0, Name: "zeroid", Shards: []string{"0-inf"}},
-			{ID: 4, Name: "dup", Shards: []string{"0-80", "0-80"}},
-			{ID: 5, Name: "ok", Shards: []string{"0-inf"}},
+			{ID: 1, Name: "Has_Upper", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+			{
+				ID:     2,
+				Name:   "this-name-is-far-too-long-for-k8s",
+				Shards: []string{"0-inf"},
+				State:  multiadmin.StateCreating,
+			},
+			{ID: 0, Name: "zeroid", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+			{ID: 4, Name: "dup", Shards: []string{"0-80", "0-80"}, State: multiadmin.StateCreating},
+			{ID: 5, Name: "ok", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
 		}, nil
 	}
 	f := newDynamicFixture(t, true, bad)
@@ -669,8 +693,9 @@ func TestDynamicTableGroups_DatabaseRemovedReleasesItsTableGroups(t *testing.T) 
 	if pendingDeletion(f.tableGroup("stock")) || pendingDeletion(f.tableGroup("commerce")) {
 		t.Error("a dynamic tablegroup of a declared database was marked for deletion")
 	}
-	if f.calls != 1 {
-		t.Errorf("multiadmin read %d times, want once for the one declared database", f.calls)
+	// Once, and once more after claiming commerce.
+	if f.calls != 2 {
+		t.Errorf("multiadmin read %d times, want twice for the one declared database", f.calls)
 	}
 }
 
@@ -681,6 +706,7 @@ func TestDynamicTableGroups_PerDatabaseCap(t *testing.T) {
 		for i := maxDynamicTableGroupsPerDatabase + 5; i >= 1; i-- {
 			out = append(out, multiadmin.TableGroup{
 				ID: int64(i), Name: fmt.Sprintf("tg%d", i), Shards: []string{"0-inf"},
+				State: multiadmin.StateCreating,
 			})
 		}
 		return out, nil
@@ -716,10 +742,10 @@ func TestDynamicTableGroups_RejectedEntriesDoNotStopTheRest(t *testing.T) {
 	}
 	list := func(string) ([]multiadmin.TableGroup, error) {
 		return []multiadmin.TableGroup{
-			{ID: 3, Name: "wide", Shards: tooMany},
-			{ID: 4, Name: "twice", Shards: []string{"0-inf"}},
-			{ID: 5, Name: "twice", Shards: []string{"0-inf"}},
-			{ID: 6, Name: "ok", Shards: []string{"0-inf"}},
+			{ID: 3, Name: "wide", Shards: tooMany, State: multiadmin.StateCreating},
+			{ID: 4, Name: "twice", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+			{ID: 5, Name: "twice", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
+			{ID: 6, Name: "ok", Shards: []string{"0-inf"}, State: multiadmin.StateCreating},
 		}, nil
 	}
 	f := newDynamicFixture(t, true, list)

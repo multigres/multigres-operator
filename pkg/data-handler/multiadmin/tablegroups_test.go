@@ -23,7 +23,7 @@ func serve(t *testing.T, status int, body string) string {
 
 func TestListDesiredTableGroups(t *testing.T) {
 	commerce := []TableGroup{
-		{ID: 7, Name: "commerce", Shards: []string{"0-80", "80-inf"}},
+		{ID: 7, Name: "commerce", Shards: []string{"0-80", "80-inf"}, State: StateCreating},
 	}
 	tests := map[string]struct {
 		status  int
@@ -45,6 +45,14 @@ func TestListDesiredTableGroups(t *testing.T) {
 			status: 200,
 			body:   `{"tableGroups":[{"tablegroupId":"7","name":"commerce","state":"TABLE_GROUP_STATE_CREATING","shards":["0-80","80-inf"],"future":1}],"next":"x"}`,
 			want:   commerce,
+		},
+		"dropping and unknown states are passed through": {
+			status: 200,
+			body:   `{"tableGroups":[{"tablegroupId":"7","name":"a","state":"TABLE_GROUP_STATE_DROPPING","shards":["0-inf"]},{"tablegroupId":"8","name":"b","shards":["0-inf"]}]}`,
+			want: []TableGroup{
+				{ID: 7, Name: "a", Shards: []string{"0-inf"}, State: StateDropping},
+				{ID: 8, Name: "b", Shards: []string{"0-inf"}},
+			},
 		},
 		"empty object is an empty list": {status: 200, body: `{}`, want: []TableGroup{}},
 		"empty array is an empty list": {

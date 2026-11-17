@@ -12,6 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/multiadmin"
+	"github.com/multigres/multigres-operator/pkg/resolver"
 )
 
 // dynamicTableGroupPollInterval is how often the poller reads every opted-in
@@ -144,6 +146,67 @@ func (p *dynamicTableGroupPoller) clusterNeedsReconcile(
 			len(plan.problems) > 0 && !failureReported,
 			len(plan.conflicts) > 0 && !conflictReported:
 			return true
+		}
+
+		// A dropped id whose TableGroup is still serving needs its removal
+		// started. One already draining is followed by the TableGroup's own
+		// events. One with no TableGroup left may still hold a claim to
+		// release: only topology tells, so it is read for those alone, and
+		// only while the catalog lists the id as dropping.
+		var unheld []multiadmin.TableGroup
+		for _, d := range plan.dropping {
+			current := existing[TableGroupName(cluster.Name, db.Name,
+				multigresv1alpha1.TableGroupName(d.Name))]
+			if isDynamic(current) && multigresv1alpha1.TableGroupIDOf(current) == d.ID {
+				if !tgDraining(current) {
+					return true
+				}
+				continue
+			}
+			unheld = append(unheld, d)
+		}
+		if len(unheld) > 0 && p.claimHeld(ctx, cluster, db.Name, unheld) {
+			return true
+		}
+	}
+	return false
+}
+
+// claimHeld reports whether this cluster still holds a provision claim on any
+// of dropping. A claim that cannot be read is reported as not held: the
+// reconcile could not release it either.
+func (p *dynamicTableGroupPoller) claimHeld(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	db multigresv1alpha1.DatabaseName,
+	dropping []multiadmin.TableGroup,
+) bool {
+	l := log.FromContext(ctx).WithName("dynamic-tablegroup-poller").
+		WithValues("cluster", client.ObjectKeyFromObject(cluster))
+	ref, err := p.r.globalTopoRef(ctx, cluster, resolver.NewResolver(p.r.Client, cluster.Namespace))
+	if err != nil {
+		l.Error(err, "Failed to resolve the global topology")
+		return false
+	}
+	store, err := p.r.openTopoStore(ctx, cluster.Namespace, ref)
+	if err != nil {
+		l.Error(err, "Failed to open the global topology")
+		return false
+	}
+	defer func() { _ = store.Close() }()
+	claims, err := store.ListTableGroupProvisionClaims(ctx, string(db))
+	if err != nil {
+		l.Error(err, "Failed to list tablegroup provision claims", "database", db)
+		return false
+	}
+	for _, c := range claims {
+		if c.GetProvisioner() != provisionerID(cluster) {
+			continue
+		}
+		for _, d := range dropping {
+			if c.GetTablegroupId() == d.ID {
+				return true
+			}
 		}
 	}
 	return false
