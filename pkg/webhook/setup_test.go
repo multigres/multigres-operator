@@ -38,6 +38,8 @@ func (m *mockManager) GetClient() client.Client {
 	return m.client
 }
 
+func (m *mockManager) GetAPIReader() client.Reader { return m.client }
+
 func (m *mockManager) GetWebhookServer() webhook.Server {
 	return m.server
 }

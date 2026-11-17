@@ -5,7 +5,8 @@ The operator integrates **pgBackRest** to handle automated backups, WAL archivin
 ## Architecture
 
 Every Shard in the cluster has its own independent backup repository.
-- **Replica-Based Backups:** To avoid impacting the primary's performance, backups are always performed by a **replica**. The operator's MultiAdmin component selects a healthy replica (typically in the primary zone/cell) to execute the backup.
+- **Replica-Based Backups:** To avoid impacting the primary's performance, backups in distributed clusters are performed by a **replica**. The operator's MultiAdmin component selects a healthy replica (typically in the primary zone/cell) to execute the backup.
+- **Lite clusters:** The static leader takes its own backups. Both modes need independent repositories for independent clusters; distributed backup leases only coordinate poolers within their own topology.
 - **Universal Availability:** While only one replica performs the backup, **all replicas** (current and future) need access to the backup repository to:
   1.  Bootstrap new replicas (via `pgbackrest restore`).
   2.  Perform Point-in-Time Recovery (PITR).
@@ -48,6 +49,22 @@ spec:
 
       # Option 3: EC2 instance metadata (default, no fields needed)
 ```
+
+#### Repository isolation
+
+New clusters in both Lite and distributed mode receive an S3 `keyPrefix` of `clusters/<cluster UID>` when a prefix is omitted, empty, or contains multiple slashes and nothing else. Set `keyPrefix: "/"` explicitly to restore a legacy backup from the bucket root, including when the original cluster and its PVCs are gone. With the generated prefix, the default table group and shard use `/clusters/<cluster UID>/multigres` within the bucket. Kubernetes assigns a different UID to each cluster object, including a cluster recreated with the same name, so independently created clusters do not share the default repository.
+
+The cluster controller records the allocation in the `multigres.com/default-backup-key-prefix` annotation and writes missing prefixes into the configured backup blocks in the same API update that first adds its cleanup finalizer. This happens before creating child resources or writing topology and also works with the webhook disabled. The annotation is operator-managed; omit it when creating a cluster. Admission prevents changing or removing it after initialization. It keeps the same default available on restarts and when S3 settings or shards are added later. With admission enabled, defaulted fields are also materialized on subsequent updates; without admission, the controller applies that saved default when resolving the configuration.
+
+Backup settings inherit from cluster to database, table group, and shard. Explicit prefixes, including inherited ones, are preserved exactly. If you supply prefixes yourself, use distinct values for independent clusters sharing a bucket; the operator does not check S3 for uniqueness. Filesystem backups are unchanged.
+
+**Existing clusters keep their repository paths.** A cluster that already has the operator's cleanup finalizer is not assigned a default, even if its prefix is empty. Before adding the finalizer, the controller checks for prior cluster status, TableGroups and reusable storage. It considers the names and replica ordinals of the PostgreSQL and managed etcd claims in the resolved configuration. A terminating claim, a claim owned by another MultigresCluster UID, or an unrelated claim with the same cluster label does not select a repository.
+
+**Recreating a cluster with retained storage.** The operator records the generated cluster default on PostgreSQL and managed etcd PVCs. A replacement recovers that default from the claims it will mount. Reapply the original backup settings, including any explicit prefixes, bucket and endpoint. Conflicting recorded allocations stop initialization. The cluster’s `BackupPrefixInitializationFailed` event identifies the affected claims. If reusable claims predate the allocation record and the S3 configuration omits its prefix, supply the original `keyPrefix`. Use `/` only when the original repository was at the bucket root. Existing unprefixed clusters sharing a bucket remain exposed to collisions and require a planned repository migration.
+
+Without a prefix, the repository path depends only on the database layout: `/multigres` for the default table group and shard, or a path under `/tablegroups` for another shard. Two independent clusters using the same bucket, endpoint, and layout can therefore share a repository. A fresh pooler may restore the other cluster's backup and then archive WAL into the same stanza; if no complete backup exists, stanza creation can fail instead.
+
+**Do not change a running cluster's repository path without a migration.** The pooler creates the stanza during bootstrap. Changing `keyPrefix` while retaining PostgreSQL data can leave the new location without a stanza, breaking backups and WAL archiving. Explicit backup-location edits remain possible; automatic defaulting does not migrate existing backups.
 
 ### 2. Filesystem
 

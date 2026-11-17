@@ -1408,6 +1408,18 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 				t.Fatalf("Failed to create the initial cluster, %v", err)
 			}
 
+			for _, obj := range tc.wantResources {
+				switch obj.(type) {
+				case *multigresv1alpha1.TopoServer, *multigresv1alpha1.Cell, *multigresv1alpha1.TableGroup:
+					annotations := obj.GetAnnotations()
+					if annotations == nil {
+						annotations = make(map[string]string)
+					}
+					annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix] = "clusters/" + string(tc.cluster.UID)
+					obj.SetAnnotations(annotations)
+				}
+			}
+
 			// Assert Resources
 			if err := watcher.WaitForMatch(tc.wantResources...); err != nil {
 				t.Errorf("Resources mismatch:\n%v", err)

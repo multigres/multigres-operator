@@ -294,10 +294,20 @@ type S3BackupConfig struct {
 	// +kubebuilder:validation:MinLength=1
 	Bucket string `json:"bucket"`
 	// +kubebuilder:validation:MinLength=1
-	Region            string `json:"region"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	KeyPrefix         string `json:"keyPrefix,omitempty"`
-	UseEnvCredentials bool   `json:"useEnvCredentials,omitempty"`
+	Region   string `json:"region"`
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// KeyPrefix is the path below the bucket that holds the pgBackRest repositories.
+	// Set "/" to restore from the legacy bucket root. New clusters default an empty
+	// prefix or multiple slashes to clusters/<cluster UID>. Other explicit prefixes are
+	// preserved. Clusters already reconciled by an older operator keep their paths,
+	// including an empty prefix. Do not change a running cluster's repository path
+	// without migrating its backups and stanza. Independent clusters sharing a
+	// bucket must use distinct prefixes.
+	// +optional
+	KeyPrefix string `json:"keyPrefix,omitempty"`
+
+	UseEnvCredentials bool `json:"useEnvCredentials,omitempty"`
 
 	// CredentialsSecret is the name of the Secret containing AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
 	// +optional

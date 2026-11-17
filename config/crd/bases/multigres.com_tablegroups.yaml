@@ -131,6 +131,14 @@ spec:
                       endpoint:
                         type: string
                       keyPrefix:
+                        description: |-
+                          KeyPrefix is the path below the bucket that holds the pgBackRest repositories.
+                          Set "/" to restore from the legacy bucket root. New clusters default an empty
+                          prefix or multiple slashes to clusters/<cluster UID>. Other explicit prefixes are
+                          preserved. Clusters already reconciled by an older operator keep their paths,
+                          including an empty prefix. Do not change a running cluster's repository path
+                          without migrating its backups and stanza. Independent clusters sharing a
+                          bucket must use distinct prefixes.
                         type: string
                       region:
                         minLength: 1
@@ -681,6 +689,14 @@ spec:
                             endpoint:
                               type: string
                             keyPrefix:
+                              description: |-
+                                KeyPrefix is the path below the bucket that holds the pgBackRest repositories.
+                                Set "/" to restore from the legacy bucket root. New clusters default an empty
+                                prefix or multiple slashes to clusters/<cluster UID>. Other explicit prefixes are
+                                preserved. Clusters already reconciled by an older operator keep their paths,
+                                including an empty prefix. Do not change a running cluster's repository path
+                                without migrating its backups and stanza. Independent clusters sharing a
+                                bucket must use distinct prefixes.
                               type: string
                             region:
                               minLength: 1

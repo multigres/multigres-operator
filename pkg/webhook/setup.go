@@ -35,8 +35,10 @@ func Setup(mgr ctrl.Manager, res *resolver.Resolver, opts Options) error {
 	}
 
 	// 2. Validating Webhook: MultigresCluster
+	clusterValidator := handlers.NewMultigresClusterValidator(mgr.GetClient())
+	clusterValidator.APIReader = mgr.GetAPIReader()
 	if err := ctrl.NewWebhookManagedBy(mgr, &multigresv1alpha1.MultigresCluster{}).
-		WithCustomValidator(handlers.NewMultigresClusterValidator(mgr.GetClient())).
+		WithCustomValidator(clusterValidator).
 		Complete(); err != nil {
 		return fmt.Errorf("failed to register MultigresCluster validator: %w", err)
 	}

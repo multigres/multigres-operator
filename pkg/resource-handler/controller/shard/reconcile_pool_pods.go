@@ -217,7 +217,7 @@ func (r *ShardReconciler) createMissingResources(
 				// Neither reclaimed nor expanded: it is gone once no pod uses
 				// it, and the branch above then creates its replacement.
 				logger.Info("Pool PVC is being deleted; leaving it alone", "pvc", pvcName)
-			} else if err := r.expandPVCIfNeeded(ctx, shard, existingPVCs[pvcName], poolSpec); err != nil {
+			} else if err := r.reconcilePoolDataPVC(ctx, shard, existingPVCs[pvcName], poolSpec); err != nil {
 				return 0, false, err
 			}
 		}
@@ -238,7 +238,7 @@ func (r *ShardReconciler) createMissingResources(
 			}
 			// A pod started on a PVC being deleted either cannot schedule or,
 			// once scheduled, holds that PVC and its doomed data in service.
-			if claim, err := r.claimPodVolumes(ctx, desiredPod); err != nil {
+			if claim, err := r.claimPodVolumes(ctx, shard, desiredPod); err != nil {
 				return 0, false, err
 			} else if claim != "" {
 				logger.Info("Not creating pool pod while a PVC it mounts is being deleted",
@@ -1689,6 +1689,26 @@ func podNeedsUpdate(
 
 	desiredHash := ComputeSpecHash(desired)
 	return existingHash != desiredHash
+}
+
+// reconcilePoolDataPVC also backfills the allocation on a data PVC created
+// before the operator recorded it at creation. Never relabel a volume from a
+// different allocation when a later scale-up or catalog change brings it back.
+func (r *ShardReconciler) reconcilePoolDataPVC(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	pvc *corev1.PersistentVolumeClaim,
+	poolSpec multigresv1alpha1.PoolSpec,
+) error {
+	if err := pvcutil.RecordBackupPrefix(
+		ctx,
+		r.Client,
+		pvc,
+		shard.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix],
+	); err != nil {
+		return err
+	}
+	return r.expandPVCIfNeeded(ctx, shard, pvc, poolSpec)
 }
 
 // expandPVCIfNeeded patches an existing PVC's storage request when the desired

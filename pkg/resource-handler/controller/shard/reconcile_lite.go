@@ -316,7 +316,7 @@ func (r *ShardReconciler) ensureLiteDataPVC(
 		return 0, nil
 	}
 	if err == nil {
-		if err := r.expandPVCIfNeeded(ctx, shard, existing, poolSpec); err != nil {
+		if err := r.reconcilePoolDataPVC(ctx, shard, existing, poolSpec); err != nil {
 			return 0, err
 		}
 		capacity := existing.Status.Capacity.Storage()
@@ -381,7 +381,7 @@ func (r *ShardReconciler) ensureLitePod(
 	err = r.Get(ctx, client.ObjectKeyFromObject(desired), existing)
 	if apierrors.IsNotFound(err) {
 		// The shard's only pooler would start on storage that is going away.
-		if claim, err := r.claimPodVolumes(ctx, desired); err != nil {
+		if claim, err := r.claimPodVolumes(ctx, shard, desired); err != nil {
 			return err
 		} else if claim != "" {
 			logger.Info("Not creating the Lite pod while a PVC it mounts is being deleted",

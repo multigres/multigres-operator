@@ -93,6 +93,7 @@ func BuildGlobalTopoServer(
 		},
 	}
 
+	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cluster, &ts.ObjectMeta)
 	if err := controllerutil.SetControllerReference(cluster, ts, scheme); err != nil {
 		return nil, err
 	}

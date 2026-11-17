@@ -27,6 +27,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
+	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 	"github.com/multigres/multigres-operator/pkg/util/status"
 )
 
@@ -302,6 +303,32 @@ func (r *TopoServerReconciler) reconcileStatefulSet(
 		client.FieldOwner(ownership.ManagerChildWriter),
 	); err != nil {
 		return fmt.Errorf("failed to apply StatefulSet: %w", err)
+	}
+
+	// StatefulSet volumeClaimTemplates are immutable. Write the allocation on
+	// the actual etcd claims so this also covers existing StatefulSets.
+	if prefix := toposerver.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix]; prefix != "" {
+		var claims corev1.PersistentVolumeClaimList
+		if err := r.List(
+			ctx,
+			&claims,
+			client.InNamespace(toposerver.Namespace),
+			client.MatchingLabels(desired.Spec.Selector.MatchLabels),
+		); err != nil {
+			return fmt.Errorf("listing topology PVCs: %w", err)
+		}
+		for i := range claims.Items {
+			claim := &claims.Items[i]
+			first, ordinal, ok := pvcutil.Ordinal(claim.Name)
+			if !ok || first != DataVolumeName+"-"+desired.Name+"-0" ||
+				ordinal >= int(*desired.Spec.Replicas) ||
+				!claim.DeletionTimestamp.IsZero() {
+				continue
+			}
+			if err := pvcutil.RecordBackupPrefix(ctx, r.Client, claim, prefix); err != nil {
+				return err
+			}
+		}
 	}
 
 	r.Recorder.Eventf(

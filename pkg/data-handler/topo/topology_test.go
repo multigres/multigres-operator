@@ -10,6 +10,7 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	clustermetadatapb "github.com/multigres/multigres/go/pb/clustermetadata"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
 
@@ -277,6 +278,28 @@ func TestRegisterDatabaseFromSpec(t *testing.T) {
 		if s3 == nil || s3.Bucket != "my-bucket" {
 			t.Errorf("expected S3 backup with bucket my-bucket, got %v", db.BackupLocation)
 		}
+	})
+
+	t.Run("explicit root restores from the legacy pgBackRest repository", func(t *testing.T) {
+		store := newMemoryStore(t, "cell1")
+		ctx := t.Context()
+		cfg := &multigresv1alpha1.BackupConfig{
+			Type: multigresv1alpha1.BackupTypeS3,
+			S3: &multigresv1alpha1.S3BackupConfig{
+				Bucket:    "shared",
+				Region:    "us-east-1",
+				KeyPrefix: "/",
+			},
+		}
+		require.NoError(
+			t,
+			topo.RegisterDatabaseFromSpec(ctx, store, record.NewFakeRecorder(10), owner,
+				multigresv1alpha1.DatabaseConfig{Name: "postgres"}, []string{"cell1"}, cfg, ""),
+		)
+		db, err := store.GetDatabase(ctx, "postgres")
+		require.NoError(t, err)
+		require.NotNil(t, db.BackupLocation.GetS3())
+		require.Empty(t, db.BackupLocation.GetS3().KeyPrefix)
 	})
 
 	t.Run("creates database with custom filesystem path", func(t *testing.T) {

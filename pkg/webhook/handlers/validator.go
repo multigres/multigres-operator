@@ -28,7 +28,8 @@ import (
 
 // MultigresClusterValidator validates Create and Update events for MultigresClusters.
 type MultigresClusterValidator struct {
-	Client client.Client
+	Client    client.Client
+	APIReader client.Reader
 }
 
 var _ webhook.CustomValidator = &MultigresClusterValidator{}
@@ -43,6 +44,13 @@ func (v *MultigresClusterValidator) ValidateCreate(
 	ctx context.Context,
 	obj runtime.Object,
 ) (admission.Warnings, error) {
+	if cluster, ok := obj.(*multigresv1alpha1.MultigresCluster); ok &&
+		cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix] != "" {
+		return nil, fmt.Errorf(
+			"annotation %s is allocated by the controller; omit it when creating a cluster",
+			multigresv1alpha1.AnnotationDefaultBackupKeyPrefix,
+		)
+	}
 	return v.validate(ctx, obj)
 }
 
@@ -53,6 +61,9 @@ func (v *MultigresClusterValidator) ValidateUpdate(
 ) (admission.Warnings, error) {
 	if oldCluster, ok := oldObj.(*multigresv1alpha1.MultigresCluster); ok {
 		if newCluster, ok := newObj.(*multigresv1alpha1.MultigresCluster); ok {
+			if err := v.validateBackupDefaultUpdate(ctx, oldCluster, newCluster); err != nil {
+				return nil, err
+			}
 			if oldCluster.Spec.Mode != newCluster.Spec.Mode {
 				return nil, fmt.Errorf(
 					"mode is immutable and can only be set when the cluster is created",

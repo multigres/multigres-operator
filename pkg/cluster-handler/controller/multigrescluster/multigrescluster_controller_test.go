@@ -94,6 +94,11 @@ func runReconcileTest(t *testing.T, tests map[string]reconcileTestCase) {
 				cluster = baseCluster.DeepCopy()
 			}
 
+			// The API server assigns a UID; the fake client does not.
+			if cluster.UID == "" {
+				cluster.UID = "cluster-uid"
+			}
+
 			// Apply pre-reconcile updates if defined
 			if tc.preReconcileUpdate != nil {
 				tc.preReconcileUpdate(t, cluster)
@@ -295,6 +300,7 @@ func setupFixtures(tb testing.TB) (
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clusterName,
 			Namespace: namespace,
+			UID:       "cluster-uid",
 			Labels: map[string]string{
 				metadata.LabelUsesCoreTemplate:  "true",
 				metadata.LabelUsesCellTemplate:  "true",
