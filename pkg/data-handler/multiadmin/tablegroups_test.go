@@ -54,6 +54,16 @@ func TestListDesiredTableGroups(t *testing.T) {
 				{ID: 8, Name: "b", Shards: []string{"0-inf"}},
 			},
 		},
+		"a bound shard carries its connection": {
+			status: 200,
+			body:   `{"tableGroups":[{"tablegroupId":"9","name":"legacy","state":"TABLE_GROUP_STATE_CREATING","shards":["0-inf"],"shardBackingConnections":{"0-inf":"orders-db"}}]}`,
+			want: []TableGroup{
+				{
+					ID: 9, Name: "legacy", Shards: []string{"0-inf"}, State: StateCreating,
+					ShardBackingConnections: map[string]string{"0-inf": "orders-db"},
+				},
+			},
+		},
 		"empty object is an empty list": {status: 200, body: `{}`, want: []TableGroup{}},
 		"empty array is an empty list": {
 			status: 200,

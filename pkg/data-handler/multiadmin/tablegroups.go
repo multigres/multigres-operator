@@ -26,6 +26,9 @@ type TableGroup struct {
 	// StateCreating. A state this package does not name, including none,
 	// is neither provisioned nor removed.
 	State string
+	// ShardBackingConnections maps each shard served by an external PostgreSQL
+	// to the name of its connection. Shards not listed are managed.
+	ShardBackingConnections map[string]string
 }
 
 // The TableGroupState values a provisioner acts on.
@@ -55,6 +58,9 @@ type wireTableGroup struct {
 	Name         string      `json:"name"`
 	Shards       []string    `json:"shards"`
 	State        string      `json:"state"`
+	// ShardBackingConnections is omitted by protojson when empty, and absent
+	// from a multiadmin that predates bound shards: both read as managed.
+	ShardBackingConnections map[string]string `json:"shardBackingConnections"`
 }
 
 type wireResponse struct {
@@ -108,7 +114,13 @@ func ListDesiredTableGroups(
 				err,
 			)
 		}
-		out = append(out, TableGroup{ID: id, Name: w.Name, Shards: w.Shards, State: w.State})
+		out = append(out, TableGroup{
+			ID:                      id,
+			Name:                    w.Name,
+			Shards:                  w.Shards,
+			State:                   w.State,
+			ShardBackingConnections: w.ShardBackingConnections,
+		})
 	}
 	return out, nil
 }
