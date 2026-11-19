@@ -170,6 +170,12 @@ func (r *ShardReconciler) Reconcile(
 		}
 	}
 
+	// A bound shard fronts an external database with a single pooler pod and
+	// has none of the machinery below, including its own PendingDeletion.
+	if isBoundShard(shard) {
+		return r.reconcileBound(ctx, shard)
+	}
+
 	// Handle graceful deletion via PendingDeletion annotation.
 	// The TableGroup controller sets this annotation when a shard is removed from
 	// spec. The shard controller drains all pods and sets ReadyForDeletion
