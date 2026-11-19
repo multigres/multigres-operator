@@ -361,3 +361,56 @@ jobs:
             test "$current" = "$GITHUB_SHA"
             docker buildx imagetools create --tag "$IMAGE:current" --tag "$IMAGE:latest" "$IMAGE@$EXPECTED_DIGEST"
           fi
+      - uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
+        if: ${{ !inputs.dry-run }}
+        with:
+          version: 1.4.0
+      # The manifests live in their own repository: the image repository's
+      # tags are immutable and the full-SHA tag is already taken by the image.
+      - name: Publish the verified release files as an OCI artifact
+        if: ${{ !inputs.dry-run }}
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/build-and-release.yaml@${{ github.ref }}
+        run: |
+          manifests="ghcr.io/${REPOSITORY,,}-manifests"
+          # The tag is immutable. A re-run of the same release reuses what is
+          # already published and only repeats the signing and alias steps.
+          if existing=$(oras manifest fetch --descriptor "$manifests:$RELEASE_TAG" 2>error.txt); then
+            digest=$(jq -er .digest <<< "$existing")
+          else
+            if ! grep -qiE 'not found|manifest unknown' error.txt; then
+              cat error.txt >&2
+              exit 1
+            fi
+            cd release
+            files=()
+            for file in *; do
+              case "$file" in
+                install*.yaml) type=application/vnd.multigres.operator.install.v1+yaml ;;
+                *.sigstore.json) type=application/vnd.dev.sigstore.bundle.v0.3+json ;;
+                *.spdx.json) type=application/spdx+json ;;
+                *) type=text/plain ;;
+              esac
+              files+=("$file:$type")
+            done
+            oras push "$manifests:$RELEASE_TAG" \
+              --artifact-type application/vnd.multigres.operator.manifests.v1 \
+              --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+              --annotation "org.opencontainers.image.revision=$GITHUB_SHA" \
+              --annotation "org.opencontainers.image.version=$RELEASE_TAG" \
+              "${files[@]}"
+            cd ..
+            digest=$(oras manifest fetch --descriptor "$manifests:$RELEASE_TAG" | jq -er .digest)
+          fi
+          cosign sign --yes "$manifests@$digest"
+          cosign verify --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$manifests@$digest"
+          if [ "$GITHUB_REF" = refs/heads/main ]; then
+            # A queued/stale main run must not move rolling aliases backwards.
+            current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+            test "$current" = "$GITHUB_SHA"
+            oras tag "$manifests@$digest" current latest
+          fi
