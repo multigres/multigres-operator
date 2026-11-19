@@ -7,7 +7,7 @@ const { spawnSync } = require('node:child_process');
 
 const workflow = fs.readFileSync('.github/workflows/build-and-release.yaml', 'utf8');
 const promotion = workflow.split('      - name: Promote only verified digests\n')[1]
-  .split('        run: |\n')[1].split('\n').map(line => line.slice(10)).join('\n');
+  .split('        run: |\n')[1].split('\n      - ')[0].split('\n').map(line => line.slice(10)).join('\n');
 
 test('docs-only main pushes schedule a replacement for a superseded publication', () => {
   const main = fs.readFileSync('.github/workflows/main.yaml', 'utf8');
@@ -191,5 +191,73 @@ test "$FAILURE" != provenance
     assert.equal(result.status === 0, !failure, result.stderr);
     assert.equal(fs.existsSync(path.join(dir, 'operator.tar')), !failure);
     if (!failure) assert.equal(fs.readFileSync(output, 'utf8'), `digest=${digest}\n`);
+  }
+});
+
+test('manifests are published once per tag, signed, and aliased only from a current main build', t => {
+  const step = workflow.split('      - name: Publish the verified release files as an OCI artifact\n')[1];
+  const publish = step.split('        run: |\n')[1].split('\n      - ')[0]
+    .split('\n').map(line => line.slice(10)).join('\n');
+  assert.match(step, /if: \$\{\{ !inputs\.dry-run \}\}/);
+  const digest = `sha256:${'c'.repeat(64)}`;
+  const sha = '3'.repeat(40);
+  for (const [name, ref, existing, error, current, ok] of [
+    ['main build', 'refs/heads/main', '', 'not found', sha, true],
+    ['stable release', 'refs/tags/v1.2.3', '', 'manifest unknown', sha, true],
+    ['re-run of a published tag', 'refs/heads/main', digest, '', sha, true],
+    ['registry error', 'refs/heads/main', '', 'unauthorized', sha, false],
+    ['stale main build', 'refs/heads/main', '', 'not found', 'newer-commit', false],
+  ]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-manifests-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(dir, 'release'));
+    for (const file of ['install.yaml', 'install-crds.yaml', 'operator-amd64.spdx.json',
+      'install.yaml.sigstore.json', 'checksums.txt', 'image.txt']) {
+      fs.writeFileSync(path.join(dir, 'release', file), `${file}\n`);
+    }
+    fs.writeFileSync(path.join(dir, 'oras'), `#!/bin/bash
+printf '%s\\n' "$*" >> "$LOG"
+if [ "$1 $2" = "manifest fetch" ]; then
+  if [ -n "$EXISTING" ] || [ -e "$LOG.pushed" ]; then printf '{"digest":"%s"}' "\${EXISTING:-$DIGEST}"; exit 0; fi
+  echo "$REGISTRY_ERROR" >&2
+  exit 1
+fi
+if [ "$1" = push ]; then touch "$LOG.pushed"; fi
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'cosign'), '#!/bin/bash\nprintf "cosign %s\\n" "$*" >> "$LOG"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'gh'), '#!/bin/bash\nprintf "%s" "$CURRENT"\n', { mode: 0o755 });
+    const log = path.join(dir, 'calls');
+    fs.writeFileSync(log, '');
+    const result = spawnSync(process.env.RELEASE_TEST_BASH || '/bin/bash',
+      ['--noprofile', '--norc', '-eo', 'pipefail', '-c', publish], {
+        cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`,
+          RELEASE_TAG: ref === 'refs/heads/main' ? sha : 'v1.2.3', REPOSITORY: 'Example/Operator',
+          GITHUB_REPOSITORY: 'Example/Operator', GITHUB_SERVER_URL: 'https://github.test',
+          GITHUB_SHA: sha, GITHUB_REF: ref, IDENTITY: 'identity', GH_TOKEN: 'token',
+          LOG: log, EXISTING: existing, REGISTRY_ERROR: error, CURRENT: current, DIGEST: digest },
+      });
+    assert.equal(result.status === 0, ok, `${name}: ${result.stderr}`);
+    const calls = fs.readFileSync(log, 'utf8');
+    const repository = 'ghcr.io/example/operator-manifests';
+    const tag = ref === 'refs/heads/main' ? sha : 'v1.2.3';
+    // The repository name is lowercased and no tag other than the release tag is pushed.
+    assert.ok(!calls.includes('ghcr.io/Example'), name);
+    if (error === 'unauthorized') {
+      assert.ok(!calls.includes('push '), name);
+      assert.ok(!calls.includes('cosign '), name);
+      continue;
+    }
+    assert.equal(calls.includes(`push ${repository}:${tag} `), !existing, name);
+    assert.ok(calls.includes(`cosign sign --yes ${repository}@${digest}`), name);
+    const aliased = calls.includes(`tag ${repository}@${digest} current latest`);
+    assert.equal(aliased, ok && ref === 'refs/heads/main', name);
+    if (!existing && ok) {
+      assert.ok(calls.includes('--artifact-type application/vnd.multigres.operator.manifests.v1'), name);
+      assert.ok(calls.includes(`--annotation org.opencontainers.image.revision=${sha}`), name);
+      assert.ok(calls.includes('install.yaml:application/vnd.multigres.operator.install.v1+yaml'), name);
+      assert.ok(calls.includes('install.yaml.sigstore.json:application/vnd.dev.sigstore.bundle.v0.3+json'), name);
+      assert.ok(calls.includes('operator-amd64.spdx.json:application/spdx+json'), name);
+      assert.ok(calls.includes('checksums.txt:text/plain'), name);
+    }
   }
 });
