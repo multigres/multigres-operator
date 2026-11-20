@@ -16,6 +16,7 @@ Every merge to `main` automatically:
 3. Publishes a candidate, signs its digest, and verifies its provenance and platform SBOM attestations
 4. Signs all five install manifests, platform SBOMs, `image.txt`, and `checksums.txt` with Sigstore bundles
 5. Promotes the verified digest to the full commit SHA, `current`, and `latest` tags, then updates the rolling [`current` pre-release](https://github.com/multigres/multigres-operator/releases/tag/current)
+6. Pushes the verified release files to GHCR as a signed OCI artifact, tagged with the full commit SHA, and moves its `current` and `latest` tags (see [Install manifests on GHCR](#install-manifests-on-ghcr))
 
 Download the rolling installer, then follow the verification steps below before applying it:
 
@@ -32,6 +33,7 @@ Semver tag pushes (`vX.Y.Z`) trigger the stable lane, which:
 3. Adds the semver image tag without changing the commit-SHA tag; installers use the semver tag and image digest
 4. Prepares the grouped changelog with GoReleaser in a read-only job
 5. Creates a GitHub release in a separate upload-only job, without replacing existing releases or assets
+6. Pushes the verified release files to GHCR as a signed OCI artifact with the semver tag
 
 ## How to cut a stable release
 
@@ -119,7 +121,7 @@ verification steps. It publishes `candidate-<run-id>-<attempt>` images to the
 repository's GHCR namespace and uploads a `verified-release` Actions artifact.
 It requires package, OIDC, and attestation permissions, including on forks.
 It creates no GitHub release and changes no full-SHA, semver, `current`, or
-`latest` tags. Remove candidate images when no longer needed.
+`latest` tags. It does not push the install manifests OCI artifact. Remove candidate images when no longer needed.
 Dry-run installers include the source SHA and candidate digest, but the dry run
 does not publish that SHA tag. They are verification artifacts, not approved
 release assets for downstream promotion.
@@ -149,6 +151,50 @@ Tags with a semver pre-release suffix (e.g., `v1.0.0-rc.1`, `v1.0.0-beta.2`, `v1
 | `latest` | Current | Updated on each `main` push |
 | `vX.Y.Z` | Stable | Immutable |
 
+## Install manifests on GHCR
+
+Each `main` build and each stable release also publishes the verified release
+files as one OCI artifact in a separate repository,
+`ghcr.io/multigres/multigres-operator-manifests`. The artifact holds the five
+install manifests, the platform SBOMs, `image.txt`, `checksums.txt`, and the
+Sigstore bundle for each file. Its artifact type is
+`application/vnd.multigres.operator.manifests.v1`.
+
+The repository is separate from the image repository. The full-SHA tag of the
+image repository is already used by the image.
+
+| Tag | Lane | Mutability |
+|-----|------|------------|
+| `<full-sha>` | Current | Immutable |
+| `current` | Current | Updated on each `main` push |
+| `latest` | Current | Updated on each `main` push |
+| `vX.Y.Z` | Stable | Immutable |
+
+A stable release has no full-SHA tag in this repository. Its `install.yaml`
+contains the semver image tag, so its content is different from the `main`
+build of the same commit. The two builds use the same image digest.
+
+Install ORAS and pull an artifact:
+
+```bash
+oras pull ghcr.io/multigres/multigres-operator-manifests:<full-sha-or-version> --output manifests
+```
+
+Verify the artifact signature before you use the files. Use the ref of the
+workflow run that published it: `refs/heads/main` for a full-SHA tag, and
+`refs/tags/vX.Y.Z` for a version tag.
+
+```bash
+cosign verify \
+  --certificate-identity "https://github.com/multigres/multigres-operator/.github/workflows/build-and-release.yaml@$REF" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/multigres/multigres-operator-manifests:<full-sha-or-version>
+```
+
+Then verify `checksums.txt` and the files as described in
+[Verify the release](#verify-the-release). If a tag exists already, a retry of
+the same run reuses the published artifact. It does not replace it.
+
 ## Downstream promotion contract
 
 `current` installers use
@@ -174,16 +220,18 @@ deployment support.
 | Reuse the main image for stable releases | Releases must have a full-SHA image tag | No consumer change. Release maintainers must wait for successful signed main publication before creating the version tag. |
 | Gate publication on tests, scans, and verification | Downstream copying starts after `current` is updated | `notify-builder` still runs after the release update and sends the full source SHA. Superseded runs fail the tip check and do not dispatch a copy; not every main commit is copied downstream. |
 | Keep rolling `current` publication | Assets are mutable and briefly unavailable during replacement | Retry 404s and reject a SHA mismatch. Fetch the entire asset set again if verification fails during replacement. |
+| Publish install manifests as an OCI artifact on GHCR | Per-commit manifests exist only in the rolling `current` release, which is recreated on each `main` push | No change is required now. A consumer can later pull `multigres-operator-manifests:<full-sha>` or `:vX.Y.Z` instead of the GitHub release assets, and verify the artifact signature first. |
 | Pin build inputs and tighten CI permissions | No change to image references or asset names | None. |
 
 `install-crds.yaml`, `install-rbac.yaml`, and `install.yaml` remain separate
 assets on both release lanes. Component-image overrides such as
 `MULTIGRES_IMAGE_POSTGRES` and `MULTIGRES_IMAGE_MULTIADMIN` are unchanged.
 
-This change does not add per-commit release assets or alter the delete/recreate
-behavior of `current`. Editing a release in place would not make replacement of
-multiple assets atomic. Old pins must use an existing versioned release or
-previously retained assets once `current` has advanced. GitHub immutable releases
+The GitHub release does not hold per-commit assets, and the delete/recreate
+behavior of `current` is unchanged. The per-commit install manifests are in the
+OCI artifact on GHCR. Editing a release in place would not make replacement of
+multiple assets atomic. Old pins can use the OCI artifact for their commit, an existing versioned
+release, or previously retained assets once `current` has advanced. GitHub immutable releases
 cannot be enabled for the rolling release under this model.
 
 ### Copying verified images to another registry
