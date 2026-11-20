@@ -13,6 +13,9 @@ resources:
 - bases/multigres.com_cells.yaml
 - bases/multigres.com_shards.yaml
 - bases/multigres.com_toposervers.yaml
+# Backup CRDs
+- bases/multigres.com_multigresbackups.yaml
+- bases/multigres.com_multigresbackupschedules.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

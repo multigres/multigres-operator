@@ -101,6 +101,8 @@ rules:
   - multigres.com
   resources:
   - cells
+  - multigresbackups
+  - multigresbackupschedules
   - multigresclusters
   - shards
   - tablegroups
@@ -126,6 +128,8 @@ rules:
   - multigres.com
   resources:
   - cells/status
+  - multigresbackups/status
+  - multigresbackupschedules/status
   - multigresclusters/status
   - shards/status
   - tablegroups/status

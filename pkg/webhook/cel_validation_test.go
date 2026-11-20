@@ -882,3 +882,70 @@ func TestCEL_StatelessReplicasLimit(t *testing.T) {
 		t.Errorf("Expected error to contain 'less than or equal to 128', got %v", err)
 	}
 }
+
+// T11: MultigresBackup.spec is immutable (I9), and a schedule's clusterRef
+// cannot change.
+func TestCEL_MultigresBackup(t *testing.T) {
+	t.Parallel()
+
+	backup := &multigresv1alpha1.MultigresBackup{
+		ObjectMeta: metav1.ObjectMeta{Name: "immutable-backup", Namespace: testNamespace},
+		Spec: multigresv1alpha1.MultigresBackupSpec{
+			ClusterRef: multigresv1alpha1.BackupClusterReference{Name: "mgc"},
+			Database:   "postgres",
+			TableGroup: "default",
+			Shard:      "0-inf",
+			Type:       multigresv1alpha1.BackupKindFull,
+		},
+	}
+	if err := k8sClient.Create(ctx, backup); err != nil {
+		t.Fatalf("Failed to create MultigresBackup: %v", err)
+	}
+	if backup.Spec.TimeoutSeconds != multigresv1alpha1.DefaultBackupTimeoutSeconds ||
+		backup.Spec.Attempt != 1 {
+		t.Errorf("defaults not applied: %+v", backup.Spec)
+	}
+	for name, mutate := range map[string]func(*multigresv1alpha1.MultigresBackupSpec){
+		"type":  func(s *multigresv1alpha1.MultigresBackupSpec) { s.Type = multigresv1alpha1.BackupKindDifferential },
+		"shard": func(s *multigresv1alpha1.MultigresBackupSpec) { s.Shard = "1" },
+	} {
+		toUpdate := backup.DeepCopy()
+		mutate(&toUpdate.Spec)
+		err := k8sClient.Update(ctx, toUpdate)
+		if err == nil || !strings.Contains(err.Error(), "spec is immutable") {
+			t.Errorf("updating %s: expected immutability error, got %v", name, err)
+		}
+	}
+
+	sched := &multigresv1alpha1.MultigresBackupSchedule{
+		ObjectMeta: metav1.ObjectMeta{Name: "sched", Namespace: testNamespace},
+		Spec: multigresv1alpha1.MultigresBackupScheduleSpec{
+			ClusterRef: multigresv1alpha1.BackupClusterReference{Name: "mgc"},
+			BackupScheduleTemplate: multigresv1alpha1.BackupScheduleTemplate{
+				Schedule: "0 4 * * *",
+				Type:     multigresv1alpha1.BackupKindDifferential,
+			},
+		},
+	}
+	if err := k8sClient.Create(ctx, sched); err != nil {
+		t.Fatalf("Failed to create MultigresBackupSchedule: %v", err)
+	}
+	if sched.Spec.MaxAttempts() != 4 || sched.Spec.Retry.BackoffSeconds != 1800 ||
+		sched.Spec.StartingDeadlineSeconds == nil || *sched.Spec.StartingDeadlineSeconds != 21600 {
+		t.Errorf("defaults not applied: %+v", sched.Spec)
+	}
+	toUpdate := sched.DeepCopy()
+	toUpdate.Spec.Schedule = "0 5 * * *"
+	if err := k8sClient.Update(ctx, toUpdate); err != nil {
+		t.Errorf("schedule should be mutable: %v", err)
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(sched), sched); err != nil {
+		t.Fatal(err)
+	}
+	toUpdate = sched.DeepCopy()
+	toUpdate.Spec.ClusterRef.Name = "other"
+	if err := k8sClient.Update(ctx, toUpdate); err == nil ||
+		!strings.Contains(err.Error(), "clusterRef is immutable") {
+		t.Errorf("expected clusterRef immutability error, got %v", err)
+	}
+}
