@@ -96,7 +96,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 						Replicas:    ptr.To(int32(3)),
 						ServiceName: "test-toposerver-headless",
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(toposerverLabels(t, "test-cluster")),
+							MatchLabels: metadata.GetSelectorLabels(
+								toposerverLabels(t, "test-cluster"),
+							),
 						},
 						PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
 							WhenDeleted: appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
@@ -140,14 +142,35 @@ func TestTopoServerReconciliation(t *testing.T) {
 											},
 											{Name: "ETCD_NAME", Value: "$(POD_NAME)"},
 											{Name: "ETCD_DATA_DIR", Value: "/var/lib/etcd"},
-											{Name: "ETCD_LISTEN_CLIENT_URLS", Value: "http://[::]:2379"},
-											{Name: "ETCD_LISTEN_PEER_URLS", Value: "http://[::]:2380"},
-											{Name: "ETCD_LISTEN_METRICS_URLS", Value: "http://[::]:2381"},
-											{Name: "ETCD_ADVERTISE_CLIENT_URLS", Value: "http://$(POD_NAME).test-toposerver-headless.$(POD_NAMESPACE).svc.cluster.local:2379"},
-											{Name: "ETCD_INITIAL_ADVERTISE_PEER_URLS", Value: "http://$(POD_NAME).test-toposerver-headless.$(POD_NAMESPACE).svc.cluster.local:2380"},
+											{
+												Name:  "ETCD_LISTEN_CLIENT_URLS",
+												Value: "http://[::]:2379",
+											},
+											{
+												Name:  "ETCD_LISTEN_PEER_URLS",
+												Value: "http://[::]:2380",
+											},
+											{
+												Name:  "ETCD_LISTEN_METRICS_URLS",
+												Value: "http://[::]:2381",
+											},
+											{
+												Name:  "ETCD_ADVERTISE_CLIENT_URLS",
+												Value: "http://$(POD_NAME).test-toposerver-headless.$(POD_NAMESPACE).svc.cluster.local:2379",
+											},
+											{
+												Name:  "ETCD_INITIAL_ADVERTISE_PEER_URLS",
+												Value: "http://$(POD_NAME).test-toposerver-headless.$(POD_NAMESPACE).svc.cluster.local:2380",
+											},
 											{Name: "ETCD_INITIAL_CLUSTER_STATE", Value: "new"},
-											{Name: "ETCD_INITIAL_CLUSTER_TOKEN", Value: "test-toposerver"},
-											{Name: "ETCD_INITIAL_CLUSTER", Value: "test-toposerver-0=http://test-toposerver-0.test-toposerver-headless.default.svc.cluster.local:2380,test-toposerver-1=http://test-toposerver-1.test-toposerver-headless.default.svc.cluster.local:2380,test-toposerver-2=http://test-toposerver-2.test-toposerver-headless.default.svc.cluster.local:2380"},
+											{
+												Name:  "ETCD_INITIAL_CLUSTER_TOKEN",
+												Value: "test-toposerver",
+											},
+											{
+												Name:  "ETCD_INITIAL_CLUSTER",
+												Value: "test-toposerver-0=http://test-toposerver-0.test-toposerver-headless.default.svc.cluster.local:2380,test-toposerver-1=http://test-toposerver-1.test-toposerver-headless.default.svc.cluster.local:2380,test-toposerver-2=http://test-toposerver-2.test-toposerver-headless.default.svc.cluster.local:2380",
+											},
 											{Name: "ETCD_AUTO_COMPACTION_MODE", Value: "periodic"},
 											{Name: "ETCD_AUTO_COMPACTION_RETENTION", Value: "1h"},
 											{Name: "ETCD_QUOTA_BACKEND_BYTES", Value: "2147483648"},
@@ -158,8 +181,10 @@ func TestTopoServerReconciliation(t *testing.T) {
 										StartupProbe: &corev1.Probe{
 											ProbeHandler: corev1.ProbeHandler{
 												HTTPGet: &corev1.HTTPGetAction{
-													Path:   "/readyz",
-													Port:   intstr.FromInt32(toposervercontroller.MetricsPort),
+													Path: "/readyz",
+													Port: intstr.FromInt32(
+														toposervercontroller.MetricsPort,
+													),
 													Scheme: corev1.URISchemeHTTP,
 												},
 											},
@@ -171,8 +196,10 @@ func TestTopoServerReconciliation(t *testing.T) {
 										LivenessProbe: &corev1.Probe{
 											ProbeHandler: corev1.ProbeHandler{
 												HTTPGet: &corev1.HTTPGetAction{
-													Path:   "/livez",
-													Port:   intstr.FromInt32(toposervercontroller.MetricsPort),
+													Path: "/livez",
+													Port: intstr.FromInt32(
+														toposervercontroller.MetricsPort,
+													),
 													Scheme: corev1.URISchemeHTTP,
 												},
 											},
@@ -184,8 +211,10 @@ func TestTopoServerReconciliation(t *testing.T) {
 										ReadinessProbe: &corev1.Probe{
 											ProbeHandler: corev1.ProbeHandler{
 												HTTPGet: &corev1.HTTPGetAction{
-													Path:   "/readyz",
-													Port:   intstr.FromInt32(toposervercontroller.MetricsPort),
+													Path: "/readyz",
+													Port: intstr.FromInt32(
+														toposervercontroller.MetricsPort,
+													),
 													Scheme: corev1.URISchemeHTTP,
 												},
 											},
@@ -202,7 +231,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 							{
 								ObjectMeta: metav1.ObjectMeta{Name: "data"},
 								Spec: corev1.PersistentVolumeClaimSpec{
-									AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+									AccessModes: []corev1.PersistentVolumeAccessMode{
+										corev1.ReadWriteOnce,
+									},
 									Resources: corev1.VolumeResourceRequirements{
 										Requests: corev1.ResourceList{
 											corev1.ResourceStorage: resource.MustParse("10Gi"),
@@ -248,7 +279,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 							tcpServicePort(t, "client", 2379),
 							tcpServicePort(t, "peer", 2380),
 						},
-						Selector:                 metadata.GetSelectorLabels(toposerverLabels(t, "test-cluster")),
+						Selector: metadata.GetSelectorLabels(
+							toposerverLabels(t, "test-cluster"),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -281,7 +314,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 						Replicas:    ptr.To(int32(3)),
 						ServiceName: "delete-policy-topo-headless",
 						Selector: &metav1.LabelSelector{
-							MatchLabels: metadata.GetSelectorLabels(toposerverLabels(t, "test-cluster")),
+							MatchLabels: metadata.GetSelectorLabels(
+								toposerverLabels(t, "test-cluster"),
+							),
 						},
 						PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
 							WhenDeleted: appsv1.DeletePersistentVolumeClaimRetentionPolicyType,
@@ -325,14 +360,35 @@ func TestTopoServerReconciliation(t *testing.T) {
 											},
 											{Name: "ETCD_NAME", Value: "$(POD_NAME)"},
 											{Name: "ETCD_DATA_DIR", Value: "/var/lib/etcd"},
-											{Name: "ETCD_LISTEN_CLIENT_URLS", Value: "http://[::]:2379"},
-											{Name: "ETCD_LISTEN_PEER_URLS", Value: "http://[::]:2380"},
-											{Name: "ETCD_LISTEN_METRICS_URLS", Value: "http://[::]:2381"},
-											{Name: "ETCD_ADVERTISE_CLIENT_URLS", Value: "http://$(POD_NAME).delete-policy-topo-headless.$(POD_NAMESPACE).svc.cluster.local:2379"},
-											{Name: "ETCD_INITIAL_ADVERTISE_PEER_URLS", Value: "http://$(POD_NAME).delete-policy-topo-headless.$(POD_NAMESPACE).svc.cluster.local:2380"},
+											{
+												Name:  "ETCD_LISTEN_CLIENT_URLS",
+												Value: "http://[::]:2379",
+											},
+											{
+												Name:  "ETCD_LISTEN_PEER_URLS",
+												Value: "http://[::]:2380",
+											},
+											{
+												Name:  "ETCD_LISTEN_METRICS_URLS",
+												Value: "http://[::]:2381",
+											},
+											{
+												Name:  "ETCD_ADVERTISE_CLIENT_URLS",
+												Value: "http://$(POD_NAME).delete-policy-topo-headless.$(POD_NAMESPACE).svc.cluster.local:2379",
+											},
+											{
+												Name:  "ETCD_INITIAL_ADVERTISE_PEER_URLS",
+												Value: "http://$(POD_NAME).delete-policy-topo-headless.$(POD_NAMESPACE).svc.cluster.local:2380",
+											},
 											{Name: "ETCD_INITIAL_CLUSTER_STATE", Value: "new"},
-											{Name: "ETCD_INITIAL_CLUSTER_TOKEN", Value: "delete-policy-topo"},
-											{Name: "ETCD_INITIAL_CLUSTER", Value: "delete-policy-topo-0=http://delete-policy-topo-0.delete-policy-topo-headless.default.svc.cluster.local:2380,delete-policy-topo-1=http://delete-policy-topo-1.delete-policy-topo-headless.default.svc.cluster.local:2380,delete-policy-topo-2=http://delete-policy-topo-2.delete-policy-topo-headless.default.svc.cluster.local:2380"},
+											{
+												Name:  "ETCD_INITIAL_CLUSTER_TOKEN",
+												Value: "delete-policy-topo",
+											},
+											{
+												Name:  "ETCD_INITIAL_CLUSTER",
+												Value: "delete-policy-topo-0=http://delete-policy-topo-0.delete-policy-topo-headless.default.svc.cluster.local:2380,delete-policy-topo-1=http://delete-policy-topo-1.delete-policy-topo-headless.default.svc.cluster.local:2380,delete-policy-topo-2=http://delete-policy-topo-2.delete-policy-topo-headless.default.svc.cluster.local:2380",
+											},
 											{Name: "ETCD_AUTO_COMPACTION_MODE", Value: "periodic"},
 											{Name: "ETCD_AUTO_COMPACTION_RETENTION", Value: "1h"},
 											{Name: "ETCD_QUOTA_BACKEND_BYTES", Value: "2147483648"},
@@ -343,8 +399,10 @@ func TestTopoServerReconciliation(t *testing.T) {
 										StartupProbe: &corev1.Probe{
 											ProbeHandler: corev1.ProbeHandler{
 												HTTPGet: &corev1.HTTPGetAction{
-													Path:   "/readyz",
-													Port:   intstr.FromInt32(toposervercontroller.MetricsPort),
+													Path: "/readyz",
+													Port: intstr.FromInt32(
+														toposervercontroller.MetricsPort,
+													),
 													Scheme: corev1.URISchemeHTTP,
 												},
 											},
@@ -356,8 +414,10 @@ func TestTopoServerReconciliation(t *testing.T) {
 										LivenessProbe: &corev1.Probe{
 											ProbeHandler: corev1.ProbeHandler{
 												HTTPGet: &corev1.HTTPGetAction{
-													Path:   "/livez",
-													Port:   intstr.FromInt32(toposervercontroller.MetricsPort),
+													Path: "/livez",
+													Port: intstr.FromInt32(
+														toposervercontroller.MetricsPort,
+													),
 													Scheme: corev1.URISchemeHTTP,
 												},
 											},
@@ -369,8 +429,10 @@ func TestTopoServerReconciliation(t *testing.T) {
 										ReadinessProbe: &corev1.Probe{
 											ProbeHandler: corev1.ProbeHandler{
 												HTTPGet: &corev1.HTTPGetAction{
-													Path:   "/readyz",
-													Port:   intstr.FromInt32(toposervercontroller.MetricsPort),
+													Path: "/readyz",
+													Port: intstr.FromInt32(
+														toposervercontroller.MetricsPort,
+													),
 													Scheme: corev1.URISchemeHTTP,
 												},
 											},
@@ -387,9 +449,13 @@ func TestTopoServerReconciliation(t *testing.T) {
 							{
 								ObjectMeta: metav1.ObjectMeta{Name: "data"},
 								Spec: corev1.PersistentVolumeClaimSpec{
-									AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+									AccessModes: []corev1.PersistentVolumeAccessMode{
+										corev1.ReadWriteOnce,
+									},
 									Resources: corev1.VolumeResourceRequirements{
-										Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")},
+										Requests: corev1.ResourceList{
+											corev1.ResourceStorage: resource.MustParse("10Gi"),
+										},
 									},
 									VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 								},
@@ -431,7 +497,9 @@ func TestTopoServerReconciliation(t *testing.T) {
 							tcpServicePort(t, "client", 2379),
 							tcpServicePort(t, "peer", 2380),
 						},
-						Selector:                 metadata.GetSelectorLabels(toposerverLabels(t, "test-cluster")),
+						Selector: metadata.GetSelectorLabels(
+							toposerverLabels(t, "test-cluster"),
+						),
 						PublishNotReadyAddresses: true,
 					},
 				},
@@ -482,7 +550,6 @@ func TestTopoServerReconciliation(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 // Test helpers
@@ -521,7 +588,12 @@ func tcpPort(t testing.TB, name string, port int32) corev1.ContainerPort {
 // tcpServicePort creates a TCP service port with named target
 func tcpServicePort(t testing.TB, name string, port int32) corev1.ServicePort {
 	t.Helper()
-	return corev1.ServicePort{Name: name, Port: port, TargetPort: intstr.FromString(name), Protocol: corev1.ProtocolTCP}
+	return corev1.ServicePort{
+		Name:       name,
+		Port:       port,
+		TargetPort: intstr.FromString(name),
+		Protocol:   corev1.ProtocolTCP,
+	}
 }
 
 // TestTopoServerReconcileGating exercises the reconcile-disabled label end to

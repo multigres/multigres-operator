@@ -198,35 +198,40 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 	tests := map[string]struct {
 		cluster     *multigresv1alpha1.MultigresCluster
 		wantSubject string
+		wantURI     string
 	}{
 		"project ref annotation is the cluster identity": {
 			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
 				metadata.AnnotationProjectRef: "proj_123",
 			}),
 			wantSubject: "/multigres/proj_123",
+			wantURI:     "spiffe://example.test/project/proj_123",
 		},
 		"empty project ref falls back to namespace and cluster name": {
 			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
 				metadata.AnnotationProjectRef: "",
 			}),
 			wantSubject: "/multigres/supabase/test-cluster",
+			wantURI:     "spiffe://example.test/project/supabase/test-cluster",
 		},
 		"absent annotation falls back to namespace and cluster name": {
 			cluster:     topoTLSCluster("test-cluster", "supabase", nil),
 			wantSubject: "/multigres/supabase/test-cluster",
+			wantURI:     "spiffe://example.test/project/supabase/test-cluster",
 		},
 		"unsafe path characters are percent-encoded": {
 			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
 				metadata.AnnotationProjectRef: "proj/123",
 			}),
 			wantSubject: "/multigres/proj%2F123",
+			wantURI:     "spiffe://example.test/project/proj%2F123",
 		},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			scheme := setupScheme()
-			got, err := buildTopoClientCertificate(tc.cluster, scheme)
+			got, err := buildTopoClientCertificate(tc.cluster, scheme, "example.test")
 			if err != nil {
 				t.Fatalf("buildTopoClientCertificate() error = %v", err)
 			}
@@ -255,9 +260,13 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 			if diff := cmp.Diff(wantName, spec["secretName"]); diff != "" {
 				t.Errorf("secretName mismatch (-want +got):\n%s", diff)
 			}
-			// A client credential is verified by subject, so it carries no SANs.
+			// The CN stays the topology root, because etcd reads usernames from
+			// it. The SPIFFE URI SAN carries the same project for an issuer gate.
 			if diff := cmp.Diff([]any{}, spec["dnsNames"]); diff != "" {
 				t.Errorf("dnsNames mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff([]any{tc.wantURI}, spec["uris"]); diff != "" {
+				t.Errorf("uris mismatch (-want +got):\n%s", diff)
 			}
 			wantUsages := []any{
 				"digital signature",
@@ -289,7 +298,7 @@ func TestBuildTopoClientCertificateCommonNameMatchesTopologyRoot(t *testing.T) {
 		metadata.AnnotationProjectRef: "proj_123",
 	})
 
-	cert, err := buildTopoClientCertificate(cluster, scheme)
+	cert, err := buildTopoClientCertificate(cluster, scheme, "example.test")
 	if err != nil {
 		t.Fatalf("buildTopoClientCertificate() error = %v", err)
 	}
@@ -345,7 +354,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 		cluster.Spec.TopoTLS.Enabled = ptr.To(false)
 
 		existing, err := buildTopoClientCertificate(
-			topoTLSCluster("test-cluster", "supabase", nil), scheme,
+			topoTLSCluster("test-cluster", "supabase", nil), scheme, "example.test",
 		)
 		if err != nil {
 			t.Fatalf("buildTopoClientCertificate() error = %v", err)
@@ -486,7 +495,7 @@ func TestBuildTopoClientCertificateRejectsOverLongRoot(t *testing.T) {
 		metadata.AnnotationProjectRef: strings.Repeat("p", 64),
 	})
 
-	if _, err := buildTopoClientCertificate(cluster, scheme); err == nil {
+	if _, err := buildTopoClientCertificate(cluster, scheme, "example.test"); err == nil {
 		t.Fatal("buildTopoClientCertificate() = nil error, want a common name limit error")
 	}
 }
@@ -507,5 +516,20 @@ func TestInternalCertificatesKeepClusterIssuer(t *testing.T) {
 		if issuer != "cluster-issuer" {
 			t.Errorf("%s issuerRef.name = %q, want cluster-issuer", cert.GetName(), issuer)
 		}
+	}
+}
+
+func TestBuildTopoClientCertificateDefaultTrustDomain(t *testing.T) {
+	cluster := topoTLSCluster("test-cluster", "supabase", map[string]string{
+		metadata.AnnotationProjectRef: "proj_123",
+	})
+	cert, err := buildTopoClientCertificate(cluster, setupScheme(), "")
+	if err != nil {
+		t.Fatalf("buildTopoClientCertificate() error = %v", err)
+	}
+	uris, _, _ := unstructured.NestedSlice(cert.Object, "spec", "uris")
+	want := []any{"spiffe://multigres.local/project/proj_123"}
+	if diff := cmp.Diff(want, uris); diff != "" {
+		t.Errorf("uris mismatch (-want +got):\n%s", diff)
 	}
 }

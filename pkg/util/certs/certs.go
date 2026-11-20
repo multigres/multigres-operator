@@ -23,12 +23,14 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
 const (
 	// DefaultIssuerName is the cert-manager ClusterIssuer used when a caller
 	// does not name one.
-	DefaultIssuerName = "supabase-issuer"
+	DefaultIssuerName = multigresv1alpha1.DefaultIssuerName
 
 	// Duration is the certificate duration (5 years), matching non-HA projects.
 	Duration = "44640h0m0s"
@@ -39,6 +41,10 @@ const (
 
 	// FieldOwner is the server-side apply field manager for owned Certificates.
 	FieldOwner = "multigres-operator"
+
+	// DefaultTrustDomain is the SPIFFE trust domain used in URI SANs when the
+	// operator is not given one.
+	DefaultTrustDomain = "multigres.local"
 
 	// MaxCommonNameBytes is the X.509 upper bound for the CN attribute
 	// (RFC 5280 ub-common-name). cert-manager's webhook rejects longer CNs.
@@ -59,8 +65,19 @@ type Spec struct {
 	SecretName string
 	CommonName string
 	DNSNames   []any
+	// URIs are the URI SANs. Omitted from the spec when empty.
+	URIs       []any
 	Usages     []any
 	IssuerName string
+}
+
+// SPIFFEURI returns spiffe://<trustDomain>/<path>, falling back to
+// DefaultTrustDomain when trustDomain is empty.
+func SPIFFEURI(trustDomain, path string) string {
+	if trustDomain == "" {
+		trustDomain = DefaultTrustDomain
+	}
+	return "spiffe://" + trustDomain + "/" + path
 }
 
 // Build constructs an unstructured cert-manager Certificate in the owner's
@@ -70,21 +87,29 @@ func Build(
 	scheme *runtime.Scheme,
 	spec Spec,
 ) (*unstructured.Unstructured, error) {
-	cert := &unstructured.Unstructured{}
-	cert.SetGroupVersionKind(GVK)
-	cert.SetName(spec.Name)
-	cert.SetNamespace(owner.GetNamespace())
-
+	cert := BuildShared(owner.GetNamespace(), spec)
 	if err := ctrl.SetControllerReference(owner, cert, scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)
 	}
+	return cert, nil
+}
+
+// BuildShared constructs an unstructured cert-manager Certificate in
+// namespace with no owner reference, for a Certificate shared by resources in
+// other namespaces. A namespaced owner cannot own an object elsewhere, so the
+// caller is responsible for its lifecycle.
+func BuildShared(namespace string, spec Spec) *unstructured.Unstructured {
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(GVK)
+	cert.SetName(spec.Name)
+	cert.SetNamespace(namespace)
 
 	issuer := spec.IssuerName
 	if issuer == "" {
 		issuer = DefaultIssuerName
 	}
 
-	cert.Object["spec"] = map[string]any{
+	certSpec := map[string]any{
 		"secretName": spec.SecretName,
 		"dnsNames":   spec.DNSNames,
 		"duration":   Duration,
@@ -103,8 +128,11 @@ func Build(
 		},
 		"usages": spec.Usages,
 	}
-
-	return cert, nil
+	if len(spec.URIs) != 0 {
+		certSpec["uris"] = spec.URIs
+	}
+	cert.Object["spec"] = certSpec
+	return cert
 }
 
 // TruncateCommonName returns cn unchanged when it fits the X.509 CN limit.

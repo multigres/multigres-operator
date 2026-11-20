@@ -184,11 +184,12 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	}
 
 	cluster := &multigresclustercontroller.MultigresClusterReconciler{
-		Client:          s.Ops.For("multigrescluster", base),
-		Scheme:          mgr.GetScheme(),
-		Recorder:        mgr.GetEventRecorderFor("multigrescluster-controller"),
-		APIReader:       mgr.GetAPIReader(),
-		CreateTopoStore: topo.ForClusterRef,
+		Client:            s.Ops.For("multigrescluster", base),
+		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorderFor("multigrescluster-controller"),
+		APIReader:         mgr.GetAPIReader(),
+		CreateTopoStore:   topo.ForClusterRef,
+		OperatorNamespace: OperatorNamespace,
 		// One single-member etcd per address, as topoRegistry models it, named
 		// after nothing the operator manages. Left unstubbed, this dials a real
 		// etcd and the managed global TopoServer is never retired after a move.
@@ -249,9 +250,10 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	}
 
 	topoServer := &toposervercontroller.TopoServerReconciler{
-		Client:   s.Ops.For("toposerver", base),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("toposerver-controller"),
+		Client:            s.Ops.For("toposerver", base),
+		Scheme:            mgr.GetScheme(),
+		Recorder:          mgr.GetEventRecorderFor("toposerver-controller"),
+		OperatorNamespace: OperatorNamespace,
 		// Maintenance never dials a real etcd in this suite; a case that
 		// enables it registers a simulator with c.EtcdSim.
 		MaintenanceClientFactory: etcdSimFactory,

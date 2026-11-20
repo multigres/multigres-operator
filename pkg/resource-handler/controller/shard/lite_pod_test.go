@@ -149,6 +149,44 @@ func TestBuildLiteContainer_Args(t *testing.T) {
 	}
 }
 
+func TestBuildLitePod_TopologyCredential(t *testing.T) {
+	secret := multigresv1alpha1.TopoClientCertSecretName("test-cluster")
+	for _, tc := range []struct {
+		name   string
+		secret string
+	}{
+		{
+			name:   "TLS configured",
+			secret: secret,
+		},
+		{name: "TLS disabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shard := newTestLiteShard()
+			shard.Spec.GlobalTopoServer.ClientCertSecret = tc.secret
+			shard.Spec.GlobalTopoServer.CASecret = tc.secret
+			pod, err := BuildLitePod(shard, "main", "z1", newTestPoolSpec(), testScheme())
+			require.NoError(t, err)
+
+			volumeName := multigresv1alpha1.TopoClientTLSVolumeName
+			configured := tc.secret != ""
+			if configured {
+				assertTopoVolumeSecret(t, pod.Spec.Volumes, tc.secret)
+			} else {
+				require.Nil(t, findVolume(pod.Spec.Volumes, volumeName))
+			}
+			for _, container := range append(slices.Clone(pod.Spec.InitContainers), pod.Spec.Containers...) {
+				require.Equal(
+					t,
+					configured && container.Name == "minigres",
+					mountsVolume(&container, volumeName),
+					container.Name,
+				)
+			}
+		})
+	}
+}
+
 func TestBuildLiteContainer_ImagePortsAndProbes(t *testing.T) {
 	c := buildLiteContainer(newTestLiteShard(), newTestPoolSpec(), "main", "z1", "p-test")
 
@@ -256,7 +294,10 @@ func TestBuildLitePod(t *testing.T) {
 			BuildPoolDataPVCName(shard, "main", "z1", 0) {
 		t.Errorf("first volume = %#v, want the index 0 data PVC", pod.Spec.Volumes)
 	}
-	if diff := cmp.Diff(buildPoolVolumes(shard, "z1"), pod.Spec.Volumes[1:]); diff != "" {
+	if diff := cmp.Diff(
+		buildPoolVolumes(shard, "z1"),
+		pod.Spec.Volumes[1:],
+	); diff != "" {
 		t.Errorf("shared volumes mismatch (-want +got):\n%s", diff)
 	}
 
