@@ -18,7 +18,6 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/drain"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
-	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -452,7 +451,6 @@ func (r *ShardReconciler) handlePendingDeletion(
 		shard.Status.Conditions,
 		multigresv1alpha1.ConditionReadyForDeletion,
 	) {
-		statusBase := shard.DeepCopy()
 		status.SetCondition(&shard.Status.Conditions, metav1.Condition{
 			Type:               multigresv1alpha1.ConditionReadyForDeletion,
 			Status:             metav1.ConditionTrue,
@@ -461,12 +459,7 @@ func (r *ShardReconciler) handlePendingDeletion(
 			ObservedGeneration: shard.Generation,
 			LastTransitionTime: metav1.Now(),
 		})
-		if err := r.Status().Patch(
-			ctx,
-			shard,
-			client.MergeFrom(statusBase),
-			client.FieldOwner(ownership.ManagerShard),
-		); err != nil {
+		if err := r.patchStatus(ctx, shard, shard.Status.Phase); err != nil {
 			return ctrl.Result{}, fmt.Errorf("setting ReadyForDeletion condition: %w", err)
 		}
 		logger.Info("Set ReadyForDeletion condition")

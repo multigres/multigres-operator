@@ -114,33 +114,59 @@ func TestReadyForDeletionProtocol(t *testing.T) {
 		Suite.Scheme,
 	)
 	c.NoError(err, "build orphan tablegroup")
+
+	// The orphan TableGroup and its Shard are created gated, so no controller
+	// acts on either until the test releases them, which makes the order the
+	// protocol is exercised in deterministic:
+	//
+	//  1. The TableGroup is gated while its Shard is created here, so its own
+	//     first pass cannot race the create: the Shard the protocol drains
+	//     exists before the TableGroup controller runs, and the TableGroup
+	//     cannot report ReadyForDeletion vacuously over zero children.
+	//  2. The Shard stays gated until the TableGroup controller has marked it
+	//     for pending deletion, so its first reconcile is the pending-deletion
+	//     one, on a Shard whose status has never been written. That is the
+	//     ordering a status-less Shard has to survive; left to chance, a
+	//     normal pass usually writes status first.
+	gate := func(obj client.Object) {
+		labels := obj.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[features.ReconcileLabel] = features.Disabled
+		obj.SetLabels(labels)
+	}
+	gate(orphanTG)
 	c.NoError(c.Create(orphanTG), "create orphan tablegroup")
 	orphanKey := client.ObjectKeyFromObject(orphanTG)
 
-	// Pre-create the child Shard, from the now-persisted orphanTG (so its
-	// owner reference carries a real UID), immediately after the TableGroup
-	// rather than leaving TableGroupReconciler to create it on its first
-	// normal pass. Without this, a real race exists: if multigrescluster
-	// annotates the brand-new TableGroup with AnnotationPendingDeletion before
-	// TableGroupReconciler has ever run stepApplyDesiredShards for it,
-	// handlePendingDeletion lists zero child Shards and reports
-	// ReadyForDeletion vacuously, having consulted nothing. Creating the Shard
-	// here, keyed identically to what stepApplyDesiredShards would build,
-	// guarantees the child the protocol is supposed to drain exists before
-	// either controller's watch can fire. AlreadyExists is fine rather than
-	// fatal: it means TableGroupReconciler's own first pass won the race and
-	// applied this same Shard first, which is the other safe ordering.
 	shardCR, err := tablegroupcontroller.BuildShard(
 		orphanTG,
 		&orphanTG.Spec.Shards[0],
 		Suite.Scheme,
 	)
 	c.NoError(err, "build orphan shard")
-	if err := c.Create(shardCR); err != nil &&
-		!apierrors.IsAlreadyExists(err) {
-		c.NoError(err, "create orphan shard")
-	}
+	gate(shardCR)
+	c.NoError(c.Create(shardCR), "create orphan shard")
 	orphanShardKey := client.ObjectKeyFromObject(shardCR)
+
+	c.setReconcileGate(&multigresv1alpha1.TableGroup{}, orphanKey, false)
+	c.Eventually(30*time.Second, "the TableGroup to mark its Shard for pending deletion",
+		func() error {
+			got := &Shard{}
+			if err := c.Get(orphanShardKey, got); err != nil {
+				return err
+			}
+			if got.Annotations[multigresv1alpha1.AnnotationPendingDeletion] == "" {
+				return fmt.Errorf("shard %s is not marked yet", orphanShardKey.Name)
+			}
+			return nil
+		})
+	held := &Shard{}
+	c.NoError(c.Get(orphanShardKey, held), "get the held orphan shard")
+	c.Check().Eq(0, len(held.Status.Conditions),
+		"the held Shard has status conditions, so its first pass already ran")
+	c.setReconcileGate(&Shard{}, orphanShardKey, false)
 	clusterKey := client.ObjectKeyFromObject(cluster)
 
 	// Corroborating evidence, independent of how fast the three controllers
