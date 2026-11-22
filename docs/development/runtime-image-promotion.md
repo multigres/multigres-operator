@@ -32,6 +32,40 @@ The same Git commit updates these constants in `api/v1alpha1/image_defaults.go`:
 Etcd and Postgres exporter defaults are preserved. The PR describes the current
 main and proposed images and links both build and test evidence.
 
+## Dynamic tablegroup qualification
+
+Before enabling or advertising dynamic tablegroups, run **Nightly upstream
+compatibility** with `qualify-dynamic-tablegroups=true`, the exact shipping
+operator commit, and the upstream nightly build that produced the shipping
+runtime digests. The operator commit must contain the lifecycle test. Leave
+`promote` off for this feature qualification run.
+
+```bash
+gh workflow run nightly-compatibility.yaml \
+  --repo multigres/multigres-operator --ref main \
+  -f operator-ref="$OPERATOR_SHA" -f nightly-run-id="$NIGHTLY_RUN_ID" \
+  -F qualify-dynamic-tablegroups=true
+```
+
+Require a passing **Qualify dynamic tablegroups** job and retain its test-results
+artifact with the release evidence. `TestDynamicTablegroupLifecycle` records the
+operator revision, runtime image digests, and catalog IDs. It checks the runtime
+image references on the pods after each create. A failed, skipped, or unavailable
+result leaves the feature unqualified. A change to the shipping operator
+revision or runtime digests requires a new passing result.
+
+The scenario creates and drops a two-shard tablegroup through gateway SQL on an
+opted-in distributed cluster. It checks active catalog state and serving
+primaries on both creates. Before recreating the name, it checks that the
+catalog row, pods, pooler registrations, operator provision claim, and shard
+initialization claims are gone. It requires a new catalog ID, distinct storage
+bindings, and fresh PostgreSQL data with the old PVCs still retained. A write
+and read on the default tablegroup after drop and recreation check continuity.
+
+The distributed and Lite smoke tests continue to control runtime promotion.
+Ordinary operator releases and runtime promotion can proceed with dynamic
+tablegroups disabled.
+
 ## Lite / Minigres runtime requirements
 
 Lite clusters run `minigres` from `spec.images.multipooler`. Use a runtime built
@@ -163,10 +197,11 @@ timeout without filling the Kind host's disk; CSI capacity expansion is not cove
 
 Every code PR runs this package with fixture images pinned to the qualified
 upstream revision `56439a46025bdf7d7f94f4f96152f5b4f7d57eb6`. The nightly canary
-runs both the shared suite and this dedicated package with its verified candidate
-digests through `E2E_*` overrides. Both must pass before promotion or a green
-compatibility report. The fixture pins do not change compiled runtime defaults.
-Manual canaries against older operator refs must include this test package.
+runs the shared suite and the dedicated Minigres package with its verified
+candidate digests through `E2E_*` overrides. Both must pass before promotion
+or a green compatibility report. The fixture pins do not change compiled
+runtime defaults. Operator refs selected for a manual canary must include
+the Minigres test package.
 
 On 2026-10-26 the merged Lite branch was qualified locally against the earlier
 `d063d0b437dac1fb935e0476c142f1a42a2af9f1` image pair on linux/arm64, in a
@@ -284,7 +319,7 @@ checkpoint. No partially updated image set can become visible on the branch.
 
 ## Manual qualification and promotion
 
-Both full-suite qualification jobs have a 60-minute budget, including setup.
+Each canary qualification job has a 60-minute budget, including setup.
 Existing per-scenario deadlines are unchanged. A timeout is not a green canary.
 
 Run `Nightly upstream compatibility` from operator **main**, selecting a successful
