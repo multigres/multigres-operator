@@ -133,6 +133,7 @@ func (r *Reconciler) initialize(
 	backup *multigresv1alpha1.MultigresBackup,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (ctrl.Result, error) {
+	base := backup.DeepCopy()
 	changed := false
 	if backup.Labels == nil {
 		backup.Labels = map[string]string{}
@@ -159,7 +160,11 @@ func (r *Reconciler) initialize(
 		changed = true
 	}
 	if changed {
-		if err := r.Update(ctx, backup); err != nil {
+		// A merge patch of the metadata only. An Update would send the whole
+		// spec back, and omitempty fields the creator set explicitly (such as
+		// forcePrimary: false) would read as a spec change and fail the
+		// immutability rule (I9), leaving the attempt stuck without a phase.
+		if err := r.Patch(ctx, backup, client.MergeFrom(base)); err != nil {
 			return ctrl.Result{}, err
 		}
 	}

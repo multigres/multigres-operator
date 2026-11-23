@@ -2,6 +2,7 @@ package multigresbackup
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/backup-handler/multiadmin"
@@ -34,6 +36,13 @@ type harness struct {
 
 func newHarness(t *testing.T, objs ...client.Object) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil, objs...)
+}
+
+// newHarnessWith is newHarness with client interceptors, for tests that check
+// how the reconciler writes to the API server.
+func newHarnessWith(t *testing.T, funcs *interceptor.Funcs, objs ...client.Object) *harness {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -44,11 +53,14 @@ func newHarness(t *testing.T, objs ...client.Object) *harness {
 	cluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "mgc", Namespace: ns, UID: "cluster-uid"},
 	}
-	c := fake.NewClientBuilder().
+	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(append([]client.Object{cluster}, objs...)...).
-		WithStatusSubresource(&multigresv1alpha1.MultigresBackup{}).
-		Build()
+		WithStatusSubresource(&multigresv1alpha1.MultigresBackup{})
+	if funcs != nil {
+		builder = builder.WithInterceptorFuncs(*funcs)
+	}
+	c := builder.Build()
 	h := &harness{
 		t:     t,
 		c:     c,
@@ -164,6 +176,65 @@ func TestTriggerOnce(t *testing.T) {
 	// Manual backups are labeled for the queue and owned by the cluster.
 	if b.Labels["multigres.com/shard"] != "0-inf" ||
 		b.Labels[multigresv1alpha1.LabelBackupTrigger] != "manual" {
+		t.Fatalf("labels = %v", b.Labels)
+	}
+	if owner := metav1.GetControllerOf(b); owner == nil || owner.Name != "mgc" {
+		t.Fatalf("owner = %v", b.OwnerReferences)
+	}
+}
+
+// A new attempt is labeled and owned through a metadata-only patch. An Update
+// would send the spec back without the omitempty fields its creator set
+// explicitly (forcePrimary: false), which the API server's immutability rule
+// (I9) rejects, leaving the attempt stuck without a phase. The fake client
+// doesn't run CEL, so this checks what is sent instead.
+func TestInitializePatchesMetadataOnly(t *testing.T) {
+	var patches []string
+	h := newHarnessWith(t, &interceptor.Funcs{
+		Update: func(
+			ctx context.Context,
+			c client.WithWatch,
+			obj client.Object,
+			opts ...client.UpdateOption,
+		) error {
+			if _, ok := obj.(*multigresv1alpha1.MultigresBackup); ok {
+				t.Errorf("MultigresBackup %s was updated; only its metadata may be patched", obj.GetName())
+			}
+			return c.Update(ctx, obj, opts...)
+		},
+		Patch: func(
+			ctx context.Context,
+			c client.WithWatch,
+			obj client.Object,
+			patch client.Patch,
+			opts ...client.PatchOption,
+		) error {
+			if _, ok := obj.(*multigresv1alpha1.MultigresBackup); ok {
+				data, err := patch.Data(obj)
+				if err != nil {
+					return err
+				}
+				patches = append(patches, string(data))
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	}, newBackup("manual", time.Now()))
+
+	if _, err := h.reconcile("manual"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(patches) != 1 {
+		t.Fatalf("patches = %q, want 1", patches)
+	}
+	if strings.Contains(patches[0], `"spec"`) {
+		t.Fatalf("patch touches the spec: %s", patches[0])
+	}
+	b := h.get("manual")
+	if b.Status.Phase != multigresv1alpha1.BackupPhasePending {
+		t.Fatalf("phase = %q, want Pending", b.Status.Phase)
+	}
+	if b.Labels[multigresv1alpha1.LabelBackupTrigger] != "manual" {
 		t.Fatalf("labels = %v", b.Labels)
 	}
 	if owner := metav1.GetControllerOf(b); owner == nil || owner.Name != "mgc" {
