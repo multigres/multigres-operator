@@ -1,6 +1,7 @@
 package multigrescluster
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -125,9 +126,9 @@ func TestBuildCell(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildCell() error = %v", err)
 		}
-		if got.Spec.InternalTLS != clusterWithInternalTLS.Spec.InternalTLS {
+		if !reflect.DeepEqual(got.Spec.InternalTLS, clusterWithInternalTLS.Spec.InternalTLS) {
 			t.Fatalf(
-				"InternalTLS = %#v, want propagated pointer %#v",
+				"InternalTLS = %#v, want propagated %#v",
 				got.Spec.InternalTLS,
 				clusterWithInternalTLS.Spec.InternalTLS,
 			)

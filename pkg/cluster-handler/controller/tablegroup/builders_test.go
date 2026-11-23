@@ -146,9 +146,9 @@ func TestBuildShard(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildShard() error = %v", err)
 		}
-		if got.Spec.InternalTLS != tgWithInternalTLS.Spec.InternalTLS {
+		if !reflect.DeepEqual(got.Spec.InternalTLS, tgWithInternalTLS.Spec.InternalTLS) {
 			t.Fatalf(
-				"Spec.InternalTLS = %#v, want propagated pointer %#v",
+				"Spec.InternalTLS = %#v, want propagated %#v",
 				got.Spec.InternalTLS,
 				tgWithInternalTLS.Spec.InternalTLS,
 			)

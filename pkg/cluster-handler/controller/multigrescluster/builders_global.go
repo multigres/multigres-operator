@@ -85,14 +85,16 @@ func BuildGlobalTopoServer(
 				Storage:     spec.Etcd.Storage,
 				Resources:   spec.Etcd.Resources,
 				RootPath:    spec.Etcd.RootPath,
-				Maintenance: spec.Etcd.Maintenance.DeepCopy(),
+				Maintenance: spec.Etcd.Maintenance,
 			},
 			PVCDeletionPolicy: finalPolicy,
-			TLS:               cluster.Spec.TopoTLS.DeepCopy(),
+			TLS:               cluster.Spec.TopoTLS,
 			Placement:         spec.Placement,
 		},
 	}
 
+	// ForApply copies the spec, so the cluster's own blocks are not shared.
+	ts.Spec = ts.Spec.ForApply()
 	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cluster, &ts.ObjectMeta)
 	if err := controllerutil.SetControllerReference(cluster, ts, scheme); err != nil {
 		return nil, err

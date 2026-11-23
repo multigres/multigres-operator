@@ -119,9 +119,9 @@ func TestBuildTableGroup(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildTableGroup() error = %v", err)
 		}
-		if got.Spec.InternalTLS != c.Spec.InternalTLS {
+		if !reflect.DeepEqual(got.Spec.InternalTLS, c.Spec.InternalTLS) {
 			t.Fatalf(
-				"InternalTLS = %#v, want propagated pointer %#v",
+				"InternalTLS = %#v, want propagated %#v",
 				got.Spec.InternalTLS,
 				c.Spec.InternalTLS,
 			)

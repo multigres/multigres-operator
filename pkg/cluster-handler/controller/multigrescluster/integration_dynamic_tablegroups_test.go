@@ -99,8 +99,10 @@ func TestDynamicTableGroups_RemovalWithWebhook(t *testing.T) {
 		ControlPlaneStopTimeout:  60 * time.Second,
 	}
 	adminCfg, err := env.Start()
-	require.NoError(t, err)
+	// Stopped whatever Start returned: it returns errors met after the
+	// control plane is up without stopping it.
 	t.Cleanup(func() { _ = env.Stop() })
+	require.NoError(t, err)
 
 	// The manager, and so the controller, acts as the operator's service
 	// account: the only principal the child-resource webhook admits.

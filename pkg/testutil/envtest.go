@@ -25,7 +25,10 @@ type envtestConfig struct {
 	crdPaths           []string
 }
 
-// WithKubeconfig generates a kubeconfig file for debugging and keeps envtest running.
+// WithKubeconfig generates a kubeconfig file for debugging, and keeps envtest
+// running after a test that failed so the failure can be inspected through it.
+// After a test that passed it is stopped like any other: its processes would
+// otherwise outlive the test binary.
 func WithKubeconfig() EnvtestOption {
 	return func(cfg *envtestConfig) {
 		cfg.generateKubeconfig = true
@@ -82,7 +85,8 @@ func getKubeconfigFromUserAdder(adder UserAdder) ([]byte, error) {
 // By default, envtest is automatically cleaned up when the test finishes.
 //
 // Options:
-//   - WithKubeconfig(): Generates kubeconfig for debugging and keeps envtest running
+//   - WithKubeconfig(): Generates kubeconfig for debugging and keeps envtest
+//     running after a failed test
 //   - WithCRDPaths(paths...): Sets CRD directory paths (required)
 func SetUpEnvtest(t testing.TB, opts ...EnvtestOption) *rest.Config {
 	t.Helper()
@@ -97,22 +101,23 @@ func SetUpEnvtest(t testing.TB, opts ...EnvtestOption) *rest.Config {
 	testEnv := createEnvtestEnvironment(t, cfg.crdPaths)
 	restCfg := startEnvtest(t, testEnv)
 
-	// If kubeconfig generation is enabled, do not set up cleanup.
+	stop := cleanEnvtest(t, testEnv)
 	if cfg.generateKubeconfig {
-		// Use the real control plane for main logic.
 		adder := &realUserAdder{cp: &testEnv.ControlPlane}
 		kubeconfigPath := generateKubeconfigFile(t, func() ([]byte, error) {
 			return getKubeconfigFromUserAdder(adder)
 		})
 		t.Cleanup(func() {
+			if !t.Failed() {
+				stop()
+				return
+			}
 			fmt.Printf("Kubeconfig written to: %s\n", kubeconfigPath)
 			fmt.Printf("Connect with: export KUBECONFIG=%s\n", kubeconfigPath)
 		})
 		return restCfg
 	}
-
-	// Default: cleanup envtest when test finishes
-	t.Cleanup(cleanEnvtest(t, testEnv))
+	t.Cleanup(stop)
 
 	return restCfg
 }
@@ -289,6 +294,10 @@ func startEnvtest(t testing.TB, testEnv *envtest.Environment) *rest.Config {
 
 	cfg, err := testEnv.Start()
 	if err != nil {
+		// Start returns errors met after the control plane is up, such as a
+		// CRD that fails to install, without stopping it, and its processes
+		// outlive the test binary.
+		_ = testEnv.Stop()
 		t.Fatalf("Setting up with envtest failed, %v", err)
 	}
 
