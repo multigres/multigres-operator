@@ -15,6 +15,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -98,6 +99,13 @@ func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) c
 		defaultNamespaces = map[string]cache.Config{laptopNamespace: {}}
 	}
 
+	// ResourceQuotas carry no label of ours, so they are cached unfiltered
+	// wherever Shards are reconciled.
+	quotaNamespaces := defaultNamespaces
+	if quotaNamespaces == nil {
+		quotaNamespaces = map[string]cache.Config{cache.AllNamespaces: unfilteredConfig}
+	}
+
 	return cache.Options{
 		DefaultNamespaces: defaultNamespaces,
 		ByObject: map[client.Object]cache.ByObject{
@@ -109,9 +117,42 @@ func New(operatorNamespace, laptopNamespace string, watchNamespaces ...string) c
 			&appsv1.StatefulSet{}: {Namespaces: hybrid},
 			&corev1.Service{}:     {Namespaces: hybrid},
 			&corev1.Pod{}:         {Namespaces: hybrid},
+			// SERVICEACCOUNTS: the shard ServiceAccount the operator applies
+			// carries the managed-by label, and Owns() would otherwise cache
+			// every account in the cluster. A conflicting account lacks the
+			// label, so the conflict check reads through the APIReader.
+			&corev1.ServiceAccount{}: {Namespaces: hybrid},
+			// RESOURCEQUOTAS: the shard controller watches every quota to
+			// learn when a namespace has room again, and reads nothing of one
+			// but its spec and status, so that is all the cache keeps.
+			&corev1.ResourceQuota{}: {
+				Namespaces: quotaNamespaces,
+				Transform:  keepQuotaSpecAndStatus,
+			},
 			// CONFIGMAPS are deliberately absent, so they fall back to
 			// DefaultNamespaces (unfiltered): users supply their own unlabelled
 			// ConfigMaps for postgresql.conf and the operator has to hash them.
 		},
 	}
+}
+
+// keepQuotaSpecAndStatus reduces a cached ResourceQuota to its identity, its
+// spec and its status. Labels, annotations and managedFields are most of the
+// object, and nothing reads them.
+func keepQuotaSpecAndStatus(obj any) (any, error) {
+	quota, ok := obj.(*corev1.ResourceQuota)
+	if !ok {
+		return obj, nil
+	}
+	return &corev1.ResourceQuota{
+		TypeMeta: quota.TypeMeta,
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            quota.Name,
+			Namespace:       quota.Namespace,
+			UID:             quota.UID,
+			ResourceVersion: quota.ResourceVersion,
+		},
+		Spec:   quota.Spec,
+		Status: quota.Status,
+	}, nil
 }

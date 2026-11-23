@@ -111,6 +111,7 @@ func (r *ShardReconciler) reconcileCellMaintenanceSurge(
 				desiredPool,
 				int(index),
 				r.Scheme,
+				r.podOptions()...,
 			) {
 				baseUnsettled = true
 				if stable && string(desiredPoolName) == poolName {
@@ -250,7 +251,7 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 		if err != nil {
 			return fmt.Errorf("build maintenance surge PVC %s: %w", pvcName, err)
 		}
-		if err := r.Create(ctx, pvc); err != nil && !errors.IsAlreadyExists(err) {
+		if err := r.createUnderQuota(ctx, shard, pvc); err != nil && !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("create maintenance surge PVC %s: %w", pvcName, err)
 		}
 	} else {
@@ -265,7 +266,14 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 		}
 	}
 
-	pod, err := BuildPoolPod(shard, poolName, cellName, poolSpec, int(index), r.Scheme)
+	pod, err := BuildPoolPod(
+		shard,
+		poolName,
+		cellName,
+		poolSpec,
+		int(index),
+		r.Scheme,
+		r.podOptions()...)
 	if err != nil {
 		return fmt.Errorf("build maintenance surge pod %s: %w", podName, err)
 	}
@@ -278,7 +286,7 @@ func (r *ShardReconciler) createOrAdoptMaintenanceSurge(
 		return nil
 	}
 	pod.Annotations[metadata.AnnotationMaintenanceSurge] = maintenanceAnnotationTrue
-	if err := r.Create(ctx, pod); err != nil && !errors.IsAlreadyExists(err) {
+	if err := r.createUnderQuota(ctx, shard, pod); err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("create maintenance surge pod %s: %w", podName, err)
 	}
 

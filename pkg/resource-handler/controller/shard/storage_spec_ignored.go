@@ -57,13 +57,16 @@ type pvcStorageWant struct {
 // It is derived from the spec and the PVCs rather than from the outcome of an
 // apply, so it is current on every status write, including passes that stop
 // before the PVCs are reconciled.
+//
+// claims are the names of the shard's PVCs that are not being deleted, for
+// the caller's other uses of the list this reads.
 func (r *ShardReconciler) setStorageSpecIgnoredCondition(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
-) error {
-	ignored, err := r.ignoredStorageChanges(ctx, shard)
+) (claims []string, err error) {
+	ignored, claims, err := r.ignoredStorageChanges(ctx, shard)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	cond := metav1.Condition{
@@ -101,18 +104,18 @@ func (r *ShardReconciler) setStorageSpecIgnoredCondition(
 		)
 	}
 	meta.SetStatusCondition(&shard.Status.Conditions, cond)
-	return nil
+	return claims, nil
 }
 
 // ignoredStorageChanges describes, in PVC name order, every difference between
 // a live PVC of the shard and what the spec asks of it that the operator is
 // leaving in place. Orphaned and terminating PVCs are not compared: neither is
 // in service, and an orphan comes back under the spec of the pod it is reused
-// for.
+// for. claims are the names of the shard's PVCs that are not being deleted.
 func (r *ShardReconciler) ignoredStorageChanges(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
-) ([]string, error) {
+) (ignored, claims []string, err error) {
 	pvcs := &corev1.PersistentVolumeClaimList{}
 	if err := r.List(
 		ctx,
@@ -125,15 +128,17 @@ func (r *ShardReconciler) ignoredStorageChanges(
 			metadata.LabelMultigresShard:      string(shard.Spec.ShardName),
 		},
 	); err != nil {
-		return nil, fmt.Errorf("failed to list PVCs for storage spec check: %w", err)
+		return nil, nil, fmt.Errorf("failed to list PVCs for storage spec check: %w", err)
 	}
 	slices.SortFunc(pvcs.Items, func(a, b corev1.PersistentVolumeClaim) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	var ignored []string
 	for i := range pvcs.Items {
 		pvc := &pvcs.Items[i]
+		if pvc.DeletionTimestamp.IsZero() {
+			claims = append(claims, pvc.Name)
+		}
 		if pvcutil.HasOrphanLabel(pvc) || !pvc.DeletionTimestamp.IsZero() {
 			continue
 		}
@@ -149,11 +154,11 @@ func (r *ShardReconciler) ignoredStorageChanges(
 		}
 		details, err := r.describeIgnoredStorage(ctx, pvc, want)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ignored = append(ignored, details...)
 	}
-	return ignored, nil
+	return ignored, claims, nil
 }
 
 // storageRequestFor returns the storage request the operator writes to the
@@ -228,12 +233,15 @@ func storageWantFor(
 	}
 
 	if pvc.Name != BuildSharedBackupPVCName(shard) ||
-		(shard.Spec.Backup != nil && shard.Spec.Backup.Type == multigresv1alpha1.BackupTypeS3) {
+		sidecarLocation(shard).Type == multigresv1alpha1.BackupTypeS3 {
 		return pvcStorageWant{}, false, nil
 	}
 	desired, err := BuildSharedBackupPVC(shard, false, nil)
 	if err != nil {
 		return pvcStorageWant{}, false, err
+	}
+	if desired == nil {
+		return pvcStorageWant{}, false, nil
 	}
 	want := pvcStorageWant{
 		request: desired.Spec.Resources.Requests[corev1.ResourceStorage],

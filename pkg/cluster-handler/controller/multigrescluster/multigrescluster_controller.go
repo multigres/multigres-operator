@@ -108,6 +108,7 @@ type MultigresClusterReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 func (r *MultigresClusterReconciler) Reconcile(
 	ctx context.Context,
 	req ctrl.Request,
@@ -303,6 +304,10 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
+	// Not fatal: a conflicting account must not stop cells and the rest from
+	// converging. The error is returned after status is written.
+	saErr := r.syncShardServiceAccount(ctx, cluster)
+
 	var pendingCells, pendingDBs bool
 
 	{
@@ -325,7 +330,11 @@ func (r *MultigresClusterReconciler) Reconcile(
 		childSpan.End()
 	}
 
-	{
+	// A refusal stops topology and TableGroups below, not the reconcile:
+	// status is still written, with the refusal in the condition and the phase.
+	repoErr := r.syncBackupRepositoryCondition(cluster)
+
+	if repoErr == nil {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileTopology")
 		result, err := r.reconcileTopology(ctx, cluster, res, pendingCells)
 		if err != nil {
@@ -347,7 +356,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 		}
 	}
 
-	{
+	if repoErr == nil {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.ReconcileDatabases")
 		var err error
 		pendingDBs, err = r.reconcileDatabases(ctx, cluster, res)
@@ -387,7 +396,7 @@ func (r *MultigresClusterReconciler) Reconcile(
 	// Skipped while cells or databases are still being deleted: the cluster is
 	// not settled.
 	var retireResult ctrl.Result
-	if !pendingCells && !pendingDBs {
+	if !pendingCells && !pendingDBs && repoErr == nil {
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "MultigresCluster.RetireManagedGlobalTopo")
 		var err error
 		retireResult, err = r.retireManagedGlobalTopo(ctx, cluster, res)
@@ -421,10 +430,24 @@ func (r *MultigresClusterReconciler) Reconcile(
 		totalShards,
 	)
 
+	if saErr != nil {
+		return ctrl.Result{}, saErr
+	}
+
 	if pendingCells || pendingDBs {
 		l.V(1).Info("Pending graceful deletions, requeueing",
 			"duration", time.Since(start).String())
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// The refusal is in the BackupRepositoryValid condition, the Degraded
+	// phase and one event. Only an edit to the cluster clears it, and that
+	// edit starts the next reconcile, so returning the error would only retry
+	// with backoff and log the same refusal each time.
+	if repoErr != nil {
+		l.Info("Backup repository configuration is refused; "+
+			"topology and TableGroups were not reconciled", "reason", repoErr.Error())
+		return ctrl.Result{}, nil
 	}
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(start).String())
@@ -641,6 +664,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 		Owns(&multigresv1alpha1.TopoServer{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.ServiceAccount{}).
 		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(
 			&multigresv1alpha1.CoreTemplate{},

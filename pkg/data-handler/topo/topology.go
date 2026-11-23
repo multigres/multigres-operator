@@ -51,17 +51,13 @@ func RegisterDatabaseFromSpec(
 	requireInitialRepoEncryption := backup != nil && backup.Encryption != nil
 
 	if backup != nil && backup.Type == multigresv1alpha1.BackupTypeS3 && backup.S3 != nil {
-		prefix := backup.S3.KeyPrefix
-		if prefix == "/" {
-			prefix = "" // pgBackRest adds the leading slash to the repository path.
-		}
 		dbMetadata.BackupLocation = &clustermetadatapb.BackupLocation{
 			Location: &clustermetadatapb.BackupLocation_S3{
 				S3: &clustermetadatapb.S3Backup{
 					Bucket:            backup.S3.Bucket,
 					Region:            backup.S3.Region,
 					Endpoint:          backup.S3.Endpoint,
-					KeyPrefix:         prefix,
+					KeyPrefix:         backup.S3.RepositoryKeyPrefix(),
 					UseEnvCredentials: backup.S3.UseEnvCredentials,
 				},
 			},

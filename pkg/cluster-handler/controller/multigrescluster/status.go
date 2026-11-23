@@ -319,6 +319,17 @@ func (r *MultigresClusterReconciler) updateStatus(
 		cluster.Status.Message = "Cluster is progressing"
 	}
 
+	// A cluster whose backup repository is refused applies no TableGroups, so
+	// its children keep the health of the last accepted spec and would report
+	// the cluster Healthy while its spec is not being applied.
+	if repo := meta.FindStatusCondition(
+		cluster.Status.Conditions, multigresv1alpha1.ConditionBackupRepositoryValid,
+	); repo != nil && repo.Status == metav1.ConditionFalse {
+		cluster.Status.Phase = multigresv1alpha1.PhaseDegraded
+		cluster.Status.Message = "Backup repository configuration is refused; " +
+			"topology and TableGroups are not reconciled: " + repo.Message
+	}
+
 	if cluster.Status.Phase == multigresv1alpha1.PhaseHealthy &&
 		cluster.Status.InitializedAt == nil {
 		now := metav1.Now()

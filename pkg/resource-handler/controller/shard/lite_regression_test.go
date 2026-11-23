@@ -44,7 +44,7 @@ func TestLiteTerminalPodsAreReplaced(t *testing.T) {
 			pvc.UID = "original-pvc"
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, pvc).Build()
 			r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
-			require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
+			require.NoError(t, litePodErr(r.ensureLitePod(t.Context(), shard, "main", "z1", pool)))
 			current := &corev1.Pod{}
 			err = c.Get(t.Context(), client.ObjectKeyFromObject(pod), current)
 			if phase == corev1.PodFailed || phase == corev1.PodSucceeded {
@@ -54,7 +54,10 @@ func TestLiteTerminalPodsAreReplaced(t *testing.T) {
 					"terminal pod with matching hash must be removed: %v",
 					err,
 				)
-				require.NoError(t, r.ensureLitePod(t.Context(), shard, "main", "z1", pool))
+				require.NoError(
+					t,
+					litePodErr(r.ensureLitePod(t.Context(), shard, "main", "z1", pool)),
+				)
 				require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(pod), current))
 				require.NotEqual(t, pod.UID, current.UID)
 				require.Equal(
@@ -171,7 +174,7 @@ func TestLiteFilesystemResizeReplacesReadyPod(t *testing.T) {
 			} else {
 				require.Zero(t, wait)
 			}
-			require.NoError(t, r.ensureLitePod(ctx, shard, "main", "z1", pool))
+			require.NoError(t, litePodErr(r.ensureLitePod(ctx, shard, "main", "z1", pool)))
 			current := &corev1.Pod{}
 			err = c.Get(ctx, client.ObjectKeyFromObject(pod), current)
 			if tt.replace {
@@ -181,7 +184,7 @@ func TestLiteFilesystemResizeReplacesReadyPod(t *testing.T) {
 					"ready pod must restart for a pending filesystem resize: %v",
 					err,
 				)
-				require.NoError(t, r.ensureLitePod(ctx, shard, "main", "z1", pool))
+				require.NoError(t, litePodErr(r.ensureLitePod(ctx, shard, "main", "z1", pool)))
 				require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(pod), current))
 				require.NotEqual(t, pod.UID, current.UID)
 				require.Equal(
@@ -191,7 +194,7 @@ func TestLiteFilesystemResizeReplacesReadyPod(t *testing.T) {
 				)
 				// The CSI condition may remain true while the replacement mounts
 				// the volume. Let that pod start instead of deleting it again.
-				require.NoError(t, r.ensureLitePod(ctx, shard, "main", "z1", pool))
+				require.NoError(t, litePodErr(r.ensureLitePod(ctx, shard, "main", "z1", pool)))
 				require.NoError(t, c.Get(ctx, client.ObjectKeyFromObject(pod), current))
 			} else {
 				require.NoError(t, err)

@@ -73,12 +73,13 @@ func BuildTableGroup(
 				tgCfg.Backup,
 				multigresv1alpha1.MergeBackupConfig(dbCfg.Backup, cluster.Spec.Backup),
 			),
-			CertCommonName:     cluster.Spec.CertCommonName,
-			InternalTLS:        cluster.Spec.InternalTLS,
-			Observability:      cluster.Spec.Observability,
-			LogLevels:          cluster.Spec.LogLevels,
-			CellTopologyLabels: buildCellTopologyLabels(cluster),
-			TopologyPruning:    cluster.Spec.TopologyPruning,
+			CertCommonName:          cluster.Spec.CertCommonName,
+			ShardServiceAccountName: shardServiceAccountName(cluster),
+			InternalTLS:             cluster.Spec.InternalTLS,
+			Observability:           cluster.Spec.Observability,
+			LogLevels:               cluster.Spec.LogLevels,
+			CellTopologyLabels:      buildCellTopologyLabels(cluster),
+			TopologyPruning:         cluster.Spec.TopologyPruning,
 			DurabilityPolicy: multigresv1alpha1.MergeDurabilityPolicy(
 				dbCfg.DurabilityPolicy,
 				cluster.Spec.DurabilityPolicy,
@@ -92,6 +93,15 @@ func BuildTableGroup(
 	}
 
 	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cluster, &tgCR.ObjectMeta)
+	tgCR.Spec.Images.PgBackRestd = cluster.Spec.Images.PgBackRestd
+	// The database-level merge, the one topology is fed for a distributed
+	// cluster. BuildShard replaces it with the shard's own backup config for a
+	// Lite cluster, whose shard writes the topology record.
+	tgCR.Spec.SidecarBackupLocation = multigresv1alpha1.MergeBackupConfig(
+		dbCfg.Backup,
+		cluster.Spec.Backup,
+	)
+
 	if err := controllerutil.SetControllerReference(cluster, tgCR, scheme); err != nil {
 		return nil, err
 	}
@@ -122,4 +132,13 @@ func buildCellTopologyLabels(
 		return nil
 	}
 	return m
+}
+
+// shardServiceAccountName is the ServiceAccount shard pods run as. It is empty
+// when the cluster names none.
+func shardServiceAccountName(cluster *multigresv1alpha1.MultigresCluster) string {
+	if cluster.Spec.ShardServiceAccount == nil {
+		return ""
+	}
+	return cluster.Spec.ShardServiceAccount.Name
 }

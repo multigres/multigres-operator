@@ -326,6 +326,9 @@ func mergePoolSpec(
 	if override.Multipooler.RunAsGroup != nil {
 		out.Multipooler.RunAsGroup = ptr.To(*override.Multipooler.RunAsGroup)
 	}
+	if !isResourcesZero(override.PgBackRestResources) {
+		out.PgBackRestResources = *override.PgBackRestResources.DeepCopy()
+	}
 	if override.Affinity != nil {
 		out.Affinity = override.Affinity.DeepCopy()
 	}
@@ -354,6 +357,20 @@ func defaultPoolSpec(spec *multigresv1alpha1.PoolSpec) {
 	if isResourcesZero(spec.Multipooler.Resources) {
 		spec.Multipooler.Resources = DefaultResourcesPooler()
 	}
+	spec.NormalizePgBackRestResources()
+}
+
+// InheritedShardBackup is the backup config ResolveShard gives a shard that
+// has no backup block of its own under the given inherited config.
+func InheritedShardBackup(
+	inherited *multigresv1alpha1.BackupConfig,
+) *multigresv1alpha1.BackupConfig {
+	cfg := inherited.DeepCopy()
+	if cfg == nil {
+		cfg = &multigresv1alpha1.BackupConfig{Type: multigresv1alpha1.BackupTypeFilesystem}
+	}
+	defaultBackupConfig(cfg)
+	return cfg
 }
 
 func defaultBackupConfig(cfg *multigresv1alpha1.BackupConfig) {

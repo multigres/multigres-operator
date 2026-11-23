@@ -35,6 +35,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=resourcequotas,verbs=list;watch
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 
 // ============================================================================
@@ -95,6 +96,20 @@ type PoolSpec struct {
 	// +optional
 	Multipooler ContainerConfig `json:"multipooler,omitempty"`
 
+	// omitzero on PgBackRestResources keeps a zero-value block out of what
+	// the operator applies to its child resources. Applying an empty object
+	// over a block that had entries leaves the API server with a null it then
+	// rejects as not an object, so a cluster whose block was cleared could
+	// never be applied again. A block with an empty map is not the zero value
+	// and still serialises as an empty object; NormalizePgBackRestResources
+	// turns it into one.
+
+	// PgBackRestResources defines the compute resource requirements of the
+	// pgBackRest sidecar container. When empty, the operator defaults to requests
+	// of 100m CPU and 256Mi memory with a 1Gi memory limit and no CPU limit.
+	// +optional
+	PgBackRestResources corev1.ResourceRequirements `json:"pgbackrestResources,omitempty,omitzero"`
+
 	// Affinity defines the pod's scheduling constraints.
 	// +optional
 	Affinity *corev1.Affinity `json:"affinity,omitempty"`
@@ -113,6 +128,18 @@ type PoolSpec struct {
 	// Overrides Shard, TableGroup, and MultigresCluster settings.
 	// +optional
 	PVCDeletionPolicy *PVCDeletionPolicy `json:"pvcDeletionPolicy,omitempty"`
+}
+
+// NormalizePgBackRestResources makes a pgbackrestResources block without any
+// entry the zero value. A block decoded from "limits: {}" or "requests: {}"
+// holds a non-nil empty map: it asks for nothing, like no block at all, but
+// it is not the zero value, so omitzero would not leave it out of an apply.
+// Whatever builds a pool for a child resource calls this first.
+func (p *PoolSpec) NormalizePgBackRestResources() {
+	r := p.PgBackRestResources
+	if len(r.Requests) == 0 && len(r.Limits) == 0 && len(r.Claims) == 0 {
+		p.PgBackRestResources = corev1.ResourceRequirements{}
+	}
 }
 
 // ============================================================================
@@ -205,6 +232,20 @@ type ShardSpec struct {
 	// +optional
 	Backup *BackupConfig `json:"backup,omitempty"`
 
+	// ShardServiceAccountName is the name of the ServiceAccount shard pods run
+	// as. Set from MultigresCluster.Spec.ShardServiceAccount.Name when the
+	// cluster names one.
+	// +optional
+	ShardServiceAccountName string `json:"shardServiceAccountName,omitempty"`
+
+	// SidecarBackupLocation is the backup location the pgBackRest sidecar
+	// serves, the same value written to topology, which is where multipooler
+	// reads it. In a distributed cluster it is the database-level location, so
+	// tablegroup- and shard-level backup blocks do not apply to it. In a Lite
+	// cluster it is the shard's resolved backup config.
+	// +optional
+	SidecarBackupLocation *BackupConfig `json:"sidecarBackupLocation,omitempty"`
+
 	// TopologyPruning controls whether stale topology entries are pruned.
 	// Inherited from MultigresCluster.
 	// +optional
@@ -276,6 +317,13 @@ type ShardImages struct {
 
 	// Postgres is the image for the postgres database.
 	Postgres ImageRef `json:"postgres"`
+
+	// PgBackRestd is the image for the pgBackRest sidecar. It is resolved on
+	// the MultigresCluster and defaults to the Multipooler image of the same
+	// set. A shard spec without it predates the sidecar and is not rolled until
+	// the cluster controller fills it in.
+	// +optional
+	PgBackRestd ImageRef `json:"pgbackrestd,omitempty"`
 }
 
 // ============================================================================
@@ -324,6 +372,35 @@ const (
 	// change on an existing claim: a request cannot shrink, and the class and
 	// access modes are fixed at creation.
 	ConditionStorageSpecIgnored = "StorageSpecIgnored"
+
+	// ConditionBackupRepositoryValid is set on a MultigresCluster and on a
+	// Shard. It is false when the backup repository cannot be used as
+	// configured: an S3 backup is configured but a pgBackRest sidecar's
+	// location is the local filesystem, an S3 location has no key prefix
+	// although the cluster was allocated one, a tablegroup or shard backup
+	// block of a distributed cluster sets a type, encryption, a pgBackRest
+	// TLS secret or an S3 bucket, endpoint or region that the database's
+	// location does not carry, an S3 location has no credential source the
+	// sidecar supports, or a filesystem location is outside the backup
+	// volume. On a Shard it is also false when the spec has no sidecar image.
+	// A cluster does not reconcile topology or TableGroups while it is false,
+	// and a shard does not create or replace pods. Both report the Degraded
+	// phase, except a Shard that is only waiting for its sidecar image.
+	ConditionBackupRepositoryValid = "BackupRepositoryValid"
+
+	// ConditionPodTemplateAccepted is false while the API server rejects the
+	// pod that would replace one of the shard's pods. The existing pod is
+	// then left running on its current spec and the shard reports Degraded.
+	// One refusal is recorded at a time and the condition names its pod. It
+	// is removed when the generation changes, when that pod is gone, or
+	// when that pod's replacement is acceptable, which is checked whenever
+	// another pod is asked about and on every status update. The condition
+	// is absent when nothing is refused.
+	ConditionPodTemplateAccepted = "PodTemplateAccepted"
+
+	// ReasonPodRejectedByAPIServer indicates that a dry-run create of a
+	// replacement pod was rejected by validation or admission.
+	ReasonPodRejectedByAPIServer = "RejectedByAPIServer"
 
 	// ConditionPVCTerminating is true while a shard pod mounts a PVC that has
 	// been deleted. The PVC, and its data, survive only until the last pod

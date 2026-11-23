@@ -78,9 +78,21 @@ func (r *ShardReconciler) updateLiteStatus(
 	shard.Status.OrchReady = false
 
 	r.setConditions(shard, 1, readyPods)
-	if err := r.setStorageSpecIgnoredCondition(ctx, shard); err != nil {
+	claims, err := r.setStorageSpecIgnoredCondition(ctx, shard)
+	if err != nil {
 		return err
 	}
+	var seen quotaObjectsSeen
+	if r.quotaWaiting.waiting(client.ObjectKeyFromObject(shard)) {
+		var pods []corev1.Pod
+		if pod != nil {
+			pods = []corev1.Pod{*pod}
+		}
+		seen.see(shard, poolName, cellName, 1, pods)
+		seen.seeClaims(claims)
+	}
+	r.nameQuotaWaits(shard, seen)
+	r.setBackupRepositoryCondition(shard)
 	meta.SetStatusCondition(
 		&shard.Status.Conditions,
 		r.litePrimaryCondition(ctx, shard, cellName, pod),
@@ -119,6 +131,19 @@ func (r *ShardReconciler) updateLiteStatus(
 			primary,
 		)
 	}
+
+	clearStalePodTemplateRefusal(shard)
+	// The pass that follows asks about a replacement only when the pod needs
+	// one, and writes no status when the answer is the one on record. So the
+	// refusal is looked at here, where its removal is written with the phase
+	// that holds without it: the pod may have been created again since, or
+	// the cause may have gone without a spec edit.
+	if refusedPod(shard) != "" {
+		if desiredFrom, ok := withConfigHashes(shard, rendered); ok {
+			r.reexamineRecordedRefusal(ctx, shard, desiredFrom)
+		}
+	}
+	applyRefusalPhase(shard)
 
 	shard.Status.ObservedGeneration = shard.Generation
 	return r.patchStatus(ctx, shard, oldPhase)
@@ -224,12 +249,7 @@ func (r *ShardReconciler) liteUpToDateCondition(
 		return cond
 	}
 
-	desiredShard := shard.DeepCopy()
-	if desiredShard.Annotations == nil {
-		desiredShard.Annotations = make(map[string]string)
-	}
-	desiredShard.Annotations[metadata.AnnotationPostgresConfigHash] = rendered.restartHash
-	desiredShard.Annotations[metadata.AnnotationPostgresReloadHash] = rendered.reloadHash
+	desiredShard, _ := withConfigHashes(shard, rendered)
 	desired, err := r.buildLitePod(desiredShard, poolName, cellName, poolSpec)
 	if err != nil {
 		cond.Reason = liteReasonBuildFailed

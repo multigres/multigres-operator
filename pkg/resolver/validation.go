@@ -2,9 +2,11 @@ package resolver
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -240,7 +242,32 @@ func (r *Resolver) ValidateClusterLogic(
 	ctx context.Context,
 	cluster *multigresv1alpha1.MultigresCluster,
 ) (admission.Warnings, error) {
+	return r.ValidateClusterLogicUpdate(ctx, nil, cluster)
+}
+
+// ValidateClusterLogicUpdate is ValidateClusterLogic for an update. A sidecar
+// configuration error the stored object (old) already had, word for word, is
+// reported as a warning instead of rejecting: refusing it would block every
+// write to a stored cluster that already violates the rule, the operator's
+// own metadata updates and finalizer removal included, leaving it
+// unreconcilable and undeletable. Introducing or changing a violation is still rejected.
+func (r *Resolver) ValidateClusterLogicUpdate(
+	ctx context.Context,
+	old, cluster *multigresv1alpha1.MultigresCluster,
+) (admission.Warnings, error) {
 	var warnings admission.Warnings
+
+	if err := ValidateSidecarConfig(cluster); err != nil {
+		if old == nil {
+			return nil, err
+		}
+		oldErr := ValidateSidecarConfig(old)
+		if oldErr == nil || oldErr.Error() != err.Error() {
+			return nil, err
+		}
+		warnings = append(warnings, err.Error()+
+			"; the existing configuration is left in place, but its shards will not reconcile until it is fixed")
+	}
 
 	// Extract all valid cell names for this cluster
 	var cellNames []multigresv1alpha1.CellName
@@ -550,6 +577,12 @@ func (r *Resolver) ValidateClusterLogic(
 					if err := ValidateResourceRequirements(
 						pool.Multipooler.Resources,
 						fmt.Sprintf("shard '%s' pool '%s' multipooler", shard.Name, poolName),
+					); err != nil {
+						return nil, err
+					}
+					if err := ValidateContainerResources(
+						pool.PgBackRestResources,
+						fmt.Sprintf("shard '%s' pool '%s' pgbackrest", shard.Name, poolName),
 					); err != nil {
 						return nil, err
 					}
@@ -1041,6 +1074,55 @@ func ValidateResourceRequirements(resources corev1.ResourceRequirements, compone
 	return nil
 }
 
+// ValidateContainerResources is ValidateResourceRequirements plus the other
+// things the API server checks on a container's resources and not on a
+// custom resource: no negative quantity, only resource names a container can
+// request (cpu, memory, ephemeral-storage, hugepages-<size>, or a
+// domain-qualified extended resource), and no resource claims, since the
+// operator's pods declare none to refer to.
+//
+// It is early feedback, not the guard: a block that passes can still be
+// rejected by the API server, and the shard controller asks it before it
+// replaces a pod.
+func ValidateContainerResources(resources corev1.ResourceRequirements, component string) error {
+	if err := ValidateResourceRequirements(resources, component); err != nil {
+		return err
+	}
+	if len(resources.Claims) > 0 {
+		return fmt.Errorf("%s: resource claims are not supported (claim %q)",
+			component, resources.Claims[0].Name)
+	}
+	for _, list := range []struct {
+		kind string
+		list corev1.ResourceList
+	}{{"request", resources.Requests}, {"limit", resources.Limits}} {
+		names := make([]string, 0, len(list.list))
+		for name := range list.list {
+			names = append(names, string(name))
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			quantity := list.list[corev1.ResourceName(name)]
+			if quantity.Sign() < 0 {
+				return fmt.Errorf("%s: resource %s %s (%s) must not be negative",
+					component, name, list.kind, quantity.String())
+			}
+			switch {
+			case name == string(corev1.ResourceCPU), name == string(corev1.ResourceMemory),
+				name == string(corev1.ResourceEphemeralStorage),
+				strings.HasPrefix(name, corev1.ResourceHugePagesPrefix),
+				strings.Contains(name, "/"):
+			default:
+				return fmt.Errorf(
+					"%s: %q is not a resource a container can request: use cpu, memory, "+
+						"ephemeral-storage, hugepages-<size> or a domain-qualified name",
+					component, name)
+			}
+		}
+	}
+	return nil
+}
+
 // validateCellTopology checks if nodes exist in the cluster matching each cell's
 // zone or region topology label. Returns warnings (not errors) for any cells
 // whose topology labels don't match any nodes — pods targeting those cells will
@@ -1128,4 +1210,273 @@ func (r *Resolver) validateCellTopology(
 	}
 
 	return warnings
+}
+
+// sidecarBackupMountPath is the only directory the pgBackRest sidecar mounts
+// the backup volume at, so a filesystem repository anywhere else would land on
+// the container's ephemeral root filesystem and be lost with the pod.
+const sidecarBackupMountPath = "/backups"
+
+// forEachSidecarLocation calls check with each backup location a pgBackRest
+// sidecar of the cluster serves, as multigresv1alpha1.SidecarBackupLocation
+// selects it: one per database in a distributed cluster, one per shard in a
+// Lite cluster. A cluster with no database listed yet is checked by its
+// cluster-level block. where names the location for an error message.
+func forEachSidecarLocation(
+	cluster *multigresv1alpha1.MultigresCluster,
+	check func(where string, cfg *multigresv1alpha1.BackupConfig) error,
+) error {
+	lite := cluster.Spec.Mode == multigresv1alpha1.ModeLite
+	if len(cluster.Spec.Databases) == 0 {
+		return check("spec.backup", cluster.Spec.Backup)
+	}
+	for _, db := range cluster.Spec.Databases {
+		dbBackup := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
+		shards := 0
+		if lite {
+			for _, tg := range db.TableGroups {
+				tgBackup := multigresv1alpha1.MergeBackupConfig(tg.Backup, dbBackup)
+				for _, shard := range tg.Shards {
+					shards++
+					where := fmt.Sprintf(
+						"database %q tablegroup %q shard %q backup", db.Name, tg.Name, shard.Name,
+					)
+					shardBackup := multigresv1alpha1.MergeBackupConfig(shard.Backup, tgBackup)
+					if err := check(where, shardBackup); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		// A database with no shard listed yet gets its shard from defaults,
+		// which inherits the database's backup.
+		if shards == 0 {
+			if err := check(fmt.Sprintf("database %q backup", db.Name), dbBackup); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateSidecarFilesystemPath rejects a filesystem backup location with a
+// path other than /backups, in each location a sidecar serves.
+func validateSidecarFilesystemPath(cluster *multigresv1alpha1.MultigresCluster) error {
+	check := func(where string, cfg *multigresv1alpha1.BackupConfig) error {
+		if cfg == nil || cfg.Type != multigresv1alpha1.BackupTypeFilesystem ||
+			cfg.Filesystem == nil {
+			return nil
+		}
+		if p := cfg.Filesystem.Path; p != "" && p != sidecarBackupMountPath {
+			return fmt.Errorf(
+				"%s: filesystem backup path %q is not supported by the pgBackRest sidecar: "+
+					"the sidecar only mounts the backup volume at %q, so the path must be %q or unset",
+				where, p, sidecarBackupMountPath, sidecarBackupMountPath,
+			)
+		}
+		return nil
+	}
+	return forEachSidecarLocation(cluster, check)
+}
+
+// ErrBackupRepository marks the rejection of a cluster whose backups would
+// not go to the repository its configuration asks for.
+var ErrBackupRepository = stderrors.New("backup repository is not usable as configured")
+
+// ValidateBackupRepositories refuses a cluster that configures an S3 backup
+// at any level while a sidecar's location resolves to the local filesystem,
+// an S3 location without a key prefix in a cluster that was allocated one,
+// and a distributed cluster whose tablegroup or shard backup block sets a
+// type, encryption, the pgBackRest TLS secret or an S3 bucket, endpoint or
+// region that differs from the database's location.
+//
+// A filesystem repository lives on a volume of the cluster itself, so backups
+// written there while S3 was asked for report success and are lost with the
+// cluster. The cases are a tablegroup or shard S3 block in a distributed
+// cluster, where the repository is set per database, a block that carries S3
+// settings under a filesystem type, and an override back to filesystem below
+// an S3 block.
+//
+// A distributed cluster's sidecars are configured from the database's merged
+// backup config alone, so a cipher, certificate or bucket named only in a
+// tablegroup or shard block would not be used: the repository would be
+// unencrypted, or in another place, with nothing reporting it. A block that
+// repeats the database's values is accepted.
+func ValidateBackupRepositories(cluster *multigresv1alpha1.MultigresCluster) error {
+	_, err := BackupRepositoryProblem(cluster)
+	return err
+}
+
+// BackupRepositoryProblem is ValidateBackupRepositories with the reason for
+// the BackupRepositoryValid condition.
+func BackupRepositoryProblem(
+	cluster *multigresv1alpha1.MultigresCluster,
+) (reason string, err error) {
+	reason = multigresv1alpha1.ReasonBackupRepositoryResolved
+	var s3At string
+	// s3ShardBlock is whether some shard's own backup block is an S3 one.
+	s3ShardBlock := false
+	note := func(where string, cfg *multigresv1alpha1.BackupConfig) {
+		if s3At == "" && cfg.ConfiguresS3() {
+			s3At = where
+		}
+	}
+	note("spec.backup", cluster.Spec.Backup)
+	for _, db := range cluster.Spec.Databases {
+		note(fmt.Sprintf("database %q backup", db.Name), db.Backup)
+		for _, tg := range db.TableGroups {
+			note(fmt.Sprintf("database %q tablegroup %q backup", db.Name, tg.Name), tg.Backup)
+			for _, shard := range tg.Shards {
+				note(fmt.Sprintf("database %q tablegroup %q shard %q backup",
+					db.Name, tg.Name, shard.Name), shard.Backup)
+				s3ShardBlock = s3ShardBlock || shard.Backup.ResolvesToS3()
+			}
+		}
+	}
+	err = forEachSidecarLocation(
+		cluster,
+		func(where string, cfg *multigresv1alpha1.BackupConfig) error {
+			if s3At != "" && !cfg.ResolvesToS3() {
+				reason = multigresv1alpha1.ReasonBackupRepositoryFilesystemFallback
+				hint := "a distributed cluster's repository is set by spec.backup or the " +
+					"database's backup, and tablegroup and shard backup blocks do not select " +
+					"it; to back up to S3, configure S3 in spec.backup or the database's " +
+					"backup"
+				if s3ShardBlock {
+					// The shard block may be what is left of an S3 location
+					// that was deleted above it. What the defaulting webhook
+					// then accepts as a stated move to the filesystem is
+					// narrower than "type filesystem somewhere above": see
+					// dropStaleShardBackupCopies.
+					hint += "; to back up to the filesystem, delete the S3 shard backup " +
+						"block, or write type: filesystem at a level above it that did " +
+						"not say filesystem before (spec.backup says it by default, so " +
+						"use the database's or tablegroup's backup unless spec.backup " +
+						"was the S3 block), which removes a shard block that the same " +
+						"update leaves unchanged"
+				}
+				if cluster.Spec.Mode == multigresv1alpha1.ModeLite {
+					hint = "a block below the S3 configuration selects the filesystem"
+				}
+				return fmt.Errorf(
+					"%w: %s configures S3, but %s resolves to the local filesystem (%s); "+
+						"backups there are lost with the cluster's volumes",
+					ErrBackupRepository, s3At, where, hint,
+				)
+			}
+			if multigresv1alpha1.AllocationWithoutKeyPrefix(cluster, cfg) {
+				reason = multigresv1alpha1.ReasonBackupRepositoryMissingKeyPrefix
+				return fmt.Errorf(
+					"%w: %s is an S3 location without a key prefix although the cluster "+
+						"was allocated %q; set keyPrefix, or \"/\" to use the bucket root",
+					ErrBackupRepository, where,
+					cluster.Annotations[multigresv1alpha1.AnnotationDefaultBackupKeyPrefix],
+				)
+			}
+			return nil
+		},
+	)
+	if err == nil && cluster.Spec.Mode != multigresv1alpha1.ModeLite {
+		if err = unappliedBackupOverride(cluster); err != nil {
+			reason = multigresv1alpha1.ReasonBackupRepositoryOverrideNotApplied
+		}
+	}
+	return reason, err
+}
+
+// unappliedBackupOverride returns the refusal for the first tablegroup or
+// shard backup block of a distributed cluster that sets something the
+// database's location does not carry.
+func unappliedBackupOverride(cluster *multigresv1alpha1.MultigresCluster) error {
+	for _, db := range cluster.Spec.Databases {
+		location := multigresv1alpha1.MergeBackupConfig(db.Backup, cluster.Spec.Backup)
+		check := func(where string, block *multigresv1alpha1.BackupConfig) error {
+			o := multigresv1alpha1.UnappliedBackupOverride(block, location)
+			if o == nil {
+				return nil
+			}
+			return fmt.Errorf(
+				"%w: %s sets %s to %q, but the database's backup location has %q: "+
+					"a distributed cluster's pgBackRest sidecars are configured by spec.backup "+
+					"and the database's backup, so the value would not be used; "+
+					"set it there, or remove it from this block. A block that only repeats "+
+					"what the database's backup location was before it was edited may have "+
+					"been written by defaulting in an earlier operator version; it has no "+
+					"use and can be deleted",
+				ErrBackupRepository, where, o.Field, o.Value, o.Applied,
+			)
+		}
+		for _, tg := range db.TableGroups {
+			if err := check(
+				fmt.Sprintf("database %q tablegroup %q backup", db.Name, tg.Name), tg.Backup,
+			); err != nil {
+				return err
+			}
+			for _, shard := range tg.Shards {
+				if err := check(fmt.Sprintf("database %q tablegroup %q shard %q backup",
+					db.Name, tg.Name, shard.Name), shard.Backup); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ErrSidecarCredentials marks the rejection of an S3 credential source the
+// sidecar cannot render.
+var ErrSidecarCredentials = stderrors.New(
+	"unsupported credential source for the pgBackRest sidecar",
+)
+
+// ValidateSidecarConfig runs every rule for the pgBackRest sidecar and returns
+// the first violation. Every cluster runs the sidecar, Lite included.
+func ValidateSidecarConfig(cluster *multigresv1alpha1.MultigresCluster) error {
+	_, err := SidecarConfigProblem(cluster)
+	return err
+}
+
+// SidecarConfigProblem is ValidateSidecarConfig with the reason for the
+// BackupRepositoryValid condition. Admission and the cluster controller both
+// decide from it, so a cluster the webhook would reject is one the controller
+// reports and does not build.
+func SidecarConfigProblem(
+	cluster *multigresv1alpha1.MultigresCluster,
+) (reason string, err error) {
+	if reason, err = BackupRepositoryProblem(cluster); err != nil {
+		return reason, err
+	}
+	if err = validateSidecarFilesystemPath(cluster); err != nil {
+		return multigresv1alpha1.ReasonBackupRepositoryUnsupportedPath, err
+	}
+	if err = ValidateSidecarCredentials(cluster); err != nil {
+		return multigresv1alpha1.ReasonBackupRepositoryUnsupportedCredentials, err
+	}
+	return multigresv1alpha1.ReasonBackupRepositoryResolved, nil
+}
+
+// ValidateSidecarCredentials requires that every S3 backup config names a
+// credential source the sidecar can render: IRSA (serviceAccountName on the
+// config, or the cluster's shardServiceAccount) or static keys (credentialsSecret). Node or instance-profile credentials,
+// useEnvCredentials without a secret, and EKS Pod Identity are not mapped, so a
+// cluster using them would silently stop archiving. useEnvCredentials next to a
+// credentialsSecret is the documented static-key form and stays valid. The
+// locations checked are the ones a sidecar serves, as for the filesystem path.
+func ValidateSidecarCredentials(cluster *multigresv1alpha1.MultigresCluster) error {
+	check := func(where string, cfg *multigresv1alpha1.BackupConfig) error {
+		if cfg == nil || cfg.Type != multigresv1alpha1.BackupTypeS3 || cfg.S3 == nil ||
+			cfg.S3.CredentialsSecret != "" || cfg.S3.ServiceAccountName != "" ||
+			cluster.Spec.ShardServiceAccount != nil {
+			return nil
+		}
+		return fmt.Errorf(
+			"%w: %s: s3 backup has no credential source the sidecar supports: "+
+				"the sidecar supports IRSA (serviceAccountName or shardServiceAccount) and "+
+				"static keys (credentialsSecret) only; node or instance-profile credentials "+
+				"(including useEnvCredentials without a credentialsSecret) and EKS Pod Identity "+
+				"are not supported",
+			ErrSidecarCredentials, where,
+		)
+	}
+	return forEachSidecarLocation(cluster, check)
 }
