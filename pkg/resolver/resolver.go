@@ -90,6 +90,14 @@ func mergeTopoServerPlacementSpec(
 // isResourcesZero checks if the resource requirements are strictly the zero value (nil maps).
 // This mimics reflect.DeepEqual(res, corev1.ResourceRequirements{}) but is safer and faster.
 // It is used for merging logic where we want to distinguish "inherit" (nil) from "empty" (set to empty).
+//
+// A block set to empty (for example `resources: {limits: {}}`, which is what
+// deleting the last entry with kubectl edit leaves) overrides what it would
+// inherit and is not defaulted: the component runs with no requests or limits.
+// Resolution keeps the empty maps, because the defaulting webhook writes its
+// output back into the MultigresCluster and the next resolution must still
+// see the block as set. The builders of the child resources turn it into the
+// zero value with multigresv1alpha1.NormalizeResources, so a child omits it.
 func isResourcesZero(res corev1.ResourceRequirements) bool {
 	return res.Requests == nil && res.Limits == nil && res.Claims == nil
 }

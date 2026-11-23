@@ -48,7 +48,7 @@ const (
 	DefaultEtcdStorageSize = "1Gi"
 
 	// DefaultBackupPath is the default filesystem path for backups.
-	DefaultBackupPath = "/backups"
+	DefaultBackupPath = multigresv1alpha1.DefaultFilesystemBackupPath
 
 	// DefaultBackupStorageSize is the default PVC size for backup storage.
 	DefaultBackupStorageSize = "10Gi"

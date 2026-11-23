@@ -59,10 +59,9 @@ func BuildCell(
 				ImagePullSecrets: cluster.Spec.Images.ImagePullSecrets,
 			},
 			Multigateway:          *gatewaySpec,
-			MultigatewayPlacement: gatewayPlacement.DeepCopy(),
-			AllCells:              allCellNames,
+			MultigatewayPlacement: gatewayPlacement,
 			GlobalTopoServer:      globalTopoRef,
-			TopoServer:            localTopoSpec.DeepCopy(),
+			TopoServer:            localTopoSpec,
 			TopologyReconciliation: multigresv1alpha1.TopologyReconciliation{
 				RegisterCell: true,
 				PrunePoolers: isPruningEnabled(cluster),
@@ -74,6 +73,11 @@ func BuildCell(
 		},
 	}
 
+	// ForApply copies the spec, so the cluster's own blocks are not shared.
+	// AllCells is set after it: the list is the same for every cell and
+	// nothing changes it, so each cell shares it rather than copying it.
+	cellCR.Spec = cellCR.Spec.ForApply()
+	cellCR.Spec.AllCells = allCellNames
 	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cluster, &cellCR.ObjectMeta)
 	if err := controllerutil.SetControllerReference(cluster, cellCR, scheme); err != nil {
 		return nil, err

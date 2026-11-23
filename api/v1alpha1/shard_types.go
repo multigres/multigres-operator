@@ -89,11 +89,11 @@ type PoolSpec struct {
 
 	// Postgres container configuration.
 	// +optional
-	Postgres ContainerConfig `json:"postgres,omitempty"`
+	Postgres ContainerConfig `json:"postgres,omitempty,omitzero"`
 
 	// Multipooler container configuration.
 	// +optional
-	Multipooler ContainerConfig `json:"multipooler,omitempty"`
+	Multipooler ContainerConfig `json:"multipooler,omitempty,omitzero"`
 
 	// Affinity defines the pod's scheduling constraints.
 	// +optional

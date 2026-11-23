@@ -141,7 +141,7 @@ type EtcdSpec struct {
 
 	// Resources defines the compute resource requirements.
 	// +optional
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty,omitzero"`
 
 	// Maintenance configures MVCC history retention, backend quota, and optional
 	// defragmentation. Applies only to operator-managed etcd. Omitted fields use

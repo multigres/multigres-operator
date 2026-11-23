@@ -65,7 +65,7 @@ func BuildShard(
 			Images:              tg.Spec.Images,
 			GlobalTopoServer:    tg.Spec.GlobalTopoServer,
 			Multiorch:           shardSpec.Multiorch,
-			GatewayClusterViews: shardSpec.GatewayClusterViews.DeepCopy(),
+			GatewayClusterViews: shardSpec.GatewayClusterViews,
 			InitdbArgs:          shardSpec.InitdbArgs,
 			PostgresConfigRef:   shardSpec.PostgresConfigRef,
 			PostgresConfig:      shardSpec.PostgresConfig,
@@ -91,6 +91,8 @@ func BuildShard(
 			CellTopologyLabels:        tg.Spec.CellTopologyLabels,
 		},
 	}
+	// ForApply copies the spec, so the TableGroup's own blocks are not shared.
+	shardCR.Spec = shardCR.Spec.ForApply()
 	multigresv1alpha1.CopyDefaultBackupKeyPrefix(tg, &shardCR.ObjectMeta)
 	if err := controllerutil.SetControllerReference(tg, shardCR, scheme); err != nil {
 		return nil, err

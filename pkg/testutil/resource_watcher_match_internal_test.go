@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,8 +48,15 @@ func (m *mockTB) Logf(format string, args ...any) {
 	m.logCalled = true
 }
 
+// Cleanup records f for runCleanups and registers it on the embedded test
+// as well, once for both. A test that never calls runCleanups, as after a
+// mocked Fatal, would otherwise leave behind what f releases, such as an
+// envtest control plane, whose processes outlive the test binary.
 func (m *mockTB) Cleanup(f func()) {
-	m.cleanupFuncs = append(m.cleanupFuncs, f)
+	var once sync.Once
+	run := func() { once.Do(f) }
+	m.cleanupFuncs = append(m.cleanupFuncs, run)
+	m.TB.Cleanup(run)
 }
 
 // mockManager implements manager.Manager for testing.

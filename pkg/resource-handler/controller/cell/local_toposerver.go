@@ -44,7 +44,7 @@ func BuildLocalTopoServer(
 		return nil, nil
 	}
 
-	etcd := cell.Spec.TopoServer.Etcd.DeepCopy()
+	etcd := cell.Spec.TopoServer.Etcd
 	clusterName := cell.Labels[metadata.LabelMultigresCluster]
 	labels := metadata.BuildStandardLabels(clusterName, "local-topo")
 	metadata.AddClusterLabel(labels, clusterName)
@@ -62,6 +62,8 @@ func BuildLocalTopoServer(
 		},
 	}
 
+	// ForApply copies the spec, so the Cell's own etcd block is not shared.
+	ts.Spec = ts.Spec.ForApply()
 	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cell, &ts.ObjectMeta)
 	if err := ctrl.SetControllerReference(cell, ts, scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)

@@ -38,7 +38,7 @@ type StatelessSpec struct {
 
 	// Resources defines the compute resource requirements.
 	// +optional
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty,omitzero"`
 
 	// Affinity defines the pod's scheduling constraints.
 	// +optional
@@ -197,7 +197,7 @@ func (c *TopoTLSConfig) IsEnabled() bool {
 type ContainerConfig struct {
 	// Resources defines the compute resource requirements.
 	// +optional
-	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+	Resources corev1.ResourceRequirements `json:"resources,omitempty,omitzero"`
 
 	// RunAsUser sets the UID for the container process. For Postgres and
 	// Multipooler, leaving this unset does not fall back to the image's own
@@ -284,7 +284,7 @@ type FilesystemBackupConfig struct {
 	// Storage defines the PVC configuration for the backup volume.
 	// This volume is shared by all pools in the shard.
 	// +optional
-	Storage StorageSpec `json:"storage,omitempty"`
+	Storage StorageSpec `json:"storage,omitempty,omitzero"`
 }
 
 // S3BackupConfig defines S3-compatible backup storage settings.
@@ -745,4 +745,14 @@ func MergeBackupConfig(child, parent *BackupConfig) *BackupConfig {
 	}
 
 	return merged
+}
+
+// NormalizeResources replaces a resources block whose requests, limits and
+// claims are all empty with the zero value. Such a block asks for nothing, but
+// a non-nil empty map makes it non-zero, so omitzero would not leave it out of
+// a server-side apply. It is for the apply boundary only; see ForApply.
+func NormalizeResources(r *corev1.ResourceRequirements) {
+	if len(r.Requests) == 0 && len(r.Limits) == 0 && len(r.Claims) == 0 {
+		*r = corev1.ResourceRequirements{}
+	}
 }

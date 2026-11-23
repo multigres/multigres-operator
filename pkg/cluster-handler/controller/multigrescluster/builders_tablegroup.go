@@ -91,6 +91,7 @@ func BuildTableGroup(
 		},
 	}
 
+	tgCR.Spec = tgCR.Spec.ForApply()
 	multigresv1alpha1.CopyDefaultBackupKeyPrefix(cluster, &tgCR.ObjectMeta)
 	if err := controllerutil.SetControllerReference(cluster, tgCR, scheme); err != nil {
 		return nil, err

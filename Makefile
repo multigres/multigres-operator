@@ -345,9 +345,18 @@ test: manifests generate fmt vet ## Run tests (no integration testing)
 		go test $(TEST_OUTPUT_FLAGS) -p 1 $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out $(TEST_OUTPUT_PIPE)
 
 .PHONY: test-integration
+# The run gets a TMPDIR of its own, under which envtest puts every control
+# plane's directories, so afterwards scripts/check-envtest-orphans.sh can find
+# any kube-apiserver or etcd this run started that outlived its test binary,
+# and fail on it, without touching another run's.
 test-integration: manifests generate fmt vet setup-envtest ## Run integration tests
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test $(TEST_OUTPUT_FLAGS) -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out $(TEST_OUTPUT_PIPE)
+	@tmp=$$(mktemp -d); \
+	TMPDIR=$$tmp KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+		go test $(TEST_OUTPUT_FLAGS) -p 1 -tags=integration,verbose $$(go list ./... | grep -v /e2e | grep -v /test/suite) -coverprofile=cover.out $(TEST_OUTPUT_PIPE); \
+	status=$$?; \
+	scripts/check-envtest-orphans.sh "$$tmp" || status=1; \
+	rm -rf "$$tmp"; \
+	exit $$status
 
 .PHONY: test-coverage
 test-coverage: manifests generate fmt vet setup-envtest ## Generate coverage report with HTML

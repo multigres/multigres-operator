@@ -52,6 +52,14 @@ var (
 
 // TestMain acts as the global setup/teardown for the entire package.
 func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
+}
+
+// runTests sets up, runs the tests and tears down, returning the exit code.
+// It is apart from TestMain so that every return, a failed setup included,
+// stops the envtest control plane: os.Exit skips deferred calls, and the
+// control plane's processes outlive the test binary.
+func runTests(m *testing.M) int {
 	// 1. Setup Global Context
 	ctx, cancel = context.WithCancel(context.Background())
 
@@ -79,9 +87,17 @@ func TestMain(m *testing.M) {
 
 	var err error
 	TestCfg, err = testEnv.Start()
+	// Start returns errors met after the control plane is up without
+	// stopping it, so it is stopped whatever Start returned.
+	defer func() {
+		cancel()
+		if err := testEnv.Stop(); err != nil {
+			fmt.Printf("Failed to stop envtest: %v\n", err)
+		}
+	}()
 	if err != nil {
 		fmt.Printf("Failed to start envtest: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 4. Setup Manager & Webhook
@@ -100,7 +116,7 @@ func TestMain(m *testing.M) {
 	})
 	if err != nil {
 		fmt.Printf("Failed to create manager: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 5. Initialize Clients
@@ -111,7 +127,7 @@ func TestMain(m *testing.M) {
 	k8sClient, err = client.New(TestCfg, client.Options{Scheme: s})
 	if err != nil {
 		fmt.Printf("Failed to create direct client: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 6. Setup Resolver & Handlers
@@ -121,7 +137,7 @@ func TestMain(m *testing.M) {
 		Namespace: testNamespace,
 	}); err != nil {
 		fmt.Printf("Failed to setup webhooks: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 7. Start Manager in Background
@@ -134,25 +150,17 @@ func TestMain(m *testing.M) {
 	// 8. Wait for Webhook Server Readiness
 	if err := waitForWebhookReadiness(k8sClient); err != nil {
 		fmt.Printf("Webhook never became ready: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 9. Create Global Defaults (Using Direct Client to ensure they exist immediately)
 	if err := createDefaults(k8sClient); err != nil {
 		fmt.Printf("Failed to create defaults: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// 10. Run Tests
-	code := m.Run()
-
-	// 11. Teardown
-	cancel()
-	if err := testEnv.Stop(); err != nil {
-		fmt.Printf("Failed to stop envtest: %v\n", err)
-	}
-
-	os.Exit(code)
+	return m.Run()
 }
 
 // waitForWebhookReadiness polls until the manager and webhook are active.
