@@ -2,7 +2,9 @@ package multigrescluster
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -164,9 +166,14 @@ func buildInternalCertificates(
 //
 // The issuer is the topology CA, not the cluster's own issuer: the credential
 // is only useful if it chains to a CA the topology server trusts.
+//
+// The URI SAN carries the cluster identity in SPIFFE form for an issuer gate
+// to match on. Nothing reads it yet. Each kind of identity has its own path,
+// so no SAN is a path prefix of another. See topoClientSPIFFEPath.
 func buildTopoClientCertificate(
 	cluster *multigresv1alpha1.MultigresCluster,
 	scheme *runtime.Scheme,
+	trustDomain string,
 ) (*unstructured.Unstructured, error) {
 	roots, err := topology.ForCluster(cluster)
 	if err != nil {
@@ -192,6 +199,9 @@ func buildTopoClientCertificate(
 		// A client credential is verified by its subject, not by name, so it
 		// carries no SANs.
 		DNSNames: []any{},
+		URIs: []any{
+			certs.SPIFFEURI(trustDomain, topoClientSPIFFEPath(cluster)),
+		},
 		Usages: []any{
 			"digital signature",
 			"key encipherment",
@@ -199,6 +209,29 @@ func buildTopoClientCertificate(
 		},
 		IssuerName: cluster.Spec.TopoTLS.IssuerName,
 	})
+}
+
+// spiffeSafeSegment matches the characters a SPIFFE ID path segment may hold.
+var spiffeSafeSegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// topoClientSPIFFEPath returns the SPIFFE path for the cluster's topology
+// client identity. A cluster with a project ref gets project/<ref> when the ref
+// is a valid SPIFFE path segment, and encoded-project/<lowercase hex of the ref>
+// otherwise, because a SPIFFE path segment allows no percent-encoding and no
+// "." or ".." segment. The two forms cannot collide, since their first
+// segments differ and hex is one to one. A cluster without a project ref gets
+// cluster/<namespace>/<name>, which always has two segments after cluster/
+// and so cannot overlap the project path spaces. That path uses the real
+// namespace and name even when the certificate CN is the hashed fallback root.
+func topoClientSPIFFEPath(cluster *multigresv1alpha1.MultigresCluster) string {
+	if ref := cluster.Annotations[metadata.AnnotationProjectRef]; ref != "" {
+		if spiffeSafeSegment.MatchString(ref) && ref != "." && ref != ".." {
+			return "project/" + ref
+		}
+		return "encoded-project/" + hex.EncodeToString([]byte(ref))
+	}
+	return "cluster/" + topology.EscapePathSegment(cluster.Namespace) + "/" +
+		topology.EscapePathSegment(cluster.Name)
 }
 
 // issuesTopoClientCert reports whether the operator issues the topology
@@ -340,7 +373,7 @@ func (r *MultigresClusterReconciler) reconcileCertificate(
 		// Secret brings its own trust, so a credential issued here would sit
 		// unused.
 		if issue {
-			topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme)
+			topoClientCert, err := buildTopoClientCertificate(cluster, r.Scheme, r.TrustDomain)
 			if err != nil {
 				r.markTopologyFailed(
 					ctx,

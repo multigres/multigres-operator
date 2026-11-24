@@ -47,6 +47,12 @@ type TopoServerReconciler struct {
 	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
 	// docs/development/reconcile-gating.md. The zero value is safe.
 	Gate features.Gate
+	// OperatorNamespace is where the operator runs. The etcd administrator
+	// credential is issued there, once per topology issuer.
+	OperatorNamespace string
+	// TrustDomain is the SPIFFE trust domain of the URI SAN on the
+	// administrator certificate. Empty means certs.DefaultTrustDomain.
+	TrustDomain string
 	// DialContext dials etcd member addresses. Nil (clientv3's default) outside
 	// laptop mode.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)

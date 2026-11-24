@@ -16,6 +16,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/testutil"
 )
 
 func TestBuildGlobalTopoServer(t *testing.T) {
@@ -82,6 +83,21 @@ func TestBuildGlobalTopoServer(t *testing.T) {
 		if diff := cmp.Diff(spec.Placement, got.Spec.Placement); diff != "" {
 			t.Errorf("Placement diff (-want +got):\n%s", diff)
 		}
+	})
+
+	t.Run("Etcd Enabled with authorization", func(t *testing.T) {
+		spec := &multigresv1alpha1.GlobalTopoServerSpec{
+			Auth: &multigresv1alpha1.TopoServerAuthSpec{Enabled: true},
+			Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:latest"},
+		}
+
+		got, err := BuildGlobalTopoServer(cluster, spec, scheme)
+		require.NoError(t, err)
+		require.NotNil(t, got.Spec.Auth)
+		assert.True(t, got.Spec.Auth.Enabled)
+
+		got.Spec.Auth.Enabled = false
+		assert.True(t, spec.Auth.Enabled, "the child must not alias resolved parent configuration")
 	})
 
 	t.Run("Etcd Disabled (External)", func(t *testing.T) {
@@ -1039,10 +1055,11 @@ func TestBuildMultiadminDeployment_TopoClientTLS(t *testing.T) {
 		if !containerMountsVolume(c, multigresv1alpha1.TopoClientTLSVolumeName) {
 			t.Error("multiadmin does not mount the topo client certificate")
 		}
-		volumes := got.Spec.Template.Spec.Volumes
-		if !podHasVolume(volumes, multigresv1alpha1.TopoClientTLSVolumeName) {
-			t.Error("topo client volume missing from pod spec")
-		}
+		testutil.AssertTopoVolumeSecret(
+			t,
+			got.Spec.Template.Spec.Volumes,
+			"my-cluster-topo-client-tls",
+		)
 	})
 
 	t.Run("renders unchanged when the reference carries no credential", func(t *testing.T) {

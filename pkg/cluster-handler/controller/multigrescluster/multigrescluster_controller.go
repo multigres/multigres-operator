@@ -63,6 +63,14 @@ type MultigresClusterReconciler struct {
 	// Secrets have to be read through this.
 	APIReader client.Reader
 
+	// OperatorNamespace is where the operator runs, and where the etcd
+	// administrator credential it probes managed topology servers with lives.
+	OperatorNamespace string
+
+	// TrustDomain is the SPIFFE trust domain of the URI SAN on the topology
+	// client certificate. Empty means certs.DefaultTrustDomain.
+	TrustDomain string
+
 	// Images is the operator's default component image set and update
 	// strategy. The zero value falls back to the compiled-in defaults with
 	// the immediate strategy.
