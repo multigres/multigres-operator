@@ -280,3 +280,37 @@ func TestKeyPrefixDoesNotReachSiblingClusters(t *testing.T) {
 		t.Errorf("KeyPrefix %q does not cover its own keys", short.KeyPrefix())
 	}
 }
+
+func TestHasProjectRef(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		annotations map[string]string
+		want        bool
+	}{
+		"no annotations":   {},
+		"empty reference":  {annotations: map[string]string{metadata.AnnotationProjectRef: ""}},
+		"other annotation": {annotations: map[string]string{"example.com/x": "y"}},
+		"reference": {
+			annotations: map[string]string{metadata.AnnotationProjectRef: "proj_1"},
+			want:        true,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cluster := &multigresv1alpha1.MultigresCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "c",
+					Namespace:   "ns",
+					Annotations: tt.annotations,
+				},
+			}
+			assert.Equal(t, tt.want, HasProjectRef(cluster))
+			roots, err := ForCluster(cluster)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, !strings.HasPrefix(roots.ClusterRoot(), "/multigres/ns/"),
+				"a cluster without a reference has a namespace/name root")
+		})
+	}
+}
