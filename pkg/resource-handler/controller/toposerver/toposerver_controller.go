@@ -18,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -26,6 +28,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/ownership"
+	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -203,6 +206,8 @@ func (r *TopoServerReconciler) Reconcile(
 		childSpan.End()
 	}
 
+	authReady, authErr := r.reconcileTopologyAuth(ctx, toposerver)
+
 	// Reconcile PodDisruptionBudget
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "TopoServer.ReconcilePodDisruptionBudget")
@@ -242,22 +247,34 @@ func (r *TopoServerReconciler) Reconcile(
 	}
 
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
-	// A TopoServer has converged once it is Healthy.
-	if toposerver.Status.Phase == multigresv1alpha1.PhaseHealthy && r.synced.Completed(toposerver) {
-		r.Recorder.Event(toposerver, "Normal", "Synced", "Successfully reconciled TopoServer")
-	}
-
-	if toposerver.Status.Phase != multigresv1alpha1.PhaseHealthy {
-		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
-	}
-	if maintenanceEnabled(toposerver) {
+	// Maintenance runs before the authorization result is returned, so a grant
+	// that keeps failing cannot hold back defragmentation of a healthy server.
+	healthy := toposerver.Status.Phase == multigresv1alpha1.PhaseHealthy
+	defragmenting := false
+	if healthy && maintenanceEnabled(toposerver) {
 		if err := r.reconcileMaintenance(ctx, toposerver); err != nil {
 			logger.Error(err, "Etcd maintenance deferred")
 			r.Recorder.Eventf(toposerver, "Warning", "EtcdMaintenanceFailed", "%v", err)
 		}
-		if state := toposerver.Status.EtcdMaintenance; state != nil && state.InProgress {
-			return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
-		}
+		state := toposerver.Status.EtcdMaintenance
+		defragmenting = state != nil && state.InProgress
+	}
+	if authErr != nil {
+		return ctrl.Result{}, authErr
+	}
+	if !authReady {
+		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
+	}
+	// A TopoServer has converged once it is Healthy and its grants are in place.
+	if healthy && r.synced.Completed(toposerver) {
+		r.Recorder.Event(toposerver, "Normal", "Synced", "Successfully reconciled TopoServer")
+	}
+	if !healthy || defragmenting {
+		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
+	}
+	// Cell and cluster events drive grant changes. The hourly resync is the
+	// safety net for an event the watches missed.
+	if topology.AuthManaged(toposerver) || maintenanceEnabled(toposerver) {
 		return ctrl.Result{RequeueAfter: maintenanceInterval}, nil
 	}
 	return ctrl.Result{}, nil
@@ -437,14 +454,26 @@ func (r *TopoServerReconciler) updateStatus(
 	})
 	toposerver.Status.Phase = result.Phase
 	toposerver.Status.Message = result.Message
+	if topology.AuthManaged(toposerver) && !toposerver.Status.AuthEnabled {
+		toposerver.Status.Phase = multigresv1alpha1.PhaseProgressing
+		toposerver.Status.Message = "Waiting for topology authorization"
+		meta.SetStatusCondition(&toposerver.Status.Conditions, metav1.Condition{
+			Type: "Ready", Status: metav1.ConditionFalse, Reason: "AuthorizationPending",
+			Message: toposerver.Status.Message, ObservedGeneration: toposerver.Generation,
+		})
+	}
 
 	toposerver.Status.ObservedGeneration = toposerver.Generation
 
 	// 1. Construct the Patch Object
-	readyCond := meta.FindStatusCondition(toposerver.Status.Conditions, "Ready")
 	var patchConditions []metav1.Condition
-	if readyCond != nil {
-		patchConditions = []metav1.Condition{*readyCond}
+	for _, conditionType := range []string{"Ready", "AuthorizationReady"} {
+		if condition := meta.FindStatusCondition(
+			toposerver.Status.Conditions,
+			conditionType,
+		); condition != nil {
+			patchConditions = append(patchConditions, *condition)
+		}
 	}
 
 	patchObj := &multigresv1alpha1.TopoServer{
@@ -457,6 +486,8 @@ func (r *TopoServerReconciler) updateStatus(
 			Namespace: toposerver.Namespace,
 		},
 		Status: multigresv1alpha1.TopoServerStatus{
+			AuthEnabled:        toposerver.Status.AuthEnabled,
+			AuthIdentities:     toposerver.Status.AuthIdentities,
 			Phase:              toposerver.Status.Phase,
 			Message:            toposerver.Status.Message,
 			ObservedGeneration: toposerver.Status.ObservedGeneration,
@@ -551,6 +582,22 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 	opts ...controller.Options,
 ) error {
 	r.Client = ownership.SkipNoopApplies(r.Client)
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&multigresv1alpha1.Cell{},
+		topologyServerCellIndex,
+		cellTopologyServerKeys,
+	); err != nil {
+		return fmt.Errorf("indexing Cells by topology server: %w", err)
+	}
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&multigresv1alpha1.MultigresCluster{},
+		clusterTopologyServerIndex,
+		clusterTopologyServerKeys,
+	); err != nil {
+		return fmt.Errorf("indexing MultigresClusters by topology server: %w", err)
+	}
 	if r.APIReader == nil {
 		r.APIReader = mgr.GetAPIReader()
 	}
@@ -575,7 +622,26 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 		)).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
-		Owns(&policyv1.PodDisruptionBudget{})
+		Owns(&policyv1.PodDisruptionBudget{}).
+		// Grants follow the Cells that reference a server, and nothing else
+		// wakes it when a cluster starts or stops pointing at it.
+		Watches(&multigresv1alpha1.Cell{},
+			handler.EnqueueRequestsFromMapFunc(r.authManagedTopoServersForCell),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// A deleted cluster can leave no Cell event behind, and the Cell
+		// deletions it does cause may arrive while the cluster is still cached.
+		// Adding a project reference changes no Cell generation, yet it is what
+		// turns a refused cluster into a granted one.
+		Watches(&multigresv1alpha1.MultigresCluster{},
+			handler.EnqueueRequestsFromMapFunc(r.authManagedTopoServersForCluster),
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc: func(event.CreateEvent) bool { return false },
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					return e.ObjectOld.GetAnnotations()[metadata.AnnotationProjectRef] !=
+						e.ObjectNew.GetAnnotations()[metadata.AnnotationProjectRef]
+				},
+				GenericFunc: func(event.GenericEvent) bool { return false },
+			}))
 
 	return r.Gate.Wire(b, mgr, func() client.ObjectList {
 		return &multigresv1alpha1.TopoServerList{}
