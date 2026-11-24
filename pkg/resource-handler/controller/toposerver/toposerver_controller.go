@@ -64,6 +64,9 @@ type TopoServerReconciler struct {
 	MaintenanceClientFactory func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error)
 
 	synced ownership.SyncedEvents
+	// authVerified lets a pass over unchanged identities skip their etcd reads.
+	// SetupWithManager creates it. Nil verifies every identity on every pass.
+	authVerified *authVerifyCache
 }
 
 // Reconcile manages the etcd StatefulSet, headless service, and client service for a TopoServer.
@@ -92,6 +95,7 @@ func (r *TopoServerReconciler) Reconcile(
 		if errors.IsNotFound(err) {
 			logger.Info("TopoServer resource not found, ignoring")
 			r.synced.Forget(req.NamespacedName)
+			r.authVerified.evict(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)
@@ -582,6 +586,9 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 	opts ...controller.Options,
 ) error {
 	r.Client = ownership.SkipNoopApplies(r.Client)
+	if r.authVerified == nil {
+		r.authVerified = &authVerifyCache{}
+	}
 	if err := mgr.GetFieldIndexer().IndexField(
 		context.Background(),
 		&multigresv1alpha1.Cell{},

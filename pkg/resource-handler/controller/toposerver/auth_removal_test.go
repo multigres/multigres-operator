@@ -43,11 +43,12 @@ func TestTopologyAuthKeepsRangeOfClusterTheCacheMisses(t *testing.T) {
 
 func TestTopologyAuthConfirmsRangeRemovalForRemainingCluster(t *testing.T) {
 	for _, scenario := range []string{
-		"owner with label", "owner without label", "owner with stale label",
+		"previously verified", "after restart", "owner without label", "owner with stale label",
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := t.Context()
 			r, ts, cluster, auth := authReconcileFixture(t)
+			r.authVerified = &authVerifyCache{}
 			auth.clusterID = 7
 			cell := &api.Cell{
 				ObjectMeta: metav1.ObjectMeta{
@@ -84,6 +85,9 @@ func TestTopologyAuthConfirmsRangeRemovalForRemainingCluster(t *testing.T) {
 
 			authoritative := authConfirmationReader(t, r, cluster.DeepCopy(), cell.DeepCopy())
 			r.APIReader = authoritative
+			if scenario == "after restart" {
+				r.authVerified = &authVerifyCache{}
+			}
 			require.NoError(t, r.Delete(ctx, cell))
 			auth.mutations = nil
 			ready, err = r.reconcileTopologyAuth(ctx, ts)

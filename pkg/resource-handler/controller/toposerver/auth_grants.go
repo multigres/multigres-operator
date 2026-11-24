@@ -734,6 +734,7 @@ func (r *TopoServerReconciler) reconcileTopologyAuth(
 		meta.SetStatusCondition(&ts.Status.Conditions, condition)
 	}()
 	if !topology.AuthManaged(ts) {
+		r.authVerified.evict(client.ObjectKeyFromObject(ts))
 		condition.Reason, condition.Message = "ManagementDisabled", "Managed topology authorization has not been requested"
 		return true, nil
 	}
@@ -779,6 +780,7 @@ func (r *TopoServerReconciler) reconcileTopologyAuth(
 			return false, err
 		}
 		if !status.Enabled {
+			r.authVerified.evict(client.ObjectKeyFromObject(ts))
 			plan, err = r.planTopologyAuth(passCtx, ts, false)
 			if err != nil {
 				return false, err

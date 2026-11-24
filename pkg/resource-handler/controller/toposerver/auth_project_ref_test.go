@@ -68,6 +68,7 @@ func TestTopologyAuthActivatesOnceRefusedClusterGainsProjectRef(t *testing.T) {
 func TestTopologyAuthAfterActivationDoesNotGrantClusterWithoutProjectRef(t *testing.T) {
 	r, ts, _, auth := authReconcileFixture(t)
 	auth.clusterID = 7
+	r.authVerified = &authVerifyCache{}
 	ready, err := r.reconcileTopologyAuth(t.Context(), ts)
 	require.NoError(t, err)
 	require.True(t, ready)
@@ -103,6 +104,12 @@ func TestTopologyAuthAfterActivationDoesNotGrantClusterWithoutProjectRef(t *test
 	for name := range auth.roles {
 		require.NotContains(t, name, "tenants", "refused cluster must have no etcd role")
 	}
+	require.ElementsMatch(
+		t,
+		[]string{"/multigres/bystander", "/multigres/project"},
+		cachedIdentities(r, ts),
+		"only granted identities are cached",
+	)
 
 	require.NoError(t, r.Get(t.Context(), client.ObjectKeyFromObject(noref), noref))
 	noref.Annotations = map[string]string{metadata.AnnotationProjectRef: "tenant"}
@@ -228,4 +235,12 @@ func TestTopologyWithoutAuthKeepsFallbackRoots(t *testing.T) {
 	require.True(t, ready)
 	require.Empty(t, auth.mutations)
 	requireAuthorizationCondition(t, ts, metav1.ConditionFalse, "ManagementDisabled")
+}
+
+func cachedIdentities(r *TopoServerReconciler, ts *api.TopoServer) []string {
+	var names []string
+	for name := range r.authVerified.servers[ts.UID].identities {
+		names = append(names, name)
+	}
+	return names
 }
