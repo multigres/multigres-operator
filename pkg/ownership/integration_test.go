@@ -13,6 +13,7 @@ import (
 	"github.com/multigres/testkit/managedfields"
 	"github.com/stretchr/testify/require"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,6 +29,7 @@ func newEnvClient(t *testing.T) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, multigresv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 	cfg := testutil.SetUpEnvtest(t, testutil.WithCRDPaths(
 		filepath.Join("../../", "config", "crd", "bases"),
 	))

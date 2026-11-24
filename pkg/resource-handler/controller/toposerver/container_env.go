@@ -68,8 +68,12 @@ func buildPodIdentityEnv() []corev1.EnvVar {
 		{
 			Name: "POD_NAME",
 			ValueFrom: &corev1.EnvVarSource{
+				// The API server defaults the API version, and stores the
+				// selector as one atomic value, so it is set here to match
+				// what is stored; see ownership.SkipNoopApplies.
 				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.name",
+					APIVersion: "v1",
+					FieldPath:  "metadata.name",
 				},
 			},
 		},
@@ -77,7 +81,8 @@ func buildPodIdentityEnv() []corev1.EnvVar {
 			Name: "POD_NAMESPACE",
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{
-					FieldPath: "metadata.namespace",
+					APIVersion: "v1",
+					FieldPath:  "metadata.namespace",
 				},
 			},
 		},

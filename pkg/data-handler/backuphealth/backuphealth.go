@@ -143,13 +143,17 @@ func EvaluateBackups(
 		LastBackupType: latest.Type,
 	}
 
+	// The message names when the backup completed rather than how long ago,
+	// so it changes only when the backup or the verdict does: a pass that
+	// finds the same backup writes nothing. The age is exported as a metric.
+	completed := backupTime.UTC().Format(time.RFC3339)
 	if age > BackupStaleThreshold {
 		result.Healthy = false
-		result.Message = fmt.Sprintf("Last backup is %.1fh old (threshold: %.0fh)",
-			age.Hours(), BackupStaleThreshold.Hours())
+		result.Message = fmt.Sprintf("Last %s backup completed at %s, more than %.0fh ago",
+			latest.Type, completed, BackupStaleThreshold.Hours())
 	} else {
 		result.Healthy = true
-		result.Message = fmt.Sprintf("Last %s backup completed %.1fh ago", latest.Type, age.Hours())
+		result.Message = fmt.Sprintf("Last %s backup completed at %s", latest.Type, completed)
 	}
 
 	return result

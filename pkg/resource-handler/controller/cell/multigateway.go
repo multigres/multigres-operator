@@ -13,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/util/deployment"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
@@ -119,6 +120,7 @@ func BuildMultigatewayDeployment(
 			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
+			Strategy: deployment.DefaultStrategy(),
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: metadata.GetSelectorLabels(labels),

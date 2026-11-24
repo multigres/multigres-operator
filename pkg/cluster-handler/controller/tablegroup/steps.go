@@ -94,6 +94,7 @@ func stepFetchTableGroup(ctx context.Context, rc *reconcileContext) (stepResult,
 	tg := &multigresv1alpha1.TableGroup{}
 	if err := rc.r.Get(ctx, rc.req.NamespacedName, tg); err != nil {
 		if apierrors.IsNotFound(err) {
+			rc.r.synced.Forget(rc.req.NamespacedName)
 			return doneStep(ctrl.Result{}), nil
 		}
 		return stepResult{}, fmt.Errorf("failed to get TableGroup: %w", err)
@@ -101,6 +102,7 @@ func stepFetchTableGroup(ctx context.Context, rc *reconcileContext) (stepResult,
 
 	rc.tg = tg
 	rc.oldPhase = tg.Status.Phase
+	rc.r.synced.Observe(tg, tg.Status.ObservedGeneration)
 	return continueStep(), nil
 }
 

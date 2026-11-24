@@ -68,8 +68,33 @@ func TestCellEventsOnlyOnChanges(t *testing.T) {
 				return false
 			}
 			first := reconcile()
+			if mode != multigresv1alpha1.ModeLite {
+				// A distributed Cell converges once its gateways are ready,
+				// and records Synced on that pass, not the first.
+				if has(first, "Synced") || !has(first, "PhaseChange") {
+					t.Fatalf("unexpected initial events before convergence: %v", first)
+				}
+				if events := reconcile(); len(events) != 0 {
+					t.Fatalf("unchanged reconcile emitted events: %v", events)
+				}
+				deploy := &appsv1.Deployment{}
+				key := client.ObjectKey{
+					Namespace: cell.Namespace,
+					Name:      BuildMultigatewayDeploymentName(cell),
+				}
+				if err := cl.Get(t.Context(), key, deploy); err != nil {
+					t.Fatal(err)
+				}
+				deploy.Status.ObservedGeneration = deploy.Generation
+				deploy.Status.Replicas = *deploy.Spec.Replicas
+				deploy.Status.ReadyReplicas = *deploy.Spec.Replicas
+				if err := cl.Status().Update(t.Context(), deploy); err != nil {
+					t.Fatal(err)
+				}
+				first = reconcile()
+			}
 			if !has(first, "Synced") || !has(first, "PhaseChange") {
-				t.Fatalf("missing initial events: %v", first)
+				t.Fatalf("missing events on convergence: %v", first)
 			}
 			if events := reconcile(); len(events) != 0 {
 				t.Fatalf("unchanged reconcile emitted events: %v", events)

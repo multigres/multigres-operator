@@ -71,7 +71,7 @@ func TestOwnerOf(t *testing.T) {
 
 func TestManagersSortedAndDistinct(t *testing.T) {
 	m := Managers()
-	require.Len(t, m, 9)
+	require.Len(t, m, 11)
 	require.True(t, slices.IsSorted(m))
 	require.Len(t, slices.Compact(slices.Clone(m)), len(m))
 }
@@ -474,6 +474,37 @@ func TestSkipUnchanged(t *testing.T) {
 				want = 1
 			}
 			require.Equal(t, want, *calls, "tidy-up patches")
+		})
+	}
+}
+
+// A status apply sent through a SkipNoopApplies client that the cached object
+// does not yet show, or that failed, means the cache cannot say what is
+// stored, so nothing is skipped on it.
+func TestSkipUnchanged_PendingWrite(t *testing.T) {
+	cond := `{"f:status":{"f:conditions":{"k:{\"type\":\"X\"}":{".":{},"f:status":{}}}}}`
+	for name, tc := range map[string]struct {
+		write    *writeRecord
+		wantSkip bool
+	}{
+		"no write":                         {nil, true},
+		"a write the cache shows":          {&writeRecord{rv: 10}, true},
+		"a write the cache lacks":          {&writeRecord{rv: 11}, false},
+		"a write whose outcome is unknown": {&writeRecord{unknown: true}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			obj := shardWithStatusManagers()
+			obj.ResourceVersion = "10"
+			obj.ManagedFields = []metav1.ManagedFieldsEntry{currentEntry(ManagerShardGuard, cond)}
+			c, _ := countingClient(t)
+			n := newNoopApplyClient(c)
+			if tc.write != nil {
+				k, ok := n.objectKey(obj)
+				require.True(t, ok)
+				n.written[k] = map[writeSlot]writeRecord{{ManagerShardGuard, "status"}: *tc.write}
+			}
+			got := SkipUnchanged(t.Context(), n, obj, ManagerShardGuard, ConditionPath("X"), true)
+			require.Equal(t, tc.wantSkip, got)
 		})
 	}
 }

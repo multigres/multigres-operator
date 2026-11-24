@@ -64,6 +64,14 @@ func (r *MultigresClusterReconciler) reconcileAdminNetworkPolicies(
 					Namespace: cluster.Namespace,
 				},
 			}
+			// Only a policy the cache holds is deleted: the controller owns
+			// and watches these, so one created after this read reconciles
+			// the cluster again.
+			if err := r.Get(ctx, client.ObjectKeyFromObject(stale), stale); errors.IsNotFound(err) {
+				continue
+			} else if err != nil {
+				return fmt.Errorf("failed to read stale network policy %s: %w", stale.Name, err)
+			}
 			if err := r.Delete(ctx, stale); err != nil && !errors.IsNotFound(err) {
 				return fmt.Errorf(
 					"failed to delete stale network policy %s: %w", stale.Name, err,
@@ -115,23 +123,20 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("TopoServer"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	changed, err := ownership.Apply(ctx, r.Client, desired)
+	if err != nil {
 		return fmt.Errorf("failed to apply global topo server: %w", err)
 	}
 
-	r.Recorder.Eventf(
-		cluster,
-		"Normal",
-		"Applied",
-		"Applied Global TopoServer %s",
-		desired.Name,
-	)
+	if changed {
+		r.Recorder.Eventf(
+			cluster,
+			"Normal",
+			"Applied",
+			"Applied Global TopoServer %s",
+			desired.Name,
+		)
+	}
 
 	return nil
 }
@@ -159,23 +164,20 @@ func (r *MultigresClusterReconciler) reconcileMultiadmin(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	changed, err := ownership.Apply(ctx, r.Client, desired)
+	if err != nil {
 		return fmt.Errorf("failed to apply multiadmin deployment: %w", err)
 	}
 
-	r.Recorder.Eventf(
-		cluster,
-		"Normal",
-		"Applied",
-		"Applied Multiadmin Deployment %s",
-		desired.Name,
-	)
+	if changed {
+		r.Recorder.Eventf(
+			cluster,
+			"Normal",
+			"Applied",
+			"Applied Multiadmin Deployment %s",
+			desired.Name,
+		)
+	}
 
 	// Reconcile Service
 	desiredSvc, err := buildMultiadminService(cluster, r.Scheme)
@@ -266,23 +268,20 @@ func (r *MultigresClusterReconciler) reconcileMultiadminWeb(
 	}
 
 	desiredDeploy.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
-	if err := r.Patch(
-		ctx,
-		desiredDeploy,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	changed, err := ownership.Apply(ctx, r.Client, desiredDeploy)
+	if err != nil {
 		return fmt.Errorf("failed to apply multiadmin-web deployment: %w", err)
 	}
 
-	r.Recorder.Eventf(
-		cluster,
-		"Normal",
-		"Applied",
-		"Applied MultiadminWeb Deployment %s",
-		desiredDeploy.Name,
-	)
+	if changed {
+		r.Recorder.Eventf(
+			cluster,
+			"Normal",
+			"Applied",
+			"Applied MultiadminWeb Deployment %s",
+			desiredDeploy.Name,
+		)
+	}
 
 	// 2. Reconcile Service
 	desiredSvc, err := buildMultiadminWebService(cluster, cluster.Spec.ExternalAdminWeb, r.Scheme)

@@ -28,7 +28,8 @@ func TestEvaluateBackups_Healthy(t *testing.T) {
 		},
 	}
 
-	recentID := time.Now().Add(-1 * time.Hour).Format("20060102-150405")
+	recent := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
+	recentID := recent.Format("20060102-150405")
 	backups := []*multipoolermanagerdata.BackupMetadata{
 		{
 			BackupId: recentID,
@@ -47,6 +48,12 @@ func TestEvaluateBackups_Healthy(t *testing.T) {
 	if result.LastBackupTime == nil {
 		t.Error("expected LastBackupTime to be set")
 	}
+	// The message must not change while the backup does not, or every pass
+	// writes the status again.
+	want := "Last full backup completed at " + recent.Format(time.RFC3339)
+	if result.Message != want {
+		t.Errorf("message = %q, want %q", result.Message, want)
+	}
 }
 
 func TestEvaluateBackups_Stale(t *testing.T) {
@@ -60,7 +67,8 @@ func TestEvaluateBackups_Stale(t *testing.T) {
 		},
 	}
 
-	oldID := time.Now().Add(-48 * time.Hour).Format("20060102-150405")
+	old := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second)
+	oldID := old.Format("20060102-150405")
 	backups := []*multipoolermanagerdata.BackupMetadata{
 		{
 			BackupId: oldID,
@@ -75,6 +83,10 @@ func TestEvaluateBackups_Stale(t *testing.T) {
 	}
 	if result.LastBackupType != "diff" {
 		t.Errorf("expected type=diff, got %s", result.LastBackupType)
+	}
+	want := "Last diff backup completed at " + old.Format(time.RFC3339) + ", more than 25h ago"
+	if result.Message != want {
+		t.Errorf("message = %q, want %q", result.Message, want)
 	}
 }
 

@@ -130,6 +130,14 @@ func (r *ShardReconciler) reconcileDataPlane(
 	if err := r.updateStatus(ctx, shard, rendered); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update status after data-plane observation: %w", err)
 	}
+	// The verdict follows the status apply: on a Shard with no status yet, an
+	// apply of the verdict alone is refused, the status's required fields
+	// being unset.
+	if poolerClientUnavailable {
+		if err := r.applyBackupStatus(ctx, shard, false); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	// Requeue when the shard is Healthy but topology hasn't elected a primary
 	// yet. This closes a race where the reconciliation burst settles before
@@ -192,10 +200,8 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 	}
 
-	// Phase: Evaluate backup health. Publish through patchStatus so the
-	// storage guard's condition is excluded from our SSA payload. A merge
-	// patch of conditions replaces the whole list and can overwrite a newer
-	// guard verdict with the stale copy held by this reconciliation.
+	// Phase: Evaluate backup health, and publish it with applyBackupStatus,
+	// apart from the status applied above.
 	if rpcClient != nil {
 		_, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcileBackupHealth")
 		result, err := backuphealth.Evaluate(ctx, store, rpcClient, shard)
@@ -214,7 +220,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 				shard,
 				fmt.Sprintf("Failed to check backup health: %v", err),
 			)
-			if patchErr := r.patchStatus(ctx, shard, shard.Status.Phase); patchErr != nil {
+			if patchErr := r.applyBackupStatus(ctx, shard, false); patchErr != nil {
 				return ctrl.Result{}, fmt.Errorf("update unavailable backup status: %w", patchErr)
 			}
 		} else if result != nil {
@@ -230,7 +236,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 				r.Recorder.Event(shard, "Warning", "BackupStale", result.Message)
 			}
 
-			if err := r.patchStatus(ctx, shard, shard.Status.Phase); err != nil {
+			if err := r.applyBackupStatus(ctx, shard, true); err != nil {
 				monitoring.RecordSpanError(childSpan, err)
 				childSpan.End()
 				logger.Error(err, "Failed to update shard backup status")

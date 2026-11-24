@@ -44,6 +44,8 @@ type TableGroupReconciler struct {
 	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
 	// docs/development/reconcile-gating.md. The zero value is safe.
 	Gate features.Gate
+
+	synced ownership.SyncedEvents
 }
 
 // Reconcile reads the state of the TableGroup and ensures its child Shards are in the desired state.
@@ -281,6 +283,7 @@ func (r *TableGroupReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	r.Client = ownership.SkipNoopApplies(r.Client)
 	if r.APIReader == nil {
 		r.APIReader = mgr.GetAPIReader()
 	}

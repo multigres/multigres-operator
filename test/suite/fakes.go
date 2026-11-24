@@ -3,6 +3,7 @@ package suite
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient/memorytopo"
 	cm "github.com/multigres/multigres/go/pb/clustermetadata"
 	md "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -133,7 +135,7 @@ func (r *topoRegistry) ForClusterRef(
 func podTopo(pod *corev1.Pod) (topoKey, bool) {
 	var k topoKey
 	var haveAddr, haveRoot bool
-	for _, c := range pod.Spec.Containers {
+	for _, c := range slices.Concat(pod.Spec.InitContainers, pod.Spec.Containers) {
 		for _, arg := range c.Args {
 			if v, ok := strings.CutPrefix(arg, "--topo-global-server-addresses="); ok {
 				k.address, haveAddr = v, true
@@ -557,6 +559,23 @@ func (p *poolerSim) tickShard(
 			fault != nil && fault.unreachable,
 		)
 		p.rpc.SetStatusResponse(topoclient.ComponentIDString(id), resp)
+		if serviceID, ok := renderedServiceID(pod); ok &&
+			pod.Labels[metadata.LabelMultigresGatewayRole] == metadata.GatewayRoleLite {
+			// A Lite pod is its shard's only pooler and its static leader.
+			// The operator asks it for its role by the service ID it
+			// registers under, the one its container was rendered with, and
+			// reads the role from PoolerType. An unreachable pod fails it
+			// there as well.
+			lite := proto.Clone(resp).(*md.StatusResponse)
+			lite.Status.PoolerType = cm.PoolerType_PRIMARY
+			liteID := topoclient.ComponentIDString(&cm.ID{
+				Component: cm.ID_MULTIPOOLER,
+				Cell:      id.Cell,
+				Name:      serviceID,
+			})
+			p.setUnreachable(string(liteID), fault != nil && fault.unreachable)
+			p.rpc.SetStatusResponse(liteID, lite)
+		}
 
 		// Keyed by topology and pod UID, not name: a rolled pod keeps its name
 		// but is a new process, and a real multipooler registers on every
@@ -596,4 +615,17 @@ func (p *poolerSim) tickShard(
 			p.mu.Unlock()
 		}
 	}
+}
+
+// renderedServiceID returns the --service-id a container of pod was rendered
+// with, which is the ID a real multipooler registers and answers under.
+func renderedServiceID(pod *corev1.Pod) (string, bool) {
+	for _, c := range slices.Concat(pod.Spec.InitContainers, pod.Spec.Containers) {
+		for _, arg := range append(slices.Clone(c.Command), c.Args...) {
+			if id, ok := strings.CutPrefix(arg, "--service-id="); ok {
+				return id, true
+			}
+		}
+	}
+	return "", false
 }

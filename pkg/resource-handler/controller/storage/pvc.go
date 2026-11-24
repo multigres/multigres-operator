@@ -4,6 +4,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 // BuildPVCTemplate creates a PersistentVolumeClaim for StatefulSet's volumeClaimTemplates.
@@ -37,7 +38,14 @@ func BuildPVCTemplate(
 					corev1.ResourceStorage: resource.MustParse(storageSize),
 				},
 			},
+			// The API server defaults the volume mode and the phase on a
+			// stored template. A StatefulSet's templates are an atomic list,
+			// compared whole, so the template is built as stored and an
+			// apply that changes nothing is recognised as one; see
+			// ownership.SkipNoopApplies.
+			VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 	}
 
 	if storageClassName != nil {

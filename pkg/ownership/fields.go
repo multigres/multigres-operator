@@ -216,11 +216,13 @@ var Fields = []Field{
 	},
 	// reconcile_quarantine.go reconcileQuarantine defers volume remediation unless
 	// this is True. The shard controller refreshes it from backup listing, independent
-	// of the quarantined pod.
+	// of the quarantined pod, under its own manager: the shard's other status
+	// applies run earlier in a pass from a cached copy, and would put an older
+	// verdict back.
 	{
 		Kind:    kindShard,
 		Path:    `.status.conditions[type="BackupHealthy"]`,
-		Manager: ManagerShard,
+		Manager: ManagerShardBackup,
 		Class:   Gate,
 	},
 	// reconcile_shards.go pendingDeletion holds the Shard until this is True. The
@@ -240,8 +242,21 @@ var Fields = []Field{
 	{Kind: kindShard, Path: ".status.cells", Manager: ManagerShard, Class: Observation},
 	{Kind: kindShard, Path: ".status.orchReady", Manager: ManagerShard, Class: Observation},
 	{Kind: kindShard, Path: ".status.poolsReady", Manager: ManagerShard, Class: Observation},
-	{Kind: kindShard, Path: ".status.lastBackupTime", Manager: ManagerShard, Class: Observation},
-	{Kind: kindShard, Path: ".status.lastBackupType", Manager: ManagerShard, Class: Observation},
+	// The last backup's time and type are written only from a successful
+	// backup listing, under a manager of their own, so a failed check, which
+	// updates BackupHealthy, leaves them as the last listing found them.
+	{
+		Kind:    kindShard,
+		Path:    ".status.lastBackupTime",
+		Manager: ManagerShardLastBackup,
+		Class:   Observation,
+	},
+	{
+		Kind:    kindShard,
+		Path:    ".status.lastBackupType",
+		Manager: ManagerShardLastBackup,
+		Class:   Observation,
+	},
 	// drain_helpers.go resolvePodRole chooses the primary or replica removal path,
 	// reconcile_quarantine.go reconcileQuarantine protects recorded primaries, and
 	// disruption.go CheckDisruption blocks unsafe drains. status.go hasPrimary and

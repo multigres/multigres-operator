@@ -26,6 +26,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
+	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -100,10 +101,15 @@ func postureTestReconciler(
 	t.Helper()
 	scheme := postureTestScheme(t)
 	allObjects := append([]client.Object{shard}, objects...)
+	// The CRD schemas make the status conditions a keyed list, as on the API
+	// server, so separate managers can each apply their own condition, and
+	// managedFields are returned so the reconciler sees who holds what.
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithTypeConverters(testutil.TypeConverters(t, "../../../../config/crd/bases")...).
 		WithObjects(allObjects...).
 		WithStatusSubresource(&multigresv1alpha1.Shard{}).
+		WithReturnManagedFields().
 		Build()
 	return &ShardReconciler{
 		Client:          c,

@@ -22,7 +22,11 @@ spec:
       app.kubernetes.io/component: multigateway
       app.kubernetes.io/instance: golden-cluster
       multigres.com/cell: zone1
-  strategy: {}
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
   template:
     metadata:
       annotations:

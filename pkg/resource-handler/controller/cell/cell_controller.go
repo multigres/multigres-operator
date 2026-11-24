@@ -51,6 +51,8 @@ type CellReconciler struct {
 	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
 	// docs/development/reconcile-gating.md. The zero value is safe.
 	Gate features.Gate
+
+	synced ownership.SyncedEvents
 }
 
 // Reconcile manages the Multigateway deployment and per-cell services for a Cell.
@@ -78,12 +80,14 @@ func (r *CellReconciler) Reconcile(
 	if err := r.Get(ctx, req.NamespacedName, cell); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("Cell resource not found, ignoring")
+			r.synced.Forget(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)
 		logger.Error(err, "Failed to get Cell")
 		return ctrl.Result{}, err
 	}
+	r.synced.Observe(cell, cell.Status.ObservedGeneration)
 
 	// Backstop for the event filter: a RequeueAfter scheduled before the label
 	// went on still reaches here.
@@ -191,8 +195,6 @@ func (r *CellReconciler) Reconcile(
 		childSpan.End()
 	}
 
-	specChanged := cell.Status.ObservedGeneration != cell.Generation
-
 	// Update status
 	{
 		_, childSpan := monitoring.StartChildSpan(ctx, "Cell.UpdateStatus")
@@ -207,13 +209,12 @@ func (r *CellReconciler) Reconcile(
 	}
 
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
-	if specChanged {
-		r.Recorder.Event(cell, "Normal", "Synced", "Successfully reconciled Cell spec")
-	}
-
 	if cell.Spec.Mode != multigresv1alpha1.ModeLite &&
 		cell.Status.Phase != multigresv1alpha1.PhaseHealthy {
 		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
+	}
+	if r.synced.Completed(cell) {
+		r.Recorder.Event(cell, "Normal", "Synced", "Successfully reconciled Cell spec")
 	}
 	return ctrl.Result{}, nil
 }
@@ -732,6 +733,7 @@ func (r *CellReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	r.Client = ownership.SkipNoopApplies(r.Client)
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}

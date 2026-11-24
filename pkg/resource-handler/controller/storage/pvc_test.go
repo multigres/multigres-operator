@@ -3,6 +3,8 @@ package storage
 import (
 	"testing"
 
+	"k8s.io/utils/ptr"
+
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -38,7 +40,9 @@ func TestBuildPVCTemplate(t *testing.T) {
 							corev1.ResourceStorage: resource.MustParse("10Gi"),
 						},
 					},
+					VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			},
 		},
 		"nil storage class - uses cluster default": {
@@ -58,7 +62,9 @@ func TestBuildPVCTemplate(t *testing.T) {
 							corev1.ResourceStorage: resource.MustParse("20Gi"),
 						},
 					},
+					VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			},
 		},
 		"different storage class": {
@@ -79,7 +85,9 @@ func TestBuildPVCTemplate(t *testing.T) {
 							corev1.ResourceStorage: resource.MustParse("100Gi"),
 						},
 					},
+					VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			},
 		},
 		"small storage size": {
@@ -99,7 +107,9 @@ func TestBuildPVCTemplate(t *testing.T) {
 							corev1.ResourceStorage: resource.MustParse("1Gi"),
 						},
 					},
+					VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			},
 		},
 		"large storage size": {
@@ -120,7 +130,9 @@ func TestBuildPVCTemplate(t *testing.T) {
 							corev1.ResourceStorage: resource.MustParse("1Ti"),
 						},
 					},
+					VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			},
 		},
 		"custom access modes": {
@@ -144,7 +156,9 @@ func TestBuildPVCTemplate(t *testing.T) {
 							corev1.ResourceStorage: resource.MustParse("50Gi"),
 						},
 					},
+					VolumeMode: ptr.To(corev1.PersistentVolumeFilesystem),
 				},
+				Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
 			},
 		},
 	}

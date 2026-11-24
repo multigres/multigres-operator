@@ -13,6 +13,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/util/deployment"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -134,6 +135,7 @@ func BuildMultiadminDeployment(
 			Labels:    standardLabels,
 		},
 		Spec: appsv1.DeploymentSpec{
+			Strategy: deployment.DefaultStrategy(),
 			Replicas: spec.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: metadata.GetSelectorLabels(standardLabels),
@@ -349,6 +351,7 @@ func BuildMultiadminWebDeployment(
 			Labels:    standardLabels,
 		},
 		Spec: appsv1.DeploymentSpec{
+			Strategy: deployment.DefaultStrategy(),
 			Replicas: spec.Replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: metadata.GetSelectorLabels(standardLabels),

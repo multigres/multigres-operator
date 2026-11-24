@@ -298,9 +298,11 @@ func setupFixtures(tb testing.TB) (
 
 	baseCluster := &multigresv1alpha1.MultigresCluster{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      clusterName,
-			Namespace: namespace,
-			UID:       "cluster-uid",
+			// The API server sets generation 1 on create; the fake client does not.
+			Generation: 1,
+			Name:       clusterName,
+			Namespace:  namespace,
+			UID:        "cluster-uid",
 			Labels: map[string]string{
 				metadata.LabelUsesCoreTemplate:  "true",
 				metadata.LabelUsesCellTemplate:  "true",

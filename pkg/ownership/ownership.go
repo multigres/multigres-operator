@@ -44,6 +44,8 @@ const (
 	ManagerShard           = "multigres-shard"
 	ManagerShardGuard      = "multigres-shard-guard"
 	ManagerShardReadiness  = "multigres-shard-readiness"
+	ManagerShardBackup     = "multigres-shard-backup"
+	ManagerShardLastBackup = "multigres-shard-last-backup"
 	ManagerTopoServerGuard = "multigres-toposerver-guard"
 	ManagerEtcdMaintenance = "multigres-etcd-maintenance"
 )
@@ -73,7 +75,8 @@ const (
 func Managers() []string {
 	m := []string{
 		ManagerCluster, ManagerTableGroup, ManagerCell, ManagerTopoServer,
-		ManagerShard, ManagerShardGuard, ManagerShardReadiness,
+		ManagerShard, ManagerShardGuard, ManagerShardReadiness, ManagerShardBackup,
+		ManagerShardLastBackup,
 		ManagerTopoServerGuard, ManagerEtcdMaintenance,
 	}
 	slices.Sort(m)
@@ -203,6 +206,10 @@ func ApplyStatus(ctx context.Context, c client.Client, obj client.Object, manage
 // missing StorageClass) would otherwise never retry a tidy-up that failed.
 // A cleanup conflict falls through to ApplyStatus, whose response refreshes
 // managedFields and whose cleanup can return a conflict to the reconciler.
+//
+// obj, read from the cache, is compared only when it is at least as new as
+// the last status apply under manager that c, a client from SkipNoopApplies,
+// sent or tried to send to it; see SkipNoopApplies.
 func SkipUnchanged(
 	ctx context.Context,
 	c client.Client,
@@ -211,6 +218,9 @@ func SkipUnchanged(
 	unchanged bool,
 ) bool {
 	if !unchanged || !Owns(obj, manager, path) {
+		return false
+	}
+	if n, ok := c.(*noopApplyClient); ok && !n.caughtUp(obj, obj, manager, "status") {
 		return false
 	}
 	return TidyLegacy(ctx, c, obj) == nil

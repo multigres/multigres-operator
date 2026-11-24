@@ -1,6 +1,7 @@
 package shard
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/multigres/multigres/go/common/topoclient"
 	"github.com/multigres/multigres/go/pb/clustermetadata"
 	multipoolermanagerdatapb "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -16,6 +18,7 @@ import (
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 )
 
 // Exercise the real data-plane phases across reconciles: quarantine consumes
@@ -190,4 +193,112 @@ func TestReconcileDataPlaneBackupHealthGatesQuarantine(t *testing.T) {
 			}
 		})
 	}
+}
+
+// verdictAtDelete records the BackupHealthy condition stored when the first
+// PersistentVolumeClaim is deleted, which is what a quarantine remediation
+// acted on as far as anyone reading the Shard can tell.
+type verdictAtDelete struct {
+	client.Client
+	shard   client.ObjectKey
+	deleted bool
+	stored  *metav1.Condition
+}
+
+func (v *verdictAtDelete) Delete(
+	ctx context.Context,
+	obj client.Object,
+	opts ...client.DeleteOption,
+) error {
+	if _, ok := obj.(*corev1.PersistentVolumeClaim); ok && !v.deleted {
+		v.deleted = true
+		s := &multigresv1alpha1.Shard{}
+		if err := v.Get(ctx, v.shard, s); err != nil {
+			return err
+		}
+		v.stored = meta.FindStatusCondition(s.Status.Conditions, backuphealth.ConditionHealthy)
+	}
+	return v.Client.Delete(ctx, obj, opts...)
+}
+
+// A Shard whose BackupHealthy verdict is still held by the main status
+// manager, as an operator that wrote it with the rest of the status left it,
+// keeps that verdict stored through the pass that hands it to the backup
+// manager, so a quarantine remediation acting on it acts on what is stored.
+func TestReconcileDataPlaneQuarantineSeesStoredLegacyVerdict(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	shard := qrShard()
+	badPod := qrPod(shard, 1, now.Add(-time.Hour), false)
+	goodPod := qrPod(shard, 0, now.Add(-time.Hour), true)
+	badPVC := qrPVC(shard, 1)
+	goodPVC := qrPVC(shard, 0)
+	primaryID := &clustermetadata.ID{Cell: qrCell, Name: goodPod.Name}
+
+	rpc := rpcclient.NewFakeClient()
+	rpc.SetStatusResponse(
+		topoclient.ComponentIDString(primaryID),
+		&multipoolermanagerdatapb.StatusResponse{
+			Status: &multipoolermanagerdatapb.Status{
+				PostgresStatus: multipoolermanagerdatapb.PostgresStatus_POSTGRES_STATUS_PRIMARY,
+			},
+		},
+	)
+	rpc.GetBackupsResponses[topoclient.ComponentIDString(primaryID)] = &multipoolermanagerdatapb.GetBackupsResponse{
+		Backups: []*multipoolermanagerdatapb.BackupMetadata{{
+			BackupId:      now.Add(-time.Hour).Format("20060102-150405") + "F",
+			Type:          "full",
+			Status:        multipoolermanagerdatapb.BackupMetadata_COMPLETE,
+			StopTimestamp: timestamppb.New(now.Add(-time.Hour)),
+		}},
+	}
+	r, c := postureTestReconciler(t, shard, rpc, badPod, goodPod, badPVC, goodPVC)
+	r.CreateTopoStore = func(*multigresv1alpha1.Shard) (topoclient.Store, error) {
+		store := qrStoreWithQuarantined(t, shard, 1)
+		_, err := store.UpdateMultipoolerFields(
+			t.Context(),
+			primaryID,
+			func(pooler *clustermetadata.Multipooler) error {
+				pooler.RoutingState.Role = clustermetadata.RoutingRole_ROUTING_ROLE_PRIMARY
+				return nil
+			},
+		)
+		return store, err
+	}
+
+	legacy := &multigresv1alpha1.Shard{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: multigresv1alpha1.GroupVersion.String(),
+			Kind:       "Shard",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: shard.Name, Namespace: shard.Namespace},
+		Status: multigresv1alpha1.ShardStatus{
+			Conditions: []metav1.Condition{{
+				Type:               backuphealth.ConditionHealthy,
+				Status:             metav1.ConditionTrue,
+				Reason:             "BackupRecent",
+				Message:            "a recent backup exists",
+				LastTransitionTime: metav1.NewTime(now.Add(-time.Hour)),
+			}},
+		},
+	}
+	require.NoError(t, c.Status().Patch(t.Context(), legacy, client.Apply,
+		client.FieldOwner(ownership.ManagerShard), client.ForceOwnership))
+	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(shard), shard))
+	require.True(t, ownership.Owns(shard, ownership.ManagerShard,
+		ownership.ConditionPath(backuphealth.ConditionHealthy)))
+
+	spy := &verdictAtDelete{Client: c, shard: client.ObjectKeyFromObject(shard)}
+	r.Client = spy
+	_, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{})
+	require.NoError(t, err)
+
+	require.True(t, spy.deleted, "the quarantined replica is remediated on a True verdict")
+	require.NotNil(t, spy.stored, "the verdict quarantine acted on is stored")
+	require.Equal(t, metav1.ConditionTrue, spy.stored.Status)
+	stored := &multigresv1alpha1.Shard{}
+	require.NoError(t, c.Get(t.Context(), client.ObjectKeyFromObject(shard), stored))
+	require.True(t, ownership.Owns(stored, ownership.ManagerShardBackup,
+		ownership.ConditionPath(backuphealth.ConditionHealthy)))
+	require.False(t, ownership.Owns(stored, ownership.ManagerShard,
+		ownership.ConditionPath(backuphealth.ConditionHealthy)))
 }

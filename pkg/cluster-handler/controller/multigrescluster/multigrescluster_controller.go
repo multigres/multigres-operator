@@ -34,6 +34,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/images"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/status"
@@ -94,6 +95,8 @@ type MultigresClusterReconciler struct {
 		cluster *multigresv1alpha1.MultigresCluster,
 		database string,
 	) ([]multiadmin.TableGroup, error)
+
+	synced ownership.SyncedEvents
 }
 
 // Reconcile resolves templates, reconciles child resources (Cells, TableGroups, TopoServer),
@@ -135,11 +138,13 @@ func (r *MultigresClusterReconciler) Reconcile(
 				r.PoolerClientCache.ForgetCluster(req.NamespacedName)
 			}
 			monitoring.ForgetCluster(req.Name, req.Namespace)
+			r.synced.Forget(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)
 		return ctrl.Result{}, fmt.Errorf("failed to get MultigresCluster: %w", err)
 	}
+	r.synced.Observe(cluster, cluster.Status.ObservedGeneration)
 
 	// Backstop for the event filter: a RequeueAfter scheduled before the label
 	// went on still reaches here.
@@ -428,7 +433,9 @@ func (r *MultigresClusterReconciler) Reconcile(
 	}
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(start).String())
-	r.Recorder.Event(cluster, "Normal", "Synced", "Successfully reconciled MultigresCluster")
+	if r.synced.Completed(cluster) {
+		r.Recorder.Event(cluster, "Normal", "Synced", "Successfully reconciled MultigresCluster")
+	}
 	return retireResult, nil
 }
 
@@ -616,6 +623,7 @@ func (r *MultigresClusterReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	r.Client = ownership.SkipNoopApplies(r.Client)
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}

@@ -6,7 +6,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/ownership"
@@ -25,24 +24,10 @@ func (r *ShardReconciler) reconcileMultiorchDeployment(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	if err := ownership.ApplyRecorded(
+		ctx, r.Client, r.Recorder, shard, desired); err != nil {
 		return fmt.Errorf("failed to apply Multiorch Deployment: %w", err)
 	}
-
-	r.Recorder.Eventf(
-		shard,
-		"Normal",
-		"Applied",
-		"Applied %s %s",
-		desired.GroupVersionKind().Kind,
-		desired.Name,
-	)
 
 	return nil
 }
@@ -60,24 +45,10 @@ func (r *ShardReconciler) reconcileMultiorchService(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Service"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	if err := ownership.ApplyRecorded(
+		ctx, r.Client, r.Recorder, shard, desired); err != nil {
 		return fmt.Errorf("failed to apply Multiorch Service: %w", err)
 	}
-
-	r.Recorder.Eventf(
-		shard,
-		"Normal",
-		"Applied",
-		"Applied %s %s",
-		desired.GroupVersionKind().Kind,
-		desired.Name,
-	)
 
 	return nil
 }

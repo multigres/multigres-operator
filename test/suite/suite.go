@@ -184,9 +184,12 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	}
 
 	cluster := &multigresclustercontroller.MultigresClusterReconciler{
-		Client:          s.Ops.For("multigrescluster", base),
-		Scheme:          mgr.GetScheme(),
-		Recorder:        mgr.GetEventRecorderFor("multigrescluster-controller"),
+		Client: s.Ops.For("multigrescluster", base),
+		Scheme: mgr.GetScheme(),
+		Recorder: loggingRecorder{
+			mgr.GetEventRecorderFor("multigrescluster-controller"),
+			"multigrescluster",
+		},
 		APIReader:       mgr.GetAPIReader(),
 		CreateTopoStore: topo.ForClusterRef,
 		// One single-member etcd per address, as topoRegistry models it, named
@@ -228,7 +231,7 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 		// case arms to model an informer that has not caught up.
 		Client:    s.Ops.For("tablegroup", lag.wrap(base, &ShardList{})),
 		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("tablegroup-controller"),
+		Recorder:  loggingRecorder{mgr.GetEventRecorderFor("tablegroup-controller"), "tablegroup"},
 		APIReader: mgr.GetAPIReader(),
 	}
 	if err := tableGroup.SetupWithManagerReconciler(
@@ -240,7 +243,7 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	cell := &cellcontroller.CellReconciler{
 		Client:   s.Ops.For("cell", base),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("cell-controller"),
+		Recorder: loggingRecorder{mgr.GetEventRecorderFor("cell-controller"), "cell"},
 	}
 	if err := cell.SetupWithManagerReconciler(
 		mgr, s.Reconciles.Wrap("cell", cell), opts,
@@ -251,7 +254,7 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 	topoServer := &toposervercontroller.TopoServerReconciler{
 		Client:   s.Ops.For("toposerver", base),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("toposerver-controller"),
+		Recorder: loggingRecorder{mgr.GetEventRecorderFor("toposerver-controller"), "toposerver"},
 		// Maintenance never dials a real etcd in this suite; a case that
 		// enables it registers a simulator with c.EtcdSim.
 		MaintenanceClientFactory: etcdSimFactory,
@@ -266,7 +269,7 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 		// Pod lists through the cached client are subject to lag, as above.
 		Client:          hookedClient{s.Ops.For("shard", lag.wrap(base, &corev1.PodList{}))},
 		Scheme:          mgr.GetScheme(),
-		Recorder:        mgr.GetEventRecorderFor("shard-controller"),
+		Recorder:        loggingRecorder{mgr.GetEventRecorderFor("shard-controller"), "shard"},
 		APIReader:       mgr.GetAPIReader(),
 		PoolerClients:   poolerclient.Static(faultingRPC{FakeClient: rpc, sim: poolers}),
 		CreateTopoStore: topo.ForShard,

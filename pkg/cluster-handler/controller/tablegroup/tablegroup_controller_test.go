@@ -41,8 +41,10 @@ func setupFixtures(
 
 	baseTG := &multigresv1alpha1.TableGroup{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      tgName,
-			Namespace: namespace,
+			// The API server sets generation 1 on create; the fake client does not.
+			Generation: 1,
+			Name:       tgName,
+			Namespace:  namespace,
 			Labels: map[string]string{
 				"multigres.com/cluster":    clusterName,
 				"multigres.com/database":   dbName,

@@ -3,6 +3,8 @@ package shard
 import (
 	"testing"
 
+	"github.com/multigres/multigres-operator/pkg/util/deployment"
+
 	"github.com/google/go-cmp/cmp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -78,6 +80,7 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(int32(1)), // Replicas = len(cells)
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -177,6 +180,7 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(int32(1)), // 1 replica per cell
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -276,6 +280,7 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(int32(3)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -404,6 +409,7 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(int32(1)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -533,6 +539,7 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(int32(1)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{

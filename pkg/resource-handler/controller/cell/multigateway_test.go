@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multigres/multigres-operator/pkg/util/deployment"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
@@ -79,6 +81,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -223,6 +226,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(int32(5)),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -365,6 +369,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -535,6 +540,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -713,6 +719,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -873,6 +880,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -1027,6 +1035,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -1169,6 +1178,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
@@ -1314,6 +1324,7 @@ func TestBuildMultigatewayDeployment(t *testing.T) {
 					},
 				},
 				Spec: appsv1.DeploymentSpec{
+					Strategy: deployment.DefaultStrategy(),
 					Replicas: ptr.To(DefaultMultigatewayReplicas),
 					Selector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{

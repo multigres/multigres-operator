@@ -10,10 +10,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/data-handler/backuphealth"
 	"github.com/multigres/multigres-operator/pkg/data-handler/posture"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
 	"github.com/multigres/multigres-operator/pkg/ownership"
@@ -138,11 +141,21 @@ func (r *ShardReconciler) patchStatus(
 	shard *multigresv1alpha1.Shard,
 	oldPhase multigresv1alpha1.Phase,
 ) error {
+	if err := r.adoptBackupStatus(ctx, shard); err != nil {
+		return err
+	}
 	// Filter conditions for the SSA patch. Each condition type must belong to
-	// exactly one SSA field manager
+	// exactly one SSA field manager. The backup verdict and the last backup's
+	// time and type belong to applyBackupStatus and are never carried here,
+	// whatever manager the cached Shard shows holding them: this apply runs
+	// from the cached Shard, which can predate the backup managers' latest
+	// write, and carrying its copy would put an older verdict back. On a Shard
+	// an earlier operator wrote, adoptBackupStatus has handed them to the
+	// backup managers first, so leaving them out here removes nothing.
 	var patchConditions []metav1.Condition
 	for i := range shard.Status.Conditions {
-		if shard.Status.Conditions[i].Type == conditionStorageClassValid {
+		switch shard.Status.Conditions[i].Type {
+		case conditionStorageClassValid, backuphealth.ConditionHealthy:
 			continue
 		}
 		patchConditions = append(patchConditions, shard.Status.Conditions[i])
@@ -166,8 +179,6 @@ func (r *ShardReconciler) patchStatus(
 			ReadyReplicas:      shard.Status.ReadyReplicas,
 			Cells:              shard.Status.Cells,
 			Conditions:         patchConditions,
-			LastBackupTime:     shard.Status.LastBackupTime,
-			LastBackupType:     shard.Status.LastBackupType,
 			PodRoles:           shard.Status.PodRoles,
 			PodPostures:        shard.Status.PodPostures,
 			PostgresConfig:     shard.Status.PostgresConfig,
@@ -186,9 +197,7 @@ func (r *ShardReconciler) patchStatus(
 		)
 	}
 
-	// Note: We rely on Server-Side Apply (SSA) to handle idempotency.
-	// If the status hasn't changed, the API server will treat this Patch as a no-op,
-	// so we don't need a manual DeepEqual check here.
+	// An unchanged status is not sent; see ownership.SkipNoopApplies.
 	if err := ownership.ApplyStatus(ctx, r.Client, patchObj, ownership.ManagerShard); err != nil {
 		return fmt.Errorf("failed to patch status: %w", err)
 	}
@@ -503,4 +512,154 @@ func (r *ShardReconciler) setConditions(
 	}
 
 	meta.SetStatusCondition(&shard.Status.Conditions, availableCondition)
+}
+
+// adoptBackupStatus hands the backup fields an earlier operator wrote with the
+// rest of the status, under ManagerShard, to ManagerShardBackup and
+// ManagerShardLastBackup before patchStatus stops carrying them: the
+// BackupHealthy condition and the last backup's time and type. Leaving them
+// out first would remove them while this pass still acts on the verdict in
+// memory, quarantine among them, and on a Shard whose backups cannot be
+// listed, or which has no primary to list them from, nothing would write them
+// again. It writes the values the pass holds, which are the stored ones unless
+// the pass has already replaced the verdict, as it does with Unknown when no
+// pooler client can be built, and then writes the same value itself.
+//
+// Each apply carries the cached Shard's resourceVersion as a precondition. A
+// snapshot older than what is stored, which may predate a newer verdict
+// already written under the backup manager, is refused with a conflict rather
+// than put back, and the pass is retried from a newer one. The Shard in memory
+// then takes the resourceVersion and managedFields the last apply returned: a
+// pass writes status more than once from the one Shard it read, and a later
+// write must see the fields already handed off, not hand them off again on a
+// snapshot this apply made stale.
+func (r *ShardReconciler) adoptBackupStatus(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) error {
+	rv := shard.ResourceVersion
+	// A field is handed off while the main manager holds it and the backup
+	// manager does not: an apply of the same value shares ownership, so once
+	// the backup manager holds it the main apply leaving it out removes
+	// nothing.
+	unadopted := func(path, manager string) bool {
+		return ownership.Owns(shard, ownership.ManagerShard, path) &&
+			!ownership.Owns(shard, manager, path)
+	}
+	var verdict backupStatus
+	if c := meta.FindStatusCondition(
+		shard.Status.Conditions,
+		backuphealth.ConditionHealthy,
+	); c != nil && unadopted(
+		ownership.ConditionPath(backuphealth.ConditionHealthy),
+		ownership.ManagerShardBackup,
+	) {
+		verdict.Conditions = []metav1.Condition{*c}
+	}
+	var last backupStatus
+	if shard.Status.LastBackupTime != nil &&
+		unadopted(".status.lastBackupTime", ownership.ManagerShardLastBackup) {
+		last.LastBackupTime = shard.Status.LastBackupTime
+	}
+	if shard.Status.LastBackupType != "" &&
+		unadopted(".status.lastBackupType", ownership.ManagerShardLastBackup) {
+		last.LastBackupType = shard.Status.LastBackupType
+	}
+	for _, a := range []struct {
+		fields  backupStatus
+		manager string
+	}{{verdict, ownership.ManagerShardBackup}, {last, ownership.ManagerShardLastBackup}} {
+		if a.fields.empty() {
+			continue
+		}
+		applied, err := r.applyPartialStatus(ctx, shard, a.fields, a.manager, rv)
+		if err != nil {
+			return fmt.Errorf("adopt backup status under %s: %w", a.manager, err)
+		}
+		rv = applied.GetResourceVersion()
+		shard.ResourceVersion = rv
+		shard.ManagedFields = applied.GetManagedFields()
+	}
+	return nil
+}
+
+// applyBackupStatus writes the backup verdict computed in memory: the
+// BackupHealthy condition under ManagerShardBackup, and, when observed is
+// true, the last backup's time and type under ManagerShardLastBackup. A pass
+// computes the verdict after its other status applies, which run from the
+// cached Shard: were the verdict written with them, a pass starting before its
+// cache held the previous pass's verdict would put the older verdict back, and
+// the next would restore the newer one, flipping the condition every pass
+// until the cache caught up. A pass that could not list backups has observed
+// no last backup, so it leaves those fields as they are; applying without them
+// under the manager that holds them would remove them.
+func (r *ShardReconciler) applyBackupStatus(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	observed bool,
+) error {
+	var verdict backupStatus
+	if c := meta.FindStatusCondition(
+		shard.Status.Conditions,
+		backuphealth.ConditionHealthy,
+	); c != nil {
+		verdict.Conditions = []metav1.Condition{*c}
+	}
+	if _, err := r.applyPartialStatus(
+		ctx, shard, verdict, ownership.ManagerShardBackup, "",
+	); err != nil {
+		return fmt.Errorf("failed to apply backup status: %w", err)
+	}
+	if !observed {
+		return nil
+	}
+	last := backupStatus{
+		LastBackupTime: shard.Status.LastBackupTime,
+		LastBackupType: shard.Status.LastBackupType,
+	}
+	if _, err := r.applyPartialStatus(
+		ctx, shard, last, ownership.ManagerShardLastBackup, "",
+	); err != nil {
+		return fmt.Errorf("failed to apply last backup status: %w", err)
+	}
+	return nil
+}
+
+// backupStatus is the part of a Shard's status the backup managers apply. A
+// typed ShardStatus would also send orchReady and poolsReady, which encode
+// even when false, and claim them for those managers.
+type backupStatus struct {
+	Conditions     []metav1.Condition `json:"conditions,omitempty"`
+	LastBackupTime *metav1.Time       `json:"lastBackupTime,omitempty"`
+	LastBackupType string             `json:"lastBackupType,omitempty"`
+}
+
+func (b backupStatus) empty() bool {
+	return len(b.Conditions) == 0 && b.LastBackupTime == nil && b.LastBackupType == ""
+}
+
+// applyPartialStatus applies exactly fields under manager, with resourceVersion
+// as a precondition when it is set, and returns the Shard as the apply left
+// it. An empty apply removes what manager holds; the client skips
+// it when manager holds nothing, which only the client can tell, since it
+// remembers writes its cache has not yet shown.
+func (r *ShardReconciler) applyPartialStatus(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	fields backupStatus,
+	manager, resourceVersion string,
+) (*unstructured.Unstructured, error) {
+	st, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&fields)
+	if err != nil {
+		return nil, err
+	}
+	u := &unstructured.Unstructured{Object: map[string]any{"status": st}}
+	u.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("Shard"))
+	u.SetName(shard.Name)
+	u.SetNamespace(shard.Namespace)
+	u.SetResourceVersion(resourceVersion)
+	if err := ownership.ApplyStatus(ctx, r.Client, u, manager); err != nil {
+		return nil, err
+	}
+	return u, nil
 }

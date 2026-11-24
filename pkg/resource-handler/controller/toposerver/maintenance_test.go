@@ -162,7 +162,15 @@ func TestEtcdMaintenanceSerializesMembersAndRestarts(t *testing.T) {
 		t.Fatal("completed reservation not persisted")
 	}
 	// A new controller instance, or a stale reconcile, must obey the persisted interval.
-	r2 := *r
+	r2 := &TopoServerReconciler{
+		Client:                   r.Client,
+		APIReader:                r.APIReader,
+		Scheme:                   r.Scheme,
+		Recorder:                 r.Recorder,
+		Gate:                     r.Gate,
+		DialContext:              r.DialContext,
+		MaintenanceClientFactory: r.MaintenanceClientFactory,
+	}
 	if err := r2.reconcileMaintenance(t.Context(), fresh); err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +338,15 @@ func TestEtcdMaintenanceIncompleteLeadershipTransfer(t *testing.T) {
 	if state == nil || !state.InProgress || state.Endpoint != maintenanceEndpoints(ts)[0] {
 		t.Fatalf("incomplete transfer did not retain the target reservation: %+v", state)
 	}
-	r2 := *r
+	r2 := &TopoServerReconciler{
+		Client:                   r.Client,
+		APIReader:                r.APIReader,
+		Scheme:                   r.Scheme,
+		Recorder:                 r.Recorder,
+		Gate:                     r.Gate,
+		DialContext:              r.DialContext,
+		MaintenanceClientFactory: r.MaintenanceClientFactory,
+	}
 	if err := r2.reconcileMaintenance(t.Context(), fresh); err != nil {
 		t.Fatal(err)
 	}

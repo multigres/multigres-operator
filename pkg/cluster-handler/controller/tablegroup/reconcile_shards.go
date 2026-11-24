@@ -8,7 +8,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -60,13 +59,8 @@ func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResu
 		rc.activeShardNames[desired.Name] = true
 
 		desired.SetGroupVersionKind(multigresv1alpha1.GroupVersion.WithKind("Shard"))
-		if err := rc.r.Patch(
-			ctx,
-			desired,
-			client.Apply,
-			client.ForceOwnership,
-			client.FieldOwner(ownership.ManagerChildWriter),
-		); err != nil {
+		changed, err := ownership.Apply(ctx, rc.r.Client, desired)
+		if err != nil {
 			return stepResult{}, newStepError(
 				fmt.Errorf("failed to apply shard: %w", err),
 				"Warning",
@@ -81,7 +75,9 @@ func stepApplyDesiredShards(ctx context.Context, rc *reconcileContext) (stepResu
 		// ready before its own controller has reconciled.
 		rc.appliedGeneration[desired.Name] = desired.Generation
 
-		rc.r.Recorder.Eventf(rc.tg, "Normal", "Applied", "Applied Shard %s", desired.Name)
+		if changed {
+			rc.r.Recorder.Eventf(rc.tg, "Normal", "Applied", "Applied Shard %s", desired.Name)
+		}
 	}
 
 	return continueStep(), nil

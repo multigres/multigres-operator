@@ -73,8 +73,8 @@ func TestTwoControllersWriteOneShard(t *testing.T) {
 // So instead of waiting, this drives the relationship directly: it makes a
 // small, known write of its own to the Shard (an annotation neither manager's
 // apply payload mentions, see shardProbeAnnotation) to produce a fresh watch
-// event, then waits for a COMPLETE tablegroup reconcile pass that both began
-// after that write and wrote this Shard (see awaitTableGroupPassAfter), read
+// event, then waits for a COMPLETE tablegroup reconcile pass that began after
+// that write (see awaitTableGroupPassAfter), read
 // from Suite.Reconciles rather than the raw op cursor. That matters: a
 // reconcile record is only appended once the whole pass has returned, so
 // waiting on it cannot observe half a pass the way a plain op-log cursor can,
@@ -108,6 +108,16 @@ func (c *C) requireTableGroupPatchesAreNoOps(key client.ObjectKey) {
 
 		probedFrom := c.probeShard(key, i)
 		pass := awaitTableGroupPassAfter(c, c.NS, key, probedFrom)
+		// A pass that failed may have stopped before its apply of the Shard,
+		// so its sending nothing would prove nothing.
+		c.NoError(pass.Err, "tablegroup's pass %s", pass)
+		// The pass's apply of the Shard would change nothing, so it is not
+		// sent at all; see ownership.SkipNoopApplies.
+		for _, op := range Suite.Reconciles.Ops(pass) {
+			c.False(ctrltest.KindSuffix(op.Kind) == "Shard" && op.Key.Name == key.Name,
+				"tablegroup's pass %s sent %s to Shard %s, which it had not changed",
+				pass, op.Verb, key.Name)
+		}
 
 		after := &Shard{}
 		c.NoError(c.Get(key, after), "get shard %s", key)
@@ -131,8 +141,9 @@ func (c *C) requireTableGroupPatchesAreNoOps(key client.ObjectKey) {
 }
 
 // awaitTableGroupPassAfter blocks until the tablegroup controller has completed
-// a reconcile pass that started after notBefore and wrote the Shard at key, and
-// returns that pass.
+// a reconcile pass that started after notBefore, and returns that pass. The
+// probe write to the Shard at key is what starts it, through the controller's
+// watch of the Shards it owns.
 //
 // The bar is Reconcile.Start measured against an instant captured BEFORE the
 // probe write was issued, and both halves of that were arrived at by measuring
@@ -189,18 +200,13 @@ func awaitTableGroupPassAfter(
 	what := fmt.Sprintf("a tablegroup pass on Shard %s beginning after the probe", key.Name)
 	c.Eventually(10*time.Second, what, func() error {
 		for _, r := range Suite.Reconciles.InNamespace(ns) {
-			if r.Controller != "tablegroup" || !r.Start.After(notBefore) {
-				continue
-			}
-			for _, op := range Suite.Reconciles.Ops(r) {
-				if ctrltest.KindSuffix(op.Kind) == "Shard" && op.Key.Name == key.Name {
-					pass = r
-					return nil
-				}
+			if r.Controller == "tablegroup" && !r.Gated && r.Start.After(notBefore) {
+				pass = r
+				return nil
 			}
 		}
 		return fmt.Errorf(
-			"no tablegroup pass touching Shard %s has begun since the probe write",
+			"no tablegroup pass has begun since the probe write to Shard %s",
 			key.Name,
 		)
 	})

@@ -53,6 +53,8 @@ type TopoServerReconciler struct {
 	// MaintenanceClientFactory, when set, replaces the real per-member etcd
 	// clients; the test suite injects a simulator here. Nil in production.
 	MaintenanceClientFactory func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error)
+
+	synced ownership.SyncedEvents
 }
 
 // Reconcile manages the etcd StatefulSet, headless service, and client service for a TopoServer.
@@ -80,12 +82,14 @@ func (r *TopoServerReconciler) Reconcile(
 	if err := r.Get(ctx, req.NamespacedName, toposerver); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("TopoServer resource not found, ignoring")
+			r.synced.Forget(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)
 		logger.Error(err, "Failed to get TopoServer")
 		return ctrl.Result{}, err
 	}
+	r.synced.Observe(toposerver, toposerver.Status.ObservedGeneration)
 
 	// Backstop for the event filter: a RequeueAfter scheduled before the label
 	// went on still reaches here.
@@ -232,7 +236,10 @@ func (r *TopoServerReconciler) Reconcile(
 	}
 
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
-	r.Recorder.Event(toposerver, "Normal", "Synced", "Successfully reconciled TopoServer")
+	// A TopoServer has converged once it is Healthy.
+	if toposerver.Status.Phase == multigresv1alpha1.PhaseHealthy && r.synced.Completed(toposerver) {
+		r.Recorder.Event(toposerver, "Normal", "Synced", "Successfully reconciled TopoServer")
+	}
 
 	if toposerver.Status.Phase != multigresv1alpha1.PhaseHealthy {
 		return ctrl.Result{RequeueAfter: statusRecheckDelay}, nil
@@ -261,24 +268,10 @@ func (r *TopoServerReconciler) reconcilePodDisruptionBudget(
 	}
 
 	desired.SetGroupVersionKind(policyv1.SchemeGroupVersion.WithKind("PodDisruptionBudget"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	if err := ownership.ApplyRecorded(
+		ctx, r.Client, r.Recorder, toposerver, desired); err != nil {
 		return fmt.Errorf("failed to apply PodDisruptionBudget: %w", err)
 	}
-
-	r.Recorder.Eventf(
-		toposerver,
-		"Normal",
-		"Applied",
-		"Applied %s %s",
-		desired.GroupVersionKind().Kind,
-		desired.Name,
-	)
 
 	return nil
 }
@@ -295,13 +288,8 @@ func (r *TopoServerReconciler) reconcileStatefulSet(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("StatefulSet"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	changed, err := ownership.Apply(ctx, r.Client, desired)
+	if err != nil {
 		return fmt.Errorf("failed to apply StatefulSet: %w", err)
 	}
 
@@ -331,14 +319,16 @@ func (r *TopoServerReconciler) reconcileStatefulSet(
 		}
 	}
 
-	r.Recorder.Eventf(
-		toposerver,
-		"Normal",
-		"Applied",
-		"Applied %s %s",
-		desired.GroupVersionKind().Kind,
-		desired.Name,
-	)
+	if changed {
+		r.Recorder.Eventf(
+			toposerver,
+			"Normal",
+			"Applied",
+			"Applied %s %s",
+			desired.GroupVersionKind().Kind,
+			desired.Name,
+		)
+	}
 
 	return nil
 }
@@ -355,24 +345,10 @@ func (r *TopoServerReconciler) reconcileHeadlessService(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Service"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	if err := ownership.ApplyRecorded(
+		ctx, r.Client, r.Recorder, toposerver, desired); err != nil {
 		return fmt.Errorf("failed to apply headless Service: %w", err)
 	}
-
-	r.Recorder.Eventf(
-		toposerver,
-		"Normal",
-		"Applied",
-		"Applied %s %s",
-		desired.GroupVersionKind().Kind,
-		desired.Name,
-	)
 
 	return nil
 }
@@ -389,24 +365,10 @@ func (r *TopoServerReconciler) reconcileClientService(
 
 	// Server Side Apply
 	desired.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Service"))
-	if err := r.Patch(
-		ctx,
-		desired,
-		client.Apply,
-		client.ForceOwnership,
-		client.FieldOwner(ownership.ManagerChildWriter),
-	); err != nil {
+	if err := ownership.ApplyRecorded(
+		ctx, r.Client, r.Recorder, toposerver, desired); err != nil {
 		return fmt.Errorf("failed to apply client Service: %w", err)
 	}
-
-	r.Recorder.Eventf(
-		toposerver,
-		"Normal",
-		"Applied",
-		"Applied %s %s",
-		desired.GroupVersionKind().Kind,
-		desired.Name,
-	)
 
 	return nil
 }
@@ -582,6 +544,7 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	r.Client = ownership.SkipNoopApplies(r.Client)
 	if r.APIReader == nil {
 		r.APIReader = mgr.GetAPIReader()
 	}

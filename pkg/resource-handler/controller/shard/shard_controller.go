@@ -30,6 +30,7 @@ import (
 	"github.com/multigres/multigres-operator/pkg/data-handler/poolerclient"
 	"github.com/multigres/multigres-operator/pkg/features"
 	"github.com/multigres/multigres-operator/pkg/monitoring"
+	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	pvcutil "github.com/multigres/multigres-operator/pkg/util/pvc"
 )
@@ -114,6 +115,8 @@ type ShardReconciler struct {
 	// when Apply fires.
 	notConvergedMu    sync.Mutex
 	notConvergedSince map[string]time.Time
+
+	synced ownership.SyncedEvents
 }
 
 // Reconcile manages pool pods, PVCs, services, and data-plane topology for a Shard.
@@ -141,6 +144,7 @@ func (r *ShardReconciler) Reconcile(
 	if err := r.Get(ctx, req.NamespacedName, shard); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("Shard resource not found, ignoring")
+			r.synced.Forget(req.NamespacedName)
 			r.forgetStrikes(req.Namespace, req.Name)
 			monitoring.ForgetShard(req.Name, req.Namespace)
 			return ctrl.Result{}, nil
@@ -149,6 +153,7 @@ func (r *ShardReconciler) Reconcile(
 		logger.Error(err, "Failed to get Shard")
 		return ctrl.Result{}, err
 	}
+	r.synced.Observe(shard, shard.Status.ObservedGeneration)
 
 	// Backstop for the event filter: a RequeueAfter scheduled before the label
 	// went on still reaches here.
@@ -535,7 +540,9 @@ func (r *ShardReconciler) Reconcile(
 	}
 
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
-	r.Recorder.Event(shard, "Normal", "Synced", "Successfully reconciled Shard")
+	if r.synced.Completed(shard) {
+		r.Recorder.Event(shard, "Normal", "Synced", "Successfully reconciled Shard")
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -747,6 +754,7 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	r.Client = ownership.SkipNoopApplies(r.Client)
 	controllerOpts := controller.Options{
 		MaxConcurrentReconciles: 20,
 	}

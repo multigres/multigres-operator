@@ -135,7 +135,7 @@ func stepPatchStatus(ctx context.Context, rc *reconcileContext) (stepResult, err
 		)
 	}
 
-	// Server-Side Apply makes unchanged status patches no-ops.
+	// An unchanged status is not sent; see ownership.SkipNoopApplies.
 	if err := ownership.ApplyStatus(
 		ctx,
 		rc.r.Client,
@@ -151,7 +151,7 @@ func stepPatchStatus(ctx context.Context, rc *reconcileContext) (stepResult, err
 	}
 
 	l.V(1).Info("reconcile complete", "duration", time.Since(rc.start).String())
-	if !rc.pendingDeletion {
+	if !rc.pendingDeletion && rc.r.synced.Completed(rc.tg) {
 		rc.r.Recorder.Event(rc.tg, "Normal", "Synced", "Successfully reconciled TableGroup")
 	}
 	return continueStep(), nil
