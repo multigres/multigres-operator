@@ -2,6 +2,7 @@ package multigrescluster
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -10,10 +11,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/ownership"
 	"github.com/multigres/multigres-operator/pkg/resolver"
+	"github.com/multigres/multigres-operator/pkg/topology"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
 // Builder function variables to allow mocking in tests
@@ -101,6 +105,21 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 		return fmt.Errorf("failed to resolve global topo: %w", err)
 	}
 
+	existing, err := r.existingGlobalTopoServer(ctx, cluster)
+	if err != nil {
+		return err
+	}
+	if reason, message := resolvedTopoAuthProblem(cluster, spec, existing); reason != "" {
+		return r.rejectTopology(ctx, cluster, reason, message)
+	}
+	if spec.External != nil {
+		if reason, message := r.projectRefRequiredByReferencedTopo(
+			ctx, cluster, spec.External.Endpoints,
+		); reason != "" {
+			return r.rejectTopology(ctx, cluster, reason, message)
+		}
+	}
+
 	desired, err := BuildGlobalTopoServer(cluster, spec, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to build global topo server: %w", err)
@@ -134,6 +153,120 @@ func (r *MultigresClusterReconciler) reconcileGlobalTopoServer(
 	)
 
 	return nil
+}
+
+const (
+	reasonTopologyAuthRequiresTLS        = "TopologyAuthRequiresTLS"
+	reasonTopologyAuthRequiresProjectRef = "TopologyAuthRequiresProjectRef"
+	reasonTopologyAuthCannotBeDisabled   = "TopologyAuthCannotBeDisabled"
+)
+
+// rejectTopology records a topology problem the cluster cannot reconcile past
+// and returns it as the reconcile error.
+func (r *MultigresClusterReconciler) rejectTopology(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	reason, message string,
+) error {
+	problem := stderrors.New(message)
+	r.Recorder.Event(cluster, "Warning", reason, message)
+	r.markTopologyFailed(ctx, cluster, reason, problem, log.FromContext(ctx))
+	return problem
+}
+
+// projectRefRequiredByReferencedTopo reports when the cluster has no project
+// reference but one of endpoints addresses a TopoServer with managed
+// authorization. Such a server grants no access to a cluster whose root is
+// derived from its namespace and name. The server is found with one cached Get
+// per endpoint. A server the cache cannot read is skipped rather than failing
+// the cluster, because the TopoServer controller refuses the grant either way.
+func (r *MultigresClusterReconciler) projectRefRequiredByReferencedTopo(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+	endpoints []multigresv1alpha1.EndpointUrl,
+) (reason, message string) {
+	if topology.HasProjectRef(cluster) {
+		return "", ""
+	}
+	for _, endpoint := range endpoints {
+		for _, key := range topology.EndpointTopoServerKeys(cluster.Namespace, string(endpoint)) {
+			ts := &multigresv1alpha1.TopoServer{}
+			if err := r.Get(ctx, key, ts); err != nil {
+				if !errors.IsNotFound(err) {
+					log.FromContext(ctx).V(1).Info(
+						"Could not read the referenced TopoServer to check for managed authorization",
+						"topoServer", key, "error", err.Error(),
+					)
+				}
+				continue
+			}
+			if topology.EndpointMatchesTopoServer(ts, cluster.Namespace, string(endpoint)) &&
+				topology.AuthManaged(ts) {
+				return reasonTopologyAuthRequiresProjectRef,
+					"TopoServer " + key.String() + " has managed authorization on, which grants " +
+						"access only to clusters with a project reference: set the " +
+						metadata.AnnotationProjectRef + " annotation on the cluster, " +
+						"or use a topology server without managed authorization"
+			}
+		}
+	}
+	return "", ""
+}
+
+// resolvedTopoAuthProblem checks the resolved global topology spec against the
+// rules the child TopoServer enforces. Admission only sees the inline value, so
+// an auth setting inherited from a CoreTemplate reaches here unchecked. An empty
+// reason means the spec is valid.
+func resolvedTopoAuthProblem(
+	cluster *multigresv1alpha1.MultigresCluster,
+	spec *multigresv1alpha1.GlobalTopoServerSpec,
+	existing *multigresv1alpha1.TopoServer,
+) (reason, message string) {
+	if spec == nil || spec.Etcd == nil {
+		return "", ""
+	}
+	if spec.Auth.IsEnabled() {
+		if !cluster.Spec.TopoTLS.IsEnabled() {
+			return reasonTopologyAuthRequiresTLS,
+				"spec.globalTopoServer.auth is enabled (possibly by the CoreTemplate default) " +
+					"but spec.topoTLS is not: set spec.globalTopoServer.auth.enabled to false, " +
+					"or create the cluster with spec.topoTLS.enabled, which is immutable"
+		}
+		if !topology.HasProjectRef(cluster) {
+			return reasonTopologyAuthRequiresProjectRef,
+				"spec.globalTopoServer.auth is enabled (possibly by the CoreTemplate default) " +
+					"but the cluster has no project reference: set the " +
+					metadata.AnnotationProjectRef + " annotation, or set " +
+					"spec.globalTopoServer.auth.enabled to false"
+		}
+		return "", ""
+	}
+	if existing != nil && (existing.Spec.Auth.IsEnabled() || existing.Status.AuthEnabled) {
+		return reasonTopologyAuthCannotBeDisabled,
+			"spec.globalTopoServer.auth is no longer enabled (possibly through the " +
+				"CoreTemplate default) but TopoServer " + existing.Name + " already has " +
+				"authorization on: set spec.globalTopoServer.auth.enabled to true, " +
+				"or move to an external topology server"
+	}
+	return "", ""
+}
+
+func (r *MultigresClusterReconciler) existingGlobalTopoServer(
+	ctx context.Context,
+	cluster *multigresv1alpha1.MultigresCluster,
+) (*multigresv1alpha1.TopoServer, error) {
+	existing := &multigresv1alpha1.TopoServer{}
+	err := r.Get(ctx, client.ObjectKey{
+		Name:      cluster.Name + "-global-topo",
+		Namespace: cluster.Namespace,
+	}, existing)
+	if errors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get global topo server: %w", err)
+	}
+	return existing, nil
 }
 
 // reconcileMultiadmin reconciles the Multiadmin Deployment.

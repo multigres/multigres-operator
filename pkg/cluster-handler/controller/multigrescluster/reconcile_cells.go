@@ -59,6 +59,14 @@ func (r *MultigresClusterReconciler) reconcileCells(
 			return false, fmt.Errorf("failed to resolve cell '%s': %w", cellCfg.Name, err)
 		}
 
+		if local := localTopoSpec; local != nil && local.External != nil {
+			if reason, message := r.projectRefRequiredByReferencedTopo(
+				ctx, cluster, local.External.Endpoints,
+			); reason != "" {
+				return false, r.rejectTopology(ctx, cluster, reason, message)
+			}
+		}
+
 		desired, err := BuildCell(
 			cluster,
 			&cellCfg,

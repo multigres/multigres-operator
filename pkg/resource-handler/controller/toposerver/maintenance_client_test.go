@@ -7,20 +7,31 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestMaintenanceClientDialOptionsFollowDialContext(t *testing.T) {
-	withoutDialer := (&TopoServerReconciler{}).maintenanceClientConfig(t.Context(), "ep", nil)
+	withoutDialer := (&TopoServerReconciler{}).maintenanceClientConfig(
+		t.Context(),
+		[]string{"ep"},
+		nil,
+	)
 	if len(withoutDialer.DialOptions) != 0 {
 		t.Fatalf("nil DialContext: DialOptions = %d, want 0", len(withoutDialer.DialOptions))
 	}
@@ -32,7 +43,7 @@ func TestMaintenanceClientDialOptionsFollowDialContext(t *testing.T) {
 		DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, nil },
 	}).maintenanceClientConfig(
 		t.Context(),
-		"ep",
+		[]string{"ep"},
 		nil,
 	)
 	if len(withDialer.DialOptions) == 0 {
@@ -67,34 +78,98 @@ func TestMaintenanceTLSUsesUncachedCredentialAndFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      multigresv1alpha1.TopoServerCertSecretName(ts.Name),
-			Namespace: ts.Namespace,
-		},
+	adminKey := topology.AdminSecretKey(testOperatorNamespace, ts)
+	admin := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: adminKey.Name, Namespace: adminKey.Namespace},
 		Data: map[string][]byte{
 			"tls.crt": certPEM,
 			"tls.key": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
 			"ca.crt":  certPEM,
 		},
 	}
+	serving := admin.DeepCopy()
+	serving.Name = multigresv1alpha1.TopoServerCertSecretName(ts.Name)
+	serving.Namespace = ts.Namespace
+	withAuth := func(ts *multigresv1alpha1.TopoServer) {
+		ts.Spec.Auth = &multigresv1alpha1.TopoServerAuthSpec{Enabled: true}
+	}
+	invalid := func(secret *corev1.Secret) *corev1.Secret {
+		result := secret.DeepCopy()
+		delete(result.Data, corev1.TLSPrivateKeyKey)
+		return result
+	}
 	for _, test := range []struct {
 		name    string
-		change  func(*corev1.Secret)
+		objects []runtime.Object
+		adjust  func(*multigresv1alpha1.TopoServer)
 		wantErr bool
 	}{
-		{"valid", func(*corev1.Secret) {}, false},
-		{"missing key", func(s *corev1.Secret) { delete(s.Data, "tls.key") }, true},
-		{"invalid CA", func(s *corev1.Secret) { s.Data["ca.crt"] = []byte("invalid") }, true},
+		{name: "admin credential", objects: []runtime.Object{admin}, adjust: withAuth},
+		{
+			name:    "admin credential is not used without managed auth",
+			objects: []runtime.Object{admin},
+			wantErr: true,
+		},
+		{name: "serving credential during pre-auth upgrade", objects: []runtime.Object{serving}},
+		{
+			name:    "admin preferred over malformed serving credential",
+			objects: []runtime.Object{admin, invalid(serving)},
+			adjust:  withAuth,
+		},
+		{
+			name:    "malformed admin does not fall back",
+			objects: []runtime.Object{invalid(admin), serving},
+			adjust:  withAuth,
+			wantErr: true,
+		},
+		{
+			name:    "auth requested does not fall back",
+			objects: []runtime.Object{serving},
+			adjust: func(ts *multigresv1alpha1.TopoServer) {
+				ts.Spec.Auth = &multigresv1alpha1.TopoServerAuthSpec{Enabled: true}
+			},
+			wantErr: true,
+		},
+		{
+			name:    "auth enabled status does not fall back",
+			objects: []runtime.Object{serving},
+			adjust:  func(ts *multigresv1alpha1.TopoServer) { ts.Status.AuthEnabled = true },
+			wantErr: true,
+		},
+		{
+			name:    "auth identity journal does not fall back",
+			objects: []runtime.Object{serving},
+			adjust: func(ts *multigresv1alpha1.TopoServer) {
+				ts.Status.AuthIdentities = []string{"/multigres/project"}
+			},
+			wantErr: true,
+		},
+		{name: "missing key", objects: []runtime.Object{invalid(admin)}, adjust: withAuth, wantErr: true},
+		{
+			name: "invalid CA",
+			objects: []runtime.Object{func() *corev1.Secret {
+				s := admin.DeepCopy()
+				s.Data["ca.crt"] = []byte("invalid")
+				return s
+			}()},
+			adjust:  withAuth,
+			wantErr: true,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			s := secret.DeepCopy()
-			test.change(s)
-			r := &TopoServerReconciler{
-				Client:    fake.NewClientBuilder().WithScheme(certScheme()).Build(),
-				APIReader: fake.NewClientBuilder().WithScheme(certScheme()).WithObjects(s).Build(),
+			server := ts.DeepCopy()
+			if test.adjust != nil {
+				test.adjust(server)
 			}
-			cfg, err := r.maintenanceTLSConfig(t.Context(), ts)
+			r := &TopoServerReconciler{
+				OperatorNamespace: testOperatorNamespace,
+				Client:            fake.NewClientBuilder().WithScheme(certScheme()).Build(),
+				APIReader: fake.NewClientBuilder().
+					WithScheme(certScheme()).
+					WithRuntimeObjects(test.objects...).
+					Build(),
+			}
+			cfg, err := r.maintenanceTLSConfig(t.Context(), server)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("error=%v", err)
 			}
@@ -103,5 +178,48 @@ func TestMaintenanceTLSUsesUncachedCredentialAndFailsClosed(t *testing.T) {
 				t.Fatal("invalid TLS configuration")
 			}
 		})
+	}
+}
+
+type enabledAuthServer struct {
+	etcdserverpb.UnimplementedAuthServer
+}
+
+func (enabledAuthServer) AuthStatus(
+	context.Context,
+	*etcdserverpb.AuthStatusRequest,
+) (*etcdserverpb.AuthStatusResponse, error) {
+	return &etcdserverpb.AuthStatusResponse{Enabled: true}, nil
+}
+
+func TestMaintenanceAuthReachesAnyMember(t *testing.T) {
+	listener := bufconn.Listen(1 << 20)
+	server := grpc.NewServer()
+	etcdserverpb.RegisterAuthServer(server, enabledAuthServer{})
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+
+	ts := &multigresv1alpha1.TopoServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "topo", Namespace: "infra"},
+		Spec:       multigresv1alpha1.TopoServerSpec{Etcd: &multigresv1alpha1.EtcdSpec{}},
+	}
+	r := &TopoServerReconciler{
+		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+			if strings.HasPrefix(addr, ts.Name+"-0.") {
+				return nil, errors.New("member 0 is unreachable")
+			}
+			return listener.DialContext(ctx)
+		},
+	}
+	c, err := r.maintenanceClient(t.Context(), ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	status, err := c.(etcdAuthClient).AuthStatus(ctx)
+	if err != nil || !status.Enabled {
+		t.Fatalf("auth status with member 0 down: %+v, %v", status, err)
 	}
 }
