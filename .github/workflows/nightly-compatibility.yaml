@@ -29,6 +29,10 @@ on:
         required: false
         default: main
         type: string
+      qualify-dynamic-tablegroups:
+        description: Run the dynamic tablegroup lifecycle for this exact operator and runtime pair
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -349,6 +353,26 @@ jobs:
       timeout-minutes: 60
       mode: ${{ matrix.mode }}
       test-spec: ${{ matrix.test-spec }}
+      postgres-image: ${{ needs.preflight.outputs.pgctld-image }}
+      multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
+      multiadmin-web-image: ${{ needs.preflight.outputs.multiadmin-web-image }}
+      multiorch-image: ${{ needs.preflight.outputs.multigres-image }}
+      multipooler-image: ${{ needs.preflight.outputs.multigres-image }}
+      multigateway-image: ${{ needs.preflight.outputs.multigres-image }}
+
+  dynamic-tablegroups:
+    name: Qualify dynamic tablegroups
+    needs: [resolve, preflight]
+    if: inputs.qualify-dynamic-tablegroups && needs.preflight.result == 'success'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_reusable-e2e.yaml
+    with:
+      ref: ${{ needs.resolve.outputs.operator-sha }}
+      timeout-minutes: 60
+      mode: dedicated
+      test-spec: tablegroups
+      qualification-test: TestDynamicTablegroupLifecycle
       postgres-image: ${{ needs.preflight.outputs.pgctld-image }}
       multiadmin-image: ${{ needs.preflight.outputs.multigres-image }}
       multiadmin-web-image: ${{ needs.preflight.outputs.multiadmin-web-image }}

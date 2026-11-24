@@ -25,6 +25,10 @@ on:
         default: 'shared'
         required: false
         type: string
+      qualification-test:
+        description: Top-level Go test that must pass on an unmodified operator checkout in a dedicated package
+        default: ''
+        type: string
       operator-image-artifact:
         description: >
           Name of an uploaded artifact containing operator-image.tar.
@@ -123,6 +127,7 @@ jobs:
       # refs predating E2E_* support still compile the requested runtime images
       # into the operator. Current refs also apply the same values to test CRs.
       - name: Apply runtime image overrides
+        if: inputs.qualification-test == ''
         env:
           POSTGRES_IMAGE: ${{ inputs.postgres-image }}
           MULTIADMIN_IMAGE: ${{ inputs.multiadmin-image }}
@@ -238,7 +243,9 @@ jobs:
           E2E_MULTIGATEWAY_IMAGE: ${{ inputs.multigateway-image }}
           MODE: ${{ inputs.mode }}
           TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+          REQUIRED_TEST: ${{ inputs.qualification-test }}
         run: |
+          set -euo pipefail
           [[ "$TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] ||
             {
               echo "::error::Timeout must be a whole number of minutes"
@@ -259,6 +266,11 @@ jobs:
           if [ "$MODE" != "shared" ]; then
             go test -json -tags=e2e "${packages[@]}" -v -count=1 \
               "-timeout=${TIMEOUT_MINUTES}m" | tee "$RUNNER_TEMP/e2e-tests.jsonl"
+            if [ -n "$REQUIRED_TEST" ]; then
+              jq -se --arg test "$REQUIRED_TEST" 'any(.[]; .Action == "pass" and .Test == $test)' \
+                "$RUNNER_TEMP/e2e-tests.jsonl" > /dev/null ||
+                { echo "::error::Required test $REQUIRED_TEST did not pass"; exit 1; }
+            fi
             exit 0
           fi
 
@@ -266,6 +278,13 @@ jobs:
             E2E_PACKAGE_FILE="$RUNNER_TEMP/e2e-packages" \
             TEST_JSON_FILE="$RUNNER_TEMP/e2e-tests.jsonl" \
             E2E_TIMEOUT="${TIMEOUT_MINUTES}m"
+
+      - name: Upload qualification test results
+        if: ${{ !cancelled() && inputs.qualification-test != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qualification-${{ inputs.test-spec }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-tests.jsonl
 
       # Compatibility runs can check out refs that predate the local action.
       - name: Upload test results to Trunk

@@ -27,6 +27,31 @@ const legacy = [
   defaults.DefaultEtcdImage,
 ];
 
+test('a dedicated qualification requires an explicit pass for its named test', (t) => {
+  assert.match(workflow, /- name: Apply runtime image overrides\n        if: inputs\.qualification-test == ''/);
+  const step = workflow.split('      - name: Run e2e tests\n')[1]
+    .split('\n      - name:')[0].split('        run: |\n')[1]
+    .split('\n').map((line) => line.slice(10)).join('\n');
+  const dedicated = step.split('\nif [ "$MODE" != "shared" ]; then\n')[1]
+    .split('\nfi')[0];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-qualification-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'go'), '#!/bin/sh\nprintf "%s\\n" "$GO_TEST_JSON"\nexit "$GO_TEST_STATUS"\n', { mode: 0o755 });
+  const name = 'TestDynamicTablegroupLifecycle';
+  for (const [action, testName, status, expected] of [
+    ['pass', name, 0, 0], ['skip', name, 0, 1], ['pass', 'TestOther', 0, 1], ['pass', name, 2, 2],
+  ]) {
+    const result = spawnSync('bash', ['-c', `${step.split('\n')[0]}\npackages=(./test/e2e/dedicated/tablegroups/)\n${dedicated}`], {
+      encoding: 'utf8', env: {
+        ...process.env, PATH: `${dir}:${process.env.PATH}`, RUNNER_TEMP: dir,
+        TIMEOUT_MINUTES: '60', REQUIRED_TEST: name, GO_TEST_STATUS: String(status),
+        GO_TEST_JSON: JSON.stringify({ Action: action, Test: testName }),
+      },
+    });
+    assert.equal(result.status, expected, result.stderr || result.stdout);
+  }
+});
+
 function fixture(t, { oldFramework = false, images = defaults, failImage = '' } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-images-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

@@ -37,6 +37,11 @@ Semver tag pushes (`vX.Y.Z`) trigger the stable lane, which:
 
 ## How to cut a stable release
 
+Before enabling or advertising dynamic tablegroups, require a passing
+[dynamic tablegroup lifecycle canary](docs/development/runtime-image-promotion.md#dynamic-tablegroup-qualification)
+for the exact operator revision and runtime image digests being shipped.
+Ordinary releases and runtime image promotion can proceed with the feature disabled.
+
 Make sure you push the tag to the upstream `multigres/multigres-operator` repository, not to your personal fork.
 
 Wait for that commit's main publication to succeed before pushing a version tag.
