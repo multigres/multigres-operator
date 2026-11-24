@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -120,6 +121,154 @@ func TestBuildServingCertificate(t *testing.T) {
 	}
 	if diff := cmp.Diff(wantIssuerRef, spec["issuerRef"]); diff != "" {
 		t.Errorf("issuerRef mismatch (-want +got):\n%s", diff)
+	}
+}
+
+const testOperatorNamespace = "multigres-operator-system"
+
+func authManagedTopoServer(
+	name, namespace, issuer string,
+) *multigresv1alpha1.TopoServer {
+	ts := certTestTopoServer(&multigresv1alpha1.TopoTLSConfig{
+		Enabled: ptr.To(true), IssuerName: issuer,
+	})
+	ts.Name, ts.Namespace, ts.UID = name, namespace, types.UID(name+"-uid")
+	ts.Spec.Auth = &multigresv1alpha1.TopoServerAuthSpec{Enabled: true}
+	return ts
+}
+
+func TestBuildAdminCertificate(t *testing.T) {
+	certificate := BuildAdminCertificate(testOperatorNamespace, "infra-issuer", "example.test")
+	wantName := multigresv1alpha1.TopoAdminCertName("ClusterIssuer", "infra-issuer")
+	if certificate.GetName() != wantName {
+		t.Fatalf("admin certificate name = %q", certificate.GetName())
+	}
+	if certificate.GetNamespace() != testOperatorNamespace {
+		t.Fatalf("admin certificate namespace = %q", certificate.GetNamespace())
+	}
+	if refs := certificate.GetOwnerReferences(); len(refs) != 0 {
+		t.Fatalf("shared admin certificate must have no owner: %v", refs)
+	}
+	for path, want := range map[string]string{
+		"secretName":     wantName,
+		"literalSubject": fmt.Sprintf(certs.LiteralSubjectTemplate, operatorEtcdUsername),
+	} {
+		got, _, _ := unstructured.NestedString(certificate.Object, "spec", path)
+		if got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+	uris, _, _ := unstructured.NestedSlice(certificate.Object, "spec", "uris")
+	if diff := cmp.Diff([]any{"spiffe://example.test/cp/multigres-operator"}, uris); diff != "" {
+		t.Fatalf("uris mismatch (-want +got):\n%s", diff)
+	}
+	usages, _, _ := unstructured.NestedSlice(certificate.Object, "spec", "usages")
+	if diff := cmp.Diff(
+		[]any{"digital signature", "key encipherment", "client auth"},
+		usages,
+	); diff != "" {
+		t.Fatal(diff)
+	}
+	issuer, _, _ := unstructured.NestedString(certificate.Object, "spec", "issuerRef", "name")
+	if issuer != "infra-issuer" {
+		t.Fatalf("issuer = %q", issuer)
+	}
+}
+
+func TestBuildAdminCertificateDefaultTrustDomain(t *testing.T) {
+	certificate := BuildAdminCertificate(testOperatorNamespace, "infra-issuer", "")
+	uris, _, _ := unstructured.NestedSlice(certificate.Object, "spec", "uris")
+	want := []any{"spiffe://" + certs.DefaultTrustDomain + "/cp/multigres-operator"}
+	if diff := cmp.Diff(want, uris); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
+func TestReconcileAdminCertificateNotIssuedWithoutAuth(t *testing.T) {
+	for name, mutate := range map[string]func(*multigresv1alpha1.TopoServer){
+		"auth unset":   func(ts *multigresv1alpha1.TopoServer) { ts.Spec.Auth = nil },
+		"tls disabled": func(ts *multigresv1alpha1.TopoServer) { ts.Spec.TLS = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ts := authManagedTopoServer("ts", "project-a", "infra-issuer")
+			mutate(ts)
+			scheme := certScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ts).Build()
+			r := &TopoServerReconciler{
+				Client: c, Scheme: scheme, OperatorNamespace: testOperatorNamespace,
+			}
+			if err := r.reconcileCertificate(t.Context(), ts); err != nil {
+				t.Fatal(err)
+			}
+			for _, namespace := range []string{testOperatorNamespace, ts.Namespace} {
+				list, err := certs.List(t.Context(), c, namespace)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range list.Items {
+					if item.GetName() == multigresv1alpha1.TopoAdminCertName(
+						"ClusterIssuer",
+						"infra-issuer",
+					) {
+						t.Errorf(
+							"administrator certificate %s/%s issued",
+							namespace,
+							item.GetName(),
+						)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestReconcileAdminCertificateSharedPerIssuer(t *testing.T) {
+	a := authManagedTopoServer("topo-a", "project-a", "infra-issuer")
+	b := authManagedTopoServer("topo-b", "project-b", "infra-issuer")
+	other := authManagedTopoServer("topo-c", "project-c", "other-issuer")
+	scheme := certScheme()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(a, b, other).Build()
+	r := &TopoServerReconciler{Client: c, Scheme: scheme, OperatorNamespace: testOperatorNamespace}
+	for _, ts := range []*multigresv1alpha1.TopoServer{a, b, other} {
+		if err := r.reconcileCertificate(t.Context(), ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := certs.List(t.Context(), c, testOperatorNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 2 {
+		t.Fatalf("operator namespace has %d certificates, want 2 (one per issuer)", len(list.Items))
+	}
+	shared := certs.FindByName(
+		list,
+		multigresv1alpha1.TopoAdminCertName("ClusterIssuer", "infra-issuer"),
+	)
+	if shared == nil {
+		t.Fatal("shared administrator certificate missing")
+	}
+	secretName, _, _ := unstructured.NestedString(shared.Object, "spec", "secretName")
+	if secretName != multigresv1alpha1.TopoAdminCertSecretName("ClusterIssuer", "infra-issuer") {
+		t.Fatalf("secretName = %q", secretName)
+	}
+	version := shared.GetResourceVersion()
+	if err := r.reconcileCertificate(t.Context(), b); err != nil {
+		t.Fatal(err)
+	}
+	again, err := certs.Get(t.Context(), c, testOperatorNamespace, shared.GetName())
+	if err != nil || again.GetResourceVersion() != version {
+		t.Fatalf("unchanged certificate was modified: %v", err)
+	}
+}
+
+func TestReconcileAdminCertificateRequiresOperatorNamespace(t *testing.T) {
+	ts := authManagedTopoServer("ts", "project-a", "infra-issuer")
+	scheme := certScheme()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ts).Build()
+	r := &TopoServerReconciler{Client: c, Scheme: scheme}
+	if err := r.reconcileCertificate(t.Context(), ts); err == nil {
+		t.Fatal("expected an error without an operator namespace")
 	}
 }
 

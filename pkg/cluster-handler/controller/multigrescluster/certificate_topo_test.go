@@ -198,35 +198,94 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 	tests := map[string]struct {
 		cluster     *multigresv1alpha1.MultigresCluster
 		wantSubject string
+		wantURI     string
 	}{
 		"project ref annotation is the cluster identity": {
 			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
 				metadata.AnnotationProjectRef: "proj_123",
 			}),
 			wantSubject: "/multigres/proj_123",
+			wantURI:     "spiffe://example.test/project/proj_123",
 		},
 		"empty project ref falls back to namespace and cluster name": {
 			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
 				metadata.AnnotationProjectRef: "",
 			}),
 			wantSubject: "/multigres/supabase/test-cluster",
+			wantURI:     "spiffe://example.test/cluster/supabase/test-cluster",
 		},
 		"absent annotation falls back to namespace and cluster name": {
 			cluster:     topoTLSCluster("test-cluster", "supabase", nil),
 			wantSubject: "/multigres/supabase/test-cluster",
+			wantURI:     "spiffe://example.test/cluster/supabase/test-cluster",
 		},
-		"unsafe path characters are percent-encoded": {
+		"long fallback hashes the CN but the SAN keeps the real namespace and name": {
+			cluster: topoTLSCluster(
+				"cluster-abcdefghijklmnop", "namespace-abcdefghijklmnopqrstu", nil,
+			),
+			wantSubject: "/multigres-fallback/b-Tmo_r9oWzDWEuz_6f6LFOAmYO7ve1i4ksIy7qa9ac",
+			wantURI:     "spiffe://example.test/cluster/namespace-abcdefghijklmnopqrstu/cluster-abcdefghijklmnop",
+		},
+		"escaped fallback segments keep the namespace and name boundary": {
+			cluster:     topoTLSCluster("a/b", "ns", nil),
+			wantSubject: "/multigres/ns/a%2Fb",
+			wantURI:     "spiffe://example.test/cluster/ns/a%2Fb",
+		},
+		"project ref stays in the project path even when it looks like a fallback": {
+			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
+				metadata.AnnotationProjectRef: "supabase/test-cluster",
+			}),
+			wantSubject: "/multigres/supabase%2Ftest-cluster",
+			wantURI:     "spiffe://example.test/encoded-project/73757061626173652f746573742d636c7573746572",
+		},
+		"safe punctuation stays in the project path": {
+			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
+				metadata.AnnotationProjectRef: "proj_1.2-3",
+			}),
+			wantSubject: "/multigres/proj_1.2-3",
+			wantURI:     "spiffe://example.test/project/proj_1.2-3",
+		},
+		"unsafe path characters are hex-encoded in the SPIFFE ID only": {
 			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
 				metadata.AnnotationProjectRef: "proj/123",
 			}),
 			wantSubject: "/multigres/proj%2F123",
+			wantURI:     "spiffe://example.test/encoded-project/70726f6a2f313233",
+		},
+		"a single dot ref is hex-encoded": {
+			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
+				metadata.AnnotationProjectRef: ".",
+			}),
+			wantSubject: "/multigres/%2E",
+			wantURI:     "spiffe://example.test/encoded-project/2e",
+		},
+		"a double dot ref is hex-encoded": {
+			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
+				metadata.AnnotationProjectRef: "..",
+			}),
+			wantSubject: "/multigres/%2E%2E",
+			wantURI:     "spiffe://example.test/encoded-project/2e2e",
+		},
+		"a unicode ref is hex-encoded from its UTF-8 bytes": {
+			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
+				metadata.AnnotationProjectRef: "proj-é",
+			}),
+			wantSubject: "/multigres/proj-%C3%A9",
+			wantURI:     "spiffe://example.test/encoded-project/70726f6a2dc3a9",
+		},
+		"a ref named encoded-project keeps the project path": {
+			cluster: topoTLSCluster("test-cluster", "supabase", map[string]string{
+				metadata.AnnotationProjectRef: "encoded-project",
+			}),
+			wantSubject: "/multigres/encoded-project",
+			wantURI:     "spiffe://example.test/project/encoded-project",
 		},
 	}
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			scheme := setupScheme()
-			got, err := buildTopoClientCertificate(tc.cluster, scheme)
+			got, err := buildTopoClientCertificate(tc.cluster, scheme, "example.test")
 			if err != nil {
 				t.Fatalf("buildTopoClientCertificate() error = %v", err)
 			}
@@ -255,9 +314,13 @@ func TestBuildTopoClientCertificate(t *testing.T) {
 			if diff := cmp.Diff(wantName, spec["secretName"]); diff != "" {
 				t.Errorf("secretName mismatch (-want +got):\n%s", diff)
 			}
-			// A client credential is verified by subject, so it carries no SANs.
+			// The CN stays the topology root, because etcd reads usernames from
+			// it. The SPIFFE URI SAN has its own path per identity kind.
 			if diff := cmp.Diff([]any{}, spec["dnsNames"]); diff != "" {
 				t.Errorf("dnsNames mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff([]any{tc.wantURI}, spec["uris"]); diff != "" {
+				t.Errorf("uris mismatch (-want +got):\n%s", diff)
 			}
 			wantUsages := []any{
 				"digital signature",
@@ -289,7 +352,7 @@ func TestBuildTopoClientCertificateCommonNameMatchesTopologyRoot(t *testing.T) {
 		metadata.AnnotationProjectRef: "proj_123",
 	})
 
-	cert, err := buildTopoClientCertificate(cluster, scheme)
+	cert, err := buildTopoClientCertificate(cluster, scheme, "example.test")
 	if err != nil {
 		t.Fatalf("buildTopoClientCertificate() error = %v", err)
 	}
@@ -345,7 +408,7 @@ func TestReconcileCertificateTopoTLS(t *testing.T) {
 		cluster.Spec.TopoTLS.Enabled = ptr.To(false)
 
 		existing, err := buildTopoClientCertificate(
-			topoTLSCluster("test-cluster", "supabase", nil), scheme,
+			topoTLSCluster("test-cluster", "supabase", nil), scheme, "example.test",
 		)
 		if err != nil {
 			t.Fatalf("buildTopoClientCertificate() error = %v", err)
@@ -486,7 +549,7 @@ func TestBuildTopoClientCertificateRejectsOverLongRoot(t *testing.T) {
 		metadata.AnnotationProjectRef: strings.Repeat("p", 64),
 	})
 
-	if _, err := buildTopoClientCertificate(cluster, scheme); err == nil {
+	if _, err := buildTopoClientCertificate(cluster, scheme, "example.test"); err == nil {
 		t.Fatal("buildTopoClientCertificate() = nil error, want a common name limit error")
 	}
 }
@@ -507,5 +570,57 @@ func TestInternalCertificatesKeepClusterIssuer(t *testing.T) {
 		if issuer != "cluster-issuer" {
 			t.Errorf("%s issuerRef.name = %q, want cluster-issuer", cert.GetName(), issuer)
 		}
+	}
+}
+
+func TestTopoClientSPIFFEPathsDoNotOverlap(t *testing.T) {
+	project := topoClientSPIFFEPath(topoTLSCluster("c", "ns", map[string]string{
+		metadata.AnnotationProjectRef: "acme",
+	}))
+	fallback := topoClientSPIFFEPath(topoTLSCluster("acme", "ns", nil))
+	assert.Equal(t, "project/acme", project)
+	assert.Equal(t, "cluster/ns/acme", fallback)
+	assert.NotContains(t, fallback, "project/")
+}
+
+func TestBuildTopoClientCertificateDefaultTrustDomain(t *testing.T) {
+	cluster := topoTLSCluster("test-cluster", "supabase", map[string]string{
+		metadata.AnnotationProjectRef: "proj_123",
+	})
+	cert, err := buildTopoClientCertificate(cluster, setupScheme(), "")
+	if err != nil {
+		t.Fatalf("buildTopoClientCertificate() error = %v", err)
+	}
+	uris, _, _ := unstructured.NestedSlice(cert.Object, "spec", "uris")
+	want := []any{"spiffe://multigres.local/project/proj_123"}
+	if diff := cmp.Diff(want, uris); diff != "" {
+		t.Errorf("uris mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestTopoClientSPIFFEPathIsValidAndCollisionFree(t *testing.T) {
+	refs := []string{
+		"proj", "proj/123", "proj%2F123", ".", "..", "...", "proj-é", "encoded-project",
+		"encoded-project/70726f6a2f313233", "70726f6a2f313233", "a b", "a\\b",
+	}
+	seen := map[string]string{}
+	for _, ref := range refs {
+		path := topoClientSPIFFEPath(topoTLSCluster("c", "ns", map[string]string{
+			metadata.AnnotationProjectRef: ref,
+		}))
+		if other, ok := seen[path]; ok {
+			t.Errorf("refs %q and %q share SPIFFE path %q", other, ref, path)
+		}
+		seen[path] = ref
+		for _, segment := range strings.Split(path, "/") {
+			if !spiffeSafeSegment.MatchString(segment) || segment == "." || segment == ".." {
+				t.Errorf("ref %q gives SPIFFE path %q with invalid segment %q", ref, path, segment)
+			}
+		}
+	}
+	if got := topoClientSPIFFEPath(topoTLSCluster("c", "ns", map[string]string{
+		metadata.AnnotationProjectRef: "proj/123",
+	})); !strings.HasPrefix(got, "encoded-project/") {
+		t.Errorf("proj/123 path = %q, want the encoded-project form", got)
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/pkg/util/certs"
+	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
 // BuildServingCertificate constructs the cert-manager Certificate for a
@@ -49,6 +51,32 @@ func BuildServingCertificate(
 	})
 }
 
+// adminSPIFFEPath is the operator's own identity in the SPIFFE URI SAN. The
+// common name stays operatorEtcdUsername because etcd reads usernames from it.
+const adminSPIFFEPath = "cp/multigres-operator"
+
+// BuildAdminCertificate constructs the operator's etcd administrator
+// Certificate for one issuer. It lives in the operator's namespace with no
+// owner and is shared by every managed TopoServer that uses the issuer, so the
+// administrator key is never written into a project namespace.
+func BuildAdminCertificate(
+	operatorNamespace, issuerName, trustDomain string,
+) *unstructured.Unstructured {
+	cert := certs.BuildShared(operatorNamespace, certs.Spec{
+		Name:       multigresv1alpha1.TopoAdminCertName(topology.AdminIssuerKind, issuerName),
+		SecretName: multigresv1alpha1.TopoAdminCertSecretName(topology.AdminIssuerKind, issuerName),
+		CommonName: operatorEtcdUsername,
+		DNSNames:   []any{},
+		URIs:       []any{certs.SPIFFEURI(trustDomain, adminSPIFFEPath)},
+		Usages:     []any{"digital signature", "key encipherment", "client auth"},
+		IssuerName: issuerName,
+	})
+	cert.SetLabels(map[string]string{
+		metadata.LabelAppManagedBy: metadata.ManagedByMultigres,
+	})
+	return cert
+}
+
 // servingDNSNames returns the names etcd is reached by: the client Service and
 // the headless peer Service, each in its short, namespaced and fully qualified
 // form so in-cluster callers verify regardless of how they resolve the name.
@@ -72,22 +100,66 @@ func serviceFQDN(name, namespace string) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", name, namespace)
 }
 
-// reconcileCertificate ensures the serving Certificate matches the TopoServer
-// spec. A topology server owns exactly one Certificate under a deterministic
-// name, so this addresses it directly rather than listing the namespace. When
-// topology TLS is off — whether disabled or absent from the spec — the owned
-// Certificate and its generated Secret are removed, so no private key material
-// outlives the configuration that asked for it.
+// reconcileCertificate ensures the serving and administrator credentials match
+// the TopoServer spec, removing owned credentials when TLS is disabled.
 func (r *TopoServerReconciler) reconcileCertificate(
 	ctx context.Context,
 	toposerver *multigresv1alpha1.TopoServer,
 ) error {
 	desired, err := BuildServingCertificate(toposerver, r.Scheme)
 	if err != nil {
-		return fmt.Errorf("failed to build topology server cert-manager Certificate: %w", err)
+		return fmt.Errorf(
+			"failed to build topology server cert-manager Certificate %q: %w",
+			multigresv1alpha1.TopoServerCertName(toposerver.Name),
+			err,
+		)
 	}
+	if err := r.reconcileOwnedCertificate(
+		ctx,
+		toposerver,
+		multigresv1alpha1.TopoServerCertName(toposerver.Name),
+		desired,
+	); err != nil {
+		return err
+	}
+	return r.reconcileAdminCertificate(ctx, toposerver)
+}
 
-	certName := multigresv1alpha1.TopoServerCertName(toposerver.Name)
+// reconcileAdminCertificate issues the shared administrator Certificate for
+// the server's issuer, only where authorization is managed. The operator never
+// deletes it, because other TopoServers in other namespaces may still use it
+// and a namespaced owner cannot own it.
+func (r *TopoServerReconciler) reconcileAdminCertificate(
+	ctx context.Context,
+	toposerver *multigresv1alpha1.TopoServer,
+) error {
+	if !toposerver.Spec.TLS.IsEnabled() || !topology.AuthManaged(toposerver) {
+		return nil
+	}
+	if r.OperatorNamespace == "" {
+		return fmt.Errorf("operator namespace is not configured")
+	}
+	desired := BuildAdminCertificate(
+		r.OperatorNamespace,
+		topology.AdminIssuerName(toposerver),
+		r.TrustDomain,
+	)
+	existing, err := certs.Get(ctx, r.Client, r.OperatorNamespace, desired.GetName())
+	if err != nil {
+		return err
+	}
+	if existing != nil && certs.SpecEqual(existing, desired) {
+		return nil
+	}
+	return certs.ApplyOne(ctx, r.Client, desired)
+}
+
+func (r *TopoServerReconciler) reconcileOwnedCertificate(
+	ctx context.Context,
+	toposerver *multigresv1alpha1.TopoServer,
+	certName string,
+	desired *unstructured.Unstructured,
+) error {
 	existing, err := certs.Get(ctx, r.Client, toposerver.Namespace, certName)
 	if err != nil {
 		return err
