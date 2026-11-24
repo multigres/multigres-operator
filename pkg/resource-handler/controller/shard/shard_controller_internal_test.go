@@ -2901,14 +2901,16 @@ func TestHandleRollingUpdates(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
+		rollout := &shardRolloutTracker{}
 		err := r.handleRollingUpdates(
-			context.Background(), shard, poolName, cellName, poolSpec,
+			t.Context(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{}, 0, false, false,
-			&shardRolloutTracker{},
+			rollout,
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		finishRollingUpdateCondition(&shard.Status.Conditions, rollout, nil)
 
 		found := false
 		for _, cond := range shard.Status.Conditions {

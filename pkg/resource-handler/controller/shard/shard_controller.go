@@ -470,11 +470,11 @@ func (r *ShardReconciler) Reconcile(
 				result.RequeueAfter = requeue
 			}
 		}()
-		// Each pool/cell writes RollingUpdate for itself and the last one
-		// reconciled wins, so the condition can pass through other states
-		// within one pass. Its transition time must follow only a change in
-		// the final status, or every pass writes status and the Shard's own
-		// watch requeues it at once.
+		// A status that changes from pass to pass without the state changing
+		// makes the Shard's own watch requeue it at once. Pools are walked in
+		// Go map order, so the RollingUpdate condition is written once, by
+		// finishRollingUpdateCondition, from what every pool/cell noted, and
+		// its transition time follows only a change in the final status.
 		var rollingBefore *metav1.Condition
 		if c := meta.FindStatusCondition(shard.Status.Conditions, "RollingUpdate"); c != nil {
 			rollingBefore = c.DeepCopy()
@@ -783,13 +783,16 @@ func (r *ShardReconciler) SetupWithManagerReconciler(
 		Complete(reconciler)
 }
 
-// finishRollingUpdateCondition settles the RollingUpdate condition once every
-// pool/cell has written its own. before is the condition as the pass began.
+// finishRollingUpdateCondition sets the RollingUpdate condition from what
+// every pool/cell noted this pass. before is the condition as the pass began.
 func finishRollingUpdateCondition(
 	conditions *[]metav1.Condition,
 	rollout *shardRolloutTracker,
 	before *metav1.Condition,
 ) {
+	if c, ok := rollout.poolsRollingUpdate(); ok {
+		meta.SetStatusCondition(conditions, c)
+	}
 	if rollout.blocked != "" {
 		rollout.blockedAgain = before != nil && before.Reason == "RolloutBlocked" &&
 			before.Message == rollout.blocked
