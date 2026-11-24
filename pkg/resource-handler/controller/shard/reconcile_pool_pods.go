@@ -13,7 +13,6 @@ import (
 	multipoolermanagerdatapb "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -99,6 +98,12 @@ func (r *ShardReconciler) reconcilePoolPods(
 		return err
 	}
 	if surgeAction {
+		// The pass ends here for this pool/cell, but its drift still belongs
+		// in the shard's RollingUpdate condition: the surge exists to replace
+		// a drifted Pod.
+		drifted, draining := r.poolCellRollout(
+			shard, poolName, cellName, poolSpec, existingPods, replicas)
+		rollout.notePool(poolName, drifted, draining || drifted > 0)
 		return nil
 	}
 
@@ -151,6 +156,34 @@ func (r *ShardReconciler) reconcilePoolPods(
 	)
 
 	return nil
+}
+
+// poolCellRollout counts the pool/cell's live desired Pods on an old spec,
+// the Pods createMissingResources counts, and reports whether any of its Pods is
+// draining or terminating.
+func (r *ShardReconciler) poolCellRollout(
+	shard *multigresv1alpha1.Shard,
+	poolName, cellName string,
+	poolSpec multigresv1alpha1.PoolSpec,
+	existingPods map[string]*corev1.Pod,
+	replicas int32,
+) (drifted int, draining bool) {
+	for _, pod := range existingPods {
+		if pod.Annotations[metadata.AnnotationDrainState] != "" || !pod.DeletionTimestamp.IsZero() {
+			draining = true
+		}
+	}
+	for i := range replicas {
+		pod := existingPods[BuildPoolPodName(shard, poolName, cellName, int(i))]
+		if pod == nil || !pod.DeletionTimestamp.IsZero() ||
+			pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
+		if podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, int(i), r.Scheme) {
+			drifted++
+		}
+	}
+	return drifted, draining
 }
 
 // createMissingResources creates PVCs and Pods that should exist but don't.
@@ -744,6 +777,65 @@ type shardRolloutTracker struct {
 	unreadyDecided  bool
 	unreadyPending  bool
 	unreadyDeferred bool
+	// pools records, per pool, what handleRollingUpdates saw this pass,
+	// summed over the pool's cells, so the final RollingUpdate condition
+	// describes every pool rather than whichever was reconciled last.
+	pools map[string]*poolRolloutState
+}
+
+// poolRolloutState is one pool's rollout progress in the current pass.
+type poolRolloutState struct {
+	drifted    int
+	inProgress bool
+}
+
+// notePool adds one pool/cell's rollout progress to its pool's total.
+func (t *shardRolloutTracker) notePool(poolName string, drifted int, inProgress bool) {
+	if t.pools == nil {
+		t.pools = map[string]*poolRolloutState{}
+	}
+	p := t.pools[poolName]
+	if p == nil {
+		p = &poolRolloutState{}
+		t.pools[poolName] = p
+	}
+	p.drifted += drifted
+	p.inProgress = p.inProgress || inProgress
+}
+
+// poolsRollingUpdate builds the RollingUpdate condition for every pool noted
+// this pass, naming pools in sorted order so the message depends only on the
+// state. It reports false when no pool was noted.
+func (t *shardRolloutTracker) poolsRollingUpdate() (metav1.Condition, bool) {
+	if len(t.pools) == 0 {
+		return metav1.Condition{}, false
+	}
+	names := slices.Sorted(maps.Keys(t.pools))
+	var drifting []string
+	for _, name := range names {
+		if p := t.pools[name]; p.inProgress {
+			drifting = append(drifting,
+				fmt.Sprintf("%d pods need update in pool %s", p.drifted, name))
+		}
+	}
+	if len(drifting) > 0 {
+		return metav1.Condition{
+			Type:    "RollingUpdate",
+			Status:  metav1.ConditionTrue,
+			Reason:  "PodsDrifted",
+			Message: strings.Join(drifting, "; "),
+		}, true
+	}
+	message := fmt.Sprintf("All pods up to date in pool %s", names[0])
+	if len(names) > 1 {
+		message = "All pods up to date in pools " + strings.Join(names, ", ")
+	}
+	return metav1.Condition{
+		Type:    "RollingUpdate",
+		Status:  metav1.ConditionFalse,
+		Reason:  "PodsUpToDate",
+		Message: message,
+	}, true
 }
 
 // block records the first reason a required replacement was refused this
@@ -805,23 +897,7 @@ func (r *ShardReconciler) handleRollingUpdates(
 		inProgress,
 	)
 
-	if inProgress {
-		msg := fmt.Sprintf("%d pods need update in pool %s", driftedCount, poolName)
-		meta.SetStatusCondition(&shard.Status.Conditions, metav1.Condition{
-			Type:    "RollingUpdate",
-			Status:  metav1.ConditionTrue,
-			Reason:  "PodsDrifted",
-			Message: msg,
-		})
-	} else {
-		msg := fmt.Sprintf("All pods up to date in pool %s", poolName)
-		meta.SetStatusCondition(&shard.Status.Conditions, metav1.Condition{
-			Type:    "RollingUpdate",
-			Status:  metav1.ConditionFalse,
-			Reason:  "PodsUpToDate",
-			Message: msg,
-		})
-	}
+	rollout.notePool(poolName, driftedCount, inProgress)
 
 	if actionTaken || isAnyPodDraining || driftedCount == 0 {
 		return nil
