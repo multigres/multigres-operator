@@ -47,6 +47,10 @@ type EndpointUrl string
 // TopoServerSpec defines the desired state of TopoServer (Child CR).
 // +kubebuilder:validation:XValidation:rule="has(self.etcd)",message="must specify 'etcd' configuration"
 type TopoServerSpec struct {
+	// Auth turns on certificate-based etcd authorization for this managed
+	// topology server. It requires TLS.
+	// +optional
+	Auth *TopoServerAuthSpec `json:"auth,omitempty"`
 	// Etcd defines the configuration if using Etcd.
 	Etcd *EtcdSpec `json:"etcd,omitempty"`
 
@@ -65,12 +69,45 @@ type TopoServerSpec struct {
 	TLS *TopoTLSConfig `json:"tls,omitempty"`
 }
 
+// TopoServerAuthSpec controls managed etcd authorization.
+type TopoServerAuthSpec struct {
+	// Enabled turns on etcd authentication and per-cluster permissions.
+	// Once true, it cannot be set to false or removed.
+	Enabled bool `json:"enabled"`
+}
+
+// IsEnabled reports whether managed authorization was explicitly requested.
+func (a *TopoServerAuthSpec) IsEnabled() bool {
+	return a != nil && a.Enabled
+}
+
 // ============================================================================
 // CR Controller Status Specs
 // ============================================================================
 
 // TopoServerStatus defines the observed state of TopoServer.
 type TopoServerStatus struct {
+	// AuthEnabled records successful authorization activation and remains true
+	// through subsequent reconciliation failures. AuthorizationReady reports
+	// whether the current desired grants have been reconciled.
+	// +optional
+	AuthEnabled bool `json:"authEnabled,omitempty"`
+
+	// AuthIdentities lists the etcd users the controller manages. The
+	// controller writes it before changing etcd, so it can delete users left
+	// by an interrupted reconcile or a removed cluster.
+	// +optional
+	// +listType=set
+	AuthIdentities []string `json:"authIdentities,omitempty"`
+
+	// AuthIdentityClusters maps entries of authIdentities to the
+	// namespace/name of the MultigresClusters that required them, comma
+	// separated. The controller reads those clusters to confirm the removal of
+	// an identity or of its ranges instead of listing every cluster. It leaves
+	// an identity unchanged while one of its clusters is refused. Identities
+	// recorded before this field existed have no entry.
+	// +optional
+	AuthIdentityClusters map[string]string `json:"authIdentityClusters,omitempty"`
 	// ObservedGeneration is the most recent generation observed.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -198,7 +235,14 @@ type EtcdMaintenanceConfig struct {
 // GlobalTopoServerSpec defines the configuration for the global topology server.
 // It can be either an inline Etcd spec, an External reference, or a Template reference.
 // +kubebuilder:validation:XValidation:rule="[has(self.etcd), has(self.external), has(self.templateRef)].filter(x, x).size() == 1",message="must specify exactly one of 'etcd', 'external', or 'templateRef'"
+// +kubebuilder:validation:XValidation:rule="!has(self.auth) || !self.auth.enabled || !has(self.external)",message="managed authorization requires a managed topology server"
 type GlobalTopoServerSpec struct {
+	// Auth turns on certificate-based etcd authorization for the managed
+	// topology server. It requires topology TLS and is copied to the managed
+	// TopoServer after template resolution.
+	// +optional
+	Auth *TopoServerAuthSpec `json:"auth,omitempty"`
+
 	// Etcd defines an inline managed Etcd cluster.
 	// +optional
 	Etcd *EtcdSpec `json:"etcd,omitempty"`
@@ -318,6 +362,8 @@ type TopoServer struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
+	// +kubebuilder:validation:XValidation:rule="!(has(oldSelf.auth) && has(oldSelf.auth.enabled) && oldSelf.auth.enabled) || (has(self.auth) && has(self.auth.enabled) && self.auth.enabled)",message="managed authorization cannot be disabled after being requested"
+	// +kubebuilder:validation:XValidation:rule="!has(self.auth) || !self.auth.enabled || (has(self.tls) && has(self.tls.enabled) && self.tls.enabled)",message="managed authorization requires topology TLS"
 	Spec   TopoServerSpec   `json:"spec,omitempty"`
 	Status TopoServerStatus `json:"status,omitempty"`
 }

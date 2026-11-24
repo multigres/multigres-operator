@@ -148,7 +148,8 @@ var Fields = []Field{
 
 	// TopoServer
 	// cell_controller.go Reconcile, reconcile_topology.go reconcileTopology, and
-	// status.go updateStatus require this to match generation before trusting phase.
+	// toposerver_controller.go updateStatus require this to match generation before
+	// trusting phase.
 	// The toposerver controller refreshes it during reconciliation.
 	{
 		Kind:    kindTopoServer,
@@ -157,6 +158,20 @@ var Fields = []Field{
 		Class:   Gate,
 	},
 	{Kind: kindTopoServer, Path: conditionsOwner, Manager: ManagerTopoServer, Class: Observation},
+	// auth.go makes successful authorization activation sticky, while
+	// toposerver_controller.go updateStatus uses it to gate initial readiness.
+	// AuthorizationReady reports the current reconciliation without resetting it.
+	{Kind: kindTopoServer, Path: ".status.authEnabled", Manager: ManagerTopoServer, Class: Gate},
+	// auth.go records identities before granting access and retains them on errors;
+	// later reconciles prune removed identities before shrinking this list.
+	{
+		Kind: kindTopoServer, Path: ".status.authIdentities",
+		Manager: ManagerTopoServer, Class: WorkflowMemory,
+	},
+	{
+		Kind: kindTopoServer, Path: ".status.authIdentityClusters",
+		Manager: ManagerTopoServer, Class: WorkflowMemory,
+	},
 	{
 		Kind:    kindTopoServer,
 		Path:    `.status.conditions[type="StorageClassValid"]`,
@@ -164,7 +179,8 @@ var Fields = []Field{
 		Class:   Observation,
 	},
 	// cell_controller.go Reconcile, reconcile_topology.go reconcileTopology, and
-	// status.go updateStatus read this before trusting the topology server.
+	// toposerver_controller.go updateStatus read this before trusting the topology
+	// server.
 	// toposerver_controller.go Reconcile recomputes it from the etcd StatefulSet.
 	{Kind: kindTopoServer, Path: ".status.phase", Manager: ManagerTopoServer, Class: Gate},
 	{Kind: kindTopoServer, Path: ".status.message", Manager: ManagerTopoServer, Class: Observation},
