@@ -77,6 +77,8 @@ import (
 // +kubebuilder:validation:XValidation:rule="has(self.topoTLS) == has(oldSelf.topoTLS) && (!has(self.topoTLS) || self.topoTLS == oldSelf.topoTLS)",message="topoTLS is immutable and can only be set when the cluster is created"
 // +kubebuilder:validation:XValidation:rule="has(self.mode) == has(oldSelf.mode) && (!has(self.mode) || self.mode == oldSelf.mode)",message="mode is immutable and can only be set when the cluster is created"
 // +kubebuilder:validation:XValidation:rule="!has(self.mode) || self.mode != 'lite' || size(self.cells) == 1",message="lite mode requires exactly one cluster cell"
+// +kubebuilder:validation:XValidation:rule="!has(self.globalTopoServer) || !has(self.globalTopoServer.auth) || !self.globalTopoServer.auth.enabled || (has(self.topoTLS) && has(self.topoTLS.enabled) && self.topoTLS.enabled)",message="managed authorization requires topology TLS"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.globalTopoServer) || !has(oldSelf.globalTopoServer.auth) || !oldSelf.globalTopoServer.auth.enabled || (has(self.globalTopoServer) && ((has(self.globalTopoServer.auth) && self.globalTopoServer.auth.enabled) || has(self.globalTopoServer.external)))",message="managed authorization cannot be disabled unless moving to an external topology server"
 type MultigresClusterSpec struct {
 	// Mode selects how the cluster runs. Empty runs multigateway Deployments,
 	// multiorch and a cohort of pool pods per shard. "lite" runs one pod that

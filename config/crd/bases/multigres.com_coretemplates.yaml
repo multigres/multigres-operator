@@ -48,6 +48,19 @@ spec:
                   GlobalTopoServer configuration.
                   Uses TopoServerSpec directly (Managed Etcd only).
                 properties:
+                  auth:
+                    description: |-
+                      Auth turns on certificate-based etcd authorization for this managed
+                      topology server. It requires TLS.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled turns on etcd authentication and per-cluster permissions.
+                          Once true, it cannot be set to false or removed.
+                        type: boolean
+                    required:
+                    - enabled
+                    type: object
                   etcd:
                     description: Etcd defines the configuration if using Etcd.
                     properties:

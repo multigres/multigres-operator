@@ -50,6 +50,19 @@ spec:
             description: TopoServerSpec defines the desired state of TopoServer (Child
               CR).
             properties:
+              auth:
+                description: |-
+                  Auth turns on certificate-based etcd authorization for this managed
+                  topology server. It requires TLS.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled turns on etcd authentication and per-cluster permissions.
+                      Once true, it cannot be set to false or removed.
+                    type: boolean
+                required:
+                - enabled
+                type: object
               etcd:
                 description: Etcd defines the configuration if using Etcd.
                 properties:
@@ -1429,11 +1442,43 @@ spec:
                     && size(self.issuerName) > 0)'
             type: object
             x-kubernetes-validations:
+            - message: managed authorization cannot be disabled after being requested
+              rule: '!(has(oldSelf.auth) && has(oldSelf.auth.enabled) && oldSelf.auth.enabled)
+                || (has(self.auth) && has(self.auth.enabled) && self.auth.enabled)'
+            - message: managed authorization requires topology TLS
+              rule: '!has(self.auth) || !self.auth.enabled || (has(self.tls) && has(self.tls.enabled)
+                && self.tls.enabled)'
             - message: must specify 'etcd' configuration
               rule: has(self.etcd)
           status:
             description: TopoServerStatus defines the observed state of TopoServer.
             properties:
+              authEnabled:
+                description: |-
+                  AuthEnabled records successful authorization activation and remains true
+                  through subsequent reconciliation failures. AuthorizationReady reports
+                  whether the current desired grants have been reconciled.
+                type: boolean
+              authIdentities:
+                description: |-
+                  AuthIdentities lists the etcd users the controller manages. The
+                  controller writes it before changing etcd, so it can delete users left
+                  by an interrupted reconcile or a removed cluster.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              authIdentityClusters:
+                additionalProperties:
+                  type: string
+                description: |-
+                  AuthIdentityClusters maps entries of authIdentities to the
+                  namespace/name of the MultigresClusters that required them, comma
+                  separated. The controller reads those clusters to confirm the removal of
+                  an identity or of its ranges instead of listing every cluster. It leaves
+                  an identity unchanged while one of its clusters is refused. Identities
+                  recorded before this field existed have no entry.
+                type: object
               clientService:
                 description: ClientService is the name of the service for clients.
                 type: string
