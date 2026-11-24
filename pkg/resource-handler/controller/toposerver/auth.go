@@ -13,6 +13,7 @@ import (
 	"go.etcd.io/etcd/api/v3/authpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
@@ -152,6 +153,9 @@ func (r *TopoServerReconciler) reconcileEtcdIdentities(
 		continueOnError: ts.Status.AuthEnabled,
 		identityTimeout: authIdentityTimeout,
 		status:          status,
+		verified:        r.authVerified,
+		server:          client.ObjectKeyFromObject(ts),
+		uid:             ts.UID,
 		confirmRangeRemoval: func(ctx context.Context, grant etcdIdentityGrant) error {
 			recorded := priorClusters[grant.Name]
 			if recorded == "" && slices.Contains(previous, grant.Name) {
@@ -273,8 +277,13 @@ type authPassOptions struct {
 	// fails, which is only safe once etcd has auth enabled.
 	continueOnError bool
 	// identityTimeout bounds the etcd calls for each identity. Zero means none.
-	identityTimeout     time.Duration
-	status              *clientv3.AuthStatusResponse
+	identityTimeout time.Duration
+	status          *clientv3.AuthStatusResponse
+	// verified lets the pass skip identities it already reconciled with the
+	// same grant. Nil disables skipping.
+	verified            *authVerifyCache
+	server              types.NamespacedName
+	uid                 types.UID
 	confirmRangeRemoval func(context.Context, etcdIdentityGrant) error
 }
 
@@ -327,7 +336,16 @@ func reconcileEtcdAuth(
 	for _, grant := range desired {
 		desiredNames[grant.Name] = true
 	}
+	var clusterID uint64
+	if status.Header != nil {
+		clusterID = status.Header.ClusterId
+	}
+	opts.verified.sync(opts.server, opts.uid, clusterID, status.Enabled, desiredNames)
 	for _, grant := range desired {
+		fingerprint := grant.fingerprint()
+		if opts.verified.applied(opts.uid, grant.Name, fingerprint) {
+			continue
+		}
 		if err := opts.run(ctx, func(ctx context.Context) error {
 			if err := ensureEtcdRole(ctx, c, grant.Name); err != nil {
 				return err
@@ -342,12 +360,14 @@ func reconcileEtcdAuth(
 			}
 			return ensureEtcdUserRole(ctx, c, grant.Name, grant.Name, true)
 		}); err != nil {
+			opts.verified.forget(opts.uid, grant.Name)
 			if !tolerate {
 				return result, err
 			}
 			result.failed[grant.Name] = err
 			continue
 		}
+		opts.verified.record(opts.uid, grant.Name, fingerprint)
 	}
 	for _, identity := range previous {
 		if identity == "" || identity == "root" || identity == operatorEtcdUsername ||

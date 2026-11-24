@@ -62,6 +62,10 @@ type TopoServerReconciler struct {
 	// MaintenanceClientFactory, when set, replaces the real per-member etcd
 	// clients; the test suite injects a simulator here. Nil in production.
 	MaintenanceClientFactory func(context.Context, *multigresv1alpha1.TopoServer) (EtcdMaintenanceClient, error)
+
+	// authVerified lets a pass over unchanged identities skip their etcd reads.
+	// SetupWithManager creates it. Nil verifies every identity on every pass.
+	authVerified *authVerifyCache
 }
 
 // Reconcile manages the etcd StatefulSet, headless service, and client service for a TopoServer.
@@ -89,6 +93,7 @@ func (r *TopoServerReconciler) Reconcile(
 	if err := r.Get(ctx, req.NamespacedName, toposerver); err != nil {
 		if errors.IsNotFound(err) {
 			logger.Info("TopoServer resource not found, ignoring")
+			r.authVerified.evict(req.NamespacedName)
 			return ctrl.Result{}, nil
 		}
 		monitoring.RecordSpanError(span, err)
@@ -619,6 +624,9 @@ func (r *TopoServerReconciler) SetupWithManagerReconciler(
 	reconciler reconcile.Reconciler,
 	opts ...controller.Options,
 ) error {
+	if r.authVerified == nil {
+		r.authVerified = &authVerifyCache{}
+	}
 	if err := mgr.GetFieldIndexer().IndexField(
 		context.Background(),
 		&multigresv1alpha1.Cell{},
