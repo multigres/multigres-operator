@@ -72,7 +72,7 @@ func TestHeldRolloutAcrossPoolsKeepsItsCondition(t *testing.T) {
 		Type:    "RollingUpdate",
 		Status:  metav1.ConditionTrue,
 		Reason:  "PodsDrifted",
-		Message: "1 pods need update in pool alpha; 1 pods need update in pool beta",
+		Message: "1 pod needs update in pool alpha; 1 pod needs update in pool beta",
 	}
 	c.Eventually(30*time.Second, "RollingUpdate to name both pools", func() error {
 		shard := &Shard{}
