@@ -109,6 +109,7 @@ func TestReconcileDataPlaneBackupHealthGatesQuarantine(t *testing.T) {
 					t.Context(),
 					shard,
 					renderedConfig{},
+					&shardRolloutTracker{},
 				); err != nil {
 					t.Fatalf("reconcile %d: %v", pass, err)
 				}
@@ -289,10 +290,13 @@ func TestReconcileDataPlaneQuarantineSeesStoredLegacyVerdict(t *testing.T) {
 
 	spy := &verdictAtDelete{Client: c, shard: client.ObjectKeyFromObject(shard)}
 	r.Client = spy
-	_, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{})
+	rollout := &shardRolloutTracker{}
+	_, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{}, rollout)
 	require.NoError(t, err)
 
 	require.True(t, spy.deleted, "the quarantined replica is remediated on a True verdict")
+	require.True(t, rollout.HasStarted(),
+		"the wipe is the pass's one disruption: the disruption walk starts nothing after it")
 	require.NotNil(t, spy.stored, "the verdict quarantine acted on is stored")
 	require.Equal(t, metav1.ConditionTrue, spy.stored.Status)
 	stored := &multigresv1alpha1.Shard{}

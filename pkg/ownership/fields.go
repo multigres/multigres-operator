@@ -267,7 +267,7 @@ var Fields = []Field{
 	{Kind: kindShard, Path: ".status.readyReplicas", Manager: ManagerShard, Class: Observation},
 
 	// Pod
-	// reconcile_pool_pods.go podTopoDrifted and disruption.go canStartDisruption
+	// reconcile_pool_pods.go podTopoDrifted and disruption.go observeDisruption
 	// read this through Pod readiness. A missing value blocks disruption and permits
 	// replacement of a drifted pod; reconcilePoolerReadiness refreshes it from pooler status.
 	{

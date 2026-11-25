@@ -30,13 +30,12 @@ const lifecycleShardName multigresv1alpha1.ShardName = "0-inf"
 // blockedObservationWindow is how long steps 5 and 6 watch for a reaction
 // that never comes.
 //
-// The shard controller requeues every disruptionRecoveryRequeue (5s,
-// pkg/resource-handler/controller/shard/disruption.go:17) for as long as a
-// disruption is refused, so a window several times that long is the
-// difference between "the operator tried repeatedly and refused every time"
-// and "the operator had not got round to trying yet". A Quiet() step on its
-// own asserts silence only over the 250ms settle window, which for this
-// question would be almost nothing.
+// The shard controller retries a refused disruption on a backoff that starts
+// at five seconds, so a window several times that long is the difference
+// between "the operator tried repeatedly and refused every time" and "the
+// operator had not got round to trying yet". A Quiet() step on its own
+// asserts silence only over the 250ms settle window, which for this question
+// would be almost nothing.
 const blockedObservationWindow = 20 * time.Second
 
 // lifecycleShardRef is a Shard carrying only the fields BuildPoolPodName,
@@ -287,44 +286,46 @@ func podRoleViolation(err error) bool {
 		strings.Contains(msg, "has unrecognized role ")
 }
 
-// rollingUpdateDrift reports whether the Shard says wantPods of its pool pods
-// have drifted from their desired spec, through the RollingUpdate condition
-// handleRollingUpdates writes (reconcile_pool_pods.go:735-751).
+// rollingUpdateBlocked reports whether the shard has seen a spec newer than
+// generation after and says, in its RollingUpdate condition, that the
+// disruption walk refused to remove a pod.
 //
 // This is the only object state the operator changes in response to a spec
-// change it then refuses to act on: the drain it would start next is blocked
-// before it writes anything to a pod, and the DisruptionBlocked Event that
-// refusal records goes through client-go's per-object spam filter (burst 25,
-// one refill per 300s), which a chatty Shard inside a short envtest run has
-// already spent. Steps 5 and 6 need this because a step asserting that
-// nothing happened asserts nothing at all unless the stimulus provably
-// arrived first.
-//
-// The expected message is built from the same format string the operator
-// uses, so this is coupled to that wording. The coupling is deliberate and
-// fails in the safe direction: a reworded message makes the step fail loudly
-// rather than quietly stop asserting.
-func rollingUpdateDrift(key client.ObjectKey, wantPods int) error {
+// change it then refuses to act on: the drain it would start next is refused
+// before anything is written to a pod. A step asserting that nothing happened
+// asserts nothing at all unless the stimulus provably arrived first, and the
+// refusal alone does not prove that once an earlier step has left the rollout
+// blocked, so the shard must also have observed a generation the step's own
+// change produced.
+func (c *C) rollingUpdateBlocked(key client.ObjectKey, after int64) error {
 	shard := &Shard{}
-	if err := Suite.Client.Get(context.Background(), key, shard); err != nil {
+	if err := c.Get(key, shard); err != nil {
 		return err
+	}
+	if shard.Generation <= after || shard.Status.ObservedGeneration != shard.Generation {
+		return fmt.Errorf("shard %s has observed generation %d of %d, want one after %d",
+			key, shard.Status.ObservedGeneration, shard.Generation, after)
 	}
 	cond := meta.FindStatusCondition(shard.Status.Conditions, "RollingUpdate")
 	if cond == nil {
 		return fmt.Errorf("shard %s has no RollingUpdate condition yet", key)
 	}
-	want := fmt.Sprintf("%d pods need update in pool %s", wantPods, resolver.DefaultPoolName)
-	if wantPods == 1 {
-		want = fmt.Sprintf("1 pod needs update in pool %s", resolver.DefaultPoolName)
-	}
-	if cond.Status != metav1.ConditionTrue || cond.Reason != "PodsDrifted" ||
-		cond.Message != want {
+	if cond.Status != metav1.ConditionTrue || cond.Reason != "RolloutBlocked" ||
+		!strings.HasPrefix(cond.Message, "not removing pod ") {
 		return fmt.Errorf(
-			"shard %s reports RollingUpdate=%s reason=%s %q, want True PodsDrifted %q",
-			key, cond.Status, cond.Reason, cond.Message, want,
+			"shard %s reports RollingUpdate=%s reason=%s %q, want True RolloutBlocked",
+			key, cond.Status, cond.Reason, cond.Message,
 		)
 	}
 	return nil
+}
+
+// shardGeneration is the shard's current metadata.generation.
+func (c *C) shardGeneration(key client.ObjectKey) int64 {
+	c.Helper()
+	shard := &Shard{}
+	c.NoError(c.Get(key, shard), "get shard")
+	return shard.Generation
 }
 
 // lifecycleResources builds a concrete, distinguishable resource request/limit
@@ -551,7 +552,6 @@ func TestShardLifecycle(t *testing.T) {
 	// second pod's role has not propagated yet. A single read lands in that
 	// window often enough to matter: observed failing one full run in six,
 	// reporting one primary and zero replicas.
-	var initialMembers Members
 	c.Eventually(
 		30*time.Second,
 		"the pool to report one primary and one replica",
@@ -563,7 +563,6 @@ func TestShardLifecycle(t *testing.T) {
 			if len(members.Replicas) != 1 || members.Primary == "" {
 				return fmt.Errorf("got %+v", members)
 			}
-			initialMembers = members
 			return nil
 		},
 	)
@@ -571,10 +570,9 @@ func TestShardLifecycle(t *testing.T) {
 	// Step 2: change CPU and memory on the pool. This is written as the
 	// positive assertion the brief describes, and it does not pass: the
 	// mutation lands in the Shard spec and podNeedsUpdate correctly flags both
-	// pool pods as drifted (the Shard reports RollingUpdate=True
-	// reason=PodsDrifted, "2 pods need update in pool default"), but
-	// handleRollingUpdates never drains either of them. canStartDisruption
-	// (disruption.go) calls posture.CheckDisruption, which calls
+	// pool pods as drifted, but the disruption walk never drains either of
+	// them. Its check (disruptionCheck in disruption.go) calls
+	// posture.CheckDisruption, which calls
 	// consensus.CheckSufficientRecruitment against the two-pooler rule
 	// test/suite/fakes.go's poolerSim registers; that function's own majority
 	// rule is len(cohort)/2+1, which for a two-member cohort is 2, so
@@ -618,14 +616,15 @@ func TestShardLifecycle(t *testing.T) {
 	// here is the assertion that the operator did not take some other action
 	// instead of the one it refused.
 	s.Step("change CPU and memory on the pool", func() error {
+		generation := c.shardGeneration(shardKey)
 		c.updateLifecyclePool(clusterName, func(p *PoolSpec) {
 			p.Postgres.Resources = lifecycleResources("100m", "128Mi", "200m", "256Mi")
 		})
 		c.Eventually(
 			30*time.Second,
-			"the shard to report both pool pods drifted",
+			"the shard to report the rollout blocked",
 			func() error {
-				return rollingUpdateDrift(shardKey, len(initialMembers.Replicas)+1)
+				return c.rollingUpdateBlocked(shardKey, generation)
 			},
 		)
 		podsBefore := c.poolPodFingerprints()
@@ -738,11 +737,11 @@ func TestShardLifecycle(t *testing.T) {
 	//
 	// That guarantee, documented at
 	// pkg/resource-handler/controller/shard/reconcile_pool_pods.go:711, is
-	// that handleRollingUpdates drains drifted pods one at a time, replicas
+	// that the disruption walk drains drifted pods one at a time, replicas
 	// before the primary, with the primary's switchover requested before it is
 	// touched, and that handleScaleDown removes an extra replica by draining
 	// it. Nothing in this harness can observe any of it, because no drain ever
-	// starts at any cohort size. canStartDisruption calls
+	// starts at any cohort size. disruptionCheck calls
 	// posture.CheckDisruption, whose revocation check
 	// (consensus.CheckSufficientRecruitment) requires that the pod being
 	// excluded cannot satisfy the durability policy on its own, and
@@ -778,7 +777,7 @@ func TestShardLifecycle(t *testing.T) {
 	//
 	// One note for whoever picks that up, because it is not obvious from the
 	// guarantee's wording: the switchover half has no Pod or PVC footprint to
-	// assert even in principle. handleRollingUpdates "requests a switchover"
+	// assert even in principle. the disruption walk "requests a switchover"
 	// by calling the same initiateDrain annotation patch it uses for a replica
 	// (drain_helpers.go:58) and recording a RollingUpdateStarted Event on the
 	// Shard. So the only Kubernetes-visible difference between draining the
@@ -791,29 +790,27 @@ func TestShardLifecycle(t *testing.T) {
 	// through MembersOf rather than assumed from index, both as the
 	// precondition that makes the step meaningful (silence about a rolling
 	// update is only interesting over a pool that really does hold three
-	// members, one of them primary) and because the drifted-pod count
-	// asserted below is derived from it.
+	// members, one of them primary).
 	members, err := MembersOf(c.Context(), c.Client(), shardKey)
 	c.NoError(err, "MembersOf before step 5")
 	c.Eq(2, len(members.Replicas), "want two replicas before step 5, got %+v", members)
 	c.NotEq("", members.Primary, "want a primary before step 5, got %+v", members)
-	poolPods := len(members.Replicas) + 1
 
 	s.Step("change CPU and memory again, now with three members", func() error {
 		podsBefore := c.poolPodFingerprints()
+		generation := c.shardGeneration(shardKey)
 		c.updateLifecyclePool(clusterName, func(p *PoolSpec) {
 			p.Postgres.Resources = lifecycleResources("150m", "192Mi", "300m", "384Mi")
 		})
-		// The count is what makes this non-vacuous. Step 2's change was never
-		// applied either, so two pods have been drifted since then and a bare
-		// "RollingUpdate is True" would have been satisfied before this step
-		// ran; only the third pod, created at step 4 from the then-current
-		// spec, drifts because of this mutation.
+		// The generation is what makes this non-vacuous. Step 2's change was
+		// never applied either, so the rollout has been blocked since then
+		// and a bare "RollingUpdate is RolloutBlocked" would have been
+		// satisfied before this step ran.
 		c.Eventually(
 			30*time.Second,
-			"the shard to report every pool pod drifted",
+			"the shard to report the rollout blocked on the new spec",
 			func() error {
-				return rollingUpdateDrift(shardKey, poolPods)
+				return c.rollingUpdateBlocked(shardKey, generation)
 			},
 		)
 		// Slept inside the step's own action rather than after it, so the

@@ -1769,6 +1769,7 @@ func TestScaleDown_ExternallyDeletedExtraPod(t *testing.T) {
 			pod.Annotations = make(map[string]string)
 		}
 		pod.Annotations[metadata.AnnotationSpecHash] = desiredPod.Annotations[metadata.AnnotationSpecHash]
+		pod.OwnerReferences = desiredPod.OwnerReferences
 
 		// Hold the extra pod after the Delete below sets its deletion timestamp.
 		if i == 2 {
@@ -1850,14 +1851,12 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 		if !ready {
 			readyStatus = corev1.ConditionFalse
 		}
-		return &corev1.Pod{
+		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        name,
 				Namespace:   "default",
 				Annotations: map[string]string{},
-				Labels: map[string]string{
-					metadata.LabelMultigresCell: cellName,
-				},
+				Labels:      buildPoolLabelsWithCell(shardObj, poolName, cellName),
 			},
 			Status: corev1.PodStatus{
 				Conditions: []corev1.PodCondition{
@@ -1865,6 +1864,11 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 				},
 			},
 		}
+		// Pool maintenance and the walk act only on pods the shard owns.
+		if err := ctrl.SetControllerReference(shardObj, pod, scheme); err != nil {
+			t.Fatal(err)
+		}
+		return pod
 	}
 
 	t.Run("blocks drain when pool has non-ready pod", func(t *testing.T) {
@@ -1896,7 +1900,7 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			existingPods[p.Name] = p
 		}
 
-		actionTaken, _, err := r.handleScaleDown(
+		actionTaken, _, err := r.scaleDownPass(
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods,
 			2, // replicas: pod-2 is extra
@@ -1967,7 +1971,7 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			existingPods[p.Name] = p
 		}
 
-		actionTaken, _, err := r.handleScaleDown(
+		actionTaken, _, err := r.scaleDownPass(
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods,
 			2, // replicas: pod-2 is extra
@@ -2026,7 +2030,7 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 		tracker := &shardRolloutTracker{}
 		tracker.SetStarted()
 
-		actionTaken, _, err := r.handleScaleDown(
+		actionTaken, _, err := r.scaleDownPass(
 			t.Context(), shard, poolName, multigresv1alpha1.PoolSpec{},
 			existingPods, 2, 2, false, tracker,
 		)
@@ -2080,7 +2084,7 @@ func TestScaleDown_HealthGateBlocksDrain(t *testing.T) {
 			existingPods[p.Name] = p
 		}
 
-		actionTaken, _, err := r.handleScaleDown(
+		actionTaken, _, err := r.scaleDownPass(
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods,
 			2, // replicas: pod-2 is extra
@@ -2190,7 +2194,7 @@ func TestRollingUpdateOrder(t *testing.T) {
 	observeHealthyDisruption(t, r, shardObj, "primary", "zone1")
 
 	// Run reconcile loop
-	err := r.reconcilePoolPods(
+	err := r.poolPodsPass(
 		context.Background(),
 		shardObj,
 		"primary",

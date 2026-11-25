@@ -37,6 +37,7 @@ func clearDrainAnnotations(ctx context.Context, k8sClient client.Client, pod *co
 	patch := client.MergeFrom(pod.DeepCopy())
 	delete(pod.Annotations, metadata.AnnotationDrainState)
 	delete(pod.Annotations, metadata.AnnotationDrainRequestedAt)
+	delete(pod.Annotations, metadata.AnnotationDrainReason)
 	if err := k8sClient.Patch(ctx, pod, patch); err != nil {
 		return fmt.Errorf("failed to clear drain annotations for pod %s: %w", pod.Name, err)
 	}
@@ -45,12 +46,41 @@ func clearDrainAnnotations(ctx context.Context, k8sClient client.Client, pod *co
 
 // initiateDrain sets the drain-requested annotation on a pod via merge patch.
 func (r *ShardReconciler) initiateDrain(ctx context.Context, pod *corev1.Pod) error {
-	patch := client.MergeFrom(pod.DeepCopy())
+	return r.requestDrain(ctx, pod, client.MergeFrom(pod.DeepCopy()), "")
+}
+
+// initiateJudgedDrain requests the drain of pod exactly as the disruption
+// walk read it. The patch carries that read's resourceVersion, so it is
+// refused if the pod has changed in any way since: replaced under the same
+// name, scheduled, or turned Ready or not Ready. The walk allowed the removal
+// of the pod it observed, and a pod that has changed is the next pass's to
+// judge. reason is recorded when the pod's own state will not show why it is
+// being drained.
+func (r *ShardReconciler) initiateJudgedDrain(
+	ctx context.Context,
+	pod *corev1.Pod,
+	reason string,
+) error {
+	patch := client.MergeFromWithOptions(pod.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	return r.requestDrain(ctx, pod, patch, reason)
+}
+
+func (r *ShardReconciler) requestDrain(
+	ctx context.Context,
+	pod *corev1.Pod,
+	patch client.Patch,
+	reason string,
+) error {
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
 	pod.Annotations[metadata.AnnotationDrainState] = metadata.DrainStateRequested
 	pod.Annotations[metadata.AnnotationDrainRequestedAt] = time.Now().UTC().Format(time.RFC3339)
+	// A reason left on the pod by an earlier drain is not this drain's.
+	delete(pod.Annotations, metadata.AnnotationDrainReason)
+	if reason != "" {
+		pod.Annotations[metadata.AnnotationDrainReason] = reason
+	}
 	if err := r.Patch(ctx, pod, patch); err != nil {
 		return fmt.Errorf("failed to initiate drain for pod %s: %w", pod.Name, err)
 	}

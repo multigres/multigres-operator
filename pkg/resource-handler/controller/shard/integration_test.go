@@ -22,6 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1746,6 +1747,23 @@ func testReloadVsRestartRollout(
 			return false
 		}
 	}, 40*time.Second, 100*time.Millisecond, "restart change did not initiate a replica drain")
+	// The drain takes four writes of the pod's drain annotation and a delete,
+	// each in its own pass, and no pass on this path asks for a requeue
+	// shorter than five seconds. Finishing in less than that means each pass
+	// was started by the watch event of the write before it.
+	requested := time.Now()
+	require.Eventually(t, func() bool {
+		for i := range original.Items {
+			pod := &corev1.Pod{}
+			err := k8sClient.Get(ctx, client.ObjectKeyFromObject(&original.Items[i]), pod)
+			if apierrors.IsNotFound(err) || (err == nil && pod.UID != original.Items[i].UID) {
+				return true
+			}
+		}
+		return false
+	}, 30*time.Second, 10*time.Millisecond, "the drained pod was never deleted")
+	require.Less(t, time.Since(requested), 4*time.Second,
+		"the drain waited on a timer rather than on its own pod events")
 	var pods corev1.PodList
 	require.NoError(
 		t,

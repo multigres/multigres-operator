@@ -282,7 +282,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 		pods map[string]*corev1.Pod,
 	) map[string]string {
 		t.Helper()
-		if err := r.handleRollingUpdates(
+		if err := r.rollingUpdatePass(
 			ctx, shard, topoMovePool, topoMoveCell, topoMovePoolSpec(),
 			pods, len(pods), false, false, &shardRolloutTracker{},
 		); err != nil {
@@ -317,7 +317,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 		}
 
 		rollout := &shardRolloutTracker{}
-		if err := r.handleRollingUpdates(
+		if err := r.rollingUpdatePass(
 			ctx, shard, topoMovePool, topoMoveCell, topoMovePoolSpec(),
 			pods, len(pods), false, false, rollout,
 		); err != nil {
@@ -348,7 +348,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 			{topo: oldGlobalTopo, ready: true},
 		})
 
-		if err := r.handleRollingUpdates(
+		if err := r.rollingUpdatePass(
 			ctx, shard, topoMovePool, topoMoveCell, topoMovePoolSpec(),
 			pods, len(pods)-1, false, false, &shardRolloutTracker{},
 		); err != nil {
@@ -364,7 +364,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 
 	t.Run("a drain already in progress blocks the next stranded pod", func(t *testing.T) {
 		r, c, shard, pods, _ := setup(t, allStranded)
-		if err := r.handleRollingUpdates(
+		if err := r.rollingUpdatePass(
 			ctx, shard, topoMovePool, topoMoveCell, topoMovePoolSpec(),
 			pods, len(pods), false, true, &shardRolloutTracker{},
 		); err != nil {
@@ -381,7 +381,7 @@ func TestHandleRollingUpdates_TopoMove(t *testing.T) {
 		r, c, shard, pods, _ := setup(t, allStranded)
 		rollout := &shardRolloutTracker{}
 		rollout.SetStarted()
-		if err := r.handleRollingUpdates(
+		if err := r.rollingUpdatePass(
 			ctx, shard, topoMovePool, topoMoveCell, topoMovePoolSpec(),
 			pods, len(pods), false, false, rollout,
 		); err != nil {

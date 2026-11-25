@@ -85,12 +85,23 @@ func (r *ShardReconciler) reconcilePostgresConfig(
 		return err
 	}
 
+	stampPostgresConfigHashes(shard, cfg)
+	return nil
+}
+
+// stampPostgresConfigHashes sets the rendered config's hashes as annotations
+// on the in-memory shard, where BuildPoolPod reads them. They are never
+// persisted, so they are lost whenever the shard is replaced by a response
+// from the API server.
+func stampPostgresConfigHashes(shard *multigresv1alpha1.Shard, cfg renderedConfig) {
+	if cfg.err != nil {
+		return
+	}
 	if shard.Annotations == nil {
 		shard.Annotations = make(map[string]string)
 	}
 	shard.Annotations[metadata.AnnotationPostgresConfigHash] = cfg.restartHash
 	shard.Annotations[metadata.AnnotationPostgresReloadHash] = cfg.reloadHash
-	return nil
 }
 
 // renderPostgresConfig renders the effective postgresql.conf for a shard and

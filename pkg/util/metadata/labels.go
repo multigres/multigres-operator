@@ -3,6 +3,8 @@ package metadata
 import (
 	"maps"
 
+	"k8s.io/apimachinery/pkg/types"
+
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 )
 
@@ -149,6 +151,15 @@ const (
 	DrainStateAcknowledged = "acknowledged"
 	// DrainStateReadyForDeletion indicates the data-handler unregistered the pod from etcd.
 	DrainStateReadyForDeletion = "ready-for-deletion"
+
+	// AnnotationDrainReason records why a drain was requested when the pod's
+	// own state does not show it. A drain requested for a pod that is within
+	// its replica count and on the desired spec is otherwise cancelled as no
+	// longer wanted.
+	AnnotationDrainReason = "drain.multigres.com/reason"
+	// drainReasonFilesystemResize prefixes the reason of a drain that
+	// restarts a pod so its data PVC's filesystem can grow.
+	drainReasonFilesystemResize = "filesystem-resize"
 
 	// AnnotationDrainRequestedAt stores the RFC3339 timestamp of when the drain
 	// was first requested. Used to detect failover timeouts.
@@ -322,4 +333,12 @@ func MergeLabels(standardLabels, customLabels map[string]string) map[string]stri
 	maps.Copy(merged, standardLabels)
 
 	return merged
+}
+
+// FilesystemResizeDrainReason is the AnnotationDrainReason value of a drain
+// that restarts the pod with the given UID so its data PVC's filesystem can
+// grow. The UID is part of the value so that the reason holds for that pod
+// only, not for a pod that inherited or was given the annotation.
+func FilesystemResizeDrainReason(pod types.UID) string {
+	return drainReasonFilesystemResize + "/" + string(pod)
 }

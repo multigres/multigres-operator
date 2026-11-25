@@ -348,7 +348,7 @@ func (c *C) awaitShardSettled(key client.ObjectKey, since time.Time, n int) {
 // then changes the pool so that pod drifts. A Lite shard replaces a drifted pod
 // directly, with no drain and no cohort check, so this is the one place in the
 // suite a voluntary replacement actually happens; it must not happen here.
-// Pool shards gate the same replacement in canStartDisruption, which the
+// Pool shards gate the same replacement in observeDisruption, which the
 // suite cannot reach because its pooler fake refuses every drain.
 func testLiteDataPVCDeleted(t *testing.T) {
 	c := newCase(t)
