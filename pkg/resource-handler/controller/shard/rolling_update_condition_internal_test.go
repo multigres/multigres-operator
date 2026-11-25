@@ -46,7 +46,7 @@ func TestFinishRollingUpdateConditionAcrossPools(t *testing.T) {
 			notes:       []note{{"alpha", 1, true}, {"beta", 0, false}},
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  "PodsDrifted",
-			wantMessage: "1 pods need update in pool alpha",
+			wantMessage: "1 pod needs update in pool alpha",
 		},
 		"two pools drifted, cells summed": {
 			notes: []note{
@@ -142,7 +142,7 @@ func TestSurgeActionNotesItsDrift(t *testing.T) {
 	}
 	condition, ok := rollout.poolsRollingUpdate()
 	if !ok || condition.Reason != "PodsDrifted" ||
-		condition.Message != "1 pods need update in pool primary" {
+		condition.Message != "1 pod needs update in pool primary" {
 		t.Fatalf("RollingUpdate = %+v (%v), want 1 drifted pod in pool primary", condition, ok)
 	}
 }

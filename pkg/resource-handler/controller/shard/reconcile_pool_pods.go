@@ -814,8 +814,12 @@ func (t *shardRolloutTracker) poolsRollingUpdate() (metav1.Condition, bool) {
 	var drifting []string
 	for _, name := range names {
 		if p := t.pools[name]; p.inProgress {
+			noun, verb := "pods", "need"
+			if p.drifted == 1 {
+				noun, verb = "pod", "needs"
+			}
 			drifting = append(drifting,
-				fmt.Sprintf("%d pods need update in pool %s", p.drifted, name))
+				fmt.Sprintf("%d %s %s update in pool %s", p.drifted, noun, verb, name))
 		}
 	}
 	if len(drifting) > 0 {

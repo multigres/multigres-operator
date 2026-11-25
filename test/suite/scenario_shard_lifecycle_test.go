@@ -314,6 +314,9 @@ func rollingUpdateDrift(key client.ObjectKey, wantPods int) error {
 		return fmt.Errorf("shard %s has no RollingUpdate condition yet", key)
 	}
 	want := fmt.Sprintf("%d pods need update in pool %s", wantPods, resolver.DefaultPoolName)
+	if wantPods == 1 {
+		want = fmt.Sprintf("1 pod needs update in pool %s", resolver.DefaultPoolName)
+	}
 	if cond.Status != metav1.ConditionTrue || cond.Reason != "PodsDrifted" ||
 		cond.Message != want {
 		return fmt.Errorf(
