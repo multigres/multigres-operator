@@ -269,7 +269,7 @@ func TestTopologyAuthDoesNotPruneForUnknownOwnerKind(t *testing.T) {
 }
 
 func TestTopologyAuthRemovalConfirmationFailsBeforeMutation(t *testing.T) {
-	for _, scenario := range []string{"no API reader", "no recorded cluster", "cell list error", "template get error", "resolution error"} {
+	for _, scenario := range []string{"no API reader", "no recorded cluster", "cell list error", "template get error"} {
 		t.Run(scenario, func(t *testing.T) {
 			r, ts, first, auth := authReconcileFixture(t)
 			second := authGrantCluster("second", "second")
@@ -285,9 +285,6 @@ func TestTopologyAuthRemovalConfirmationFailsBeforeMutation(t *testing.T) {
 			require.NoError(t, r.Delete(t.Context(), second))
 			if scenario == "template get error" {
 				second.Spec.GlobalTopoServer = &api.GlobalTopoServerSpec{TemplateRef: "unavailable"}
-			}
-			if scenario == "resolution error" {
-				second.Spec.Cells = []api.CellConfig{{Name: "zone", CellTemplate: "missing"}}
 			}
 			authoritativeObjects := []client.Object{first.DeepCopy(), second}
 			if scenario == "template get error" {
@@ -421,6 +418,7 @@ func TestTopologyAuthActivationIsSticky(t *testing.T) {
 				bad := authGrantCluster("bad", "bad")
 				bad.Spec.GlobalTopoServer.External.ClientCertSecret = "unmanaged"
 				require.NoError(t, r.Create(t.Context(), bad))
+				reason = "ClusterConfigInvalid"
 			case "etcd failure":
 				r.MaintenanceClientFactory = func(context.Context, *api.TopoServer) (EtcdMaintenanceClient, error) {
 					return nil, errors.New("etcd unavailable")
@@ -701,7 +699,7 @@ func TestReconcileRunsMaintenanceDespiteAuthorizationRefusal(t *testing.T) {
 	}
 
 	_, err = r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ts)})
-	var refused *projectRefRequiredError
+	var refused *refusedClustersError
 	require.ErrorAs(t, err, &refused)
 	require.ErrorContains(t, err, "projects/noref")
 	require.Len(t, sim.DefragLog(), 1)

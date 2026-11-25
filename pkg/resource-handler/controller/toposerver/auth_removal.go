@@ -15,7 +15,8 @@ import (
 // confirmIdentityRemoval re-reads, uncached, each cluster recorded for a
 // tracked identity whose desired grant no longer lists it, so a stale cache
 // cannot revoke a live cluster's grants. What those clusters still require is
-// merged into desired, and the ones now refused are added to refused. Clusters
+// merged into desired, and the ones now refused are added to refused, including
+// on an active server those whose configuration cannot be authorized. Clusters
 // already refused are not re-read. A tracked identity with no recorded cluster
 // is an error, so nothing is pruned on a guess.
 func (r *TopoServerReconciler) confirmIdentityRemoval(
@@ -23,6 +24,7 @@ func (r *TopoServerReconciler) confirmIdentityRemoval(
 	ts *api.TopoServer,
 	desired []etcdIdentityGrant,
 	refused []clusterRefusal,
+	activated bool,
 ) ([]etcdIdentityGrant, []clusterRefusal, error) {
 	departed, err := departedClusters(ts, desired)
 	if err != nil {
@@ -46,7 +48,12 @@ func (r *TopoServerReconciler) confirmIdentityRemoval(
 	for _, key := range departed {
 		reason, err := r.addLiveClusterGrants(ctx, ts, key, grants)
 		if err != nil {
-			return nil, nil, err
+			refusal, err := configRefusal(activated, key, err)
+			if err != nil {
+				return nil, nil, err
+			}
+			refused = append(refused, refusal)
+			continue
 		}
 		if reason != "" {
 			refused = append(refused, clusterRefusal{cluster: key, reason: reason})

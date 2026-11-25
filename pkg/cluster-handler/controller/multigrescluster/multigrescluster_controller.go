@@ -87,6 +87,15 @@ type MultigresClusterReconciler struct {
 		ref multigresv1alpha1.GlobalTopoServerRef,
 	) (topo.EtcdIdentity, error)
 
+	// ReadEtcdMembership overrides how the membership behind a topology
+	// reference is read without Status, for testing. Defaults to
+	// topo.ReadEtcdMembership.
+	ReadEtcdMembership func(
+		ctx context.Context,
+		namespace string,
+		ref multigresv1alpha1.GlobalTopoServerRef,
+	) (topo.EtcdIdentity, error)
+
 	// Gate pauses objects labelled multigres.com/reconcile=disabled, see
 	// docs/development/reconcile-gating.md. The zero value is safe.
 	Gate features.Gate

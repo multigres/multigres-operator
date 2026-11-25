@@ -108,7 +108,12 @@ func desiredEtcdGrants(
 
 		reason, err := addClusterGrants(ctx, reader, ts, cluster, clusterCells, grants)
 		if err != nil {
-			return nil, nil, err
+			refusal, err := configRefusal(ts.Status.AuthEnabled, key, err)
+			if err != nil {
+				return nil, nil, err
+			}
+			refused = append(refused, refusal)
+			continue
 		}
 		if reason != "" {
 			refused = append(refused, clusterRefusal{cluster: key, reason: reason})
@@ -164,7 +169,8 @@ func finalizeGrants(grants map[string]*etcdIdentityGrant) []etcdIdentityGrant {
 // addClusterGrants adds the grants cluster needs on ts. A cluster that
 // references ts without a project reference, or with a root outside its
 // project prefix, gets none and comes back with the reason it is refused, so
-// such a root is never granted, cached or tracked.
+// such a root is never granted, cached or tracked. Errors in the cluster's own
+// configuration come back as a clusterConfigError, before any grant is added.
 func addClusterGrants(
 	ctx context.Context,
 	reader client.Reader,
@@ -173,7 +179,8 @@ func addClusterGrants(
 	clusterCells []*api.Cell,
 	grants map[string]*etcdIdentityGrant,
 ) (refusal string, err error) {
-	res := resolver.NewResolver(reader, cluster.Namespace)
+	reads := &readFailureRecorder{Reader: reader}
+	res := resolver.NewResolver(reads, cluster.Namespace)
 	global, globalErr := res.ResolveGlobalTopo(ctx, cluster)
 	matchesGlobal := false
 	if globalErr == nil {
@@ -222,15 +229,17 @@ func addClusterGrants(
 		return "", nil
 	}
 	if globalErr != nil {
-		return "", fmt.Errorf("resolving cluster %s topology: %w", cluster.Name, globalErr)
+		return "", reads.configError(
+			fmt.Errorf("resolving cluster %s topology: %w", cluster.Name, globalErr),
+		)
 	}
 	for _, resolved := range resolvedCells {
 		if resolved.err != nil {
-			return "", fmt.Errorf(
+			return "", reads.configError(fmt.Errorf(
 				"resolving cluster %s cell topology: %w",
 				cluster.Name,
 				resolved.err,
-			)
+			))
 		}
 	}
 	if !topology.HasProjectRef(cluster) {
@@ -239,7 +248,7 @@ func addClusterGrants(
 
 	roots, err := topology.ForCluster(cluster)
 	if err != nil {
-		return "", err
+		return "", &clusterConfigError{err: err}
 	}
 	project := projectGrants{roots: roots, grants: grants, cluster: cluster}
 	operatorCredential := api.OperatorIssuesTopoClientCert(cluster)
@@ -251,7 +260,7 @@ func addClusterGrants(
 			rootPath = global.External.RootPath
 		}
 		if err := project.add(rootPath, operatorCredential); err != nil {
-			return "", err
+			return "", &clusterConfigError{err: err}
 		}
 	}
 	// After a move to another server, pods not yet restarted still use the root
@@ -263,7 +272,7 @@ func addClusterGrants(
 	}
 	for _, cell := range clusterCells {
 		if err := project.addCell(ts, cell); err != nil {
-			return "", err
+			return "", &clusterConfigError{err: err}
 		}
 	}
 	for _, resolved := range resolvedCells {
@@ -276,7 +285,7 @@ func addClusterGrants(
 				resolved.local.External.RootPath,
 				operatorCredential,
 			); err != nil {
-				return "", err
+				return "", &clusterConfigError{err: err}
 			}
 		}
 	}
@@ -834,7 +843,7 @@ func (r *TopoServerReconciler) planTopologyAuth(
 	if err != nil {
 		return topologyAuthPlan{}, err
 	}
-	desired, refused, err = r.confirmIdentityRemoval(ctx, ts, desired, refused)
+	desired, refused, err = r.confirmIdentityRemoval(ctx, ts, desired, refused, activated)
 	if err != nil {
 		return topologyAuthPlan{}, fmt.Errorf("confirming topology identity removal: %w", err)
 	}
@@ -842,7 +851,7 @@ func (r *TopoServerReconciler) planTopologyAuth(
 	// identities unchanged while the other identities reconcile.
 	var refusal error
 	if len(refused) > 0 {
-		refusal = &projectRefRequiredError{refused: refused}
+		refusal = &refusedClustersError{refused: refused}
 		if !activated {
 			return topologyAuthPlan{}, refusal
 		}
@@ -859,10 +868,12 @@ func (r *TopoServerReconciler) planTopologyAuth(
 
 func authFailureReason(err error) string {
 	var failures *identityFailuresError
-	var refused *projectRefRequiredError
+	var refused *refusedClustersError
 	switch {
 	case errors.As(err, &failures):
 		return "IdentitiesFailed"
+	case errors.As(err, &refused) && refused.invalidConfig():
+		return "ClusterConfigInvalid"
 	case errors.As(err, &refused):
 		return "ProjectRefRequired"
 	default:

@@ -274,6 +274,17 @@ changes in that time either. When the message
 shows another problem as well, such as `IdentitiesFailed`, the refusal is
 appended to it on its own line and the reason stays the other problem's.
 
+After activation, a referencing cluster whose own configuration cannot be
+authorized is refused the same way. Examples are custom topology client
+credentials, a missing CoreTemplate or CellTemplate, and a project reference
+that cannot form a root. Its existing access is kept, and the other clusters
+keep reconciling. The condition reason is `ClusterConfigInvalid`, and the
+message names the cluster and the cause. The reason is `ProjectRefRequired`
+only when every refused cluster lacks a ref or has a root outside its prefix.
+A failed API read is not a refusal. It fails the pass with `ReconcileFailed`,
+which retries. Before activation, these errors fail the pass with
+`ReconcileFailed`, as [Activation](#activation) describes.
+
 Adding the annotation to a refused cluster lifts the refusal. It does not
 finish the change for a cluster that already has data. The TopoServer controller watches the project-ref annotation on every
 MultigresCluster, resolves the servers the cluster names, and reconciles the
@@ -295,21 +306,24 @@ the cluster until its root is moved under `/multigres/<ref>`.
 
 ### Activation
 
-For an existing TLS-enabled cluster, first upgrade the operator and wait for
-the shared administrator Certificate and Secret in the operator's namespace to
-become Ready.
-Then set `spec.globalTopoServer.auth.enabled: true` on the
-`MultigresCluster`. Existing plaintext clusters cannot enable topology TLS in
-place because `spec.topoTLS` is immutable. They need a separate migration to a
-TLS-enabled topology server. There is no legacy identity compatibility mode,
-so all topology clients must already use the cluster credential before auth is
-requested.
+For an existing TLS-enabled cluster, first upgrade the operator. Then establish
+the issuer policy, including any approver-policy rule that allows
+`CN=multigres-operator` from the operator's namespace. Verify that the
+operator-issued cluster certificate is Ready and mounted by every topology
+client. There is no legacy identity compatibility mode, so all topology clients
+must already use the cluster credential before auth is requested. Existing
+plaintext clusters cannot enable topology TLS in place because `spec.topoTLS`
+is immutable. They need a separate migration to a TLS-enabled topology server.
 
-Before activation, establish the issuer policy and verify that the
-operator-issued cluster certificate is Ready and mounted by workloads. Before
-it activates auth, the controller waits for the serving and administrator
-Secrets to contain all three TLS keys. It does not wait for the cluster Secret
-or for workloads to mount it.
+Then set `spec.globalTopoServer.auth.enabled: true` on the `MultigresCluster`
+and watch the TopoServer's `AuthorizationReady` condition. Requesting auth is
+what makes the controller create the shared administrator Certificate in the
+operator's namespace, so it does not exist before this step. Before it
+activates auth, the controller waits for the serving and administrator Secrets
+to contain all three TLS keys and reports `PendingCredentials` meanwhile. It
+does not wait for the cluster Secret or for workloads to mount it. Activation
+is done when `status.authEnabled` is true and `AuthorizationReady` is `True`
+with reason `Reconciled`.
 
 The controller resolves every grant before it changes etcd. That covers all
 referencing clusters, their existing Cells, and Cells their specs have yet to
@@ -372,7 +386,8 @@ maintenance: on a `Healthy` server the controller runs maintenance first and
 then returns the authorization error. The `AuthorizationReady` condition
 reports the current pass
 with reason `Reconciled`, `PendingCredentials`, `ReconcileFailed`,
-`IdentitiesFailed`, `ProjectRefRequired`, or `ManagementDisabled`.
+`IdentitiesFailed`, `ProjectRefRequired`, `ClusterConfigInvalid`, or
+`ManagementDisabled`.
 
 ## Cleanup and retries
 
@@ -416,17 +431,20 @@ attempt can leave a partial update until a later pass succeeds.
 
 The operator records applied grants in memory and skips unchanged identities.
 It keys the record by TopoServer UID and etcd cluster ID. For each identity it
-keeps a hash of the desired grant. A pass skips the etcd reads and writes for an
-identity when its grant hash equals the recorded one. An identity that fails, is
+keeps a hash of the desired grant and when it was verified. A pass skips the
+etcd reads and writes for an identity when its grant hash equals the recorded
+one and the entry has not expired. An identity that fails, is
 or is pruned loses its entry. The operator drops every
 entry for a server when etcd reports that auth is off or reports a different
 cluster ID. The record is lost on restart, so the first pass after a restart
 verifies every identity once.
 
-Entries do not expire. A change made directly in etcd to a project role is not
-repaired until the operator restarts or that identity's grant changes. The
-operator treats a manual change to etcd roles as unlikely, and a restart is the
-fix when it happens.
+Entries expire 30 to 45 minutes after verification. The exact time comes from
+the identity name, so identities verified in one pass come due across later
+passes. The first pass after an entry expires re-verifies the identity and
+repairs a change made directly in etcd to its role. Passes run at least once an
+hour, so repair comes within an hour of expiry. Every expiry is shorter than
+the hourly resync, so a resync after a quiet hour re-verifies every identity.
 
 The controller reconciles grants when a Cell that references the server is
 created, deleted, or has its spec changed, so a new cluster is granted access
@@ -489,18 +507,22 @@ reaches a different etcd cluster, so an alias to the same server cannot trigger
 retirement. The identity probe makes only the read-only `MemberList` and
 `Status` RPCs.
 
-Once auth is on, a project client certificate can still call `MemberList`, but
-`Status` needs the `root` role. If the external endpoint matches a TLS-enabled
-managed TopoServer by a recognized name, the probe drops the supplied reference
-and connects to `https://<toposerver>.<namespace>.svc:2379`. It uses the
-administrator Secret in the operator's namespace once authorization is managed
-on that server, and the server's serving Secret before then. Probes of the
-retiring server use its own Service and credential the same way. For any other
-endpoint the probe uses the supplied reference unchanged, so its credential
-needs enough privilege on the external etcd for those two RPCs.
+The probe always dials the configured endpoint with the configured credential,
+which is what the workloads use. Once auth is on, a project client certificate
+can still call `MemberList`, but `Status` needs the `root` role. So when the
+external endpoint matches a TLS-enabled TopoServer by a recognized name and
+authorization is managed on that server, the configured probe calls only
+`MemberList`. A second probe then reads `MemberList` and `Status` through
+`https://<toposerver>.<namespace>.svc:2379` with the administrator Secret in the
+operator's namespace. Both probes must report the same etcd cluster ID, and
+neither membership may list a member of the retiring server. On any other
+endpoint, including a TopoServer without managed authorization, the configured
+probe makes both RPCs, so its credential needs enough privilege for them.
+Probes of the retiring server use its own Service, with the administrator
+Secret once authorization is managed on it and its serving Secret before then.
 
-An unreadable membership, or a missing credential for a matched destination,
-blocks retirement and emits `GlobalTopoRetireBlocked` instead of deleting the
+An unreadable membership, a configured endpoint or credential that fails, or a
+missing administrator credential for a matched destination, blocks retirement and emits `GlobalTopoRetireBlocked` instead of deleting the
 old server. A failed probe of the retiring server does not block, because a
 dead server cannot answer. See
 [`retire_global_topo.go`](../../pkg/cluster-handler/controller/multigrescluster/retire_global_topo.go)
@@ -517,9 +539,10 @@ ExternalName Services, load balancers) are not recognized as that server.
 Auth on a server shared by many clusters is sized for tens of clusters, not
 thousands. Per-cluster grants, with a grant per MultigresCluster, a finalizer,
 and key cleanup, are the planned fix. A pass with nothing to change costs one auth status read plus the reads for the
-two administrator users and the `root` role. The first pass after an operator
-restart verifies every identity, at two role reads and one user read each, so it
-grows with the number of identities. etcd serves each of those reads through
+two administrator users and the `root` role, plus the reads for identities
+whose entries have expired. The first pass after an operator restart, and a
+resync an hour after the last pass, verify every identity, at two role reads and one user read each, so it grows
+with the number of identities. etcd serves each of those reads through
 raft. Each Cell spec change on a referencing cluster re-runs the pass through
 the Cell watch. The pass recomputes every grant from the API cache, and it
 changes etcd only for the identities whose grants differ. Until activation
@@ -597,6 +620,7 @@ data unchanged.
 | `authEnabled` stays false | Read the `AuthorizationReady` reason. `PendingCredentials` means the serving Secret or the shared administrator Secret is incomplete. For `ReconcileFailed`, the message names the unresolved Cell, custom-credential cluster, or etcd error. `ProjectRefRequired` names each refused cluster and why. Set the `multigres.com/project-ref` annotation on a cluster that has none. Move a root that is outside the project prefix under `/multigres/<ref>`. |
 | A cluster has `TopologyReady=False` with reason `TopologyAuthRequiresProjectRef` | The cluster uses an auth-managed server, owned or referenced, and has no `multigres.com/project-ref` annotation. Set the annotation, or use a server without managed authorization. Access the cluster already has on the server is kept, not revoked, until the annotation is restored or the cluster is deleted. |
 | Workloads fail after activation despite `authEnabled: true` | Check that the cluster Certificate is Ready and every topology client mounts the cluster Secret. |
+| `AuthorizationReady=False` with reason `ClusterConfigInvalid` | Auth is active and a referencing cluster cannot be authorized. The message names the cluster and the cause, such as custom credentials or a missing template. Fix that cluster. Its existing access is kept and the other clusters keep reconciling meanwhile. |
 | Custom credential cluster blocks activation | Use the operator-issued cluster certificate, or manage authorization on the external etcd independently. |
 | Removed identities remain in etcd | Leave `status.authIdentities` intact and read the `AuthorizationReady` message for the failed cleanup RPC. Identities the controller did not create need separate administration. |
-| Retirement is blocked on membership reads | Check that the endpoint is a recognized name. An unrecognized endpoint needs a credential with privileges for `MemberList` and `Status`. Inspect `GlobalTopoRetireBlocked` events and controller logs. |
+| Retirement is blocked on membership reads | Check that the configured endpoint is reachable and the workload credential Secret holds a valid keypair. An endpoint that is not a recognized name of an auth-managed TopoServer needs a credential with privileges for `MemberList` and `Status`. Inspect `GlobalTopoRetireBlocked` events and controller logs. |

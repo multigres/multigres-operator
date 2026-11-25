@@ -793,14 +793,14 @@ func TestSharedSourceGrantRequiresTrackedOperatorCredential(t *testing.T) {
 		customCellCert  bool
 		cellLocal       bool
 		sameDestination bool
-		wantError       bool
+		wantRefusal     bool
 	}{
 		"tracked source":            {contributor: "projects/cluster"},
 		"tracked local source":      {contributor: "projects/cluster", cellLocal: true},
-		"untracked local source":    {contributor: "projects/other", cellLocal: true, wantError: true},
-		"different contributor":     {contributor: "projects/other", wantError: true},
-		"custom Cell credential":    {contributor: "projects/cluster", customCellCert: true, wantError: true},
-		"source equals destination": {contributor: "projects/cluster", sameDestination: true, wantError: true},
+		"untracked local source":    {contributor: "projects/other", cellLocal: true, wantRefusal: true},
+		"different contributor":     {contributor: "projects/other", wantRefusal: true},
+		"custom Cell credential":    {contributor: "projects/cluster", customCellCert: true, wantRefusal: true},
+		"source equals destination": {contributor: "projects/cluster", sameDestination: true, wantRefusal: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cluster := authGrantCluster("project", "cluster")
@@ -851,15 +851,13 @@ func TestSharedSourceGrantRequiresTrackedOperatorCredential(t *testing.T) {
 			grants, refused, err := desiredEtcdGrants(
 				t.Context(), authGrantReconciler(t, cluster, cell).Client, ts,
 			)
-			if tc.wantError {
-				require.ErrorContains(
-					t,
-					err,
-					"operator-issued topology client certificate is required",
-				)
+			require.NoError(t, err)
+			if tc.wantRefusal {
+				requireConfigRefusal(t, refused, cluster,
+					"operator-issued topology client certificate is required")
+				require.Empty(t, grants)
 				return
 			}
-			require.NoError(t, err)
 			require.Empty(t, refused)
 			require.Equal(t, []etcdIdentityGrant{{
 				Name: identity, Permissions: []etcdPermission{etcdPrefixPermission(root + "/")},
@@ -871,11 +869,11 @@ func TestSharedSourceGrantRequiresTrackedOperatorCredential(t *testing.T) {
 
 func TestDesiredEtcdGrantsUsesMaterializedCellCredentialDuringGlobalMove(t *testing.T) {
 	for name, tc := range map[string]struct {
-		certName  string
-		wantError bool
+		certName    string
+		wantRefusal bool
 	}{
 		"operator issued": {certName: api.TopoClientCertSecretName("owner")},
-		"custom":          {certName: "old-custom-cert", wantError: true},
+		"custom":          {certName: "old-custom-cert", wantRefusal: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cluster := authGrantCluster("project", "owner")
@@ -910,15 +908,13 @@ func TestDesiredEtcdGrantsUsesMaterializedCellCredentialDuringGlobalMove(t *test
 			grants, refused, err := desiredEtcdGrants(
 				t.Context(), authGrantReconciler(t, cluster, cell).Client, ts,
 			)
-			if tc.wantError {
-				require.ErrorContains(
-					t,
-					err,
-					"operator-issued topology client certificate is required",
-				)
+			require.NoError(t, err)
+			if tc.wantRefusal {
+				requireConfigRefusal(t, refused, cluster,
+					"operator-issued topology client certificate is required")
+				require.Empty(t, grants)
 				return
 			}
-			require.NoError(t, err)
 			require.Empty(t, refused)
 			require.Len(t, grants, 1)
 			require.Equal(

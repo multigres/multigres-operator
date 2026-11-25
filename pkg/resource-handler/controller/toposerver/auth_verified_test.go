@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/authpb"
@@ -21,6 +22,7 @@ type verifyHarness struct {
 	cache  *authVerifyCache
 	server types.NamespacedName
 	uid    types.UID
+	now    time.Time
 }
 
 func newVerifyHarness(t *testing.T) *verifyHarness {
@@ -29,7 +31,8 @@ func newVerifyHarness(t *testing.T) *verifyHarness {
 		server: types.NamespacedName{Namespace: "stores", Name: "shared"},
 		uid:    "uid-1",
 	}
-	h.cache = &authVerifyCache{}
+	h.now = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h.cache = &authVerifyCache{now: func() time.Time { return h.now }}
 	return h
 }
 
@@ -131,7 +134,7 @@ func TestVerifiedPassFingerprintIgnoresPermissionOrder(t *testing.T) {
 	require.NotEqual(t, prefixGrant("id", nil, "/a/").fingerprint(), readOnly.fingerprint())
 }
 
-func TestVerifiedPassDoesNotRepairDriftUntilGrantOrClusterChanges(t *testing.T) {
+func TestVerifiedPassRepairsDriftAfterIntervalOrChange(t *testing.T) {
 	stolen := &authpb.Permission{
 		Key: []byte("/stolen/"), RangeEnd: []byte("/stolen0"), PermType: authpb.READWRITE,
 	}
@@ -146,12 +149,24 @@ func TestVerifiedPassDoesNotRepairDriftUntilGrantOrClusterChanges(t *testing.T) 
 		return h, c, grants, victim
 	}
 
-	t.Run("unchanged grant is not repaired", func(t *testing.T) {
+	t.Run("unchanged grant is not repaired before the interval", func(t *testing.T) {
 		h, c, grants, victim := setup(t)
+		h.now = h.now.Add(authReverifyInterval - authReverifyJitter - time.Second)
 		h.pass(c, grants)
 		require.Len(t, c.roles[victim], 2, "the role changed behind the operator stays")
 		require.Equal(t, fixedRoleGets, c.roleGets)
 		require.Empty(t, c.mutations)
+	})
+	t.Run("unchanged grant is repaired after the interval", func(t *testing.T) {
+		h, c, grants, victim := setup(t)
+		h.now = h.now.Add(authReverifyInterval)
+		h.pass(c, grants)
+		require.Len(t, c.roles[victim], 1, "drift is revoked")
+		require.Equal(t, fixedRoleGets+2*len(grants), c.roleGets)
+
+		c.resetCounts()
+		h.pass(c, grants)
+		require.Equal(t, fixedRoleGets, c.roleGets, "the repaired grants are trusted again")
 	})
 	t.Run("changed grant is repaired", func(t *testing.T) {
 		h, c, grants, victim := setup(t)
@@ -374,4 +389,46 @@ func TestTopologyAuthSkipsUnchangedIdentitiesAcrossPasses(t *testing.T) {
 	require.True(t, ready)
 	require.Equal(t, fixedRoleGets, auth.roleGets)
 	require.Equal(t, fixedUserGets, auth.userGets)
+}
+
+func TestVerifiedCacheEntriesExpire(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c := &authVerifyCache{now: func() time.Time { return now }}
+	server := types.NamespacedName{Namespace: "stores", Name: "shared"}
+	const identity = "/multigres/project"
+	c.sync(server, "uid", 7, true, map[string]bool{identity: true})
+	fp := prefixGrant(identity, nil, identity+"/global/").fingerprint()
+	c.record("uid", identity, fp)
+	start := now
+
+	require.True(t, c.applied("uid", identity, fp), "a fresh entry is applied")
+	now = start.Add(reverifyAfter(identity) - time.Nanosecond)
+	require.True(t, c.applied("uid", identity, fp), "an entry is applied until it expires")
+	now = start.Add(reverifyAfter(identity))
+	require.False(t, c.applied("uid", identity, fp), "an expired entry is re-verified")
+
+	c.record("uid", identity, fp)
+	require.True(t, c.applied("uid", identity, fp), "re-recording refreshes the entry")
+}
+
+func TestVerifiedCacheJitterSpreadsExpiry(t *testing.T) {
+	require.LessOrEqual(t, authReverifyInterval, maintenanceInterval,
+		"the hourly requeue must find every entry expired")
+	grants := numberedGrants(1000)
+	expiries := map[time.Duration]bool{}
+	expiredAtMidpoint := 0
+	midpoint := authReverifyInterval - authReverifyJitter/2
+	for _, grant := range grants {
+		after := reverifyAfter(grant.Name)
+		require.Greater(t, after, authReverifyInterval-authReverifyJitter)
+		require.LessOrEqual(t, after, authReverifyInterval)
+		require.Equal(t, after, reverifyAfter(grant.Name), "the offset is stable")
+		expiries[after] = true
+		if after <= midpoint {
+			expiredAtMidpoint++
+		}
+	}
+	require.Greater(t, len(expiries), 900, "identities expire at distinct times")
+	require.InDelta(t, len(grants)/2, expiredAtMidpoint, float64(len(grants))/5,
+		"about half the identities expire in the first half of the window")
 }

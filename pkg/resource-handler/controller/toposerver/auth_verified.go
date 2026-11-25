@@ -4,14 +4,41 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"fmt"
+	"hash/fnv"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"k8s.io/apimachinery/pkg/types"
 )
 
+const (
+	// authReverifyInterval is the longest a verified grant is trusted. It is
+	// shorter than maintenanceInterval, the hourly safety-net requeue, so each
+	// such requeue re-reads, and repairs, a role changed directly in etcd.
+	authReverifyInterval = maintenanceInterval * 3 / 4
+	// authReverifyJitter is the most an entry expires early. It spreads the
+	// identities verified in one pass across later passes.
+	authReverifyJitter = maintenanceInterval / 4
+)
+
 type grantFingerprint [sha256.Size]byte
+
+type verifiedGrant struct {
+	fingerprint grantFingerprint
+	expires     time.Time
+}
+
+// reverifyAfter is how long identity's entry is trusted, from
+// authReverifyInterval minus authReverifyJitter up to authReverifyInterval.
+// The offset comes from the name, so it is stable across passes.
+func reverifyAfter(identity string) time.Duration {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(identity))
+	offset := int64(h.Sum32()) % int64(authReverifyJitter/time.Millisecond)
+	return authReverifyInterval - time.Duration(offset)*time.Millisecond
+}
 
 // fingerprint hashes everything that decides an identity's etcd state.
 func (g etcdIdentityGrant) fingerprint() grantFingerprint {
@@ -36,15 +63,24 @@ func (g etcdIdentityGrant) fingerprint() grantFingerprint {
 type verifiedServer struct {
 	name       types.NamespacedName
 	clusterID  uint64
-	identities map[string]grantFingerprint
+	identities map[string]verifiedGrant
 }
 
 // authVerifyCache remembers, in memory only, which identity grants were last
-// fully reconciled. The zero value is ready to use and safe for concurrent use.
-// A nil cache remembers nothing.
+// fully reconciled and when. The zero value is ready to use and safe for
+// concurrent use. A nil cache remembers nothing.
 type authVerifyCache struct {
 	mu      sync.Mutex
 	servers map[types.UID]*verifiedServer
+	// now is the clock. Nil means time.Now.
+	now func() time.Time
+}
+
+func (c *authVerifyCache) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // sync reconciles the cache with what the pass just read from etcd. It drops
@@ -76,7 +112,7 @@ func (c *authVerifyCache) sync(
 		s = &verifiedServer{
 			name:       name,
 			clusterID:  clusterID,
-			identities: map[string]grantFingerprint{},
+			identities: map[string]verifiedGrant{},
 		}
 		c.servers[uid] = s
 	}
@@ -87,9 +123,10 @@ func (c *authVerifyCache) sync(
 	}
 }
 
-// applied reports whether the identity was fully reconciled with this grant.
-// Entries never expire, so a change made directly in etcd stays until the grant
-// changes, the entry is dropped, or the operator restarts.
+// applied reports whether the identity was fully reconciled with this grant
+// within its re-verification interval. A change made directly in etcd stays
+// until the entry expires, the grant changes, the entry is dropped, or the
+// operator restarts.
 func (c *authVerifyCache) applied(uid types.UID, identity string, fp grantFingerprint) bool {
 	if c == nil {
 		return false
@@ -101,7 +138,7 @@ func (c *authVerifyCache) applied(uid types.UID, identity string, fp grantFinger
 		return false
 	}
 	got, ok := s.identities[identity]
-	return ok && got == fp
+	return ok && got.fingerprint == fp && c.clock().Before(got.expires)
 }
 
 func (c *authVerifyCache) record(uid types.UID, identity string, fp grantFingerprint) {
@@ -111,7 +148,10 @@ func (c *authVerifyCache) record(uid types.UID, identity string, fp grantFingerp
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if s := c.servers[uid]; s != nil {
-		s.identities[identity] = fp
+		s.identities[identity] = verifiedGrant{
+			fingerprint: fp,
+			expires:     c.clock().Add(reverifyAfter(identity)),
+		}
 	}
 }
 
