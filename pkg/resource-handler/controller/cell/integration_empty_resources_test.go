@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -50,10 +49,6 @@ func TestEmptyResourcesBlockReachesLocalTopoServer(t *testing.T) {
 	c := mgr.GetClient()
 	ctx := t.Context()
 
-	populated := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("123m")},
-		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("321Mi")},
-	}
 	cell := &multigresv1alpha1.Cell{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "empty-resources-cell",
@@ -75,7 +70,10 @@ func TestEmptyResourcesBlockReachesLocalTopoServer(t *testing.T) {
 				Implementation: "etcd",
 			},
 			TopoServer: &multigresv1alpha1.LocalTopoServerSpec{
-				Etcd: &multigresv1alpha1.EtcdSpec{Image: "etcd:local", Resources: populated},
+				Etcd: &multigresv1alpha1.EtcdSpec{
+					Image:     "etcd:local",
+					Resources: testutil.PopulatedResources(),
+				},
 			},
 		},
 	}
@@ -100,7 +98,11 @@ func TestEmptyResourcesBlockReachesLocalTopoServer(t *testing.T) {
 		t.Helper()
 		var last corev1.ResourceRequirements
 		var lastErr error
-		if err := wait.PollUntilContextTimeout(t.Context(), 200*time.Millisecond, 30*time.Second, true,
+		if err := wait.PollUntilContextTimeout(
+			t.Context(),
+			200*time.Millisecond,
+			30*time.Second,
+			true,
 			func(ctx context.Context) (bool, error) {
 				ts := &multigresv1alpha1.TopoServer{}
 				err := c.Get(ctx, topoKey, ts)
@@ -110,41 +112,17 @@ func TestEmptyResourcesBlockReachesLocalTopoServer(t *testing.T) {
 				}
 				last = ts.Spec.Etcd.Resources
 				if want {
-					return last.Requests.Cpu().String() == "123m" &&
-						last.Limits.Memory().String() == "321Mi", nil
+					return testutil.IsPopulatedResources(last), nil
 				}
-				return len(last.Requests) == 0 && len(last.Limits) == 0 && len(last.Claims) == 0, nil
-			}); err != nil {
+				return testutil.IsEmptyResources(last), nil
+			},
+		); err != nil {
 			testutil.LogWarnings(t, c, "default", "")
 			t.Fatalf("local TopoServer never converged (want populated=%v): %v, last read error %v",
 				want, last, lastErr)
 		}
 	}
 
-	populatedJSON, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&populated)
-	require.NoError(t, err)
-
-	requireTopoResources(true)
-	for _, s := range []struct {
-		name  string
-		shape map[string]any
-	}{
-		{"empty requests", map[string]any{"requests": map[string]any{}}},
-		{"empty limits", map[string]any{"limits": map[string]any{}}},
-		{"empty claims", map[string]any{"claims": []any{}}},
-		{"all empty", map[string]any{
-			"requests": map[string]any{},
-			"limits":   map[string]any{},
-			"claims":   []any{},
-		}},
-		{"empty block", map[string]any{}},
-	} {
-		setResources(s.shape)
-		t.Logf("shape %s: waiting for the TopoServer to drop its resources", s.name)
-		requireTopoResources(false)
-
-		setResources(populatedJSON)
-		t.Logf("shape %s: waiting for the TopoServer to carry resources again", s.name)
-		requireTopoResources(true)
-	}
+	testutil.RoundTripEmptyResources(t, "the TopoServer", testutil.EmptyResourcesShapesAndBlock(),
+		setResources, requireTopoResources)
 }
