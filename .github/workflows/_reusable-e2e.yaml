@@ -3,6 +3,14 @@ name: End-to-end tests
 on:
   workflow_call:
     inputs:
+      repository:
+        description: >
+          Repository to check out, as owner/name. Empty uses the repository of the
+          calling workflow. Set it when another repository calls this workflow to
+          test an operator commit.
+        default: ''
+        required: false
+        type: string
       ref:
         description: Git ref to check out (defaults to the triggering commit SHA)
         default: ''
@@ -85,6 +93,7 @@ jobs:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
