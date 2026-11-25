@@ -10,10 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -21,30 +19,6 @@ import (
 	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
-
-func populatedResources() corev1.ResourceRequirements {
-	return corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("123m")},
-		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("321Mi")},
-	}
-}
-
-// emptyResourcesShapes are the non-zero ways a resources block can ask for
-// nothing. `{limits: {}}` is what kubectl edit leaves after the last limit is
-// deleted.
-var emptyResourcesShapes = []struct {
-	name  string
-	shape map[string]any
-}{
-	{"empty requests", map[string]any{"requests": map[string]any{}}},
-	{"empty limits", map[string]any{"limits": map[string]any{}}},
-	{"empty claims", map[string]any{"claims": []any{}}},
-	{"all empty", map[string]any{
-		"requests": map[string]any{},
-		"limits":   map[string]any{},
-		"claims":   []any{},
-	}},
-}
 
 // childResources reports the resources blocks of a cluster's children that a
 // test follows, keyed by a name for failure messages.
@@ -95,7 +69,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 					GlobalTopoServer: &multigresv1alpha1.GlobalTopoServerSpec{
 						Etcd: &multigresv1alpha1.EtcdSpec{
 							Image:     "etcd:latest",
-							Resources: populatedResources(),
+							Resources: testutil.PopulatedResources(),
 						},
 					},
 					Cells: []multigresv1alpha1.CellConfig{{
@@ -104,7 +78,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 						Spec: &multigresv1alpha1.CellInlineSpec{
 							Multigateway: multigresv1alpha1.MultigatewaySpec{
 								StatelessSpec: multigresv1alpha1.StatelessSpec{
-									Resources: populatedResources(),
+									Resources: testutil.PopulatedResources(),
 								},
 							},
 						},
@@ -120,7 +94,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 								Overrides: &multigresv1alpha1.ShardOverrides{
 									Multiorch: &multigresv1alpha1.MultiorchSpec{
 										StatelessSpec: multigresv1alpha1.StatelessSpec{
-											Resources: populatedResources(),
+											Resources: testutil.PopulatedResources(),
 										},
 									},
 									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -131,11 +105,11 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 											// config non-empty once its
 											// resources block is omitted.
 											Postgres: multigresv1alpha1.ContainerConfig{
-												Resources: populatedResources(),
+												Resources: testutil.PopulatedResources(),
 												RunAsUser: new(int64(999)),
 											},
 											Multipooler: multigresv1alpha1.ContainerConfig{
-												Resources: populatedResources(),
+												Resources: testutil.PopulatedResources(),
 											},
 										},
 									},
@@ -209,7 +183,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 							LocalTopoServer: &multigresv1alpha1.LocalTopoServerSpec{
 								Etcd: &multigresv1alpha1.EtcdSpec{
 									Image:     "etcd:local",
-									Resources: populatedResources(),
+									Resources: testutil.PopulatedResources(),
 								},
 							},
 						},
@@ -267,7 +241,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 						Overrides: &multigresv1alpha1.CellOverrides{
 							Multigateway: &multigresv1alpha1.MultigatewaySpec{
 								StatelessSpec: multigresv1alpha1.StatelessSpec{
-									Resources: populatedResources(),
+									Resources: testutil.PopulatedResources(),
 								},
 							},
 						},
@@ -283,7 +257,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 								Overrides: &multigresv1alpha1.ShardOverrides{
 									Multiorch: &multigresv1alpha1.MultiorchSpec{
 										StatelessSpec: multigresv1alpha1.StatelessSpec{
-											Resources: populatedResources(),
+											Resources: testutil.PopulatedResources(),
 										},
 									},
 									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -292,7 +266,7 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 											Cells:           []multigresv1alpha1.CellName{"zone-a"},
 											ReplicasPerCell: new(int32(1)),
 											Postgres: multigresv1alpha1.ContainerConfig{
-												Resources: populatedResources(),
+												Resources: testutil.PopulatedResources(),
 											},
 										},
 									},
@@ -337,27 +311,19 @@ func TestEmptyResourcesBlocksReachChildren(t *testing.T) {
 		},
 	}
 
-	populatedJSON, err := runtime.DefaultUnstructuredConverter.ToUnstructured(
-		new(populatedResources()),
-	)
-	require.NoError(t, err)
-
 	for _, v := range variants {
 		setTestPostgresPasswordSecretRef(v.cluster)
 		require.NoError(t, k8sClient.Create(ctx, v.cluster))
 	}
 	for _, v := range variants {
 		name := v.cluster.Name
-		requireChildResources(t, k8sClient, name, v.children, true)
-		for _, s := range emptyResourcesShapes {
-			setClusterResources(t, k8sClient, name, v.paths, s.shape)
-			t.Logf("%s, shape %s: waiting for children to drop their resources", name, s.name)
-			requireChildResources(t, k8sClient, name, v.children, false)
-
-			setClusterResources(t, k8sClient, name, v.paths, populatedJSON)
-			t.Logf("%s, shape %s: waiting for children to carry resources again", name, s.name)
-			requireChildResources(t, k8sClient, name, v.children, true)
-		}
+		testutil.RoundTripEmptyResources(
+			t,
+			name+" children",
+			testutil.EmptyResourcesShapes,
+			func(shape map[string]any) { setClusterResources(t, k8sClient, name, v.paths, shape) },
+			func(populated bool) { requireChildResources(t, k8sClient, name, v.children, populated) },
+		)
 	}
 }
 
@@ -416,7 +382,8 @@ func requireChildResources(
 			}
 			for _, r := range last {
 				if want {
-					if r.Requests.Cpu().String() != "123m" || r.Limits.Memory().String() != "321Mi" {
+					if r.Requests.Cpu().String() != "123m" ||
+						r.Limits.Memory().String() != "321Mi" {
 						return false, nil
 					}
 				} else if len(r.Requests) != 0 || len(r.Limits) != 0 || len(r.Claims) != 0 {
