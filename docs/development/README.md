@@ -27,6 +27,7 @@ Internal documentation for contributors and operators. For user-facing documenta
 | [Template Propagation](template-propagation.md) | Template update behavior, proposed update policy (`Auto`/`Manual`/`Window`) |
 | [Cell Topology](cell-topology.md) | Local TopoServer design, failure domains, zone/region scheduling implementation |
 | [Shared Topology Roots](shared-topology.md) | Canonical cluster-scoped global and cell topology roots for sharing one physical etcd cluster |
+| [Topology Authentication](topology-authentication.md) | Cluster certificate identity, etcd permissions, issuer trust boundary, authorization rollout, and troubleshooting |
 | [PostgreSQL Image Strategy](postgresql-image-strategy.md) | Bundled pgctld image, future custom image support plan |
 | [Observability Internals](observability-internals.md) | Metrics registration, tracing lifecycle, traceparent bridge, log-trace correlation, alerts & dashboards |
 | [Known Behaviors](known-behaviors.md) | Documented quirks (e.g., "configured" loop with CSA + mutating webhooks) |
