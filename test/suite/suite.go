@@ -190,9 +190,8 @@ func register(ctx context.Context, mgr manager.Manager, s *ctrltest.Suite) error
 			mgr.GetEventRecorderFor("multigrescluster-controller"),
 			"multigrescluster",
 		},
-		APIReader:         mgr.GetAPIReader(),
-		CreateTopoStore:   topo.ForClusterRef,
-		OperatorNamespace: OperatorNamespace,
+		APIReader:       mgr.GetAPIReader(),
+		CreateTopoStore: topo.ForClusterRef,
 		// One single-member etcd per address, as topoRegistry models it, named
 		// after nothing the operator manages. Left unstubbed, this dials a real
 		// etcd and the managed global TopoServer is never retired after a move.

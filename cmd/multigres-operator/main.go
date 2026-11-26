@@ -555,7 +555,6 @@ func main() {
 		PoolerClientCache: poolerClients,
 		Gate:              gate,
 		DialContext:       laptopDial,
-		OperatorNamespace: defaultNS,
 		TrustDomain:       trustDomain,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MultigresCluster")

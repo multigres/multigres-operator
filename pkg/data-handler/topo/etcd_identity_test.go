@@ -118,13 +118,6 @@ func TestReadEtcdIdentity(t *testing.T) {
 		viaName.Members[0].ID != viaIP.Members[0].ID {
 		t.Errorf("two addresses of one etcd disagree: %+v and %+v", viaIP, viaName)
 	}
-	membership, err := topo.ReadEtcdMembership(t.Context(), nil, "default",
-		multigresv1alpha1.GlobalTopoServerRef{Address: fmt.Sprintf("http://127.0.0.1:%d", a)}, nil)
-	if err != nil || membership.ClusterID != viaIP.ClusterID || len(membership.Members) != 1 ||
-		membership.StatusClusterID != 0 || membership.StatusMemberID != 0 {
-		t.Errorf("membership read = %+v, %v; want the members of %x without Status",
-			membership, err, viaIP.ClusterID)
-	}
 	if other.ClusterID == viaIP.ClusterID {
 		t.Errorf("two separate etcds both reported cluster ID %x", other.ClusterID)
 	}

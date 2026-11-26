@@ -20,7 +20,6 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/resolver"
-	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -375,9 +374,12 @@ func (r *MultigresClusterReconciler) externalIsAnotherEtcd(
 	ts *multigresv1alpha1.TopoServer,
 	external multigresv1alpha1.GlobalTopoServerRef,
 ) (*retireWait, error) {
-	ext, configuredMembers, wait := r.externalIdentity(ctx, cluster.Namespace, external)
-	if wait != nil {
-		return wait, nil
+	ext, err := r.etcdIdentity(ctx, cluster.Namespace, external)
+	if err != nil {
+		return &retireWait{
+			reason: "the external etcd's membership to be readable",
+			detail: err.Error(), blocked: true,
+		}, nil
 	}
 	if bad := ext.Implausible(); bad != "" {
 		return &retireWait{
@@ -389,7 +391,7 @@ func (r *MultigresClusterReconciler) externalIsAnotherEtcd(
 	if err != nil {
 		return nil, err
 	}
-	if m := managedMember(slices.Concat(ext.Members, configuredMembers), ts, hosts); m != "" {
+	if m := managedMember(ext.Members, ts, hosts); m != "" {
 		return &retireWait{
 			reason: fmt.Sprintf(
 				"the external topology to list no member of %s (it lists %s)",
@@ -399,108 +401,21 @@ func (r *MultigresClusterReconciler) externalIsAnotherEtcd(
 			blocked: true,
 		}, nil
 	}
-	managedNamespace, managedRef, err := r.managedTopoRef(ctx, ts)
-	if err != nil {
-		return nil, nil
-	}
-	managed, err := r.etcdIdentity(ctx, managedNamespace, managedRef)
-	if err != nil {
-		return nil, nil
-	}
-	for _, id := range []uint64{managed.ClusterID, managed.StatusClusterID} {
-		if id != 0 && (id == ext.ClusterID || id == ext.StatusClusterID) {
-			return &retireWait{
-				reason: fmt.Sprintf(
-					"the external topology to be an etcd other than %s",
-					ts.Name,
-				),
-				detail:  fmt.Sprintf("both report cluster ID %x", id),
-				blocked: true,
-			}, nil
+	if managed, err := r.etcdIdentity(ctx, cluster.Namespace, managedTopoRef(ts)); err == nil {
+		for _, id := range []uint64{managed.ClusterID, managed.StatusClusterID} {
+			if id != 0 && (id == ext.ClusterID || id == ext.StatusClusterID) {
+				return &retireWait{
+					reason: fmt.Sprintf(
+						"the external topology to be an etcd other than %s",
+						ts.Name,
+					),
+					detail:  fmt.Sprintf("both report cluster ID %x", id),
+					blocked: true,
+				}, nil
+			}
 		}
 	}
 	return nil, nil
-}
-
-// externalIdentity reads the external etcd's identity through the configured
-// address and credential, as the workloads reach it. Status needs the root
-// role, which a project client certificate lacks on an auth-managed
-// TopoServer. There the configured probe reads only the membership, which is
-// returned as configuredMembers, and the identity is read through the
-// server's own Service with its administrator credential. Both must report
-// the same cluster.
-func (r *MultigresClusterReconciler) externalIdentity(
-	ctx context.Context,
-	namespace string,
-	external multigresv1alpha1.GlobalTopoServerRef,
-) (ext topo.EtcdIdentity, configuredMembers []topo.EtcdMember, wait *retireWait) {
-	adminNamespace, admin, authManaged, err := r.adminProbeRef(ctx, namespace, external)
-	if err != nil {
-		return ext, nil, &retireWait{
-			reason: "the external topology's credentials to be readable",
-			detail: err.Error(), blocked: true,
-		}
-	}
-	if !authManaged {
-		ext, err = r.etcdIdentity(ctx, namespace, external)
-		if err != nil {
-			return ext, nil, &retireWait{
-				reason: "the external etcd's membership to be readable",
-				detail: err.Error(), blocked: true,
-			}
-		}
-		return ext, nil, nil
-	}
-	configured, err := r.etcdMembership(ctx, namespace, external)
-	if err != nil {
-		return ext, nil, &retireWait{
-			reason: "the external topology to be reachable with its configured credentials",
-			detail: err.Error(), blocked: true,
-		}
-	}
-	ext, err = r.etcdIdentity(ctx, adminNamespace, admin)
-	if err != nil {
-		return ext, nil, &retireWait{
-			reason: "the external etcd's membership to be readable",
-			detail: err.Error(), blocked: true,
-		}
-	}
-	if configured.ClusterID == 0 || configured.ClusterID != ext.ClusterID {
-		return ext, nil, &retireWait{
-			reason: "the external topology's configured endpoint to reach its TopoServer's etcd",
-			detail: fmt.Sprintf("the configured endpoint reports cluster %x, the TopoServer %x",
-				configured.ClusterID, ext.ClusterID),
-			blocked: true,
-		}
-	}
-	return ext, configured.Members, nil
-}
-
-// adminProbeRef returns the administrator reference of the auth-managed
-// TopoServer that ref names, and whether there is one.
-func (r *MultigresClusterReconciler) adminProbeRef(
-	ctx context.Context,
-	requestNamespace string,
-	ref multigresv1alpha1.GlobalTopoServerRef,
-) (string, multigresv1alpha1.GlobalTopoServerRef, bool, error) {
-	reader := r.APIReader
-	if reader == nil {
-		reader = r.Client
-	}
-	servers := &multigresv1alpha1.TopoServerList{}
-	if err := reader.List(ctx, servers); err != nil {
-		return "", ref, false, fmt.Errorf("failed to list topo servers: %w", err)
-	}
-	for i := range servers.Items {
-		ts := &servers.Items[i]
-		if !ts.Spec.TLS.IsEnabled() || !topology.AuthManaged(ts) ||
-			!topology.EndpointMatchesTopoServer(ts, requestNamespace, ref.Address) {
-			continue
-		}
-		namespace, admin, err := r.managedTopoRef(ctx, ts)
-		return namespace, admin, true, err
-	}
-	return "", ref, false, nil
 }
 
 // managedMember names the first member that is one of ts's, or "": by its name
@@ -614,34 +529,21 @@ func isManagedEtcdPod(pod *corev1.Pod, ts *multigresv1alpha1.TopoServer) bool {
 	return err == nil
 }
 
-// managedTopoRef is a topology reference to ts's own Service, with the
-// namespace its credential Secret is read from. TLS probes use the
-// administrator credential, which lives in the operator's namespace, except
-// while authorization has never been managed on the server, when they use its
-// serving credential.
-func (r *MultigresClusterReconciler) managedTopoRef(
-	ctx context.Context,
-	ts *multigresv1alpha1.TopoServer,
-) (string, multigresv1alpha1.GlobalTopoServerRef, error) {
+// managedTopoRef is a topology reference to ts's own Service, with ts's serving
+// credential as both CA bundle and client keypair when TLS is on: the
+// certificate carries client-auth usage for etcd peer TLS, which is also how
+// the TopoServer controller's maintenance client reaches it.
+func managedTopoRef(ts *multigresv1alpha1.TopoServer) multigresv1alpha1.GlobalTopoServerRef {
 	scheme := "http"
-	secretNamespace := ts.Namespace
 	ref := multigresv1alpha1.GlobalTopoServerRef{Implementation: "etcd"}
 	if ts.Spec.TLS.IsEnabled() {
 		scheme = "https"
-		reader := r.APIReader
-		if reader == nil {
-			reader = r.Client
-		}
-		secret, err := topology.ManagedProbeTLSSecret(ctx, reader, r.OperatorNamespace, ts)
-		if err != nil {
-			return "", ref, err
-		}
-		secretNamespace = secret.Namespace
-		ref.CASecret = secret.Name
-		ref.ClientCertSecret = secret.Name
+		secret := multigresv1alpha1.TopoServerCertSecretName(ts.Name)
+		ref.CASecret = secret
+		ref.ClientCertSecret = secret
 	}
 	ref.Address = fmt.Sprintf("%s://%s.%s.svc:2379", scheme, ts.Name, ts.Namespace)
-	return secretNamespace, ref, nil
+	return ref
 }
 
 func (r *MultigresClusterReconciler) etcdIdentity(
@@ -657,21 +559,6 @@ func (r *MultigresClusterReconciler) etcdIdentity(
 		reader = r.Client
 	}
 	return topo.ReadEtcdIdentity(ctx, reader, namespace, ref, r.DialContext)
-}
-
-func (r *MultigresClusterReconciler) etcdMembership(
-	ctx context.Context,
-	namespace string,
-	ref multigresv1alpha1.GlobalTopoServerRef,
-) (topo.EtcdIdentity, error) {
-	if r.ReadEtcdMembership != nil {
-		return r.ReadEtcdMembership(ctx, namespace, ref)
-	}
-	reader := r.APIReader
-	if reader == nil {
-		reader = r.Client
-	}
-	return topo.ReadEtcdMembership(ctx, reader, namespace, ref, r.DialContext)
 }
 
 // podReferences reports whether any container or init container of pod has

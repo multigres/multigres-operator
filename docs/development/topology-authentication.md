@@ -78,7 +78,7 @@ Certificate is not owned by a `TopoServer`. See
 | `<cluster>-topo-client-tls` | Canonical cluster-root CN | All topology clients in the cluster |
 | `<toposerver>-topo-server-tls` | Service DNS identity with client and server usages | etcd serving and peer connections |
 | `<cluster>-topo-client-tls` URI SAN | `spiffe://<trust-domain>/project/<ref>` with a project ref, `spiffe://<trust-domain>/encoded-project/<hex>` for a ref that is not a valid path segment, `spiffe://<trust-domain>/cluster/<namespace>/<name>` without a ref | Matched by an issuer gate. Nothing in the operator reads it |
-| `multigres-operator-topo-admin-<hash>` | CN `multigres-operator`, URI SAN `spiffe://<trust-domain>/cp/multigres-operator`, client usage | Operator etcd administration, maintenance, and managed-server identity probes |
+| `multigres-operator-topo-admin-<hash>` | CN `multigres-operator`, URI SAN `spiffe://<trust-domain>/cp/multigres-operator`, client usage | Operator etcd administration and maintenance |
 
 The `multigres-operator` identity is the infrastructure administrator with the
 etcd `root` role. Its Secret is never mounted into a Multigres workload.
@@ -88,7 +88,7 @@ etcd `root` role. Its Secret is never mounted into a Multigres workload.
 The administrator Certificate is issued only for a TLS-enabled TopoServer on
 which authorization is managed. A TopoServer without managed authorization has
 no administrator credential, and the operator uses its serving credential for
-probes.
+maintenance.
 
 There is one administrator Certificate and Secret per distinct topology issuer,
 in the operator's namespace. Both are named
@@ -499,40 +499,30 @@ The matcher rejects userinfo, other ports, non-root paths, queries, and
 fragments. It does not recognize IP addresses, load balancer hostnames, CNAMEs,
 or ExternalName Services, so an endpoint written that way counts as external.
 
-## Retirement probes and administrator access
+## Retirement of the old managed server
 
-When a cluster moves from managed global topology to an external server, the
-operator deletes the old server only after it proves that the external endpoint
-reaches a different etcd cluster, so an alias to the same server cannot trigger
-retirement. The identity probe makes only the read-only `MemberList` and
-`Status` RPCs.
+Managed authorization does not change how the operator retires a managed
+global TopoServer after its cluster moves to an external server.
+[Storage](../storage.md) describes those checks.
 
-The probe always dials the configured endpoint with the configured credential,
-which is what the workloads use. Once auth is on, a project client certificate
-can still call `MemberList`, but `Status` needs the `root` role. So when the
-external endpoint matches a TLS-enabled TopoServer by a recognized name and
-authorization is managed on that server, the configured probe calls only
-`MemberList`. A second probe then reads `MemberList` and `Status` through
-`https://<toposerver>.<namespace>.svc:2379` with the administrator Secret in the
-operator's namespace. Both probes must report the same etcd cluster ID, and
-neither membership may list a member of the retiring server. On any other
-endpoint, including a TopoServer without managed authorization, the configured
-probe makes both RPCs, so its credential needs enough privilege for them.
-Probes of the retiring server use its own Service, with the administrator
-Secret once authorization is managed on it and its serving Secret before then.
+Retirement reads the external server's identity through the configured
+endpoint with the configured credential, as the workloads reach it. It calls
+`MemberList` and `Status`. etcd allows `Status` only to the `root` role once
+auth is on, and a cluster client certificate does not have it. So when the
+external server has managed authorization, that read fails. Retirement stays
+blocked with a `GlobalTopoRetireBlocked` event, and the old managed TopoServer
+keeps running. Retiring a server in that case is planned as a follow-up.
 
-An unreadable membership, a configured endpoint or credential that fails, or a
-missing administrator credential for a matched destination, blocks retirement and emits `GlobalTopoRetireBlocked` instead of deleting the
-old server. A failed probe of the retiring server does not block, because a
-dead server cannot answer. See
-[`retire_global_topo.go`](../../pkg/cluster-handler/controller/multigrescluster/retire_global_topo.go)
-for the full rollout and retirement checks.
+Retirement also reads the identity of the server being retired, through its
+own Service with its serving credential, to compare cluster IDs. Once
+authorization is managed on that server, the read can fail. Retirement then
+skips the comparison, as it does for a dead server. The external server's
+membership must still list no member of the server being retired.
 
-Retirement waits only on the owner cluster: its readiness and its own pods. It
+Retirement waits only on the owner cluster's readiness and its own pods. It
 does not check whether other clusters still use the server, so move every
-tenant off it first. Deleting the owner cluster still garbage-collects the
-server and its volumes. Aliases to a TopoServer (IP addresses, CNAMEs,
-ExternalName Services, load balancers) are not recognized as that server.
+tenant off it first. Deleting the owner cluster still deletes the server and
+its volumes.
 
 ## Limits
 
@@ -623,4 +613,4 @@ data unchanged.
 | `AuthorizationReady=False` with reason `ClusterConfigInvalid` | Auth is active and a referencing cluster cannot be authorized. The message names the cluster and the cause, such as custom credentials or a missing template. Fix that cluster. Its existing access is kept and the other clusters keep reconciling meanwhile. |
 | Custom credential cluster blocks activation | Use the operator-issued cluster certificate, or manage authorization on the external etcd independently. |
 | Removed identities remain in etcd | Leave `status.authIdentities` intact and read the `AuthorizationReady` message for the failed cleanup RPC. Identities the controller did not create need separate administration. |
-| Retirement is blocked on membership reads | Check that the configured endpoint is reachable and the workload credential Secret holds a valid keypair. An endpoint that is not a recognized name of an auth-managed TopoServer needs a credential with privileges for `MemberList` and `Status`. Inspect `GlobalTopoRetireBlocked` events and controller logs. |
+| Retirement is blocked after a move to a server with managed authorization | Expected. The retirement check needs `Status`, which etcd allows only to the `root` role, and the cluster certificate lacks it. The old TopoServer stays. Inspect `GlobalTopoRetireBlocked` events and controller logs. |

@@ -21,7 +21,6 @@ import (
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
 	"github.com/multigres/multigres-operator/pkg/data-handler/topo"
 	"github.com/multigres/multigres-operator/pkg/resolver"
-	"github.com/multigres/multigres-operator/pkg/topology"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
@@ -41,10 +40,7 @@ type retireFixture struct {
 	// identity stands in for the etcd behind each address. The default gives
 	// every address its own etcd.
 	identity func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error)
-	// membership, when set, stands in for the MemberList-only probe. Unset,
-	// the real one runs, which fails before dialing on an unusable credential.
-	membership func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error)
-	events     []string
+	events   []string
 
 	// stored, when set, changes the API server's copy of the cluster after the
 	// pass has evaluated f.cluster: an edit that landed mid-reconcile.
@@ -85,22 +81,6 @@ func managedEtcd() topo.EtcdIdentity {
 // isManagedRef reports whether ref is the fixture's managed etcd's own Service.
 func isManagedRef(ref multigresv1alpha1.GlobalTopoServerRef) bool {
 	return strings.Contains(ref.Address, "test-global-topo.default.svc")
-}
-
-const testOperatorNamespace = "multigres-operator-system"
-
-// topoAdminSecret is the administrator credential of ts's issuer, which lives
-// in the operator's namespace.
-func topoAdminSecret(ts *multigresv1alpha1.TopoServer) *corev1.Secret {
-	key := topology.AdminSecretKey(testOperatorNamespace, ts)
-	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
-}
-
-func topoCredentialSecret(
-	ts *multigresv1alpha1.TopoServer,
-	name string,
-) *corev1.Secret {
-	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ts.Namespace}}
 }
 
 // newRetireFixture is a cluster moved to an external global topology whose
@@ -204,10 +184,9 @@ func (f *retireFixture) retire(
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 	recorder := record.NewFakeRecorder(10)
 	r := &MultigresClusterReconciler{
-		Client:            c,
-		Scheme:            scheme,
-		Recorder:          recorder,
-		OperatorNamespace: testOperatorNamespace,
+		Client:   c,
+		Scheme:   scheme,
+		Recorder: recorder,
 		ReadEtcdIdentity: func(
 			_ context.Context,
 			_ string,
@@ -215,15 +194,6 @@ func (f *retireFixture) retire(
 		) (topo.EtcdIdentity, error) {
 			return f.identity(ref)
 		},
-	}
-	if f.membership != nil {
-		r.ReadEtcdMembership = func(
-			_ context.Context,
-			_ string,
-			ref multigresv1alpha1.GlobalTopoServerRef,
-		) (topo.EtcdIdentity, error) {
-			return f.membership(ref)
-		}
 	}
 	defer func() {
 		close(recorder.Events)
@@ -561,400 +531,17 @@ func TestManagedTopoRef(t *testing.T) {
 	ts := &multigresv1alpha1.TopoServer{
 		ObjectMeta: metav1.ObjectMeta{Name: "c-global-topo", Namespace: "ns"},
 	}
-	r := &MultigresClusterReconciler{}
-	_, plain, err := r.managedTopoRef(t.Context(), ts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	plain := managedTopoRef(ts)
 	if plain.Address != "http://c-global-topo.ns.svc:2379" || plain.ClientCertSecret != "" {
 		t.Errorf("without TLS: %+v", plain)
 	}
 	ts.Spec.TLS = &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)}
+	secure := managedTopoRef(ts)
 	secret := multigresv1alpha1.TopoServerCertSecretName(ts.Name)
-	r.Client = fake.NewClientBuilder().WithScheme(setupScheme()).WithObjects(
-		topoCredentialSecret(ts, secret),
-	).Build()
-	secretNamespace, secure, err := r.managedTopoRef(t.Context(), ts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if secretNamespace != ts.Namespace {
-		t.Errorf("serving credential namespace = %q, want %q", secretNamespace, ts.Namespace)
-	}
 	if secure.Address != "https://c-global-topo.ns.svc:2379" ||
 		secure.ClientCertSecret != secret || secure.CASecret != secret {
 		t.Errorf("with TLS: %+v", secure)
 	}
-}
-
-func TestRetireManagedGlobalTopo_IdentityProbeCredentials(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		managed bool
-	}{
-		{name: "configured endpoint and credential without auth"},
-		{name: "configured membership and admin identity after auth is managed", managed: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
-			f.cluster.Spec.TopoTLS = &multigresv1alpha1.TopoTLSConfig{
-				Enabled: ptr.To(true), IssuerName: "topology-issuer",
-			}
-			f.ts.Spec.TLS = &multigresv1alpha1.TopoTLSConfig{
-				Enabled: ptr.To(true), IssuerName: "topology-issuer",
-			}
-			shared := sharedTopoServer()
-			credential := func(ts *multigresv1alpha1.TopoServer) (string, *corev1.Secret) {
-				if test.managed {
-					ts.Status.AuthEnabled = true
-					secret := topoAdminSecret(ts)
-					return secret.Name, secret
-				}
-				name := multigresv1alpha1.TopoServerCertSecretName(ts.Name)
-				return name, topoCredentialSecret(ts, name)
-			}
-			sharedCredential, sharedSecret := credential(shared)
-			managedCredential, managedSecret := credential(f.ts)
-			f.objs = append(f.objs, shared, sharedSecret)
-			if managedSecret.Namespace != sharedSecret.Namespace ||
-				managedSecret.Name != sharedSecret.Name {
-				f.objs = append(f.objs, managedSecret)
-			}
-
-			var external, managed, configured multigresv1alpha1.GlobalTopoServerRef
-			f.identity = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-				if isManagedRef(ref) {
-					managed = ref
-					return managedEtcd(), nil
-				}
-				external = ref
-				return sharedEtcd(), nil
-			}
-			f.membership = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-				configured = ref
-				return sharedEtcd(), nil
-			}
-			if _, tsExists, _ := f.retire(t); tsExists {
-				t.Fatalf("kept the TopoServer, events %q", f.events)
-			}
-
-			workload := multigresv1alpha1.TopoClientCertSecretName(f.cluster.Name)
-			wantConfigured := multigresv1alpha1.GlobalTopoServerRef{
-				Address:          "https://shared-topo:2379",
-				CASecret:         workload,
-				ClientCertSecret: workload,
-			}
-			wantExternal := wantConfigured
-			if test.managed {
-				wantExternal = multigresv1alpha1.GlobalTopoServerRef{
-					Implementation:   "etcd",
-					Address:          "https://shared-topo.default.svc:2379",
-					CASecret:         sharedCredential,
-					ClientCertSecret: sharedCredential,
-				}
-			} else {
-				wantConfigured = multigresv1alpha1.GlobalTopoServerRef{}
-			}
-			if configured.Address != wantConfigured.Address ||
-				configured.CASecret != wantConfigured.CASecret ||
-				configured.ClientCertSecret != wantConfigured.ClientCertSecret {
-				t.Errorf("configured membership probe = %+v, want %+v", configured, wantConfigured)
-			}
-			if external.Address != wantExternal.Address ||
-				external.CASecret != wantExternal.CASecret ||
-				external.ClientCertSecret != wantExternal.ClientCertSecret {
-				t.Errorf("external identity probe = %+v, want %+v", external, wantExternal)
-			}
-			if managed.CASecret != managedCredential ||
-				managed.ClientCertSecret != managedCredential {
-				t.Errorf(
-					"managed identity probe reference = %+v, want credential %q",
-					managed,
-					managedCredential,
-				)
-			}
-		})
-	}
-
-	t.Run("custom external credentials are preserved", func(t *testing.T) {
-		f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
-		f.cluster.Spec.TopoTLS = &multigresv1alpha1.TopoTLSConfig{
-			Enabled: ptr.To(true), IssuerName: "topology-issuer",
-		}
-		f.cluster.Spec.GlobalTopoServer.External.CASecret = "custom-ca"
-		f.cluster.Spec.GlobalTopoServer.External.ClientCertSecret = "custom-client"
-
-		var external multigresv1alpha1.GlobalTopoServerRef
-		f.identity = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-			if isManagedRef(ref) {
-				return managedEtcd(), nil
-			}
-			external = ref
-			return distinctEtcds(t.Context(), "", ref)
-		}
-		f.retire(t)
-
-		if external.ClientCertSecret != "custom-client" || external.CASecret != "custom-ca" {
-			t.Errorf("external identity probe credentials = %+v, want custom Secrets", external)
-		}
-	})
-}
-
-func TestRetireManagedGlobalTopo_OldServerProbeIsBestEffort(t *testing.T) {
-	dead := errors.New("context deadline exceeded")
-	for _, test := range []struct {
-		name     string
-		auth     bool
-		secret   func(ts *multigresv1alpha1.TopoServer) *corev1.Secret
-		probeErr error
-	}{
-		{name: "serving Secret missing", auth: false},
-		{name: "administrator Secret missing", auth: true},
-		{
-			name: "serving Secret present and the probe fails",
-			secret: func(ts *multigresv1alpha1.TopoServer) *corev1.Secret {
-				return topoCredentialSecret(ts, multigresv1alpha1.TopoServerCertSecretName(ts.Name))
-			},
-			probeErr: dead,
-		},
-		{
-			name:     "administrator Secret present and the probe fails",
-			auth:     true,
-			secret:   topoAdminSecret,
-			probeErr: dead,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
-			f.ts.Spec.TLS = &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)}
-			f.ts.Status.AuthEnabled = test.auth
-			if test.secret != nil {
-				f.objs = append(f.objs, test.secret(f.ts))
-			}
-			f.identity = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-				if isManagedRef(ref) {
-					return topo.EtcdIdentity{}, test.probeErr
-				}
-				return distinctEtcds(t.Context(), "", ref)
-			}
-			if _, tsExists, _ := f.retire(t); tsExists {
-				t.Fatal("kept the TopoServer, want it retired without probing the old server")
-			}
-		})
-	}
-
-	t.Run("a missing destination administrator credential blocks", func(t *testing.T) {
-		f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
-		shared := sharedTopoServer()
-		shared.Status.AuthEnabled = true
-		f.objs = append(f.objs, shared)
-		requeue, tsExists, _ := f.retire(t)
-		if !tsExists || !requeue {
-			t.Fatalf("requeue=%v tsExists=%v, want the TopoServer kept and a recheck",
-				requeue, tsExists)
-		}
-		if len(f.events) != 1 ||
-			!strings.HasPrefix(f.events[0], "Warning GlobalTopoRetireBlocked ") {
-			t.Errorf("events = %q, want one GlobalTopoRetireBlocked warning", f.events)
-		}
-	})
-}
-
-// sharedTopoServer is a TLS TopoServer the fixture's external endpoint names.
-func sharedTopoServer() *multigresv1alpha1.TopoServer {
-	return &multigresv1alpha1.TopoServer{
-		ObjectMeta: metav1.ObjectMeta{Name: "shared-topo", Namespace: "default"},
-		Spec: multigresv1alpha1.TopoServerSpec{
-			TLS: &multigresv1alpha1.TopoTLSConfig{
-				Enabled: ptr.To(true), IssuerName: "topology-issuer",
-			},
-			Etcd: &multigresv1alpha1.EtcdSpec{},
-		},
-	}
-}
-
-// sharedEtcd is the etcd behind every address of sharedTopoServer.
-func sharedEtcd() topo.EtcdIdentity {
-	return singleMember(0xbb, 0xb0, "shared-topo-0",
-		"https://shared-topo-0.shared-topo-headless.default.svc.cluster.local:2380")
-}
-
-// authManagedRetireFixture is a retirement whose external endpoint names an
-// auth-managed TopoServer. The administrator probe of that server succeeds.
-func authManagedRetireFixture() *retireFixture {
-	f := newRetireFixture(multigresv1alpha1.DeletePVCRetentionPolicy)
-	f.cluster.Spec.TopoTLS = &multigresv1alpha1.TopoTLSConfig{
-		Enabled: ptr.To(true), IssuerName: "topology-issuer",
-	}
-	shared := sharedTopoServer()
-	shared.Status.AuthEnabled = true
-	f.objs = append(f.objs, shared, topoAdminSecret(shared))
-	f.identity = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-		switch {
-		case isManagedRef(ref):
-			return managedEtcd(), nil
-		case ref.Address == "https://shared-topo.default.svc:2379" &&
-			ref.ClientCertSecret == topoAdminSecret(shared).Name:
-			return sharedEtcd(), nil
-		}
-		return topo.EtcdIdentity{}, fmt.Errorf(
-			"permission denied reading Status at %s",
-			ref.Address,
-		)
-	}
-	return f
-}
-
-func TestRetireManagedGlobalTopo_ConfiguredEndpointMustWork(t *testing.T) {
-	for name, configure := range map[string]func(f *retireFixture){
-		"configured endpoint unreachable": func(f *retireFixture) {
-			f.membership = func(ref multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-				return topo.EtcdIdentity{}, fmt.Errorf("dialing %s: connection refused", ref.Address)
-			}
-		},
-		"workload credential missing": func(*retireFixture) {},
-		"workload credential unusable": func(f *retireFixture) {
-			f.objs = append(f.objs, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-				Name:      multigresv1alpha1.TopoClientCertSecretName(f.cluster.Name),
-				Namespace: f.cluster.Namespace,
-			}})
-		},
-		"configured endpoint reaches another etcd": func(f *retireFixture) {
-			f.membership = func(multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-				return singleMember(0xcc, 0xc0, "elsewhere-0", "https://elsewhere-0:2380"), nil
-			}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			f := authManagedRetireFixture()
-			configure(f)
-			requeue, tsExists, _ := f.retire(t)
-			if !tsExists || !requeue {
-				t.Fatalf("requeue=%v tsExists=%v, want the TopoServer kept and a recheck",
-					requeue, tsExists)
-			}
-			if len(f.events) != 1 ||
-				!strings.HasPrefix(f.events[0], "Warning GlobalTopoRetireBlocked ") ||
-				!strings.Contains(f.events[0], "configured") {
-				t.Errorf(
-					"events = %q, want one GlobalTopoRetireBlocked warning about the configured endpoint",
-					f.events,
-				)
-			}
-		})
-	}
-
-	t.Run("configured endpoint works", func(t *testing.T) {
-		f := authManagedRetireFixture()
-		f.membership = func(multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-			id := sharedEtcd()
-			id.StatusClusterID, id.StatusMemberID = 0, 0
-			return id, nil
-		}
-		if _, tsExists, _ := f.retire(t); tsExists {
-			t.Fatalf("kept the TopoServer, events %q", f.events)
-		}
-	})
-
-	t.Run("configured membership listing a managed member blocks", func(t *testing.T) {
-		f := authManagedRetireFixture()
-		f.membership = func(multigresv1alpha1.GlobalTopoServerRef) (topo.EtcdIdentity, error) {
-			id := sharedEtcd()
-			id.Members = append(id.Members, managedEtcd().Members...)
-			return id, nil
-		}
-		if _, tsExists, _ := f.retire(t); !tsExists {
-			t.Fatal(
-				"retired the TopoServer although the configured endpoint lists one of its members",
-			)
-		}
-	})
-}
-
-func TestAdminProbeRef(t *testing.T) {
-	shared := &multigresv1alpha1.TopoServer{
-		ObjectMeta: metav1.ObjectMeta{Name: "shared-topo", Namespace: "infra"},
-		Spec: multigresv1alpha1.TopoServerSpec{
-			TLS:  &multigresv1alpha1.TopoTLSConfig{Enabled: ptr.To(true)},
-			Etcd: &multigresv1alpha1.EtcdSpec{},
-		},
-	}
-	pending := shared.DeepCopy()
-	pending.Spec.Auth = &multigresv1alpha1.TopoServerAuthSpec{Enabled: true}
-	admin := topoAdminSecret(pending)
-	servingSecret := multigresv1alpha1.TopoServerCertSecretName(shared.Name)
-	supplied := multigresv1alpha1.GlobalTopoServerRef{
-		Implementation:   "tenant-supplied",
-		RootPath:         "/tenant-root",
-		CASecret:         "project-ca",
-		ClientCertSecret: "project-client",
-	}
-	reconciler := func(objs ...client.Object) *MultigresClusterReconciler {
-		return &MultigresClusterReconciler{
-			Client: fake.NewClientBuilder().
-				WithScheme(setupScheme()).
-				WithObjects(objs...).
-				Build(),
-			OperatorNamespace: testOperatorNamespace,
-		}
-	}
-	tests := map[string]struct {
-		server  *multigresv1alpha1.TopoServer
-		address string
-		want    bool
-	}{
-		"TopoServer without auth is not swapped": {
-			server:  shared,
-			address: "http://shared-topo-0.shared-topo-headless.infra.svc.cluster.local:2379",
-		},
-		"external endpoint is not swapped": {
-			server:  pending,
-			address: "https://external.example:2379",
-		},
-		"auth-managed TopoServer uses the administrator credential": {
-			server:  pending,
-			address: "https://shared-topo.infra.svc:2379",
-			want:    true,
-		},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			r := reconciler(tt.server, admin, topoCredentialSecret(shared, servingSecret))
-			ref := supplied
-			ref.Address = tt.address
-			namespace, got, managed, err := r.adminProbeRef(t.Context(), "tenant", ref)
-			if err != nil {
-				t.Fatalf("adminProbeRef() error = %v", err)
-			}
-			if managed != tt.want {
-				t.Fatalf("adminProbeRef() managed = %v, want %v", managed, tt.want)
-			}
-			if managed && (namespace != testOperatorNamespace ||
-				got.Address != "https://shared-topo.infra.svc:2379" ||
-				got.ClientCertSecret != admin.Name || got.CASecret != admin.Name) {
-				t.Errorf(
-					"adminProbeRef() = namespace %q, ref %+v; want administrator credential %q",
-					namespace,
-					got,
-					admin.Name,
-				)
-			}
-		})
-	}
-
-	t.Run(
-		"auth-managed TopoServer without administrator credential fails closed",
-		func(t *testing.T) {
-			r := reconciler(pending, topoCredentialSecret(pending, servingSecret))
-			ref := supplied
-			ref.Address = "https://shared-topo.infra.svc:2379"
-			_, _, _, err := r.adminProbeRef(t.Context(), "tenant", ref)
-			if err == nil ||
-				!strings.Contains(err.Error(), "not available after authorization was managed") {
-				t.Fatalf("adminProbeRef() error = %v, want missing administrator credential", err)
-			}
-		},
-	)
 }
 
 // TestRetireManagedGlobalTopo_RetainSetWithTheMove pins that a Retain set on

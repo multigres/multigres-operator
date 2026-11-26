@@ -106,6 +106,7 @@ when multiple clusters are pointed at an externally managed etcd service.
 
 A cluster-owned server can serve other clusters. Retiring it after the owner
 moves to an external topology does not check those clusters, and deleting the
-owner cluster still garbage-collects the server and its volumes, so move the
-tenants first. Aliases to a TopoServer (IP addresses, CNAMEs, ExternalName
-Services, load balancers) are not recognized as that server.
+owner cluster still deletes the server and its volumes, so move the tenants
+first. When granting a tenant access, the operator does not recognize aliases
+to a TopoServer (IP addresses, CNAMEs, ExternalName Services, load balancers)
+as that server.

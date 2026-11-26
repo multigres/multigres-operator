@@ -85,30 +85,6 @@ func ReadEtcdIdentity(
 	ref multigresv1alpha1.GlobalTopoServerRef,
 	dial func(ctx context.Context, network, addr string) (net.Conn, error),
 ) (EtcdIdentity, error) {
-	return readEtcdIdentity(ctx, c, namespace, ref, dial, true)
-}
-
-// ReadEtcdMembership reads only the MemberList half of ref's identity, so the
-// Status fields stay zero. A client certificate limited to its own key range
-// can call MemberList but not Status.
-func ReadEtcdMembership(
-	ctx context.Context,
-	c client.Reader,
-	namespace string,
-	ref multigresv1alpha1.GlobalTopoServerRef,
-	dial func(ctx context.Context, network, addr string) (net.Conn, error),
-) (EtcdIdentity, error) {
-	return readEtcdIdentity(ctx, c, namespace, ref, dial, false)
-}
-
-func readEtcdIdentity(
-	ctx context.Context,
-	c client.Reader,
-	namespace string,
-	ref multigresv1alpha1.GlobalTopoServerRef,
-	dial func(ctx context.Context, network, addr string) (net.Conn, error),
-	withStatus bool,
-) (EtcdIdentity, error) {
 	if ref.Implementation != "" && ref.Implementation != "etcd" {
 		return EtcdIdentity{}, fmt.Errorf(
 			"topology implementation %q has no etcd identity",
@@ -151,19 +127,17 @@ func readEtcdIdentity(
 	if err != nil {
 		return EtcdIdentity{}, fmt.Errorf("listing etcd members at %s: %w", ref.Address, err)
 	}
+	status, err := cli.Status(ctx, ref.Address)
+	if err != nil {
+		return EtcdIdentity{}, fmt.Errorf("reading etcd status from %s: %w", ref.Address, err)
+	}
 	id := EtcdIdentity{}
 	if members.Header != nil {
 		id.ClusterID = members.Header.ClusterId
 	}
-	if withStatus {
-		status, err := cli.Status(ctx, ref.Address)
-		if err != nil {
-			return EtcdIdentity{}, fmt.Errorf("reading etcd status from %s: %w", ref.Address, err)
-		}
-		if status.Header != nil {
-			id.StatusClusterID = status.Header.ClusterId
-			id.StatusMemberID = status.Header.MemberId
-		}
+	if status.Header != nil {
+		id.StatusClusterID = status.Header.ClusterId
+		id.StatusMemberID = status.Header.MemberId
 	}
 	for _, m := range members.Members {
 		id.Members = append(id.Members, EtcdMember{

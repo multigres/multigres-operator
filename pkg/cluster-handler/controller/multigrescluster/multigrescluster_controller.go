@@ -63,10 +63,6 @@ type MultigresClusterReconciler struct {
 	// Secrets have to be read through this.
 	APIReader client.Reader
 
-	// OperatorNamespace is where the operator runs, and where the etcd
-	// administrator credential it probes managed topology servers with lives.
-	OperatorNamespace string
-
 	// TrustDomain is the SPIFFE trust domain of the URI SAN on the topology
 	// client certificate. Empty means certs.DefaultTrustDomain.
 	TrustDomain string
@@ -82,15 +78,6 @@ type MultigresClusterReconciler struct {
 	// ReadEtcdIdentity overrides how the etcd behind a topology reference is
 	// identified, for testing. Defaults to topo.ReadEtcdIdentity.
 	ReadEtcdIdentity func(
-		ctx context.Context,
-		namespace string,
-		ref multigresv1alpha1.GlobalTopoServerRef,
-	) (topo.EtcdIdentity, error)
-
-	// ReadEtcdMembership overrides how the membership behind a topology
-	// reference is read without Status, for testing. Defaults to
-	// topo.ReadEtcdMembership.
-	ReadEtcdMembership func(
 		ctx context.Context,
 		namespace string,
 		ref multigresv1alpha1.GlobalTopoServerRef,
