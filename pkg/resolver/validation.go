@@ -495,6 +495,7 @@ func (r *Resolver) ValidateClusterLogic(
 						}
 					}
 					cellCount := len(shardCells)
+					warningsBefore := len(warnings)
 
 					switch durabilityPolicy {
 					case "MULTI_CELL_AT_LEAST_2":
@@ -519,6 +520,27 @@ func (r *Resolver) ValidateClusterLogic(
 								cellCount,
 								durabilityPolicy,
 								2,
+							))
+						}
+					}
+
+					// A layout can satisfy the policy and still never bootstrap:
+					// multiorch requires a cohort that survives losing any one
+					// pooler. Only checked when the warnings above did not fire.
+					if len(warnings) == warningsBefore {
+						safe, err := cohortIsFailureSafe(durabilityPolicy, pools)
+						if err == nil && !safe {
+							warnings = append(warnings, fmt.Sprintf(
+								"shard '%s' has %d total pooler(s) across %d cell(s); "+
+									"multiorch will not bootstrap a new shard with this layout under durability policy %q, "+
+									"because it could not lose any one pooler and still meet the policy "+
+									"(at least %d poolers, e.g. replicasPerCell: %d).",
+								shard.Name,
+								totalReplicas,
+								cellCount,
+								durabilityPolicy,
+								MinFailureSafePoolers,
+								failureSafeReplicasPerCell(max(cellCount, 1)),
 							))
 						}
 					}

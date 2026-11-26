@@ -33,7 +33,16 @@ func TestResolver_ValidateClusterLogic_MultiPoolDurability(t *testing.T) {
 		"AT_LEAST_2 across pools in the same cell": {
 			policy: "AT_LEAST_2",
 			pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
+				"a": pool("zone-1"), "b": pool("zone-1"), "c": pool("zone-1"),
+			},
+		},
+		"AT_LEAST_2 warns that two members cannot bootstrap": {
+			policy: "AT_LEAST_2",
+			pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"a": pool("zone-1"), "b": pool("zone-1"),
+			},
+			wantWarnings: []string{
+				"shard '0-80' has 2 total pooler(s) across 1 cell(s); multiorch will not bootstrap a new shard with this layout under durability policy \"AT_LEAST_2\", because it could not lose any one pooler and still meet the policy (at least 3 poolers, e.g. replicasPerCell: 3).",
 			},
 		},
 		"MULTI_CELL_AT_LEAST_2 across three single-member pools": {
@@ -42,17 +51,20 @@ func TestResolver_ValidateClusterLogic_MultiPoolDurability(t *testing.T) {
 				"a": pool("zone-1"), "b": pool("zone-2"), "c": pool("zone-3"),
 			},
 		},
-		"MULTI_CELL_AT_LEAST_2 across two single-member pools": {
+		"MULTI_CELL_AT_LEAST_2 warns that two single-member pools cannot bootstrap": {
 			policy: "MULTI_CELL_AT_LEAST_2",
 			pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"a": pool("zone-1"), "b": pool("zone-2"),
+			},
+			wantWarnings: []string{
+				"shard '0-80' has 2 total pooler(s) across 2 cell(s); multiorch will not bootstrap a new shard with this layout under durability policy \"MULTI_CELL_AT_LEAST_2\", because it could not lose any one pooler and still meet the policy (at least 3 poolers, e.g. replicasPerCell: 2).",
 			},
 		},
 		"database AT_LEAST_2 permits pools in the same cell": {
 			policy:         "MULTI_CELL_AT_LEAST_2",
 			databasePolicy: "AT_LEAST_2",
 			pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
-				"a": pool("zone-1"), "b": pool("zone-1"),
+				"a": pool("zone-1"), "b": pool("zone-1"), "c": pool("zone-1"),
 			},
 		},
 		"database MULTI_CELL_AT_LEAST_2 warns for pools in the same cell": {

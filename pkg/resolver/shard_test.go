@@ -191,7 +191,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type:            "read",
-					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
+					ReplicasPerCell: ptr.To(int32(2)),
 					// Expect injected cells
 					Cells: []multigresv1alpha1.CellName{"zone-a", "zone-b"},
 					Storage: multigresv1alpha1.StorageSpec{
@@ -242,7 +242,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 				},
 			},
 		},
-		"Explicit Two Pool Cells Defaults To One Replica Per Cell": {
+		"Explicit Two Pool Cells Defaults To Two Replicas Per Cell": {
 			config: &multigresv1alpha1.ShardConfig{
 				Spec: &multigresv1alpha1.ShardInlineSpec{
 					Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
@@ -264,7 +264,7 @@ func TestResolver_ResolveShard(t *testing.T) {
 			wantPools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 				"p1": {
 					Type:            "readWrite",
-					ReplicasPerCell: ptr.To(DefaultPoolReplicasPerCell),
+					ReplicasPerCell: ptr.To(int32(2)),
 					Cells:           []multigresv1alpha1.CellName{"zone-a", "zone-b"},
 					Storage: multigresv1alpha1.StorageSpec{
 						Size: DefaultEtcdStorageSize,
@@ -1611,7 +1611,7 @@ func TestMergeShardConfig_PostgresConfig(t *testing.T) {
 
 // TestResolveShard_LiteMode checks that a Lite shard resolves without a
 // multiorch spec and with one pooler in a single-cell pool, which otherwise
-// defaults to two.
+// defaults to three.
 func TestResolveShard_LiteMode(t *testing.T) {
 	t.Parallel()
 
@@ -1633,7 +1633,7 @@ func TestResolveShard_LiteMode(t *testing.T) {
 		wantOrchReplicas *int32
 		wantPoolReplicas int32
 	}{
-		"Multigres": {wantOrchReplicas: ptr.To(int32(1)), wantPoolReplicas: 2},
+		"Multigres": {wantOrchReplicas: ptr.To(int32(1)), wantPoolReplicas: 3},
 		"Lite":      {mode: multigresv1alpha1.ModeLite, wantPoolReplicas: 1},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -303,10 +303,8 @@ make kind-deploy
 ```
 
 Apply the sample (`config/samples/minimal.yaml`) with `replicasPerCell: 3` set.
-The sample's own defaults resolve to `replicasPerCell: 2` with
-`durabilityPolicy: AT_LEAST_2`, which multiorch refuses to initialize while
-every CR still reports `Healthy`, so override it explicitly by adding an
-explicit shard/pool to the sample:
+The sample's own defaults now resolve to `replicasPerCell: 3`; the explicit
+shard/pool below keeps the procedure independent of defaults:
 
 ```sh
 kubectl apply -f - <<'EOF'

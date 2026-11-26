@@ -369,9 +369,9 @@ func TestMultigresCluster_ResolutionLogic(t *testing.T) {
 							"default": {
 								Type:  "readWrite",
 								Cells: []multigresv1alpha1.CellName{"zone-c"},
-								// Single-cell pool defaults to 2 (the minimum the
-								// AT_LEAST_2 durability policy needs).
-								ReplicasPerCell: ptr.To(int32(2)),
+								// Single-cell pool defaults to 3, the smallest cohort
+								// multiorch will bootstrap under AT_LEAST_2.
+								ReplicasPerCell: ptr.To(int32(3)),
 								Storage:         multigresv1alpha1.StorageSpec{Size: "1Gi"},
 								Postgres: multigresv1alpha1.ContainerConfig{
 									Resources: resolver.DefaultResourcesPostgres(),
@@ -674,9 +674,9 @@ func TestMultigresCluster_TemplateOverrides(t *testing.T) {
 						"default": {
 							Type:  "readWrite",
 							Cells: []multigresv1alpha1.CellName{"zone-a"},
-							// Single-cell pool defaults to 2 (the minimum the
-							// AT_LEAST_2 durability policy needs).
-							ReplicasPerCell: ptr.To(int32(2)),
+							// Single-cell pool defaults to 3, the smallest cohort
+							// multiorch will bootstrap under AT_LEAST_2.
+							ReplicasPerCell: ptr.To(int32(3)),
 							Storage:         multigresv1alpha1.StorageSpec{Size: "1Gi"},
 							Postgres: multigresv1alpha1.ContainerConfig{
 								Resources: resolver.DefaultResourcesPostgres(),

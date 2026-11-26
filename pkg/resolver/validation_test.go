@@ -669,7 +669,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 				"durability policy \"AT_LEAST_2\" requires at least 2 total poolers",
 			},
 		},
-		"No Durability Warning: AT_LEAST_2 pool with 2 replicas in one cell": {
+		"No Durability Warning: AT_LEAST_2 pool with 3 replicas in one cell": {
 			cluster: &multigresv1alpha1.MultigresCluster{
 				ObjectMeta: metav1.ObjectMeta{Name: "valid", Namespace: "default"},
 				Spec: multigresv1alpha1.MultigresClusterSpec{
@@ -694,7 +694,7 @@ func TestResolver_ValidateClusterLogic(t *testing.T) {
 								Overrides: &multigresv1alpha1.ShardOverrides{
 									Pools: map[multigresv1alpha1.PoolName]multigresv1alpha1.PoolSpec{
 										"default": {
-											ReplicasPerCell: ptr.To(int32(2)),
+											ReplicasPerCell: ptr.To(int32(3)),
 										},
 									},
 								},
