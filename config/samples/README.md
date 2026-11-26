@@ -210,6 +210,12 @@ Otherwise the operator never removes a provisioned dynamic tablegroup while its 
 
 Rolling the operator back to a release without dynamic tablegroups is destructive for an opted-in cluster: the older build computes the wanted TableGroups from the spec alone and drains and deletes every dynamic one, with its Shards and PVCs per their deletion policy, while the catalog still lists them. Re-upgrading provisions them again from empty. Remove the annotation and let the catalog be emptied before rolling back.
 
+### Tablegroups bound to an external PostgreSQL
+
+`CREATE TABLEGROUP name CONNECTION conn` binds the tablegroup's one shard, `0-inf`, to a connection in the catalog instead of to PostgreSQL the operator runs. The catalog lists the binding under `shardBackingConnections`, and the operator provisions one TableGroup with that one Shard, both annotated `multigres.com/backing-connection` with the connection's name. That Shard runs a single multipooler pod and nothing else: no PostgreSQL or pgctld, volumes, backups, exporter or orchestrator. The pooler learns the endpoint and credentials from the catalog and serves the external database; the pod's readiness and liveness do not depend on it.
+
+The pooler runs in the first cell of the default tablegroup's shard: the first entry in the `cells` list of its first pool (pools taken in name order), and stays there for the life of the tablegroup. It gets no connection pool flags, as a managed pooler does not: it sizes its pool from the external server's `max_connections` less the reserved connections when it opens; if the database cannot be queried then, it uses its default of 100 and logs a warning. The operator never runs two poolers for one external database: a change to the pod replaces it, and the replacement is created only once the old pod is gone, so a rollout is a short outage rather than an overlap.
+
 ---
 
 ## 9. Scenarios & Gotchas

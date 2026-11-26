@@ -59,6 +59,8 @@ import (
 //   - A spec-declared tablegroup is never applied over a dynamic one of the
 //     same name. The conflict is reported from the existing TableGroups, so
 //     it is visible whether or not the catalog is being read.
+//   - A tablegroup whose shard the catalog binds to an external PostgreSQL is
+//     provisioned as one pooler-only Shard instead; see bound_tablegroups.go.
 //   - A failed read adds nothing and removes nothing.
 
 // multiadminHTTPTimeout bounds one desired-list read.
@@ -213,13 +215,13 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 			// TableGroup as it is rather than guess its shape.
 			continue
 		}
-		desired, err := buildDynamicTableGroup(
-			cluster,
-			tmpl,
-			storedShape(tg),
-			globalTopoRef,
-			r.Scheme,
-		)
+		want := storedShape(tg)
+		place, problem := resolveBoundPlacement(tmpl, tg, want)
+		if problem != "" {
+			// A bound TableGroup keeps the placement it has.
+			continue
+		}
+		desired, err := buildDynamicTableGroup(cluster, tmpl, want, place, globalTopoRef, r.Scheme)
 		if err != nil {
 			return err
 		}
@@ -257,13 +259,21 @@ func (r *MultigresClusterReconciler) reconcileDynamicTableGroups(
 		var claimable []multiadmin.TableGroup
 		built := map[int64]*multigresv1alpha1.TableGroup{}
 		for _, want := range plan.pending {
-			desiredTG, err := buildDynamicTableGroup(cluster, tmpl, want, globalTopoRef, r.Scheme)
-			if err != nil {
-				return err
-			}
 			// A pending entry has no TableGroup of its name and id, so a
 			// current object is another incarnation to wait for; what is
 			// left after the wait is a name with nothing under it yet.
+			place, problem := resolveBoundPlacement(tmpl, nil, want)
+			if problem != "" {
+				problems = append(problems, fmt.Sprintf("%s/%s (id %d): %s",
+					db.Name, want.Name, want.ID, problem))
+				continue
+			}
+			desiredTG, err := buildDynamicTableGroup(
+				cluster, tmpl, want, place, globalTopoRef, r.Scheme,
+			)
+			if err != nil {
+				return err
+			}
 			wait, err := r.priorIncarnationPresent(
 				ctx,
 				cluster,
@@ -421,9 +431,10 @@ func storedShape(tg *multigresv1alpha1.TableGroup) multiadmin.TableGroup {
 		shards = append(shards, s.Name)
 	}
 	return multiadmin.TableGroup{
-		ID:     multigresv1alpha1.TableGroupIDOf(tg),
-		Name:   string(tg.Spec.TableGroupName),
-		Shards: shards,
+		ID:                      multigresv1alpha1.TableGroupIDOf(tg),
+		Name:                    string(tg.Spec.TableGroupName),
+		Shards:                  shards,
+		ShardBackingConnections: storedBindings(tg),
 	}
 }
 
@@ -471,17 +482,19 @@ func validateDesiredTableGroup(tg multiadmin.TableGroup) string {
 		}
 		seen[s] = true
 	}
-	return ""
+	return validateBoundLayout(tg)
 }
 
 // buildDynamicTableGroup shapes a desired catalog tablegroup from the
 // database's default tablegroup: every shard copies the default shard's
 // resolved spec (cells, pools, storage, backup, multiorch), and only the
-// tablegroup name, shard names and catalog id differ.
+// tablegroup name, shard names and catalog id differ. place is nil for a
+// managed tablegroup and says where the pooler runs for a bound one.
 func buildDynamicTableGroup(
 	cluster *multigresv1alpha1.MultigresCluster,
 	tmpl dynamicTemplate,
 	want multiadmin.TableGroup,
+	place *boundPlacement,
 	globalTopoRef multigresv1alpha1.GlobalTopoServerRef,
 	scheme *runtime.Scheme,
 ) (*multigresv1alpha1.TableGroup, error) {
@@ -494,6 +507,9 @@ func buildDynamicTableGroup(
 	for _, name := range want.Shards {
 		s := tmpl.shard.DeepCopy()
 		s.Name = name
+		if place != nil {
+			buildBoundShard(s, place)
+		}
 		shards = append(shards, *s)
 	}
 
@@ -506,6 +522,9 @@ func buildDynamicTableGroup(
 		tg.Annotations = map[string]string{}
 	}
 	tg.Annotations[multigresv1alpha1.AnnotationTableGroupID] = strconv.FormatInt(want.ID, 10)
+	if place != nil {
+		tg.Annotations[multigresv1alpha1.AnnotationBackingConnection] = boundConnection(want)
+	}
 	return tg, nil
 }
 

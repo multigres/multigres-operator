@@ -50,6 +50,13 @@ func BuildShard(
 		}
 		annotations[multigresv1alpha1.AnnotationTableGroupID] = id
 	}
+	// A bound tablegroup's Shard says which connection it fronts.
+	if v := tg.Annotations[multigresv1alpha1.AnnotationBackingConnection]; v != "" {
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[multigresv1alpha1.AnnotationBackingConnection] = v
+	}
 
 	shardCR := &multigresv1alpha1.Shard{
 		ObjectMeta: metav1.ObjectMeta{

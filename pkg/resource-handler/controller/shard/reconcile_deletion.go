@@ -447,6 +447,16 @@ func (r *ShardReconciler) handlePendingDeletion(
 	}
 
 	// All pods drained and deleted — set ReadyForDeletion condition.
+	return r.markReadyForDeletion(ctx, shard)
+}
+
+// markReadyForDeletion sets the ReadyForDeletion condition the TableGroup
+// controller waits for before it deletes a shard that left the spec.
+func (r *ShardReconciler) markReadyForDeletion(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 	if !status.IsConditionTrue(
 		shard.Status.Conditions,
 		multigresv1alpha1.ConditionReadyForDeletion,
