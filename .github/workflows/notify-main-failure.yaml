@@ -8,6 +8,11 @@ name: Notify main failure
 # Notes:
 # - "*" covers every workflow, including new ones. This workflow is excluded
 #   by name, so it cannot trigger itself.
+# - The "Coverage comment" workflow is excluded by name. Another workflow
+#   triggers it (workflow_run), and GitHub gives it the branch of the run
+#   that triggered it. A failed PR run can then look like a failure on main.
+#   If you rename it, update the condition below. Other workflow_run
+#   workflows can have the same problem. Add them here if they alert falsely.
 # - Cancelled runs do not alert. Superseded runs cancel often.
 # - This workflow runs with secrets. It must never check out or run code from
 #   the triggering run. It only reads the event payload.
@@ -27,6 +32,7 @@ jobs:
     timeout-minutes: 5
     if: >-
       github.event.workflow_run.name != 'Notify main failure' &&
+      github.event.workflow_run.name != 'Coverage comment' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.event != 'pull_request' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
