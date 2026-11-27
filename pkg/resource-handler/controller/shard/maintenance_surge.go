@@ -159,6 +159,12 @@ func (r *ShardReconciler) reconcileCellMaintenanceSurge(
 			return 0, false, err
 		}
 		rollout.SetSurgeStarted(cellName)
+		// Adoption marks the existing pod in place. Its old template still
+		// counts for disruption ordering this pass, unlike a newly built pod.
+		podName := BuildPoolPodName(shard, poolName, cellName, int(replicas))
+		if isMaintenanceSurge(existingPods[podName]) {
+			return 1, true, nil
+		}
 		return 0, true, nil
 	}
 

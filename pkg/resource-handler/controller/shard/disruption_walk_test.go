@@ -554,6 +554,80 @@ func TestWalkCandidates(t *testing.T) {
 			drained: []int{4},
 		},
 		{
+			name:  "a resize restart of the drifted primary waits for a later pool",
+			pools: three, replicas: 1,
+			arrange: func(t *testing.T, f *walkFixture) {
+				f.shard.Spec.Images.Postgres = "postgres:updated"
+				f.resizePending(t, "alpha", 0)
+			},
+			drained: []int{1},
+		},
+		{
+			name:     "a current-spec primary resize waits for a replaceable follower",
+			pools:    three,
+			replicas: 1,
+			arrange: func(t *testing.T, f *walkFixture) {
+				pool := f.shard.Spec.Pools["gamma"]
+				pool.FSGroup = ptr.To(int64(1234))
+				f.shard.Spec.Pools["gamma"] = pool
+				f.resizePending(t, "alpha", 0)
+			},
+			drained: []int{2},
+		},
+		{
+			name:     "a resize-only primary restarts",
+			pools:    three,
+			replicas: 1,
+			arrange:  func(t *testing.T, f *walkFixture) { f.resizePending(t, "alpha", 0) },
+			drained:  []int{0},
+		},
+		{
+			name:  "an urgent primary resize follows a refused replica",
+			pools: []string{"alpha", "beta", "gamma", "omega"}, replicas: 1,
+			arrange: func(t *testing.T, f *walkFixture) {
+				// Beta is outside the committed three-member cohort. Its newer
+				// rule refuses its own removal, not the healthy primary's.
+				for i := range f.responses {
+					respond(f, i, func(response *md.StatusResponse) {
+						rule := response.ConsensusStatus.CurrentPosition.Position.Decision
+						rule.CohortMembers = slices.Delete(rule.CohortMembers, 1, 2)
+						if i == 1 {
+							rule.RuleNumber.CoordinatorTerm++
+						}
+					})
+				}
+				pool := f.shard.Spec.Pools["beta"]
+				pool.FSGroup = ptr.To(int64(1234))
+				f.shard.Spec.Pools["beta"] = pool
+				f.resizePending(t, "alpha", 0)
+			},
+			drained: []int{0},
+		},
+		{
+			name:     "two primary markers do not hide the former leader or restart the observed leader first",
+			pools:    three,
+			replicas: 1,
+			leader:   1,
+			arrange: func(t *testing.T, f *walkFixture) {
+				f.shard.Status.PodRoles[f.names[0]] = "PRIMARY"
+				f.shard.Spec.Images.Postgres = "postgres:updated"
+				f.resizePending(t, "alpha", 0)
+				f.resizePending(t, "beta", 0)
+			},
+			drained: []int{0},
+		},
+		{
+			name:     "two primary markers do not deadlock ordinary replacement",
+			pools:    three,
+			replicas: 1,
+			leader:   0,
+			arrange: func(_ *testing.T, f *walkFixture) {
+				f.shard.Status.PodRoles[f.names[1]] = "PRIMARY"
+				f.shard.Spec.Images.Postgres = "postgres:updated"
+			},
+			drained: []int{1},
+		},
+		{
 			name:  "a replica in a later pool before the primary",
 			pools: three, replicas: 1,
 			arrange: func(t *testing.T, f *walkFixture) { f.drift(t, 0, 1, 2) },
@@ -580,7 +654,11 @@ func TestWalkCandidates(t *testing.T) {
 		{
 			name:  "the primary once nothing else is drifted",
 			pools: three, replicas: 1,
-			arrange: func(t *testing.T, f *walkFixture) { f.drift(t, 0) },
+			arrange: func(_ *testing.T, f *walkFixture) {
+				pool := f.shard.Spec.Pools["alpha"]
+				pool.FSGroup = ptr.To(int64(1234))
+				f.shard.Spec.Pools["alpha"] = pool
+			},
 			drained: []int{0},
 		},
 		{
@@ -619,6 +697,164 @@ func TestWalkCandidates(t *testing.T) {
 			drained: []int{0},
 		},
 	})
+}
+
+// A desired quarantined pod is replaced by the Ready walk if remediation
+// hasn't removed it. A surplus ordinal is removed, never replaced.
+func TestReadyReplacementDriftScope(t *testing.T) {
+	f := newWalkFixture(t, []string{"alpha", "beta"}, 2, 0)
+	beta := f.shard.Spec.Pools["beta"]
+	beta.FSGroup = ptr.To(int64(1234))
+	beta.ReplicasPerCell = ptr.To(int32(1))
+	f.shard.Spec.Pools["beta"] = beta
+	f.shard.Status.PodRoles[f.names[2]] = "QUARANTINED"
+	pods := &corev1.PodList{}
+	if err := f.base.List(t.Context(), pods); err != nil {
+		t.Fatal(err)
+	}
+	got := f.r.desiredDrift(f.shard, pods.Items, nil)
+	if len(got) != 1 || !got[f.names[2]] {
+		t.Fatalf("drift=%v, want only desired quarantined pod %s", got, f.names[2])
+	}
+}
+
+// Beta's old-template surge is Ready but cannot be removed: it isn't
+// registered in the cohort. Alpha has a current peer in its own cell.
+func TestPrimaryWaitsOnlyForKeptSurge(t *testing.T) {
+	for _, state := range []string{"kept", "retiring", "removed"} {
+		t.Run(state, func(t *testing.T) {
+			f := newWalkFixtureIn(t, []string{"alpha", "beta", "peer"}, func(pool string) string {
+				if pool == "beta" {
+					return "b"
+				}
+				return "a"
+			}, 1, 0)
+			f.shard.Spec.DurabilityPolicy = multiCellAtLeast2Policy
+			spec := f.shard.Spec.Pools["beta"]
+			spec.FSGroup = ptr.To(int64(1234))
+			if err := f.r.createOrAdoptMaintenanceSurge(
+				t.Context(),
+				f.shard,
+				"beta",
+				"b",
+				spec,
+				nil,
+				nil,
+				1,
+			); err != nil {
+				t.Fatal(err)
+			}
+			f.names = append(f.names, BuildPoolPodName(f.shard, "beta", "b", 1))
+			surge := f.pod(t, 3)
+			setReady(surge, true)
+			if err := f.base.Status().Update(t.Context(), surge); err != nil {
+				t.Fatal(err)
+			}
+			// A real maintenance request keeps the surge; maintenance may act on the
+			// request instead of nominating any replacement in beta this pass.
+			if state == "kept" {
+				f.update(t, 1, func(p *corev1.Pod) {
+					p.Annotations[metadata.AnnotationMaintenanceRequested] = maintenanceAnnotationTrue
+				})
+			}
+			if state == "removed" {
+				if err := f.base.Delete(t.Context(), surge); err != nil {
+					t.Fatal(err)
+				}
+			}
+			alpha := f.shard.Spec.Pools["alpha"]
+			alpha.FSGroup = ptr.To(int64(1234))
+			f.shard.Spec.Pools["alpha"] = alpha
+			pass := f.reconcile(t, nil, nil)
+			if pass.walkErr != nil || pass.poolsErr != nil {
+				t.Fatalf("maintenance=%v walk=%v", pass.poolsErr, pass.walkErr)
+			}
+			if state == "kept" {
+				f.requireDrained(t)
+				if pass.rollout.keptSurges[poolCell{"beta", "b"}] != 1 {
+					t.Fatal("maintenance did not keep beta's surge")
+				}
+				return
+			}
+			f.requireDrained(t, 0)
+		})
+	}
+}
+
+func TestPrimaryOrderTracksSurgeAdoptedByPoolMaintenance(t *testing.T) {
+	f := newWalkFixtureIn(t, []string{"alpha", "beta", "peer"}, func(pool string) string {
+		if pool == "beta" {
+			return "b"
+		}
+		return "a"
+	}, 1, 0)
+	f.shard.Spec.DurabilityPolicy = multiCellAtLeast2Policy
+
+	// beta has one Ready base pod and an old surplus pod that maintenance can
+	// adopt instead of creating new capacity. Only the primary has base drift.
+	old := f.shard.Spec.Pools["beta"]
+	old.FSGroup = ptr.To(int64(1234))
+	surplus, err := BuildPoolPod(f.shard, "beta", "b", old, 1, f.r.Scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.base.Create(t.Context(), surplus); err != nil {
+		t.Fatal(err)
+	}
+	f.names = append(f.names, surplus.Name)
+	f.update(t, 1, func(p *corev1.Pod) {
+		p.Annotations[metadata.AnnotationMaintenanceRequested] = maintenanceAnnotationTrue
+	})
+	alpha := f.shard.Spec.Pools["alpha"]
+	alpha.FSGroup = ptr.To(int64(1234))
+	f.shard.Spec.Pools["alpha"] = alpha
+
+	pass := f.reconcile(t, nil, nil)
+	if pass.poolsErr != nil || pass.walkErr != nil {
+		t.Fatalf("maintenance=%v walk=%v", pass.poolsErr, pass.walkErr)
+	}
+	adopted := f.pod(t, 3)
+	if !isMaintenanceSurge(adopted) {
+		t.Fatal("pool maintenance did not adopt beta's surplus pod")
+	}
+	if drift := f.r.desiredDrift(
+		f.shard,
+		[]corev1.Pod{*adopted},
+		pass.rollout.keptSurges,
+	); !drift[adopted.Name] {
+		t.Fatal("primary ordering missed the drift of the surge adopted this pass")
+	}
+	f.requireDrained(t)
+}
+
+// A held cell leaves its replacement for a watch event. No number of
+// intervening passes should turn that ordering wait into posture retries.
+func TestPrimaryOrderHoldUsesOnlyWatchBackstop(t *testing.T) {
+	f := newWalkFixture(t, []string{"alpha", "beta", "gamma"}, 1, 0)
+	f.shard.Spec.Images.Postgres = "postgres:next"
+	const passes = 40
+	var backstops int
+	for i := range passes {
+		if i == passes/2 {
+			f.r.PoolerClients = nil
+		} // unavailable RPC must not turn this into a refusal
+		rollout := &shardRolloutTracker{pending: true, generation: f.shard.Generation}
+		rollout.cell("alpha", "a").rolling = true
+		if err := f.r.startDisruption(t.Context(), f.shard, rollout); err != nil {
+			t.Fatal(err)
+		}
+		delay := f.r.rolloutRequeue(f.shard, rollout)
+		if delay >= pendingBackstop && !rollout.waitingForRecovery && rollout.blocked == "" {
+			backstops++
+		}
+	}
+	if f.observations != 0 {
+		t.Fatalf("%d unnecessary observations", f.observations)
+	}
+	if backstops != passes {
+		t.Fatalf("%d of %d holds asked for only a watch backstop", backstops, passes)
+	}
+	f.requireDrained(t)
 }
 
 // TestWalkGates pins what holds every candidate back, and that a request

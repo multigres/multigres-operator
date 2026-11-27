@@ -158,8 +158,9 @@ func (r *ShardReconciler) startDisruption(
 	// it, and its pod turning Ready triggers the next pass. Candidates
 	// without it are dropped before the data plane is observed, so a pass
 	// that only waits for capacity sends no RPC.
+	drift := r.desiredDrift(shard, pods.Items, rollout.keptSurges)
 	var candidates []disruptionCandidate
-	for _, candidate := range r.readyCandidates(shard, rollout, cells, byCell, scaleDown, pods) {
+	for _, candidate := range readyCandidates(shard, rollout, cells, byCell, scaleDown, drift) {
 		pod := candidate.pod
 		if candidate.kind == disruptResize {
 			pending, err := r.filesystemResizePending(ctx, pod.Namespace, candidate.pvc)
@@ -175,23 +176,16 @@ func (r *ShardReconciler) startDisruption(
 			candidates = append(candidates, candidate)
 		}
 	}
-	if len(candidates) == 0 {
+	if len(candidates) == 0 || onlyWaitingPrimary(shard, pods.Items, candidates, drift) {
 		return nil
 	}
 	preflight, err := r.observeForWalk(ctx, shard, rollout, pods, observed)
 	if err != nil || preflight == nil {
 		return err
 	}
-	var refused string
-	for _, candidate := range candidates {
-		pod := candidate.pod
-		if err := r.disruptionCheck(shard, preflight, pod); err != nil {
-			if refused == "" {
-				refused = fmt.Sprintf("not removing pod %s: %s", pod.Name, err)
-			}
-			continue
-		}
-		return r.disrupt(ctx, shard, rollout, candidate)
+	candidate, refused := r.chooseReadyReplacement(shard, preflight, candidates, drift)
+	if candidate != nil {
+		return r.disrupt(ctx, shard, rollout, *candidate)
 	}
 	if refused != "" {
 		// Consensus changes do not generate Kubernetes watch events.
@@ -398,29 +392,25 @@ func cellExtras(pods []*corev1.Pod, effectiveReplicas int32) []*corev1.Pod {
 	return extras
 }
 
-// readyCandidates lists what the walk may remove from a healthy shard, in
-// the order it tries them. The order between kinds holds across the whole
+// readyCandidates nominates removals from a healthy shard before the
+// observation resolves primary ordering. The order between kinds holds across the whole
 // shard and is the order pool maintenance works in: pods waiting on a
-// filesystem resize, extras, drifted replicas, then the primary. Within a
+// filesystem resize, extras, then drifted pods. Within a
 // kind pool/cells are taken by pool name, then cell name, and pods by name,
-// except extras, which are ranked across the shard (rankPodsToDrain). The
-// primary is a candidate only once no other desired pod in the shard is
-// drifted, so it is switched over once rather than onto a replica that still
-// has to be replaced.
+// except extras, which are ranked across the shard (rankPodsToDrain).
 //
 // A resize request names the pod maintenance saw by UID: a pod recreated
 // under the same name mounted the grown volume when it started.
-func (r *ShardReconciler) readyCandidates(
+func readyCandidates(
 	shard *multigresv1alpha1.Shard,
 	rollout *shardRolloutTracker,
 	cells []poolCell,
 	byCell map[poolCell][]*corev1.Pod,
 	scaleDown map[poolCell]bool,
-	pods *corev1.PodList,
+	drift map[string]bool,
 ) []disruptionCandidate {
 	var candidates []disruptionCandidate
 	var extras, drifted []*corev1.Pod
-	var primary *corev1.Pod
 	for _, cell := range cells {
 		request := rollout.cells[cell]
 		byUID := make(map[types.UID]*corev1.Pod, len(byCell[cell]))
@@ -440,11 +430,7 @@ func (r *ShardReconciler) readyCandidates(
 			continue
 		}
 		for _, pod := range byCell[cell] {
-			switch {
-			case !r.podDrifted(shard, pod):
-			case resolvePodRole(shard, pod.Name) == "PRIMARY":
-				primary = pod
-			default:
+			if drift[pod.Name] {
 				drifted = append(drifted, pod)
 			}
 		}
@@ -456,29 +442,118 @@ func (r *ShardReconciler) readyCandidates(
 	for _, pod := range drifted {
 		candidates = append(candidates, disruptionCandidate{pod: pod, kind: disruptDrifted})
 	}
-	if primary != nil && !driftedReplicaExists(shard, r.classifyDesiredPods(shard, pods.Items)) {
-		candidates = append(candidates, disruptionCandidate{pod: primary, kind: disruptPrimary})
-	}
 	return candidates
 }
 
-// podDrifted reports whether pod, in a pool/cell of the shard's spec, is on
-// an old spec.
-func (r *ShardReconciler) podDrifted(shard *multigresv1alpha1.Shard, pod *corev1.Pod) bool {
-	cell := podPoolCell(pod)
-	poolSpec, ok := shard.Spec.Pools[multigresv1alpha1.PoolName(cell.pool)]
-	if !ok || !poolUsesCell(poolSpec, cell.cell) {
+// onlyWaitingPrimary skips posture observation when it could not authorize
+// any action: the only nominee is the sole marked primary, and it must wait
+// for another replacement's watch event. Ambiguous markers need observation.
+func onlyWaitingPrimary(
+	shard *multigresv1alpha1.Shard,
+	pods []corev1.Pod,
+	candidates []disruptionCandidate,
+	drift map[string]bool,
+) bool {
+	if len(candidates) != 1 || candidates[0].kind != disruptDrifted || len(drift) < 2 {
 		return false
 	}
-	index, _ := resolvePodIndex(pod.Name)
-	return podNeedsUpdate(pod, shard, cell.pool, cell.cell, poolSpec, index, r.Scheme)
+	name := candidates[0].pod.Name
+	if resolvePodRole(shard, name) != "PRIMARY" {
+		return false
+	}
+	for i := range pods {
+		if pods[i].Name != name && resolvePodRole(shard, pods[i].Name) == "PRIMARY" {
+			return false
+		}
+	}
+	return true
 }
 
-// driftedReplicaExists reports whether a desired pool Pod of the shard other
-// than the primary is on an old spec, in any pool/cell, whether or not its
-// pool/cell asked the walk for anything this pass.
-func driftedReplicaExists(shard *multigresv1alpha1.Shard, desired rolloutCandidates) bool {
-	return len(desired.unready)+len(desired.ready) > 0
+// desiredDrift counts only drifted pods the Ready walk replaces: desired
+// ordinals and surge capacity kept this pass, including desired quarantined pods
+// not yet removed by remediation. Extras are permanently removed by scale-down.
+// Include desired pods even where maintenance didn't nominate a target this pass.
+func (r *ShardReconciler) desiredDrift(
+	shard *multigresv1alpha1.Shard,
+	pods []corev1.Pod,
+	keptSurges map[poolCell]int32,
+) map[string]bool {
+	drift := map[string]bool{}
+	for i := range pods {
+		pod := &pods[i]
+		cell := podPoolCell(pod)
+		spec, ok := shard.Spec.Pools[multigresv1alpha1.PoolName(cell.pool)]
+		index, valid := resolvePodIndex(pod.Name)
+		if ok && valid && poolUsesCell(spec, cell.cell) &&
+			index < int(poolReplicas(spec)+keptSurges[cell]) &&
+			podNeedsUpdate(pod, shard, cell.pool, cell.cell, spec, index, r.Scheme) {
+			drift[pod.Name] = true
+		}
+	}
+	return drift
+}
+
+// chooseReadyReplacement applies primary ordering to nominations of every kind
+// except permanent removals. A rolling primary waits even for refused or held
+// drift. A filesystem resize is urgent: once allowed it yields only to another
+// drifted pod that can actually be replaced this pass, not to a refusal or hold.
+func (r *ShardReconciler) chooseReadyReplacement(
+	shard *multigresv1alpha1.Shard,
+	preflight *disruptionPreflight,
+	candidates []disruptionCandidate,
+	drift map[string]bool,
+) (*disruptionCandidate, string) {
+	primary := preflight.observation.LeaderPod()
+	// During a handoff, keep a lone status primary last until status catches
+	// up. Check independently refuses the new leader if not marked PRIMARY.
+	// When markers disagree, use the observed leader, not map or pool order.
+	if resolvePodRole(shard, primary) != "PRIMARY" {
+		var marked string
+		for i := range preflight.pods.Items {
+			name := preflight.pods.Items[i].Name
+			if resolvePodRole(shard, name) == "PRIMARY" {
+				if marked != "" {
+					marked = ""
+					break
+				}
+				marked = name
+			}
+		}
+		if marked != "" {
+			primary = marked
+		}
+	}
+	others := len(drift)
+	if drift[primary] {
+		others--
+	}
+	var resize *disruptionCandidate
+	var refused string
+	for i := range candidates {
+		c := &candidates[i]
+		name := c.pod.Name
+		if resize != nil && (name == primary || c.kind == disruptExtra || !drift[name]) {
+			continue
+		}
+		if name == primary && c.kind == disruptDrifted {
+			if others > 0 {
+				continue
+			}
+			c.kind = disruptPrimary
+		}
+		if err := r.disruptionCheck(shard, preflight, c.pod); err != nil {
+			if refused == "" {
+				refused = fmt.Sprintf("not removing pod %s: %s", name, err)
+			}
+			continue
+		}
+		if name == primary && c.kind == disruptResize && others > 0 {
+			resize = c
+			continue
+		}
+		return c, ""
+	}
+	return resize, refused
 }
 
 // startJudgedDrain requests the drain of a pod the walk allowed, with the

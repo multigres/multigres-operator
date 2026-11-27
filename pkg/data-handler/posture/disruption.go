@@ -73,6 +73,7 @@ type DisruptionObservation struct {
 	// stalePrimaries holds pods still running as primary on a rule older
 	// than the topology primary's.
 	stalePrimaries map[string]bool
+	leaderPod      string
 	leader         *clustermetadatapb.ID
 	rule           *clustermetadatapb.ShardRule
 }
@@ -205,6 +206,7 @@ func ObserveDisruption(
 		return nil, fmt.Errorf("primary observations disagree")
 	}
 	leader := topoPrimary[0]
+	o.leaderPod = leader.name
 	o.leader = leader.pooler.Id
 	o.rule = leader.resp.GetConsensusStatus().GetCurrentPosition().GetPosition().GetDecision()
 	// A pooler that still runs as primary but that topology no longer routes
@@ -223,6 +225,10 @@ func ObserveDisruption(
 	}
 	return o, nil
 }
+
+// LeaderPod names the pod that topology and PostgreSQL agree is primary,
+// or is empty when the observation found none.
+func (o *DisruptionObservation) LeaderPod() string { return o.leaderPod }
 
 // Serving reports whether podName's pooler answered as an eligible member of
 // its committed cohort with PostgreSQL accepting connections: the same

@@ -119,6 +119,14 @@ func (r *ShardReconciler) reconcilePoolPods(
 	if err != nil {
 		return err
 	}
+	// Keep desired surge capacity separate from disruption requests: a cell
+	// that acted here may not nominate anything, but its drift still counts.
+	if maintenanceSurges > 0 {
+		if rollout.keptSurges == nil {
+			rollout.keptSurges = map[poolCell]int32{}
+		}
+		rollout.keptSurges[poolCell{poolName, cellName}] = maintenanceSurges
+	}
 	if surgeAction {
 		// The surge pod or PVC this pass created or waits on ends in a watch
 		// event.
@@ -678,7 +686,8 @@ type shardRolloutTracker struct {
 	// cells records, per pool/cell, the disruptions its maintenance left for
 	// the walk to decide. A pool/cell that acted or has a drain in progress
 	// asks for none.
-	cells map[poolCell]*cellDisruptions
+	cells      map[poolCell]*cellDisruptions
+	keptSurges map[poolCell]int32
 	// generation is the Shard generation pool maintenance read its spec
 	// from. The walk acts on cells only while the shard is still on it.
 	generation int64

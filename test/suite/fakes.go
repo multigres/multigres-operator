@@ -29,9 +29,10 @@ import (
 const (
 	defaultSimCell = "zone-a"
 	secondSimCell  = "zone-b"
+	thirdSimCell   = "zone-c"
 )
 
-var simCells = []string{defaultSimCell, secondSimCell}
+var simCells = []string{defaultSimCell, secondSimCell, thirdSimCell}
 
 // topoRegistry hands out one in-memory topology store per topology server,
 // identified by address and root path, the same pair a multipooler is started
@@ -199,6 +200,8 @@ type podIncarnation struct{ ns, uid string }
 // pooler that is down while its Pod is Running, has no testkit primitive.
 // This is the local stand-in until testkit grows a data-plane RPC fault model.
 type poolerModel struct {
+	// election optionally keeps the incumbent of a single-shard scenario until it drains.
+	election *stickyElection
 	// durability is the policy the cohort is committed under. The default,
 	// AtLeastN(1), lets any single pooler satisfy durability alone, so
 	// posture.CheckDisruption's revocation check refuses every removal. A
@@ -207,6 +210,55 @@ type poolerModel struct {
 	// fault decides, on every tick, how a pod's pooler deviates from
 	// healthy. nil means healthy.
 	fault func(*corev1.Pod) *poolerFault
+}
+
+// stickyElection records every election at the source (rather than sampling
+// Shard status, which can skip intermediate roles). tickShard expects its
+// leader first, so move the elected pod before building the rule and replies.
+// The inputs are sorted by name; the first non-draining survivor wins.
+type stickyElection struct {
+	mu      sync.Mutex
+	history []string
+	uid     string
+}
+
+func (e *stickyElection) elect(pods []*corev1.Pod) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var incumbent string
+	if len(e.history) > 0 {
+		incumbent = e.history[len(e.history)-1]
+	}
+	best := -1
+	for i, p := range pods {
+		if p.Annotations[metadata.AnnotationDrainState] != "" ||
+			(p.Name == incumbent && string(p.UID) != e.uid) {
+			continue
+		}
+		if best < 0 {
+			best = i
+		}
+		if p.Name == incumbent {
+			best = i
+			break
+		}
+	}
+	if best < 0 {
+		return false
+	}
+	pods[0], pods[best] = pods[best], pods[0]
+	if pods[0].Name == incumbent {
+		return false
+	}
+	e.uid = string(pods[0].UID)
+	e.history = append(e.history, pods[0].Name)
+	return true
+}
+
+func (e *stickyElection) leaders() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.history)
 }
 
 // poolerFault is how one pooler's answer deviates from the sim's healthy one.
@@ -467,6 +519,10 @@ func (p *poolerSim) tickShard(
 ) {
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
 
+	p.mu.Lock()
+	model, modelled := p.models[ns]
+	p.mu.Unlock()
+	changed := model.election != nil && model.election.elect(pods)
 	ids := make([]*cm.ID, 0, len(pods))
 	for _, pod := range pods {
 		ids = append(ids, &cm.ID{
@@ -478,9 +534,6 @@ func (p *poolerSim) tickShard(
 		return
 	}
 	leader := ids[0]
-	p.mu.Lock()
-	model, modelled := p.models[ns]
-	p.mu.Unlock()
 	durability := model.durability
 	if durability == nil {
 		durability = topoclient.AtLeastN(1)
@@ -493,7 +546,7 @@ func (p *poolerSim) tickShard(
 		// A modelled namespace is closer to multiorch: the cohort is the
 		// leader plus the poolers registered under their current pod,
 		// connected followers only those that could be streaming (answering,
-		// with Postgres up), and a new leader starts a new term. The leader
+		// with Postgres up), and a new leader starts a new term. By default the leader
 		// stays the lowest-named pod even while its replacement registers,
 		// because the sim writes a pooler's routing role only once, at
 		// registration.
@@ -594,7 +647,7 @@ func (p *poolerSim) tickShard(
 		// A held namespace still gets its Status RPC answered above, so pods
 		// already registered stay healthy and the shard keeps converging. Only
 		// the new registration waits, which is the whole point.
-		if already {
+		if already && !changed {
 			if modelled {
 				p.setAnswering(string(topoclient.ComponentIDString(id)),
 					podIncarnation{ns: ns, uid: string(pod.UID)})
