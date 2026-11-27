@@ -189,26 +189,20 @@ func testPVCDeletionPolicyRoundTrip(t *testing.T) {
 	}
 
 	sc.Step("set PVCDeletionPolicy to Retain/Retain", func() error {
-		got := &MultigresCluster{}
-		if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
-			return err
-		}
-		got.Spec.PVCDeletionPolicy = &PVCDeletionPolicy{
-			WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
-			WhenScaled:  multigresv1alpha1.RetainPVCRetentionPolicy,
-		}
-		return c.Update(got)
+		return c.tryUpdateCluster(cluster, func(got *MultigresCluster) {
+			got.Spec.PVCDeletionPolicy = &PVCDeletionPolicy{
+				WhenDeleted: multigresv1alpha1.RetainPVCRetentionPolicy,
+				WhenScaled:  multigresv1alpha1.RetainPVCRetentionPolicy,
+			}
+		})
 	}, consequences...)
 
 	sc.Step("settled after setting the field", nil, ctrltest.Quiet())
 
 	sc.Step("unset PVCDeletionPolicy", func() error {
-		got := &MultigresCluster{}
-		if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
-			return err
-		}
-		got.Spec.PVCDeletionPolicy = nil
-		return c.Update(got)
+		return c.tryUpdateCluster(cluster, func(got *MultigresCluster) {
+			got.Spec.PVCDeletionPolicy = nil
+		})
 	}, consequences...)
 
 	sc.Step("nothing left to do after the round trip", nil, ctrltest.Quiet())

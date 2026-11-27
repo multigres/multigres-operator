@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -117,6 +119,17 @@ type ShardReconciler struct {
 	notConvergedSince map[string]time.Time
 
 	synced ownership.SyncedEvents
+
+	// disruptionRefusedMu and disruptionRefused record, per shard, the
+	// refusal its disruption walk is being polled for; see
+	// recordDisruptionRefusal.
+	disruptionRefusedMu sync.Mutex
+	disruptionRefused   map[string]disruptionRefusal
+
+	// ignoredLoggedMu and ignoredLogged record, per pool/cell of a shard,
+	// the unmanaged pods already logged; see logIgnoredPods.
+	ignoredLoggedMu sync.Mutex
+	ignoredLogged   map[ignoredPodsKey]map[types.UID]struct{}
 }
 
 // Reconcile manages pool pods, PVCs, services, and data-plane topology for a Shard.
@@ -440,6 +453,25 @@ func (r *ShardReconciler) Reconcile(
 		return ctrl.Result{}, err
 	}
 
+	// rollout carries what pool maintenance records to the disruption walk
+	// and to the RollingUpdate condition.
+	rollout := &shardRolloutTracker{generation: shard.Generation}
+	defer func() {
+		// The one place the rollout's waits become a requeue; see
+		// rolloutRequeue. A pass that failed is retried by the workqueue,
+		// and what it recorded before failing is not a full account.
+		if err != nil {
+			return
+		}
+		requeue := r.rolloutRequeue(shard, rollout)
+		if requeue > 0 && (result.RequeueAfter == 0 || result.RequeueAfter > requeue) {
+			result.RequeueAfter = requeue
+		}
+	}()
+	var rollingBefore *metav1.Condition
+	if c := meta.FindStatusCondition(shard.Status.Conditions, "RollingUpdate"); c != nil {
+		rollingBefore = c.DeepCopy()
+	}
 	{
 		ctx, childSpan := monitoring.StartChildSpan(ctx, "Shard.ReconcilePools")
 		if err := r.reconcileShardPDB(ctx, shard); err != nil {
@@ -456,51 +488,16 @@ func (r *ShardReconciler) Reconcile(
 			return ctrl.Result{}, err
 		}
 
-		// Shared across every pool in this reconcile pass so that once one
-		// pool initiates a drain, no other pool starts one too in the same
-		// pass
-		rollout := &shardRolloutTracker{}
-		defer func() {
-			// Consensus changes do not generate Kubernetes watch events.
-			// A refusal that has not changed since the last pass is waiting
-			// on something slower, such as multiorch evicting a dead member
-			// or a human, and re-observing every pooler every few seconds
-			// would only add load. Pod changes still trigger a reconcile.
-			requeue := disruptionRecoveryRequeue
-			if rollout.blockedAgain {
-				requeue = repeatedRefusalRequeue
-			}
-			if err == nil && rollout.waitingForRecovery &&
-				(result.RequeueAfter == 0 || result.RequeueAfter > requeue) {
-				result.RequeueAfter = requeue
-			}
-		}()
 		// A status that changes from pass to pass without the state changing
 		// makes the Shard's own watch requeue it at once. Pools are walked in
 		// Go map order, so the RollingUpdate condition is written once, by
-		// finishRollingUpdateCondition, from what every pool/cell noted, and
-		// its transition time follows only a change in the final status.
-		var rollingBefore *metav1.Condition
-		if c := meta.FindStatusCondition(shard.Status.Conditions, "RollingUpdate"); c != nil {
-			rollingBefore = c.DeepCopy()
+		// finishRollingUpdateCondition, after the disruption walk, from what
+		// every pool/cell noted.
+		if err := r.reconcilePools(ctx, shard, rollout); err != nil {
+			monitoring.RecordSpanError(childSpan, err)
+			childSpan.End()
+			return ctrl.Result{}, err
 		}
-		for poolName, pool := range shard.Spec.Pools {
-			if err := r.reconcilePool(ctx, shard, string(poolName), pool, rollout); err != nil {
-				monitoring.RecordSpanError(childSpan, err)
-				childSpan.End()
-				logger.Error(err, "Failed to reconcile pool", "poolName", poolName)
-				r.Recorder.Eventf(
-					shard,
-					"Warning",
-					"FailedApply",
-					"Failed to reconcile pool %s: %v",
-					poolName,
-					err,
-				)
-				return ctrl.Result{}, err
-			}
-		}
-		finishRollingUpdateCondition(&shard.Status.Conditions, rollout, rollingBefore)
 		childSpan.End()
 	}
 
@@ -530,13 +527,25 @@ func (r *ShardReconciler) Reconcile(
 	// this shard and leave observedGeneration stale.
 	dataPlaneCtx, dataPlaneCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dataPlaneCancel()
-	result, err = r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg)
+	result, err = r.reconcileDataPlane(dataPlaneCtx, shard, renderedCfg, rollout)
 	if err == nil && !shard.Status.PoolsReady &&
 		(result.RequeueAfter == 0 || result.RequeueAfter > stuckPodsRefreshInterval) {
 		result.RequeueAfter = stuckPodsRefreshInterval
 	}
-	if err != nil || result.RequeueAfter > 0 {
-		return result, err
+
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// The disruption walk runs last, on a pass whose pool maintenance and
+	// data plane phase both completed: maintenance records what each
+	// pool/cell asks for, and the data plane phase advances the drains
+	// already in flight.
+	if err = r.reconcileDisruption(ctx, shard, renderedCfg, rollout, rollingBefore); err != nil {
+		return ctrl.Result{}, err
+	}
+	if result.RequeueAfter > 0 {
+		return result, nil
 	}
 
 	logger.V(1).Info("reconcile complete", "duration", time.Since(start).String())
@@ -544,6 +553,73 @@ func (r *ShardReconciler) Reconcile(
 		r.Recorder.Event(shard, "Normal", "Synced", "Successfully reconciled Shard")
 	}
 	return ctrl.Result{}, nil
+}
+
+// reconcilePools reconciles every pool of the shard. The first pool that
+// fails ends the pass.
+func (r *ShardReconciler) reconcilePools(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	rollout *shardRolloutTracker,
+) error {
+	for poolName, pool := range shard.Spec.Pools {
+		if err := r.reconcilePool(ctx, shard, string(poolName), pool, rollout); err != nil {
+			log.FromContext(ctx).Error(err, "Failed to reconcile pool", "poolName", poolName)
+			r.Recorder.Eventf(
+				shard,
+				"Warning",
+				"FailedApply",
+				"Failed to reconcile pool %s: %v",
+				poolName,
+				err,
+			)
+			return err
+		}
+	}
+	return nil
+}
+
+// reconcileDisruption runs the disruption walk and then writes the
+// RollingUpdate condition, which reports both what pool maintenance noted and
+// what the walk could not do, whether or not the walk's own write failed:
+// the drift is real either way, and a condition left from before it would
+// keep saying the pods are up to date. before is the condition as the pass
+// began.
+func (r *ShardReconciler) reconcileDisruption(
+	ctx context.Context,
+	shard *multigresv1alpha1.Shard,
+	rendered renderedConfig,
+	rollout *shardRolloutTracker,
+	before *metav1.Condition,
+) error {
+	ctx, span := monitoring.StartChildSpan(ctx, "Shard.ReconcileDisruption")
+	defer span.End()
+	// Whether a pod is on the desired spec depends on the config hashes the
+	// shard carries in memory only. A status write since they were stamped
+	// replaces the shard with the server's copy, which does not have them,
+	// and every pod would then look drifted.
+	stampPostgresConfigHashes(shard, rendered)
+	walkErr := r.startDisruption(ctx, shard, rollout)
+	if walkErr != nil {
+		monitoring.RecordSpanError(span, walkErr)
+		log.FromContext(ctx).Error(walkErr, "Failed to start a pool pod disruption")
+		r.Recorder.Eventf(shard, "Warning", "FailedApply",
+			"Failed to start a pool pod disruption: %v", walkErr)
+	}
+	finishRollingUpdateCondition(&shard.Status.Conditions, rollout, before)
+	if rollout.blocked != "" && !rollout.blockedAgain {
+		r.recordDisruptionBlocked(shard, rollout.blocked)
+	}
+	after := meta.FindStatusCondition(shard.Status.Conditions, "RollingUpdate")
+	if after == nil || (before != nil && *after == *before) {
+		return walkErr
+	}
+	// The data plane phase published the status before the walk decided.
+	if err := r.patchStatus(ctx, shard, shard.Status.Phase); err != nil {
+		monitoring.RecordSpanError(span, err)
+		return stderrors.Join(walkErr, fmt.Errorf("publish the RollingUpdate condition: %w", err))
+	}
+	return walkErr
 }
 
 // reconcilePool creates or updates the Pods, PVCs and headless Service for a pool.
@@ -798,12 +874,24 @@ func finishRollingUpdateCondition(
 	rollout *shardRolloutTracker,
 	before *metav1.Condition,
 ) {
+	// A desired pod that cannot be created holds the rollout whatever else
+	// the pass found, and is the first thing to fix.
+	if name := rollout.heldName(); name != "" {
+		rollout.blocked = fmt.Sprintf(
+			"desired pod %s cannot be created: a pod the shard does not manage holds its name",
+			name)
+	}
 	if c, ok := rollout.poolsRollingUpdate(); ok {
+		// An ignored pod is worth a line only while something is waiting.
+		if c.Reason != "PodsUpToDate" {
+			c.Message += rollout.ignoredSummary()
+		}
 		meta.SetStatusCondition(conditions, c)
 	}
 	if rollout.blocked != "" {
+		message := rollout.blocked + rollout.ignoredSummary()
 		rollout.blockedAgain = before != nil && before.Reason == "RolloutBlocked" &&
-			before.Message == rollout.blocked
+			before.Message == message
 		// Events about a Shard are rate limited per object and are lost once
 		// its early lifecycle has used the budget, so a rollout that is
 		// waiting on a safety check says so in status.
@@ -811,15 +899,8 @@ func finishRollingUpdateCondition(
 			Type:    "RollingUpdate",
 			Status:  metav1.ConditionTrue,
 			Reason:  "RolloutBlocked",
-			Message: rollout.blocked,
+			Message: message,
 		})
-	}
-	// A pass that reached no decision on a pending not-Ready replacement
-	// (another disruption already asked to wait) changes nothing about why
-	// the rollout is blocked, so the last reason stands.
-	if rollout.blocked == "" && rollout.unreadyDeferred &&
-		before != nil && before.Reason == "RolloutBlocked" {
-		meta.SetStatusCondition(conditions, *before)
 	}
 	keepTransitionTime(*conditions, before)
 }

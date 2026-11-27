@@ -361,7 +361,7 @@ func TestReconcileDataPlaneRequeuesFirstPostureStrike(t *testing.T) {
 	result, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{
 		restartHash: "restart",
 		reloadHash:  "reload",
-	})
+	}, &shardRolloutTracker{})
 	if err != nil {
 		t.Fatalf("reconcileDataPlane() error = %v", err)
 	}
@@ -411,7 +411,12 @@ func TestReconcileDataPlaneContinuesWithoutPoolerClient(t *testing.T) {
 		return store, nil
 	}
 
-	result, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{})
+	result, err := r.reconcileDataPlane(
+		t.Context(),
+		shard,
+		renderedConfig{},
+		&shardRolloutTracker{},
+	)
 	if err != nil {
 		t.Fatalf("reconcileDataPlane() error = %v", err)
 	}
@@ -481,7 +486,12 @@ func TestReconcileDataPlaneContinuesWithoutPoolerClient(t *testing.T) {
 	r.CreateTopoStore = func(*multigresv1alpha1.Shard) (topoclient.Store, error) {
 		return secondStore, nil
 	}
-	if _, err := r.reconcileDataPlane(t.Context(), got, renderedConfig{}); err != nil {
+	if _, err := r.reconcileDataPlane(
+		t.Context(),
+		got,
+		renderedConfig{},
+		&shardRolloutTracker{},
+	); err != nil {
 		t.Fatalf("second reconcileDataPlane() error = %v", err)
 	}
 	if events := drainEvents(recorder); containsEventWithReason(events, "PoolerClientUnavailable") {
@@ -535,7 +545,12 @@ func TestReconcileDataPlaneResolverFailurePreservesConfirmedPostureFailure(t *te
 		t.Fatalf("initial strikes = %d, want 1", strikes)
 	}
 
-	result, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{})
+	result, err := r.reconcileDataPlane(
+		t.Context(),
+		shard,
+		renderedConfig{},
+		&shardRolloutTracker{},
+	)
 	if err != nil {
 		t.Fatalf("reconcileDataPlane() error = %v", err)
 	}
@@ -602,7 +617,12 @@ func TestReconcileDataPlaneMarksBackupUnknownOnRPCFailure(t *testing.T) {
 		return store, nil
 	}
 
-	if _, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{}); err != nil {
+	if _, err := r.reconcileDataPlane(
+		t.Context(),
+		shard,
+		renderedConfig{},
+		&shardRolloutTracker{},
+	); err != nil {
 		t.Fatalf("reconcileDataPlane() error = %v", err)
 	}
 	got := &multigresv1alpha1.Shard{}

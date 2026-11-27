@@ -350,7 +350,9 @@ func TestCanStartDisruptionRefusesWhileMountedPVCTerminating(t *testing.T) {
 	deleteHeld(t, r.Client, backup)
 	ok, tracker := allowed()
 	require.False(t, ok, "a pod other than the target holds a PVC being deleted")
-	require.True(t, tracker.waitingForRecovery, "the shard keeps checking")
+	require.False(t, tracker.waitingForRecovery,
+		"the PVC's deletion ends in a watch event, so the shard is not polled")
+	require.Empty(t, tracker.blocked)
 
 	// A pod object holds its PVCs in any phase.
 	live := &corev1.Pod{}
@@ -512,7 +514,7 @@ func TestHandleScaleDownKeepsDrainedPodOnTerminatingPVC(t *testing.T) {
 			f.pod.Annotations[metadata.AnnotationDrainState] = metadata.DrainStateReadyForDeletion
 			require.NoError(t, f.client.Update(t.Context(), f.pod))
 
-			_, inProgress, err := f.reconciler.handleScaleDown(
+			_, inProgress, err := f.reconciler.scaleDownPass(
 				t.Context(), f.shard, "main", f.pool,
 				map[string]*corev1.Pod{f.pod.Name: f.pod}, 1, 1, false,
 			)
@@ -540,7 +542,7 @@ func TestHandleScaleDownKeepsDrainedPodOnTerminatingPVC(t *testing.T) {
 		f := newPoolFixture(t)
 		f.pod.Annotations[metadata.AnnotationDrainState] = metadata.DrainStateReadyForDeletion
 		require.NoError(t, f.client.Update(t.Context(), f.pod))
-		_, _, err := f.reconciler.handleScaleDown(
+		_, _, err := f.reconciler.scaleDownPass(
 			t.Context(), f.shard, "main", f.pool,
 			map[string]*corev1.Pod{f.pod.Name: f.pod}, 1, 1, false,
 		)
@@ -619,7 +621,7 @@ func TestHandleScaleDownReleasesHaltedPodPVC(t *testing.T) {
 	require.NoError(t, f.client.Update(t.Context(), f.pod))
 
 	// Scaled to zero, so index 0 is past the desired replicas.
-	_, inProgress, err := f.reconciler.handleScaleDown(
+	_, inProgress, err := f.reconciler.scaleDownPass(
 		t.Context(), f.shard, "main", f.pool,
 		map[string]*corev1.Pod{f.pod.Name: f.pod}, 0, 0, false,
 	)

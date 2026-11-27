@@ -2,6 +2,7 @@ package shard
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"time"
 
@@ -33,6 +34,7 @@ func (r *ShardReconciler) reconcileDataPlane(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	rendered renderedConfig,
+	rollout *shardRolloutTracker,
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -173,6 +175,9 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 		childSpan.End()
 		if acted {
+			// The wipe is the pass's one disruption: the walk, which runs
+			// after this phase, starts nothing.
+			rollout.SetStarted()
 			return withDataPlaneRequeue(
 				ctrl.Result{RequeueAfter: quarantineRemediationRequeue},
 				postureRetryAfter,
@@ -192,8 +197,12 @@ func (r *ShardReconciler) reconcileDataPlane(
 		}
 		childSpan.End()
 		if requeue {
+			// The drain advanced by writing the pod's drain annotation. That
+			// write is a Pod watch event, which starts the pass that takes
+			// the next step, so the rest of this pass is skipped without a
+			// requeue of its own.
 			return withDataPlaneRequeue(
-				ctrl.Result{RequeueAfter: 2 * time.Second},
+				ctrl.Result{},
 				postureRetryAfter,
 				poolerClientUnavailable,
 			), nil
@@ -539,8 +548,8 @@ func anyPodNotReady(readiness map[string]posture.Readiness) bool {
 //
 // Elapsed-time-based rather than a per-pass count: Owns(&corev1.Pod{}) and
 // For(&Shard{}) carry no predicates, so a pod's Pending -> ContainerCreating ->
-// per-container-Ready transitions, an operator gate patch, and a drain's 2s
-// requeues are each their own reconcile. A scale-up alone is at least five of
+// per-container-Ready transitions, an operator gate patch, and each step of a
+// drain are each their own reconcile. A scale-up alone is at least five of
 // those before there is anything to register, and a wall-clock burst of
 // events must not by itself run the delay up to the ceiling: two reconciles a
 // second apart are five seconds not-converged either way, whether they were
@@ -678,9 +687,10 @@ func (r *ShardReconciler) now() time.Time {
 	return time.Now()
 }
 
-// forgetStrikes drops namespace/name's entry from both strike maps. Called on
-// a Shard's deletion and not-found paths so a shard deleted mid-backoff, in
-// either counter, does not leak its entry for the life of the process.
+// forgetStrikes drops namespace/name's entry from the strike maps and the
+// disruption refusal map. Called on a Shard's deletion and not-found paths so
+// a shard deleted mid-backoff does not leak its entry for the life of the
+// process.
 func (r *ShardReconciler) forgetStrikes(namespace, name string) {
 	key := fmt.Sprintf("%s/%s", namespace, name)
 
@@ -691,6 +701,18 @@ func (r *ShardReconciler) forgetStrikes(namespace, name string) {
 	r.notConvergedMu.Lock()
 	delete(r.notConvergedSince, key)
 	r.notConvergedMu.Unlock()
+
+	r.disruptionRefusedMu.Lock()
+	delete(r.disruptionRefused, key)
+	r.disruptionRefusedMu.Unlock()
+
+	r.ignoredLoggedMu.Lock()
+	for logged := range r.ignoredLogged {
+		if logged.shard.Namespace == namespace && logged.shard.Name == name {
+			delete(r.ignoredLogged, logged)
+		}
+	}
+	r.ignoredLoggedMu.Unlock()
 }
 
 // reconcileDrainState iterates pods with drain annotations and runs the
@@ -724,8 +746,10 @@ func (r *ShardReconciler) reconcileDrainState(
 		logger.Error(err, "Failed to list pods for drain state machine")
 		return false, err
 	}
+	podList.Items = r.managedPoolPods(ctx, shard, podList.Items)
 
 	requeue := false
+	var errs []error
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 		state := pod.Annotations[metadata.AnnotationDrainState]
@@ -733,11 +757,20 @@ func (r *ShardReconciler) reconcileDrainState(
 			continue
 		}
 
-		if r.isDrainStale(shard, pod, state) {
+		stale, err := r.isDrainStale(ctx, shard, pod, state)
+		if err != nil {
+			// Whether the drain is still wanted is not known, so it is
+			// neither cancelled nor advanced on this pass.
+			errs = append(errs, err)
+			continue
+		}
+		if stale {
 			logger.Info("Cancelling stale drain: pod is within desired replicas and spec matches",
 				"pod", pod.Name, "state", state)
 			if err := clearDrainAnnotations(ctx, r.Client, pod); err != nil {
 				logger.Error(err, "Failed to clear drain annotations", "pod", pod.Name)
+				errs = append(errs, err)
+				continue
 			}
 			r.Recorder.Eventf(shard, "Normal", "DrainCancelled",
 				"Cancelled stale drain on pod %s (now within desired state)", pod.Name)
@@ -749,42 +782,65 @@ func (r *ShardReconciler) reconcileDrainState(
 		)
 		if derr != nil {
 			logger.Error(derr, "Failed to execute drain state machine", "pod", pod.Name)
+			errs = append(errs, derr)
 		}
 		if shouldRequeue {
 			requeue = true
 		}
 	}
 
-	return requeue, nil
+	// A drain step that failed wrote nothing, so no watch event will start
+	// the pass that retries it. Returning the error does.
+	return requeue, stderrors.Join(errs...)
 }
 
 // isDrainStale returns true when a pod's drain is no longer needed because the
 // desired state has changed (e.g. scale-down reversed or rolling-update reverted).
 // Only the requested state is cancellable.
 func (r *ShardReconciler) isDrainStale(
+	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	pod *corev1.Pod,
 	state string,
-) bool {
+) (bool, error) {
 	// Only cancel Requested — nothing has happened yet at this point.
 	if state != metadata.DrainStateRequested {
-		return false
+		return false, nil
 	}
 
 	// Pods being deleted need the drain to complete.
 	if !pod.DeletionTimestamp.IsZero() {
-		return false
+		return false, nil
 	}
 
 	poolName := pod.Labels[metadata.LabelMultigresPool]
 	cellName := pod.Labels[metadata.LabelMultigresCell]
 	if poolName == "" || cellName == "" {
-		return false
+		return false, nil
+	}
+
+	// A restart for a filesystem resize is wanted although the pod is within
+	// its replica count and on the desired spec, which is all the checks
+	// below look at. The reason counts only while it names this pod and the
+	// pod's data PVC still waits for the restart: a reason left by an earlier
+	// drain, copied from another pod, or outlived by its resize says nothing
+	// about this drain.
+	if pod.Annotations[metadata.AnnotationDrainReason] ==
+		metadata.FilesystemResizeDrainReason(pod.UID) {
+		if index, ok := resolvePodIndex(pod.Name); ok {
+			// Read from the API server: past this point the drain cannot
+			// be cancelled, and the resize may have just completed.
+			pending, err := r.filesystemResizePending(ctx, pod.Namespace,
+				BuildPoolDataPVCName(shard, poolName, cellName, index))
+			if err != nil || pending {
+				return false, err
+			}
+		}
 	}
 
 	poolSpec, ok := shard.Spec.Pools[multigresv1alpha1.PoolName(poolName)]
 	if !ok {
-		return false
+		return false, nil
 	}
 
 	replicas := DefaultPoolReplicas
@@ -794,11 +850,11 @@ func (r *ShardReconciler) isDrainStale(
 
 	index, ok := resolvePodIndex(pod.Name)
 	if !ok || index >= int(replicas) {
-		return false // Pod is still an extra pod for scale-down
+		return false, nil // Pod is still an extra pod for scale-down
 	}
 
 	// Pod is within replica range — check if its spec still matches desired.
-	return !podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme)
+	return !podNeedsUpdate(pod, shard, poolName, cellName, poolSpec, index, r.Scheme), nil
 }
 
 // topoStore returns a topology store, using the custom factory if set, otherwise the default.

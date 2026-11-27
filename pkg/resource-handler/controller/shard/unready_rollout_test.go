@@ -11,6 +11,7 @@ import (
 	cm "github.com/multigres/multigres/go/pb/clustermetadata"
 	md "github.com/multigres/multigres/go/pb/multipoolermanagerdata"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -153,7 +154,7 @@ func TestReplaceUnreadyDriftedPod(t *testing.T) {
 			target := groups["a"][BuildPoolPodName(shard, "main", "a", 0)]
 			primary := groups["a"][BuildPoolPodName(shard, "main", "a", 1)]
 			rollout := &shardRolloutTracker{}
-			handled, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout)
+			handled, err := r.replaceUnready(t.Context(), shard, rollout)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -253,7 +254,7 @@ func TestReplaceUnreadyDriftedPodPrimaryLast(t *testing.T) {
 	}
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	if !drainRequested(t, r, groups["a"][BuildPoolPodName(shard, "main", "a", 0)]) {
@@ -275,7 +276,7 @@ func TestReplaceUnreadyDriftedPodTriesEveryCell(t *testing.T) {
 	status("a", 0).Status.PostgresAction = md.PostgresAction_POSTGRES_ACTION_RESTORING_FROM_BACKUP
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	if drainRequested(t, r, groups["a"][BuildPoolPodName(shard, "main", "a", 0)]) {
@@ -285,7 +286,7 @@ func TestReplaceUnreadyDriftedPodTriesEveryCell(t *testing.T) {
 		t.Fatalf("replaceable pod in the other cell not drained (blocked: %q)", rollout.blocked)
 	}
 	// The decision is made once per pass and reported to every pool/cell.
-	handled, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout)
+	handled, err := r.replaceUnready(t.Context(), shard, rollout)
 	if err != nil || !handled {
 		t.Fatalf("second pool/cell of the pass: handled %v, err %v", handled, err)
 	}
@@ -317,7 +318,7 @@ func TestUnreadyServingPodRequestsMaintenanceSurge(t *testing.T) {
 	}
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	if drainRequested(t, r, groups["a"][BuildPoolPodName(shard, "main", "a", 0)]) {
@@ -337,6 +338,26 @@ func TestUnreadyServingPodRequestsMaintenanceSurge(t *testing.T) {
 	}
 	if !rollout.HasSurgeStarted("a") {
 		t.Fatal("surge not recorded for the pass")
+	}
+
+	// The surge's pod and PVC are built from the spec, so none is created
+	// once the API server holds a newer spec than the pass read.
+	if err := r.Delete(t.Context(), surge); err != nil {
+		t.Fatal(err)
+	}
+	stored := &multigresv1alpha1.Shard{}
+	if err := r.Get(t.Context(), client.ObjectKeyFromObject(shard), stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Generation++
+	if err := r.Update(t.Context(), stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.replaceUnready(t.Context(), shard, &shardRolloutTracker{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Get(t.Context(), key, surge); !apierrors.IsNotFound(err) {
+		t.Fatalf("a surge was created from a spec that is no longer current (err %v)", err)
 	}
 }
 
@@ -366,7 +387,7 @@ func TestReplaceUnreadyDriftedPodWaitsForDesiredSpecPod(t *testing.T) {
 	status("b", 1).Status.PostgresReady = false
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	for _, group := range groups {
@@ -450,7 +471,7 @@ func TestReplaceUnreadyDriftedPodWaitsForMissingPod(t *testing.T) {
 	setCohort(shard, status, [2]any{"a", 0}, [2]any{"a", 1}, [2]any{"b", 0})
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	if drainRequested(t, r, groups["a"][BuildPoolPodName(shard, "main", "a", 0)]) {
@@ -501,7 +522,7 @@ func TestReplaceUnreadyDriftedPodUnregisteredTarget(t *testing.T) {
 				t.Fatal(err)
 			}
 			rollout := &shardRolloutTracker{}
-			if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+			if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 				t.Fatal(err)
 			}
 			if got := drainRequested(t, r, a0); got != tc.wantDrain {
@@ -540,7 +561,7 @@ func TestUnreadyNotServingPodRequestsMaintenanceSurge(t *testing.T) {
 	setCohort(shard, status, [2]any{"a", 0}, [2]any{"b", 0})
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	surge := &corev1.Pod{}
@@ -572,7 +593,7 @@ func TestReplaceUnreadyDriftedPodRemovesBlockingExtra(t *testing.T) {
 	status("b", 1).Status.PostgresAction = md.PostgresAction_POSTGRES_ACTION_RESTORING_FROM_BACKUP
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	b1 := groups["b"][BuildPoolPodName(shard, "main", "b", 1)]
@@ -596,17 +617,17 @@ func TestFinishRollingUpdateCondition(t *testing.T) {
 		wantReason string
 	}{
 		{
-			name:       "a pass that decided nothing keeps the last block",
-			rollout:    shardRolloutTracker{unreadyPending: true, unreadyDeferred: true},
+			name:       "a pass that is refused reports the refusal",
+			rollout:    shardRolloutTracker{blocked: "not replacing pod p: reason"},
 			wantReason: "RolloutBlocked",
 		},
 		{
 			name:       "a pass that started a disruption reports progress",
-			rollout:    shardRolloutTracker{unreadyPending: true, started: true},
+			rollout:    shardRolloutTracker{started: true},
 			wantReason: "PodsDrifted",
 		},
 		{
-			name:       "nothing pending reports the pools' own state",
+			name:       "nothing refused reports the pools' own state",
 			wantReason: "PodsDrifted",
 		},
 	} {
@@ -728,7 +749,7 @@ func TestUnreadySurgeNotRequestedWhenAnotherPodDrains(t *testing.T) {
 	status("a", 1).Status.PostgresReady = false
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	if !drainRequested(t, r, groups["b"][BuildPoolPodName(shard, "main", "b", 0)]) {
@@ -768,7 +789,7 @@ func TestUnreadySurgeNotRequestedWithoutPrimary(t *testing.T) {
 	status("b", 0).Status.PrimaryStatus.Ready = false
 	publish()
 	rollout := &shardRolloutTracker{}
-	if _, err := r.replaceUnreadyDriftedPod(t.Context(), shard, rollout); err != nil {
+	if _, err := r.replaceUnready(t.Context(), shard, rollout); err != nil {
 		t.Fatal(err)
 	}
 	surge := &corev1.Pod{}

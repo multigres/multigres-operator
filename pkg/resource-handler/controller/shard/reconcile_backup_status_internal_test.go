@@ -117,7 +117,12 @@ func TestReconcileDataPlaneBackupHealthPreservesStorageGuard(t *testing.T) {
 				PoolerClients: poolerclient.Static(rpc),
 			}
 			r.CreateTopoStore = func(*multigresv1alpha1.Shard) (topoclient.Store, error) { return store, nil }
-			if _, err := r.reconcileDataPlane(t.Context(), shard, renderedConfig{}); err != nil {
+			if _, err := r.reconcileDataPlane(
+				t.Context(),
+				shard,
+				renderedConfig{},
+				&shardRolloutTracker{},
+			); err != nil {
 				t.Fatal(err)
 			}
 			got := &multigresv1alpha1.Shard{}

@@ -161,7 +161,7 @@
 //
 //   - disruption.go:30   PodList  {cluster, database, tablegroup, shard,
 //     component=Pool} (adds the component key the multigrescluster prune
-//     lacks). Read-only (feeds canStartDisruption's decision). SAFE.
+//     lacks). Read-only (feeds the disruption walk's decision). SAFE.
 //
 //   - maintenance_surge.go:300, :338   PodList  component+cell-scoped via
 //     shardPDBLabels/metadata.GetSelectorLabels. Read-only. SAFE.

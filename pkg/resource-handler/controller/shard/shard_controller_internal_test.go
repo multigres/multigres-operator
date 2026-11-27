@@ -1124,7 +1124,7 @@ func TestHandleScaleDown_ConcurrentDrainPrevention(t *testing.T) {
 
 			poolSpec := multigresv1alpha1.PoolSpec{}
 
-			gotAction, gotInProgress, err := reconciler.handleScaleDown(
+			gotAction, gotInProgress, err := reconciler.scaleDownPass(
 				context.Background(),
 				shard,
 				poolName,
@@ -2902,7 +2902,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		rollout := &shardRolloutTracker{}
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			t.Context(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{}, 0, false, false,
 			rollout,
@@ -2942,7 +2942,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName: pod}, 1, true, false,
 			&shardRolloutTracker{},
@@ -2981,7 +2981,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName: pod}, 1, false, true,
 			&shardRolloutTracker{},
@@ -3012,17 +3012,19 @@ func TestHandleRollingUpdates(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      podName,
 				Namespace: "default",
+				Labels:    buildPoolLabelsWithCell(shard, poolName, cellName),
 				Annotations: map[string]string{
 					metadata.AnnotationSpecHash: "old-hash",
 				},
 			},
 		}
 
+		setReady(pod, true)
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
@@ -3063,8 +3065,11 @@ func TestHandleRollingUpdates(t *testing.T) {
 
 		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
+		// Labels the pod and gives the shard its pool, so the walk sees the
+		// pod and it is the in-flight drain that stops it.
+		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
@@ -3114,7 +3119,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName0: pod0, podName1: pod1}, 2, false, false,
 			&shardRolloutTracker{},
@@ -3173,7 +3178,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
@@ -3191,10 +3196,12 @@ func TestHandleRollingUpdates(t *testing.T) {
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: podName, Namespace: "default",
+				Labels:      buildPoolLabelsWithCell(shard, poolName, cellName),
 				Annotations: map[string]string{metadata.AnnotationSpecHash: "old-hash"},
 			},
 		}
 
+		setReady(pod, true)
 		base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(shard, pod).Build()
 		c := testutil.NewFakeClientWithFailures(base, &testutil.FailureConfig{
 			OnPatch: func(obj client.Object) error {
@@ -3204,7 +3211,7 @@ func TestHandleRollingUpdates(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
-		err := r.handleRollingUpdates(
+		err := r.rollingUpdatePass(
 			context.Background(), shard, poolName, cellName, poolSpec,
 			map[string]*corev1.Pod{podName: pod}, 1, false, false,
 			&shardRolloutTracker{},
@@ -3266,7 +3273,7 @@ func TestHandleRollingUpdates_RolloutTrackerBlocksSameShardPass(t *testing.T) {
 	rollout := &shardRolloutTracker{}
 	rollout.SetStarted()
 
-	err := r.handleRollingUpdates(
+	err := r.rollingUpdatePass(
 		context.Background(), shard, "pool-2", "zone2", poolSpec,
 		map[string]*corev1.Pod{podName: pod}, 1, false, false,
 		rollout,
@@ -3904,7 +3911,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 		existingPods := map[string]*corev1.Pod{podName0: pod0, podName1: pod1}
-		_, _, err := r.handleScaleDown(
+		_, _, err := r.scaleDownPass(
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
 		)
@@ -3940,7 +3947,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		existingPods := map[string]*corev1.Pod{podName0: pod0}
-		_, _, err := r.handleScaleDown(
+		_, _, err := r.scaleDownPass(
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
 		)
@@ -3978,7 +3985,7 @@ func TestHandleScaleDown_ErrorPaths(t *testing.T) {
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 		existingPods := map[string]*corev1.Pod{podName1: pod1}
-		_, _, err := r.handleScaleDown(
+		_, _, err := r.scaleDownPass(
 			context.Background(), shard, poolName,
 			multigresv1alpha1.PoolSpec{}, existingPods, 1, 1, false,
 		)
@@ -4208,6 +4215,8 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 				},
 			},
 		}
+		pod.OwnerReferences = desiredPod.OwnerReferences
+		extraPod.OwnerReferences = desiredPod.OwnerReferences
 
 		base := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -4271,7 +4280,7 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 		})
 		r := &ShardReconciler{Client: c, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 		observeHealthyDisruption(t, r, shard, poolName, cellName)
-		err := r.reconcilePoolPods(
+		err := r.poolPodsPass(
 			t.Context(),
 			shard,
 			poolName,
@@ -4280,7 +4289,7 @@ func TestReconcilePoolPods_ErrorPropagation(t *testing.T) {
 			&shardRolloutTracker{},
 		)
 		if err == nil {
-			t.Fatal("expected error from handleRollingUpdates")
+			t.Fatal("expected error from the disruption walk")
 		}
 	})
 }
@@ -4454,7 +4463,7 @@ func TestHandleScaleDown_ExternalDeletionSetsActionTaken(t *testing.T) {
 	r := &ShardReconciler{Client: base, Scheme: scheme, Recorder: record.NewFakeRecorder(10)}
 
 	existingPods := map[string]*corev1.Pod{extraPodName: extraPod}
-	actionTaken, _, err := r.handleScaleDown(
+	actionTaken, _, err := r.scaleDownPass(
 		t.Context(), shard, poolName,
 		multigresv1alpha1.PoolSpec{ReplicasPerCell: ptr.To(int32(1))},
 		existingPods, 1, 1, false,
@@ -4534,7 +4543,7 @@ func TestHandleRollingUpdates_SkipsUpToDatePods(t *testing.T) {
 	observeHealthyDisruption(t, r, shard, poolName, cellName)
 
 	existingPods := map[string]*corev1.Pod{pod0Name: pod0, pod1Name: pod1}
-	err := r.handleRollingUpdates(
+	err := r.rollingUpdatePass(
 		t.Context(), shard, poolName, cellName, poolSpec,
 		existingPods, 1, false, false,
 		&shardRolloutTracker{},
@@ -5136,14 +5145,14 @@ func TestIsDrainStale(t *testing.T) {
 
 	t.Run("CancelsStaleScaleDownDrain", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
-		if !r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
+		if !r.drainStale(t, shard, pod, metadata.DrainStateRequested) {
 			t.Error("expected drain to be stale (pod within replicas, spec matches)")
 		}
 	})
 
 	t.Run("DoesNotCancelDrainingState", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateDraining)
-		if r.isDrainStale(shard, pod, metadata.DrainStateDraining) {
+		if r.drainStale(t, shard, pod, metadata.DrainStateDraining) {
 			t.Error(
 				"expected drain NOT to be stale in Draining state (standby removal already sent)",
 			)
@@ -5158,7 +5167,7 @@ func TestIsDrainStale(t *testing.T) {
 			ReplicasPerCell: ptr.To(int32(4)),
 		}
 		pod := matchingPod(4, metadata.DrainStateRequested)
-		if r.isDrainStale(smallShard, pod, metadata.DrainStateRequested) {
+		if r.drainStale(t, smallShard, pod, metadata.DrainStateRequested) {
 			t.Error("expected drain NOT to be stale (pod is extra)")
 		}
 	})
@@ -5167,7 +5176,7 @@ func TestIsDrainStale(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		// Clear labels to hit `if poolName == "" || cellName == ""`
 		pod.Labels = nil
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
+		if r.drainStale(t, shard, pod, metadata.DrainStateRequested) {
 			t.Error("expected drain NOT to be stale (missing labels)")
 		}
 	})
@@ -5176,14 +5185,14 @@ func TestIsDrainStale(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		// Change pool to one that doesn't exist in spec
 		pod.Labels[metadata.LabelMultigresPool] = "nonexistent"
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
+		if r.drainStale(t, shard, pod, metadata.DrainStateRequested) {
 			t.Error("expected drain NOT to be stale (pool not in spec)")
 		}
 	})
 
 	t.Run("DoesNotCancelAcknowledgedDrain", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateAcknowledged)
-		if r.isDrainStale(shard, pod, metadata.DrainStateAcknowledged) {
+		if r.drainStale(t, shard, pod, metadata.DrainStateAcknowledged) {
 			t.Error("expected drain NOT to be stale (past point of no return)")
 		}
 	})
@@ -5192,7 +5201,7 @@ func TestIsDrainStale(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		now := metav1.Now()
 		pod.DeletionTimestamp = &now
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
+		if r.drainStale(t, shard, pod, metadata.DrainStateRequested) {
 			t.Error("expected drain NOT to be stale (pod is being deleted)")
 		}
 	})
@@ -5200,7 +5209,7 @@ func TestIsDrainStale(t *testing.T) {
 	t.Run("DoesNotCancelWhenSpecDrifted", func(t *testing.T) {
 		pod := matchingPod(4, metadata.DrainStateRequested)
 		pod.Annotations[metadata.AnnotationSpecHash] = "wrong-hash"
-		if r.isDrainStale(shard, pod, metadata.DrainStateRequested) {
+		if r.drainStale(t, shard, pod, metadata.DrainStateRequested) {
 			t.Error("expected drain NOT to be stale (spec-hash mismatch)")
 		}
 	})

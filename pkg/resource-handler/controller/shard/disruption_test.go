@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -177,7 +178,7 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 				)
 			}
 			tracker := &shardRolloutTracker{}
-			action, _, err := r.handleScaleDown(
+			action, _, err := r.scaleDownPass(
 				t.Context(),
 				shard,
 				"main",
@@ -216,7 +217,7 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 				t.Fatal(err)
 			}
 			groups["b"][name] = pod
-			if _, _, err := r.handleScaleDown(
+			if _, _, err := r.scaleDownPass(
 				t.Context(),
 				shard,
 				"main",
@@ -232,7 +233,7 @@ func TestScaleDownUnregisteredExtra(t *testing.T) {
 			if err := r.Get(t.Context(), key, &corev1.Pod{}); !apierrors.IsNotFound(err) {
 				t.Fatalf("excess pod was not deleted: %v", err)
 			}
-			action, _, err = r.handleScaleDown(
+			action, _, err = r.scaleDownPass(
 				t.Context(),
 				shard,
 				"main",
@@ -277,7 +278,7 @@ func TestScaleDownWaitsForOtherCellsExtraPodDrain(t *testing.T) {
 				}
 			}
 			// No shared in-memory tracker survives this new reconciliation.
-			action, _, err := r.handleScaleDown(
+			action, _, err := r.scaleDownPass(
 				t.Context(),
 				shard,
 				"main",
@@ -297,32 +298,40 @@ func TestScaleDownWaitsForOtherCellsExtraPodDrain(t *testing.T) {
 
 func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
 	r, shard, groups, rpc, responses := fourToTwoFixture(t)
-	run := func(cell string) (bool, *shardRolloutTracker) {
+	// run is one pass: scale-down maintenance for both cells, then the walk.
+	run := func() (bool, *shardRolloutTracker) {
 		t.Helper()
 		tracker := &shardRolloutTracker{}
-		action, _, err := r.handleScaleDown(
-			t.Context(),
-			shard,
-			"main",
-			shard.Spec.Pools["main"],
-			groups[cell],
-			1,
-			1,
-			false,
-			tracker,
-		)
-		if err != nil {
+		for _, cell := range []string{"a", "b"} {
+			if _, _, err := r.handleScaleDown(t.Context(), shard, "main",
+				shard.Spec.Pools["main"], groups[cell], 1, 1, false, tracker); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := r.startDisruption(t.Context(), shard, tracker); err != nil {
 			t.Fatal(err)
 		}
-		return action, tracker
+		return tracker.HasStarted(), tracker
 	}
-	if action, _ := run("a"); action {
-		t.Fatal("primary selected while another cell has a removable replica")
+	drained := func(cell string, index int) bool {
+		t.Helper()
+		pod := &corev1.Pod{}
+		key := client.ObjectKey{
+			Namespace: shard.Namespace,
+			Name:      BuildPoolPodName(shard, "main", cell, index),
+		}
+		if err := r.Get(t.Context(), key, pod); err != nil {
+			t.Fatal(err)
+		}
+		return pod.Annotations[metadata.AnnotationDrainState] != ""
 	}
-	if action, _ := run("b"); !action {
+	if action, _ := run(); !action || !drained("b", 1) {
 		t.Fatal("replica drain did not start")
 	}
-	if action, _ := run("a"); action {
+	if drained("a", 1) {
+		t.Fatal("primary selected while another cell has a removable replica")
+	}
+	if action, _ := run(); action {
 		t.Fatal("second reconcile started an overlapping drain")
 	}
 	removed := groups["b"][BuildPoolPodName(shard, "main", "b", 1)]
@@ -330,7 +339,7 @@ func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(groups["b"], removed.Name)
-	if action, tracker := run("a"); action || !tracker.waitingForRecovery {
+	if action, tracker := run(); action || !tracker.waitingForRecovery {
 		t.Fatal("must requeue while deleted member remains in committed cohort")
 	}
 	// Multigres commits a smaller cohort; the remaining primary is active and
@@ -343,7 +352,7 @@ func TestScaleDownReplicaFirstAndWaitsForCohortRecovery(t *testing.T) {
 		)
 		rpc.SetStatusResponse(topoclient.ComponentIDString(response.ConsensusStatus.Id), response)
 	}
-	if action, _ := run("a"); !action {
+	if action, _ := run(); !action {
 		t.Fatal("scale-down did not resume after cohort recovery")
 	}
 }
@@ -408,7 +417,7 @@ func TestScaleDownCleanupReservesShardDisruption(t *testing.T) {
 	}
 	groups["b"][name] = pod
 	tracker := &shardRolloutTracker{}
-	action, _, err := r.handleScaleDown(
+	action, _, err := r.scaleDownPass(
 		t.Context(),
 		shard,
 		"main",
@@ -422,7 +431,7 @@ func TestScaleDownCleanupReservesShardDisruption(t *testing.T) {
 	if err != nil || !action || !tracker.HasStarted() {
 		t.Fatalf("cleanup did not reserve disruption: action=%v err=%v", action, err)
 	}
-	action, _, err = r.handleScaleDown(
+	action, _, err = r.scaleDownPass(
 		t.Context(),
 		shard,
 		"main",
@@ -512,9 +521,26 @@ func observeHealthyDisruption(
 		pods.Items = append(pods.Items, *pod)
 	}
 	if missing > 0 {
-		shard.Spec.Pools["support"] = multigresv1alpha1.PoolSpec{
+		support := multigresv1alpha1.PoolSpec{
 			Cells:           []multigresv1alpha1.CellName{multigresv1alpha1.CellName(cellName)},
 			ReplicasPerCell: ptr.To(int32(missing)),
+		}
+		shard.Spec.Pools["support"] = support
+		// The support pods are on the current spec, so a test's drifted pods
+		// are the only ones the shard has.
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if pod.Labels[metadata.LabelMultigresPool] != "support" {
+				continue
+			}
+			index, _ := resolvePodIndex(pod.Name)
+			desired, err := BuildPoolPod(shard, "support", cellName, support, index, r.Scheme)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod.Annotations = map[string]string{
+				metadata.AnnotationSpecHash: ComputeSpecHash(desired),
+			}
 		}
 	}
 	store := &disruptionTopo{}
@@ -533,6 +559,19 @@ func observeHealthyDisruption(
 		}
 		if pod.Labels[metadata.LabelMultigresCell] == "" {
 			pod.Labels[metadata.LabelMultigresCell] = cellName
+		}
+		// Pool maintenance and the walk act only on pods that carry the
+		// pool/cell's labels and that the shard owns.
+		for key, value := range buildPoolLabelsWithCell(shard,
+			pod.Labels[metadata.LabelMultigresPool], pod.Labels[metadata.LabelMultigresCell]) {
+			if pod.Labels[key] == "" {
+				pod.Labels[key] = value
+			}
+		}
+		if metav1.GetControllerOf(pod) == nil {
+			if err := ctrl.SetControllerReference(shard, pod, r.Scheme); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := r.Update(t.Context(), pod); err != nil {
 			t.Fatal(err)

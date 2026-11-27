@@ -212,7 +212,7 @@ func TestBackupStatus(t *testing.T) {
 				return store, nil
 			},
 		}
-		_, err := rr.reconcileDataPlane(ctx, get(), renderedConfig{})
+		_, err := rr.reconcileDataPlane(ctx, get(), renderedConfig{}, &shardRolloutTracker{})
 		require.NoError(t, err)
 		cond := meta.FindStatusCondition(get().Status.Conditions, backuphealth.ConditionHealthy)
 		require.NotNil(t, cond)
@@ -286,7 +286,7 @@ func TestBackupStatus(t *testing.T) {
 				client: rpcclient.NewFakeClient(),
 				err:    errors.New("certificate not issued"),
 			})
-			_, err := rr.reconcileDataPlane(t.Context(), get(), renderedConfig{})
+			_, err := rr.reconcileDataPlane(t.Context(), get(), renderedConfig{}, &shardRolloutTracker{})
 			require.NoError(t, err)
 			got := get()
 			handedOver(t, got)
@@ -303,7 +303,7 @@ func TestBackupStatus(t *testing.T) {
 		t.Run("without a primary to list backups from", func(t *testing.T) {
 			get := legacy(t, "upgrade-no-primary")
 			rr := reconciler(t, poolerclient.Static(rpcclient.NewFakeClient()))
-			_, err := rr.reconcileDataPlane(t.Context(), get(), renderedConfig{})
+			_, err := rr.reconcileDataPlane(t.Context(), get(), renderedConfig{}, &shardRolloutTracker{})
 			require.NoError(t, err)
 			got := get()
 			handedOver(t, got)

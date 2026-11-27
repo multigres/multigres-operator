@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -16,11 +16,86 @@ import (
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
 
-const disruptionRecoveryRequeue = 5 * time.Second
+// The shard controller watches its Pods and PVCs, so a pass that waits on one
+// of them (a pod created and not yet Ready, a pod or PVC being deleted, a
+// drain in progress) is restarted by the event that ends the wait and does
+// not poll. pendingBackstop is the requeue such a pass still asks for, so a
+// missed event cannot leave the wait unattended until the next resync. It is
+// longer than drain.DrainTimeout, which makes the backstop pass the one that
+// times a stuck drain out, and short enough that an operator watching a
+// rollout sees it resume within minutes. With upward jitter of
+// pendingBackstopJitter it falls in [6m, 9m], so shards that started waiting
+// together do not retry together.
+const (
+	pendingBackstop       = 6 * time.Minute
+	pendingBackstopJitter = 0.5
+)
 
-// repeatedRefusalRequeue replaces disruptionRecoveryRequeue once the same
-// not-Ready replacement refusal has been reported twice in a row.
-const repeatedRefusalRequeue = 30 * time.Second
+// rolloutRequeue returns the requeue the pass's rollout state asks for, or
+// zero for none. A refusal that only a pooler RPC can show the end of is
+// polled on the readiness backoff, from readinessBackoffMinDelay up to
+// readinessBackoffMaxDelay plus its jitter, measured from when that refusal
+// was first reported for the shard. Anything else the pass waits on ends in a watch
+// event and gets only the backstop.
+func (r *ShardReconciler) rolloutRequeue(
+	shard *multigresv1alpha1.Shard,
+	rollout *shardRolloutTracker,
+) time.Duration {
+	// A pass that started a disruption, or that waits for nothing, ended the
+	// refusal. One that stopped before the checks (a pod not Ready for a
+	// moment, a failed pool) says nothing about it.
+	ended := rollout.started || !rollout.isPending()
+	refused := r.recordDisruptionRefusal(
+		shard, rollout.blocked, rollout.waitingForRecovery, ended)
+	switch {
+	case rollout.waitingForRecovery:
+		return readinessBackoffDelay(refused)
+	case rollout.isPending():
+		return wait.Jitter(pendingBackstop, pendingBackstopJitter)
+	}
+	return 0
+}
+
+// disruptionRefusal is the refusal a shard's disruption walk is being polled
+// for and when it was first reported.
+type disruptionRefusal struct {
+	reason string
+	since  time.Time
+}
+
+// recordDisruptionRefusal tracks, per shard, how long the walk has been
+// refused for the same reason, and returns that duration. A different reason
+// starts over, so a rollout that moves from one refusal to the next is not
+// polled at the previous one's interval. Elapsed time rather than a count of
+// passes: pod events start passes too and must not advance the backoff. Nor
+// may they reset it: the record is dropped only when ended says the refusal
+// is over, not by every pass that did not reach the checks.
+func (r *ShardReconciler) recordDisruptionRefusal(
+	shard *multigresv1alpha1.Shard,
+	reason string,
+	refused, ended bool,
+) time.Duration {
+	key := fmt.Sprintf("%s/%s", shard.Namespace, shard.Name)
+	now := r.now()
+
+	r.disruptionRefusedMu.Lock()
+	defer r.disruptionRefusedMu.Unlock()
+	if !refused {
+		if ended {
+			delete(r.disruptionRefused, key)
+		}
+		return 0
+	}
+	if r.disruptionRefused == nil {
+		r.disruptionRefused = make(map[string]disruptionRefusal)
+	}
+	first, ok := r.disruptionRefused[key]
+	if !ok || first.reason != reason {
+		first = disruptionRefusal{reason: reason, since: now}
+		r.disruptionRefused[key] = first
+	}
+	return now.Sub(first.since)
+}
 
 // defaultUnregisteredPodGrace is ShardReconciler.UnregisteredPodGrace's
 // default: long enough that a pooler which is merely slow to start has
@@ -55,32 +130,6 @@ func (r *ShardReconciler) disruptionReader() client.Reader {
 	return r.APIReader
 }
 
-// canStartDisruption is a fresh preflight, independent of cached Shard status.
-// Existing operations must still be allowed to complete when it returns false.
-func (r *ShardReconciler) canStartDisruption(
-	ctx context.Context,
-	shard *multigresv1alpha1.Shard,
-	target *corev1.Pod,
-	tracker *shardRolloutTracker,
-) (allowed bool, err error) {
-	if tracker.waitingForRecovery {
-		return false, nil
-	}
-	defer func() {
-		if !allowed {
-			tracker.waitingForRecovery = true
-		}
-	}()
-	preflight, unobservable, err := r.observeDisruption(ctx, shard, nil)
-	if err != nil || preflight == nil {
-		if unobservable != "" {
-			r.recordDisruptionBlocked(shard, "", unobservable)
-		}
-		return false, err
-	}
-	return r.disruptionAllowed(shard, preflight, target), nil
-}
-
 // mayBeUnregistered reports whether pod, read fresh, has been scheduled for
 // longer than the grace and is not Ready, so a missing topology registration
 // means its pooler cannot start rather than that it has not started yet. The
@@ -101,8 +150,8 @@ func (r *ShardReconciler) mayBeUnregistered(pod *corev1.Pod) bool {
 }
 
 // disruptionPreflight is one uncached read of the shard's pool Pods and one
-// RPC observation of every pooler they run, shared by every candidate a
-// reconcile weighs so each decision rests on the same evidence.
+// RPC observation of every pooler they run, shared by every candidate the
+// disruption walk weighs so each decision rests on the same evidence.
 type disruptionPreflight struct {
 	pods        *corev1.PodList
 	observation *posture.DisruptionObservation
@@ -110,8 +159,8 @@ type disruptionPreflight struct {
 
 // observeDisruption returns a nil preflight, with no error, while any
 // disruption is already in flight or the data plane cannot be observed; both
-// mean wait. In the second case it also returns why. pods is a fresh
-// listDisruptionPods result the caller already holds, or nil to list here.
+// mean wait. In the second case it also returns why. pods is the walk's
+// fresh listDisruptionPods result.
 //
 // Every pool Pod is observed, whatever its readiness. Building the peer set
 // from Pod readiness would let the very condition a rollout repairs (Pods
@@ -122,31 +171,19 @@ func (r *ShardReconciler) observeDisruption(
 	ctx context.Context,
 	shard *multigresv1alpha1.Shard,
 	pods *corev1.PodList,
+	observed []string,
 ) (*disruptionPreflight, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if pods == nil {
-		var err error
-		if pods, err = r.listDisruptionPods(ctx, shard); err != nil {
-			return nil, "", fmt.Errorf("list ongoing shard disruptions: %w", err)
-		}
-	}
-	// Removing a pod that mounts a PVC being deleted moves that PVC one pod
-	// closer to finalizing with its data; see terminating_pvc.go.
-	terminating, err := mountedTerminatingPVCs(ctx, r.disruptionReader(), shard)
+	terminating, err := r.terminatingClaimsInUse(ctx, shard, pods.Items)
 	if err != nil {
-		return nil, "", fmt.Errorf("check for mounted PVCs being deleted: %w", err)
+		return nil, "", err
 	}
 	if len(terminating) > 0 {
 		return nil, "", nil
 	}
-	names := make([]string, 0, len(pods.Items))
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if pod.Annotations[metadata.AnnotationDrainState] != "" || !pod.DeletionTimestamp.IsZero() {
-			return nil, "", nil
-		}
-		names = append(names, pod.Name)
+	if disruptionInFlight(pods) {
+		return nil, "", nil
 	}
 	if r.PoolerClients == nil {
 		return nil, "no multipooler RPC client is configured", nil
@@ -166,7 +203,7 @@ func (r *ShardReconciler) observeDisruption(
 		return nil, "cannot open the shard's topology", nil
 	}
 	defer func() { _ = store.Close() }()
-	observation, err := posture.ObserveDisruption(ctx, store, rpc, shard, names)
+	observation, err := posture.ObserveDisruption(ctx, store, rpc, shard, observed)
 	if err != nil {
 		if errors.Is(err, posture.ErrTopologyUnavailable) {
 			log.FromContext(ctx).
@@ -183,107 +220,35 @@ func (r *ShardReconciler) observeDisruption(
 	return &disruptionPreflight{pods: pods, observation: observation}, "", nil
 }
 
-// disruptionCheck decides whether target may be removed on preflight's
-// evidence. Scheduling, readiness and age come from the preflight's fresh
-// read of the target.
+// disruptionCheck decides whether target, a pod of preflight's own read, may
+// be removed on preflight's evidence. Scheduling, readiness and age are the
+// target's as that read saw them.
 func (r *ShardReconciler) disruptionCheck(
 	shard *multigresv1alpha1.Shard,
 	preflight *disruptionPreflight,
 	target *corev1.Pod,
 ) error {
-	disruptionTarget := posture.DisruptionTarget{Name: target.Name}
-	for i := range preflight.pods.Items {
-		pod := &preflight.pods.Items[i]
-		if pod.Name != target.Name || pod.UID != target.UID {
-			continue
-		}
-		disruptionTarget.MayBeUnregistered = r.mayBeUnregistered(pod)
-		disruptionTarget.Unscheduled = pod.Spec.NodeName == "" &&
-			pod.Status.Phase == corev1.PodPending
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodScheduled &&
-				condition.Status == corev1.ConditionTrue {
-				disruptionTarget.Unscheduled = false
-			}
+	disruptionTarget := posture.DisruptionTarget{
+		Name:              target.Name,
+		MayBeUnregistered: r.mayBeUnregistered(target),
+		Unscheduled: target.Spec.NodeName == "" &&
+			target.Status.Phase == corev1.PodPending,
+	}
+	for _, condition := range target.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue {
+			disruptionTarget.Unscheduled = false
 		}
 	}
 	return preflight.observation.Check(shard, disruptionTarget)
 }
 
-func (r *ShardReconciler) disruptionAllowed(
-	shard *multigresv1alpha1.Shard,
-	preflight *disruptionPreflight,
-	target *corev1.Pod,
-) bool {
-	if err := r.disruptionCheck(shard, preflight, target); err != nil {
-		r.recordDisruptionBlocked(shard, target.Name, err.Error())
-		return false
-	}
-	return true
-}
-
 func (r *ShardReconciler) recordDisruptionBlocked(
 	shard *multigresv1alpha1.Shard,
-	target string,
 	reason string,
 ) {
 	if r.Recorder == nil {
 		return
 	}
-	if target == "" {
-		r.Recorder.Eventf(shard, "Normal", "DisruptionBlocked",
-			"Waiting for shard recovery before any removal: %s", reason)
-		return
-	}
 	r.Recorder.Eventf(shard, "Normal", "DisruptionBlocked",
-		"Waiting for shard recovery before removing %s: %s", target, reason)
-}
-
-// selectShardScaleDownPod ranks removable pods across pool/cell boundaries.
-// Active surges in other cells are retained by their maintenance workflow;
-// released local surges are already present in localExtras.
-func (r *ShardReconciler) selectShardScaleDownPod(
-	ctx context.Context,
-	shard *multigresv1alpha1.Shard,
-	localExtras []*corev1.Pod,
-) (*corev1.Pod, error) {
-	pods, err := r.listDisruptionPods(ctx, shard)
-	if err != nil {
-		return nil, fmt.Errorf("list shard scale-down candidates: %w", err)
-	}
-	candidates := map[string]*corev1.Pod{}
-	for _, pod := range localExtras {
-		candidates[pod.Name] = pod
-	}
-	groups := map[string]map[string]*corev1.Pod{}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		key := pod.Labels[metadata.LabelMultigresPool] + "/" + pod.Labels[metadata.LabelMultigresCell]
-		if groups[key] == nil {
-			groups[key] = map[string]*corev1.Pod{}
-		}
-		groups[key][pod.Name] = pod
-	}
-	for poolName, pool := range shard.Spec.Pools {
-		for _, cell := range pool.Cells {
-			group := groups[string(poolName)+"/"+string(cell)]
-			replicas := poolReplicas(pool)
-			for _, pod := range group {
-				index, ok := resolvePodIndex(pod.Name)
-				if ok && index >= int(replicas) && !isMaintenanceSurge(pod) {
-					candidates[pod.Name] = pod
-				}
-			}
-		}
-	}
-	names := make([]string, 0, len(candidates))
-	for name := range candidates {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	ordered := make([]*corev1.Pod, 0, len(names))
-	for _, name := range names {
-		ordered = append(ordered, candidates[name])
-	}
-	return r.selectPodToDrain(ctx, ordered, shard), nil
+		"Waiting for shard recovery before removing a pod: %s", reason)
 }

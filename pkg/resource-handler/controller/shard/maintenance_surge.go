@@ -325,12 +325,28 @@ func (r *ShardReconciler) maintenanceCapacityWithout(
 	); err != nil {
 		return false, fmt.Errorf("list shard poolers for maintenance capacity: %w", err)
 	}
+	poolers.Items = r.managedPoolPods(ctx, shard, poolers.Items)
 
+	return maintenanceCapacityAmong(shard, poolers.Items, cellName, excludedPodName, available), nil
+}
+
+// maintenanceCapacityAmong is maintenanceCapacityWithout over poolers, the
+// shard's pool Pods as the caller already read them.
+func maintenanceCapacityAmong(
+	shard *multigresv1alpha1.Shard,
+	poolers []corev1.Pod,
+	cellName string,
+	excludedPodName string,
+	available func(*corev1.Pod) bool,
+) bool {
+	if !requiresTwoCellMaintenanceSurge(shard) {
+		return true
+	}
 	var surgeCount int32
 	readyAfterDisruption := int32(0)
 	readyInCellAfterDisruption := 0
-	for i := range poolers.Items {
-		pod := &poolers.Items[i]
+	for i := range poolers {
+		pod := &poolers[i]
 		if isActiveMaintenanceSurge(shard, pod) {
 			surgeCount++
 		}
@@ -344,7 +360,7 @@ func (r *ShardReconciler) maintenanceCapacityWithout(
 	}
 
 	requiredReady := minAvailableForTotal(shardTotalReplicas(shard) + surgeCount)
-	return readyAfterDisruption >= requiredReady && readyInCellAfterDisruption >= 1, nil
+	return readyAfterDisruption >= requiredReady && readyInCellAfterDisruption >= 1
 }
 
 func (r *ShardReconciler) listCellPoolers(
@@ -363,6 +379,7 @@ func (r *ShardReconciler) listCellPoolers(
 	); err != nil {
 		return nil, fmt.Errorf("list poolers in cell %s: %w", cellName, err)
 	}
+	pods.Items = r.managedPoolPods(ctx, shard, pods.Items)
 	return pods, nil
 }
 

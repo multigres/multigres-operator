@@ -187,12 +187,15 @@ func (c *C) watchOneDisruption() func() []string {
 			}
 		}
 	})
-	var once sync.Once
+	halt := sync.OnceFunc(func() {
+		close(stop)
+		wg.Wait()
+	})
+	// A scenario that fails before it stops the sampler must not leave it
+	// listing pods for the rest of the suite.
+	c.Cleanup(halt)
 	return func() []string {
-		once.Do(func() {
-			close(stop)
-			wg.Wait()
-		})
+		halt()
 		return order
 	}
 }

@@ -221,6 +221,10 @@ type poolerFault struct {
 	// neverRegisters keeps the pooler out of topology, as for a multipooler
 	// that cannot start on its spec.
 	neverRegisters bool
+	// disconnected keeps a follower out of the primary's connected
+	// followers while it still answers and serves, as for a standby whose
+	// replication stream has dropped.
+	disconnected bool
 }
 
 // Model installs m for ns until the returned function is called.
@@ -505,7 +509,8 @@ func (p *poolerSim) tickShard(
 				continue
 			}
 			cohort = append(cohort, ids[i])
-			if i > 0 && (faults[i] == nil || (!faults[i].unreachable && !faults[i].notServing)) {
+			if i > 0 && (faults[i] == nil ||
+				(!faults[i].unreachable && !faults[i].notServing && !faults[i].disconnected)) {
 				followers = append(followers, ids[i])
 			}
 		}
