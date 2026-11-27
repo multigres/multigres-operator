@@ -61,6 +61,7 @@ import (
 	cellcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/cell"
 	shardcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/shard"
 	toposervercontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/toposerver"
+	"github.com/multigres/multigres-operator/pkg/util/certs"
 	multigreswebhook "github.com/multigres/multigres-operator/pkg/webhook"
 
 	gencert "github.com/multigres/multigres-operator/pkg/cert"
@@ -205,6 +206,16 @@ func main() {
 			"clusters as soon as operator configuration changes; 'lazy' holds each "+
 			"cluster on its current set until spec.imageUpdatePolicy."+
 			"acknowledgedRevision names the new set's revision.",
+	)
+
+	var trustDomain string
+	flag.StringVar(
+		&trustDomain,
+		"trust-domain",
+		certs.DefaultTrustDomain,
+		"SPIFFE trust domain used in the URI SANs of the topology client and "+
+			"administrator certificates (spiffe://<trust-domain>/...). Issuer gates "+
+			"match on it. Changing it reissues those certificates.",
 	)
 
 	// Webhook Flag Configuration
@@ -544,6 +555,7 @@ func main() {
 		PoolerClientCache: poolerClients,
 		Gate:              gate,
 		DialContext:       laptopDial,
+		TrustDomain:       trustDomain,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "MultigresCluster")
 		os.Exit(1)
@@ -576,6 +588,9 @@ func main() {
 		Recorder:    mgr.GetEventRecorderFor("toposerver-controller"),
 		Gate:        gate,
 		DialContext: laptopDial,
+
+		OperatorNamespace: defaultNS,
+		TrustDomain:       trustDomain,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TopoServer")
 		os.Exit(1)

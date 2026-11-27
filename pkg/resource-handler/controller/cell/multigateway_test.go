@@ -19,6 +19,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/testutil"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 	"github.com/multigres/multigres-operator/pkg/util/name"
 )
@@ -2642,6 +2643,11 @@ func TestBuildMultigatewayDeployment_TopoClientTLS(t *testing.T) {
 		if !mounted {
 			t.Error("multigateway does not mount the topo client certificate")
 		}
+		testutil.AssertTopoVolumeSecret(
+			t,
+			got.Spec.Template.Spec.Volumes,
+			"test-cluster-topo-client-tls",
+		)
 	})
 
 	t.Run("renders unchanged when the reference carries no credential", func(t *testing.T) {

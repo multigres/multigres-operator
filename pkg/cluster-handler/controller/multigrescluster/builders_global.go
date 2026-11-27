@@ -80,6 +80,7 @@ func BuildGlobalTopoServer(
 			Annotations: annotations,
 		},
 		Spec: multigresv1alpha1.TopoServerSpec{
+			Auth: spec.Auth,
 			Etcd: &multigresv1alpha1.EtcdSpec{
 				Image:       spec.Etcd.Image,
 				Replicas:    spec.Etcd.Replicas,

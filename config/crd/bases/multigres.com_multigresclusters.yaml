@@ -8458,6 +8458,20 @@ spec:
                 description: GlobalTopoServer defines the cluster-wide global topology
                   server.
                 properties:
+                  auth:
+                    description: |-
+                      Auth turns on certificate-based etcd authorization for the managed
+                      topology server. It requires topology TLS and is copied to the managed
+                      TopoServer after template resolution.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled turns on etcd authentication and per-cluster permissions.
+                          Once true, it cannot be set to false or removed.
+                        type: boolean
+                    required:
+                    - enabled
+                    type: object
                   etcd:
                     description: Etcd defines an inline managed Etcd cluster.
                     properties:
@@ -9874,6 +9888,8 @@ spec:
                 - message: must specify exactly one of 'etcd', 'external', or 'templateRef'
                   rule: '[has(self.etcd), has(self.external), has(self.templateRef)].filter(x,
                     x).size() == 1'
+                - message: managed authorization requires a managed topology server
+                  rule: '!has(self.auth) || !self.auth.enabled || !has(self.external)'
               imageUpdatePolicy:
                 description: |-
                   ImageUpdatePolicy controls when the cluster adopts a changed
@@ -12487,6 +12503,16 @@ spec:
             - message: lite mode requires exactly one cluster cell
               rule: '!has(self.mode) || self.mode != ''lite'' || size(self.cells)
                 == 1'
+            - message: managed authorization requires topology TLS
+              rule: '!has(self.globalTopoServer) || !has(self.globalTopoServer.auth)
+                || !self.globalTopoServer.auth.enabled || (has(self.topoTLS) && has(self.topoTLS.enabled)
+                && self.topoTLS.enabled)'
+            - message: managed authorization cannot be disabled unless moving to an
+                external topology server
+              rule: '!has(oldSelf.globalTopoServer) || !has(oldSelf.globalTopoServer.auth)
+                || !oldSelf.globalTopoServer.auth.enabled || (has(self.globalTopoServer)
+                && ((has(self.globalTopoServer.auth) && self.globalTopoServer.auth.enabled)
+                || has(self.globalTopoServer.external)))'
           status:
             description: MultigresClusterStatus defines the observed state.
             properties:

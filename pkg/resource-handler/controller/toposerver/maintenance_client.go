@@ -11,9 +11,9 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	multigresv1alpha1 "github.com/multigres/multigres-operator/api/v1alpha1"
+	"github.com/multigres/multigres-operator/pkg/topology"
 )
 
 // EtcdMaintenanceClient is the seam the test suite injects an etcd simulator
@@ -30,10 +30,16 @@ type EtcdMaintenanceClient interface {
 
 // Each endpoint has a separate client. A linearizable health read must reach
 // that member, not silently fail over to a healthy endpoint in a client pool.
+// Auth RPCs are the opposite: any member serves them, so they go through a
+// client over every member and keep working while one is down.
 type memberClients struct {
+	clientv3.Auth
 	clients map[string]*clientv3.Client
 	first   *clientv3.Client
+	all     *clientv3.Client
 }
+
+var _ etcdAuthClient = (*memberClients)(nil)
 
 func (r *TopoServerReconciler) maintenanceClient(
 	ctx context.Context,
@@ -46,9 +52,10 @@ func (r *TopoServerReconciler) maintenanceClient(
 	if err != nil {
 		return nil, err
 	}
+	endpoints := maintenanceEndpoints(ts)
 	result := &memberClients{clients: make(map[string]*clientv3.Client)}
-	for _, endpoint := range maintenanceEndpoints(ts) {
-		c, err := clientv3.New(r.maintenanceClientConfig(ctx, endpoint, tlsConfig))
+	for _, endpoint := range endpoints {
+		c, err := clientv3.New(r.maintenanceClientConfig(ctx, []string{endpoint}, tlsConfig))
 		if err != nil {
 			result.Close()
 			return nil, err
@@ -58,17 +65,23 @@ func (r *TopoServerReconciler) maintenanceClient(
 			result.first = c
 		}
 	}
+	all, err := clientv3.New(r.maintenanceClientConfig(ctx, endpoints, tlsConfig))
+	if err != nil {
+		result.Close()
+		return nil, err
+	}
+	result.all, result.Auth = all, all.Auth
 	return result, nil
 }
 
-// maintenanceClientConfig builds the clientv3.Config for a single etcd member.
+// maintenanceClientConfig builds the clientv3.Config for the given etcd members.
 func (r *TopoServerReconciler) maintenanceClientConfig(
 	ctx context.Context,
-	endpoint string,
+	endpoints []string,
 	tlsConfig *tls.Config,
 ) clientv3.Config {
 	cfg := clientv3.Config{
-		Endpoints:   []string{endpoint},
+		Endpoints:   endpoints,
 		TLS:         tlsConfig,
 		DialTimeout: 5 * time.Second,
 		Context:     ctx,
@@ -121,6 +134,9 @@ func (c *memberClients) Close() {
 	for _, c := range c.clients {
 		_ = c.Close()
 	}
+	if c.all != nil {
+		_ = c.all.Close()
+	}
 }
 
 func (r *TopoServerReconciler) maintenanceTLSConfig(
@@ -130,15 +146,12 @@ func (r *TopoServerReconciler) maintenanceTLSConfig(
 	if !ts.Spec.TLS.IsEnabled() {
 		return nil, nil
 	}
-	secret := &corev1.Secret{}
-	key := client.ObjectKey{
-		Namespace: ts.Namespace,
-		Name:      multigresv1alpha1.TopoServerCertSecretName(ts.Name),
-	}
-	if err := r.maintenanceReader().Get(ctx, key, secret); err != nil {
+	secret, err := topology.ManagedProbeTLSSecret(
+		ctx, r.maintenanceReader(), r.OperatorNamespace, ts,
+	)
+	if err != nil {
 		return nil, fmt.Errorf("reading etcd maintenance credential: %w", err)
 	}
-	// The managed serving identity also has client-auth usage for peer TLS.
 	cert, err := tls.X509KeyPair(
 		secret.Data[corev1.TLSCertKey],
 		secret.Data[corev1.TLSPrivateKeyKey],
@@ -148,7 +161,7 @@ func (r *TopoServerReconciler) maintenanceTLSConfig(
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(secret.Data["ca.crt"]) {
-		return nil, fmt.Errorf("etcd maintenance Secret %q has no valid ca.crt", key.Name)
+		return nil, fmt.Errorf("etcd maintenance Secret %q has no valid ca.crt", secret.Name)
 	}
 	return &tls.Config{
 		MinVersion:   tls.VersionTLS12,

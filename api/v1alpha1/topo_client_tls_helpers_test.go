@@ -16,7 +16,9 @@ limitations under the License.
 
 package v1alpha1
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestTopoClientTLSConfigured(t *testing.T) {
 	tests := map[string]struct {

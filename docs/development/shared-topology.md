@@ -18,7 +18,9 @@ The `multigres.com/project-ref` annotation is the preferred stable
 `<cluster-id>`. Without that annotation, the operator uses two path segments,
 `<namespace>/<MultigresCluster name>`, so clusters with the same name in
 different namespaces cannot collide. Values that are not safe path segments
-are percent-encoded.
+are percent-encoded. The SPIFFE URI SAN of the client certificate encodes an
+unsafe project ref differently. See
+[SPIFFE URI SANs](topology-authentication.md#spiffe-uri-sans).
 
 When the operator issues the cluster's topology client certificate (see
 [Client credentials](#client-credentials)), the cluster root is also that
@@ -26,17 +28,17 @@ certificate's common name and must fit within 64 bytes. If the namespace/name
 fallback exceeds that limit, it becomes `/multigres-fallback/<hash>`, where
 `<hash>` is the unpadded base64url SHA-256 digest of the original escaped
 cluster root. Shorter roots, plaintext roots, and roots for an external
-topology server that brings its own Secrets keep their existing paths. The `topoTLS` setting
-is immutable, so this does not move running plaintext clusters to another
-keyspace.
+topology server that brings its own Secrets keep their existing paths. The
+`topoTLS` setting is immutable, so this does not move running plaintext
+clusters to another keyspace.
 
 If an explicit global or cell root points outside the shortened identity, the
 operator reports a certificate failure instead of changing it. Align the
 configured root and migrate any existing topology data before retrying.
 
-Explicit project refs are never shortened. When the operator issues the
-client certificate, they must fit within 53 bytes after percent-encoding. An oversized ref prevents
-certificate creation and sets `TopologyReady=False` with reason
+Explicit project refs are never shortened. When the operator issues the client
+certificate, they must fit within 53 bytes after percent-encoding. An oversized
+ref prevents certificate creation and sets `TopologyReady=False` with reason
 `TopoCertificateFailed`, including the root length and limit. The condition
 clears after a successful topology connection.
 
@@ -59,18 +61,21 @@ existing cluster's data.
 
 ## Client credentials
 
-With `topoTLS` enabled, the operator issues each cluster a client certificate
-from `topoTLS.issuerName`, with the cluster root as its common name, into the
-`<cluster>-topo-client-tls` Secret. cert-manager writes `ca.crt` into the same
-Secret, so it is both the client keypair and the CA bundle that verifies the
-topology server.
+With `topoTLS` enabled, the operator issues one cluster client certificate from
+`topoTLS.issuerName` into `<cluster>-topo-client-tls`. Every topology client in
+the cluster uses that Secret, which also holds the issuer's `ca.crt`.
+[Topology authentication](topology-authentication.md) describes its common
+name and etcd permissions.
 
-This applies to a managed topology server and to an external one that sets
-neither `caSecret` nor `clientCertSecret`. The second case is how a cluster
-connects to a topology server shared by several clusters: the shared server's
-serving certificate and every cluster's client certificate come from the same
-issuer. An external server that sets either Secret keeps them, and the operator
-issues nothing.
+The operator issues these credentials for a managed topology server and for an
+external one that sets neither `caSecret` nor `clientCertSecret`. The second
+case is how a cluster connects to a topology server shared by several clusters:
+the shared server's serving certificate and every cluster's client certificate
+come from the same issuer. An external server that sets either Secret keeps
+them, and the operator issues nothing.
+
+The certificate's common name is the cluster root. The root length limits above
+exist because X.509 common names are bounded.
 
 ## Rollout and existing clusters
 
@@ -98,3 +103,10 @@ who provisions the etcd StatefulSet. Cluster-wide shared-etcd lifecycle,
 credentials, placement, and ownership are separate infrastructure/operator
 work. Until that is deployed, the same root scheme also prevents collisions
 when multiple clusters are pointed at an externally managed etcd service.
+
+A cluster-owned server can serve other clusters. Retiring it after the owner
+moves to an external topology does not check those clusters, and deleting the
+owner cluster still deletes the server and its volumes, so move the tenants
+first. When granting a tenant access, the operator does not recognize aliases
+to a TopoServer (IP addresses, CNAMEs, ExternalName Services, load balancers)
+as that server.

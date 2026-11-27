@@ -34,6 +34,14 @@ func ForCluster(cluster *multigresv1alpha1.MultigresCluster) (Roots, error) {
 	)
 }
 
+// HasProjectRef reports whether the cluster names its project, which is what
+// puts its topology root at /multigres/<ref>. A cluster on a shared,
+// auth-managed topology server must have one, because a root derived from
+// namespace and name can land inside another cluster's prefix.
+func HasProjectRef(cluster *multigresv1alpha1.MultigresCluster) bool {
+	return cluster.Annotations[metadata.AnnotationProjectRef] != ""
+}
+
 // NewRoots uses the project ref, or namespace/name if absent.
 // With topoTLS, fallbacks over the CN limit are hashed. Explicit refs and
 // plaintext roots are unchanged.
@@ -106,14 +114,19 @@ func encodeSegment(kind, value string) (string, error) {
 		return "", fmt.Errorf("%s must not contain a NUL byte", kind)
 	}
 
-	encoded := url.PathEscape(value)
-	// PathEscape intentionally leaves dot segments unchanged. Encode them so
-	// downstream path-cleaning cannot change the intended identity.
-	switch encoded {
+	return EscapePathSegment(value), nil
+}
+
+// EscapePathSegment escapes value as one path segment. PathEscape leaves dot
+// segments unchanged, so they are encoded to keep path cleaning from changing
+// the intended identity.
+func EscapePathSegment(value string) string {
+	switch encoded := url.PathEscape(value); encoded {
 	case ".":
-		encoded = "%2E"
+		return "%2E"
 	case "..":
-		encoded = "%2E%2E"
+		return "%2E%2E"
+	default:
+		return encoded
 	}
-	return encoded, nil
 }

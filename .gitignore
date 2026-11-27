@@ -36,3 +36,4 @@ agent-docs/
 
 # DevSpace
 .devspace
+kubeconfig-*.yaml

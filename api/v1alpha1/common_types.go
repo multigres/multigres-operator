@@ -17,6 +17,9 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -454,6 +457,27 @@ func TopoServerCertName(toposerverName string) string {
 // Certificate name.
 func TopoServerCertSecretName(toposerverName string) string {
 	return TopoServerCertName(toposerverName)
+}
+
+// DefaultIssuerName is the cert-manager ClusterIssuer used when a caller does
+// not name one.
+const DefaultIssuerName = "supabase-issuer"
+
+// TopoAdminCertName returns the name of the operator's etcd administrator
+// Certificate for one topology issuer. There is one per issuer, in the
+// operator's namespace, shared by every managed TopoServer that uses the
+// issuer. The name is derived from the issuer kind and name so it is
+// deterministic and always a valid DNS label.
+func TopoAdminCertName(issuerKind, issuerName string) string {
+	sum := sha256.Sum256([]byte(issuerKind + "/" + issuerName))
+	return "multigres-operator-topo-admin-" + hex.EncodeToString(sum[:5])
+}
+
+// TopoAdminCertSecretName returns the Secret cert-manager writes the
+// administrator Certificate for an issuer into. By convention it matches the
+// Certificate name.
+func TopoAdminCertSecretName(issuerKind, issuerName string) string {
+	return TopoAdminCertName(issuerKind, issuerName)
 }
 
 // TopoClientCertName returns the cert-manager Certificate name for the client

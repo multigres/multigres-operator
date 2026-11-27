@@ -429,3 +429,20 @@ func TestApplyOneCreates(t *testing.T) {
 		t.Fatalf("expected Certificate to be created, got error %v", err)
 	}
 }
+
+func TestBuildSharedHasNoOwnerAndOmitsEmptyURIs(t *testing.T) {
+	cert := BuildShared("operator-ns", Spec{Name: "c", SecretName: "s", CommonName: "cn"})
+	if cert.GetNamespace() != "operator-ns" || len(cert.GetOwnerReferences()) != 0 {
+		t.Fatalf("namespace=%q owners=%v", cert.GetNamespace(), cert.GetOwnerReferences())
+	}
+	if _, found, _ := unstructured.NestedSlice(cert.Object, "spec", "uris"); found {
+		t.Fatal("uris present although none were requested")
+	}
+	cert = BuildShared("operator-ns", Spec{
+		Name: "c", SecretName: "s", CommonName: "cn", URIs: []any{SPIFFEURI("", "cp/x")},
+	})
+	uris, _, _ := unstructured.NestedSlice(cert.Object, "spec", "uris")
+	if len(uris) != 1 || uris[0] != "spiffe://"+DefaultTrustDomain+"/cp/x" {
+		t.Fatalf("uris = %v", uris)
+	}
+}
