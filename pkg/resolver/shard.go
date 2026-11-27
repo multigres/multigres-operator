@@ -102,22 +102,22 @@ func (r *Resolver) ResolveShard(
 			slices.Sort(p.Cells)
 		}
 
-		// Default replicasPerCell so the pool has at least 2 total poolers,
-		// the minimum the default AT_LEAST_2 durability policy needs to elect
-		// a primary. A multi-cell pool reaches 2 total at 1 per cell; a
-		// single-cell pool needs 2. Lite mode runs one static-leader pooler,
-		// which does not need a second one.
+		// Default replicasPerCell so a new shard can bootstrap: multiorch
+		// only initializes a cohort that survives losing any one pooler
+		// (see MinFailureSafePoolers). A single-cell pool needs 3, a two-cell
+		// pool 2 per cell, and three or more cells reach it at the per-cell
+		// default. Lite mode runs one static-leader pooler, which does not
+		// form a cohort.
 		if p.ReplicasPerCell == nil && !lite {
 			effectiveCells := len(p.Cells)
 			if effectiveCells == 0 {
 				effectiveCells = len(opts.AllCellNames)
 			}
-			// A single-cell pool needs 2 replicas in that cell to reach the 2
-			// total poolers AT_LEAST_2 requires. Multi-cell pools reach 2 total
-			// at the per-cell default. effectiveCells == 0 means the cell set
-			// isn't known here (pure template resolution).
-			if effectiveCells == 1 {
-				p.ReplicasPerCell = ptr.To(int32(2))
+			// effectiveCells == 0 means the cell set isn't known here (pure
+			// template resolution); the helper then returns the per-cell
+			// default and nothing is set.
+			if n := failureSafeReplicasPerCell(effectiveCells); n > DefaultPoolReplicasPerCell {
+				p.ReplicasPerCell = ptr.To(n)
 			}
 		}
 

@@ -9,6 +9,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/multigres/multigres-operator/pkg/resolver"
 	shardcontroller "github.com/multigres/multigres-operator/pkg/resource-handler/controller/shard"
 	"github.com/multigres/multigres-operator/pkg/util/metadata"
 )
@@ -345,15 +346,18 @@ func testChildCRThrash(t *testing.T) {
 
 	c.WaitForClusterHealthy(cluster)
 
-	c.Eventually(60*time.Second, "the shard to report one primary and one replica",
+	// MinimalCluster's single-cell pool resolves to the failure-safe minimum
+	// of poolers: one primary, the rest replicas.
+	wantReplicas := int(resolver.MinFailureSafePoolers) - 1
+	c.Eventually(60*time.Second, "the shard to report one primary and its replicas",
 		func() error {
 			members, err := MembersOf(c.Context(), c.Client(), key)
 			if err != nil {
 				return err
 			}
-			if len(members.Replicas) != 1 || len(members.Quarantined) != 0 {
+			if len(members.Replicas) != wantReplicas || len(members.Quarantined) != 0 {
 				return fmt.Errorf(
-					"want 1 primary + 1 replica + 0 quarantined, got %+v", members,
+					"want 1 primary + %d replicas + 0 quarantined, got %+v", wantReplicas, members,
 				)
 			}
 			return nil

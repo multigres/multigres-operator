@@ -81,4 +81,4 @@ When using `MULTI_CELL_AT_LEAST_2`, ensure your shard's pools span at least 2 ce
 
 ## Replica Count Considerations
 
-Pools default to `replicasPerCell: 1`. `AT_LEAST_2` requires 2 total poolers; `MULTI_CELL_AT_LEAST_2` requires poolers in 2 cells. For high availability, use at least 3 total poolers so the policy remains achievable while one pooler is unavailable.
+Pools default to `replicasPerCell: 1`, except that a pool spanning one cell defaults to 3 and a pool spanning two cells defaults to 2, so a new shard always has at least 3 poolers. Multiorch only bootstraps a shard whose cohort can lose any one pooler and still meet its durability policy, which takes 3 poolers under both `AT_LEAST_2` and `MULTI_CELL_AT_LEAST_2`; `MULTI_CELL_AT_LEAST_2` also requires poolers in 2 cells. The webhook warns when a layout meets the policy but could not bootstrap.

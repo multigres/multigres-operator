@@ -77,9 +77,10 @@ func lifecycleShardRef(clusterName string) *Shard {
 // the request outright ("only dynamically provisioned pvc can be resized").
 // So the StorageClass has to be in place, and referenced, from this create.
 //
-// The shape mirrors what resolver.PopulateClusterDefaults would have
-// injected for a MinimalCluster (one pool, one cell, the two-replica floor
-// pkg/resolver/shard.go computes for a single-cell pool): every attribute
+// The shape is one pool in one cell with two replicas, which is what
+// resolver.PopulateClusterDefaults injected for a MinimalCluster before the
+// single-cell default moved to 3 (#684); it is kept at 2 for the pin in
+// step 2 of TestShardLifecycle. Every attribute
 // this script mutates is still reached by changing a cluster that already
 // exists, this just makes explicit at creation the one attribute (storage
 // class) that cannot be introduced by a later mutation.
@@ -344,8 +345,8 @@ func lifecycleResources(cpuReq, memReq, cpuLim, memLim string) corev1.ResourceRe
 }
 
 // TestShardLifecycle starts from the smallest cluster this suite can
-// converge (one pool, two pods, under the two-replica floor a single-cell
-// pool always resolves to) and mutates it forward: resource change, storage
+// converge (one pool, two pods, set explicitly; a single-cell pool now
+// defaults to 3) and mutates it forward: resource change, storage
 // change, scale up, a second resource change with three members present,
 // and scale back down. Every attribute is reached by changing a cluster
 // that already exists, never by constructing the end state, so this
@@ -379,12 +380,14 @@ func TestShardLifecycle(t *testing.T) {
 	// Step 1: converge, out of the script's sight, and then open the script
 	// over what converging produced.
 	//
-	// lifecycleCluster mirrors what MinimalCluster plus the resolver's own
-	// defaults would produce (one cell, one pool at the two-replica floor
-	// pkg/resolver/shard.go computes for a single-cell pool under the default
-	// AT_LEAST_2 durability policy), so "the smallest possible cluster"
-	// already has a primary and a replica the moment it is healthy: pods 0
-	// and 1, their data PVCs, and the shard's one shared backup PVC.
+	// lifecycleCluster sets the two-replica single-cell pool explicitly (one
+	// cell, one pool of 2). The resolver used to default a single-cell pool to
+	// 2; it now defaults to 3, the smallest cohort multiorch will bootstrap
+	// (#684), so this is no longer what MinimalCluster resolves to. Keeping 2
+	// here keeps the step 2 pin below about a two-member pool. "The smallest
+	// possible cluster" here already has a primary and a replica the moment
+	// it is healthy: pods 0 and 1, their data PVCs, and the shard's one shared
+	// backup PVC.
 	//
 	// The watch therefore opens after its own fixture, against this suite's
 	// standing rule that a stream is established before the objects it
@@ -585,16 +588,16 @@ func TestShardLifecycle(t *testing.T) {
 	// a two-member pool categorically, not just under this suite's default.
 	//
 	// This step is pinned, where steps 5 and 6 below are not, because this one
-	// is a claim about the operator. A single-cell pool takes ReplicasPerCell 2
-	// from the resolver's own default (pkg/resolver/shard.go:102-113), and the
-	// operator's purpose-built escape hatch for a member that cannot be
-	// disrupted, reconcileCellMaintenanceSurge, is gated on
-	// MULTI_CELL_AT_LEAST_2 with exactly two cells
-	// (maintenance_surge.go:349-351), so the shape the operator defaults to
-	// gets no surge and no other route. The pin may never expire, which is
-	// worth saying plainly: it expires if the majority rule changes for a
-	// 2-cohort, if the single-cell default moves off 2, or if the surge gate
-	// widens to the condition that actually triggers it, and not otherwise.
+	// is a claim about the operator. A single-cell pool no longer gets 2
+	// replicas by default (the resolver defaults it to 3 since #684), but a
+	// pool that sets replicasPerCell: 2 still does, and the operator's
+	// purpose-built escape hatch for a member that cannot be disrupted,
+	// reconcileCellMaintenanceSurge, is gated on MULTI_CELL_AT_LEAST_2 with
+	// exactly two cells (maintenance_surge.go:349-351), so that shape gets no
+	// surge and no other route. The pin may never expire, which is worth
+	// saying plainly: it expires if the majority rule changes for a 2-cohort
+	// or if the surge gate widens to the condition that actually triggers it,
+	// and not otherwise.
 	//
 	// The pin is that no drain ever starts, and it is written as exactly that:
 	// the drain state annotation never appears on any pod in the namespace.

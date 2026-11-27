@@ -271,7 +271,7 @@ Multigres uses a configurable **durability policy** to control synchronous repli
 | **2** | 1 primary + 1 standby | **Downtime during upgrades.** Draining the standby leaves zero synchronous standbys, violating `AT_LEAST_2`. Upstream multigres rejects the `UpdateSynchronousStandbyList REMOVE` because it would empty the synchronous standby list. |
 | **3** (recommended) | 1 primary + 2 standbys | **Zero-downtime upgrades.** One standby can be drained while the other maintains quorum. |
 
-Pools default to `replicasPerCell: 1`. `AT_LEAST_2` requires 2 total poolers; `MULTI_CELL_AT_LEAST_2` requires poolers in 2 cells. For high availability, use at least 3 total poolers so the policy remains achievable while one pooler is unavailable.
+Pools default to `replicasPerCell: 1`, except that a pool spanning one cell defaults to 3 and a pool spanning two cells defaults to 2, so a new shard always has at least 3 poolers. Multiorch only bootstraps a shard whose cohort can lose any one pooler and still meet its durability policy, which takes 3 poolers under both `AT_LEAST_2` and `MULTI_CELL_AT_LEAST_2`; `MULTI_CELL_AT_LEAST_2` also requires poolers in 2 cells. The webhook warns when a layout meets the policy but could not bootstrap.
 
 📖 **Full documentation:** [Durability Policy](docs/durability-policy.md)
 

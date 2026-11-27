@@ -980,8 +980,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 									"default": {
 										Type:  "readWrite",
 										Cells: []multigresv1alpha1.CellName{"zone-a"},
-										// Single-cell pool defaults to 2 (AT_LEAST_2 minimum).
-										ReplicasPerCell: ptr.To(int32(2)),
+										// Single-cell pool defaults to 3, the smallest cohort
+										// multiorch will bootstrap under AT_LEAST_2.
+										ReplicasPerCell: ptr.To(int32(3)),
 										Storage:         multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize}, // "1Gi"
 										Postgres: multigresv1alpha1.ContainerConfig{
 											Resources: resolver.DefaultResourcesPostgres(),
@@ -1349,8 +1350,9 @@ func TestMultigresCluster_HappyPath(t *testing.T) {
 									"default": {
 										Type:  "readWrite",
 										Cells: []multigresv1alpha1.CellName{"zone-a"},
-										// Single-cell pool defaults to 2 (AT_LEAST_2 minimum).
-										ReplicasPerCell: ptr.To(int32(2)),
+										// Single-cell pool defaults to 3, the smallest cohort
+										// multiorch will bootstrap under AT_LEAST_2.
+										ReplicasPerCell: ptr.To(int32(3)),
 										Storage:         multigresv1alpha1.StorageSpec{Size: resolver.DefaultEtcdStorageSize}, // "1Gi"
 										Postgres: multigresv1alpha1.ContainerConfig{
 											Resources: resolver.DefaultResourcesPostgres(),
