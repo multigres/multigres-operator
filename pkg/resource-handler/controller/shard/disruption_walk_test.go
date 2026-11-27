@@ -781,6 +781,48 @@ func TestPrimaryWaitsOnlyForKeptSurge(t *testing.T) {
 	}
 }
 
+func TestPrimaryOrderTracksSurgeAdoptedByPoolMaintenance(t *testing.T) {
+	f := newWalkFixtureIn(t, []string{"alpha", "beta", "peer"}, func(pool string) string {
+		if pool == "beta" {
+			return "b"
+		}
+		return "a"
+	}, 1, 0)
+	f.shard.Spec.DurabilityPolicy = multiCellAtLeast2Policy
+
+	// beta has one Ready base pod and an old surplus pod that maintenance can
+	// adopt instead of creating new capacity. Only the primary has base drift.
+	old := f.shard.Spec.Pools["beta"]
+	old.FSGroup = ptr.To(int64(1234))
+	surplus, err := BuildPoolPod(f.shard, "beta", "b", old, 1, f.r.Scheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.base.Create(t.Context(), surplus); err != nil {
+		t.Fatal(err)
+	}
+	f.names = append(f.names, surplus.Name)
+	f.update(t, 1, func(p *corev1.Pod) {
+		p.Annotations[metadata.AnnotationMaintenanceRequested] = maintenanceAnnotationTrue
+	})
+	alpha := f.shard.Spec.Pools["alpha"]
+	alpha.FSGroup = ptr.To(int64(1234))
+	f.shard.Spec.Pools["alpha"] = alpha
+
+	pass := f.reconcile(t, nil, nil)
+	if pass.poolsErr != nil || pass.walkErr != nil {
+		t.Fatalf("maintenance=%v walk=%v", pass.poolsErr, pass.walkErr)
+	}
+	adopted := f.pod(t, 3)
+	if !isMaintenanceSurge(adopted) {
+		t.Fatal("pool maintenance did not adopt beta's surplus pod")
+	}
+	if drift := f.r.desiredDrift(f.shard, []corev1.Pod{*adopted}, pass.rollout.keptSurges); !drift[adopted.Name] {
+		t.Fatal("primary ordering missed the drift of the surge adopted this pass")
+	}
+	f.requireDrained(t)
+}
+
 // A held cell leaves its replacement for a watch event. No number of
 // intervening passes should turn that ordering wait into posture retries.
 func TestPrimaryOrderHoldUsesOnlyWatchBackstop(t *testing.T) {
