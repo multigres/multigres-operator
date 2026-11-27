@@ -109,6 +109,12 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								buildMultiorchContainer(&multigresv1alpha1.Shard{
+									ObjectMeta: metav1.ObjectMeta{
+										Namespace: "default",
+										Labels: map[string]string{
+											"multigres.com/cluster": "test-cluster",
+										},
+									},
 									Spec: multigresv1alpha1.ShardSpec{
 										DatabaseName:   "testdb",
 										TableGroupName: "default",
@@ -209,6 +215,12 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								buildMultiorchContainer(&multigresv1alpha1.Shard{
+									ObjectMeta: metav1.ObjectMeta{
+										Namespace: "prod-ns",
+										Labels: map[string]string{
+											"multigres.com/cluster": "prod-cluster",
+										},
+									},
 									Spec: multigresv1alpha1.ShardSpec{
 										DatabaseName:   "proddb",
 										TableGroupName: "prod-tg",
@@ -309,6 +321,12 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								buildMultiorchContainer(&multigresv1alpha1.Shard{
+									ObjectMeta: metav1.ObjectMeta{
+										Namespace: "default",
+										Labels: map[string]string{
+											"multigres.com/cluster": "repl-cluster",
+										},
+									},
 									Spec: multigresv1alpha1.ShardSpec{
 										DatabaseName:   "testdb",
 										TableGroupName: "default",
@@ -444,6 +462,12 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								buildMultiorchContainer(&multigresv1alpha1.Shard{
+									ObjectMeta: metav1.ObjectMeta{
+										Namespace: "default",
+										Labels: map[string]string{
+											"multigres.com/cluster": "labels-cluster",
+										},
+									},
 									Spec: multigresv1alpha1.ShardSpec{
 										DatabaseName:   "testdb",
 										TableGroupName: "default",
@@ -569,6 +593,12 @@ func TestBuildMultiorchDeployment(t *testing.T) {
 						Spec: corev1.PodSpec{
 							Containers: []corev1.Container{
 								buildMultiorchContainer(&multigresv1alpha1.Shard{
+									ObjectMeta: metav1.ObjectMeta{
+										Namespace: "default",
+										Labels: map[string]string{
+											"multigres.com/cluster": "override-cluster",
+										},
+									},
 									Spec: multigresv1alpha1.ShardSpec{
 										DatabaseName:   "testdb",
 										TableGroupName: "default",
