@@ -817,7 +817,11 @@ func TestPrimaryOrderTracksSurgeAdoptedByPoolMaintenance(t *testing.T) {
 	if !isMaintenanceSurge(adopted) {
 		t.Fatal("pool maintenance did not adopt beta's surplus pod")
 	}
-	if drift := f.r.desiredDrift(f.shard, []corev1.Pod{*adopted}, pass.rollout.keptSurges); !drift[adopted.Name] {
+	if drift := f.r.desiredDrift(
+		f.shard,
+		[]corev1.Pod{*adopted},
+		pass.rollout.keptSurges,
+	); !drift[adopted.Name] {
 		t.Fatal("primary ordering missed the drift of the surge adopted this pass")
 	}
 	f.requireDrained(t)
