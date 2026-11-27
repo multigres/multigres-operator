@@ -212,29 +212,29 @@ func (c *C) ageEtcdPods(topoServer string) {
 	}
 }
 
-// updateCluster applies mutate to a fresh read of the cluster and writes it
-// back, failing the test rather than returning an error: a write that does not
-// land is this file's own setup breaking, never an observation about the
-// operator.
-//
-// It retries on conflict because the cluster controller writes the
-// MultigresCluster's own metadata (the cleanup finalizer, the applied-images
-// annotation) with optimistic locking, so a reconcile landing between the Get
-// and the Update is ordinary rather than a failure. ctrltest has no
-// get-mutate-update helper, so this and the loop in
-// scenario_shard_lifecycle_test.go both hand-roll one; delete both once it
-// does.
+// updateCluster applies mutate to a fresh read of the cluster and fails the
+// test if the write does not land.
 func (c *C) updateCluster(
 	cluster *MultigresCluster,
 	mutate func(*MultigresCluster),
 ) {
 	c.Helper()
-	c.NoError(retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	c.NoError(c.tryUpdateCluster(cluster, mutate), "update cluster")
+}
+
+// tryUpdateCluster returns errors to callers such as script steps. A reconcile
+// can update the cluster between Get and Update, so each conflict retry reads
+// a fresh object and reapplies mutate. ctrltest has no get-mutate-update helper.
+func (c *C) tryUpdateCluster(
+	cluster *MultigresCluster,
+	mutate func(*MultigresCluster),
+) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		got := &MultigresCluster{}
 		if err := c.Get(client.ObjectKeyFromObject(cluster), got); err != nil {
 			return err
 		}
 		mutate(got)
 		return c.Update(got)
-	}), "update cluster")
+	})
 }
